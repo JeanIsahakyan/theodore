@@ -32,9 +32,7 @@ import type {
   FleetAnswerRequest,
   FleetPresenceRequest,
   FleetRemoteSpace,
-  FleetSendRequest,
   FleetSettingsRequest,
-  FleetSpaceLine,
   FleetStartRequest,
   FleetStatus,
   FleetTrustRequest,
@@ -495,14 +493,14 @@ export const api = {
    *  as a new device. */
   fleetRemoveDevice: (deviceId: string) =>
     call<FleetStatus>('fleet_remove_device', { deviceId }),
+  /** Sends this device's spaces' questions to a trusted phone or web app
+   *  (a delegation it signs), or stops. */
+  fleetDelegate: (deviceId: string, on: boolean) =>
+    call<FleetStatus>('fleet_delegate', { deviceId, on }),
   fleetStartSpace: (req: FleetStartRequest) =>
     call<FleetRemoteSpace>('fleet_start_space', { req }),
-  fleetSend: (req: FleetSendRequest) => call<null>('fleet_send', { req }),
-  fleetStop: (space: string) => call<null>('fleet_stop', { space }),
   fleetAnswer: (req: FleetAnswerRequest) => call<null>('fleet_answer', { req }),
   fleetSpaces: () => call<FleetRemoteSpace[]>('fleet_spaces', undefined, true),
-  fleetSpaceLines: (space: string, since: number) =>
-    call<FleetSpaceLine[]>('fleet_space_lines', { space, since }, true),
   /** Where you are, for routing questions: never toasted. */
   fleetPresence: (req: FleetPresenceRequest): Promise<null> =>
     quietCall('fleet_presence', { req }),

@@ -37,3 +37,9 @@ pre-push:
       run: '[ ! -f cloud/package.json ] || pnpm -C cloud lint'
     cloud-test:
       run: '[ ! -f cloud/package.json ] || pnpm -C cloud test'
+    mobile-typecheck:
+      run: '[ ! -f mobile/package.json ] || pnpm -C mobile typecheck'
+    mobile-lint:
+      run: '[ ! -f mobile/package.json ] || pnpm -C mobile lint'
+    mobile-test:
+      run: '[ ! -f mobile/package.json ] || pnpm -C mobile test'

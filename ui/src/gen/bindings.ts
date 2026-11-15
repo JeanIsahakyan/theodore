@@ -260,6 +260,7 @@ export const commands = {
 	fleetSetSettings: (req: FleetSettingsRequest) => typedError<FleetStatus, CommandError>(__TAURI_INVOKE("fleet_set_settings", { req })),
 	fleetTrustDevice: (req: FleetTrustRequest) => typedError<FleetStatus, CommandError>(__TAURI_INVOKE("fleet_trust_device", { req })),
 	fleetRemoveDevice: (deviceId: string) => typedError<FleetStatus, CommandError>(__TAURI_INVOKE("fleet_remove_device", { deviceId })),
+	fleetDelegate: (deviceId: string, on: boolean) => typedError<FleetStatus, CommandError>(__TAURI_INVOKE("fleet_delegate", { deviceId, on })),
 	fleetStartSpace: (req: FleetStartRequest) => typedError<FleetRemoteSpace, CommandError>(__TAURI_INVOKE("fleet_start_space", { req })),
 	fleetSend: (req: FleetSendRequest) => typedError<null, CommandError>(__TAURI_INVOKE("fleet_send", { req })),
 	fleetStop: (space: string) => typedError<null, CommandError>(__TAURI_INVOKE("fleet_stop", { space })),
@@ -1176,7 +1177,10 @@ export type FleetDevice = {
 	device_id: string,
 	name: string,
 	os: FleetOs,
-	/**  `desktop` or `daemon`. */
+	/**
+	 *  `desktop` or `daemon` (computers: they run spaces), `mobile` or `web`
+	 *  (the phone and web app: clients only, never a space's target).
+	 */
 	kind: string,
 	online: boolean,
 	/**  Unix ms; 0 if never. */
@@ -1201,6 +1205,13 @@ export type FleetDevice = {
 	/**  This device trusts it (its key is pinned here). */
 	trusted: boolean,
 	this_device: boolean,
+	/**
+	 *  This device sends its spaces' questions there (docs/mobile.md
+	 *  "Following a computer's spaces"): asked for here, and still trusted.
+	 */
+	delegated: boolean,
+	/**  The cloud holds that delegation, as this device signed it. */
+	delegation_live: boolean,
 };
 
 export type FleetLineKind = "started" | "status" | "turn" | "tool" | "reply" | "ended" | "question" | "gap";
@@ -2181,6 +2192,12 @@ export type Space = {
 	 *  can be dismissed in bulk once that turn ends.
 	 */
 	sent_feedback?: SentFeedback[],
+	/**
+	 *  Set when this space runs on another device (docs/fleet.md, a
+	 *  mirror of the host's space): actions go to the host through the
+	 *  fleet; local-only parts (worktree, diff, terminal) are the host's.
+	 */
+	remote?: SpaceRemote | null,
 	created_at: number,
 	updated_at: number,
 	/**
@@ -2473,6 +2490,23 @@ export type SpaceQueuedRequest = {
 	action: QueuedAction,
 };
 
+/**
+ *  One agent turn of a space: the messages it answered and the checkpoint
+ *  it moved the space from and to.
+ *  Where a mirrored space runs.
+ */
+export type SpaceRemote = {
+	/**  The fleet id (`rs_…`). */
+	space: string,
+	host_device: string,
+	/**  The host's name as pinned on this device. */
+	host_name: string,
+	/**  The host's project name (`project` is the host's id, not one here). */
+	project_name: string,
+	/**  Started from this device (vs followed through a delegation). */
+	started_here: boolean,
+};
+
 /**  Where "Revert" takes a file back to. */
 export type SpaceRevertFrom =
 /**  As it is in the base: the space's change to it is gone. */
@@ -2627,10 +2661,6 @@ export type SpaceTrustRequest = {
 	hash: string,
 };
 
-/**
- *  One agent turn of a space: the messages it answered and the checkpoint
- *  it moved the space from and to.
- */
 export type SpaceTurn = {
 	/**
 	 *  The `chat_message` id of your message that started it; the reply's

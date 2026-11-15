@@ -3,6 +3,7 @@ import { latinKey } from './latin';
 import { findScopeFor } from './search';
 import { isBuildMode } from './space/mode';
 import {
+  RUN_ELSEWHERE,
   archivedSpacesIn,
   canMarkUnread,
   spaceTitle,
@@ -59,7 +60,7 @@ import { toggleTheme } from '../stores/UiStore';
 import { ALL, projectSettingsRoute } from '../core/workspaces';
 import { Avatar, K } from './bits';
 import { projectLabel } from './Projects';
-import { spaceTitle as fleetSpaceTitle } from './fleet/fleet';
+import { startableDevices } from './fleet/fleet';
 import { refreshProjectTracked } from './project/freshness';
 import { markSpaceUnseen, spaceSeen } from './space/seen';
 import { Sparkles } from '@gravity-ui/icons';
@@ -459,22 +460,27 @@ export const CommandMenu = observer(function CommandMenu() {
             {
               group: 'Spaces',
               label: spaceTitle(sp),
-              sub: sp.branch,
+              sub: sp.remote ? `on ${sp.remote.host_name}` : sp.branch,
               icon: <Pencil />,
               run: () => ui.go({ name: 'space', id: sp.id }),
             },
             // Pin/unpin and Mark as unread (docs/spaces.md §3): listed only
-            // once searched for, so the default view stays short.
-            {
-              group: 'Spaces',
-              searchOnly: true,
-              label: `${sp.pinned ? 'Unpin' : 'Pin'} ${spaceTitle(sp)}`,
-              icon: sp.pinned ? <PinSlash /> : <Pin />,
-              run: () =>
-                void api
-                  .setSpacePinned({ space: sp.id, pinned: !sp.pinned })
-                  .catch(() => {}),
-            },
+            // once searched for, so the default view stays short. A remote
+            // space's row is its host's: no pin here.
+            ...(sp.remote
+              ? []
+              : [
+                  {
+                    group: 'Spaces',
+                    searchOnly: true,
+                    label: `${sp.pinned ? 'Unpin' : 'Pin'} ${spaceTitle(sp)}`,
+                    icon: sp.pinned ? <PinSlash /> : <Pin />,
+                    run: () =>
+                      void api
+                        .setSpacePinned({ space: sp.id, pinned: !sp.pinned })
+                        .catch(() => {}),
+                  },
+                ]),
             ...(canMarkUnread(sp, spaceSeen.get(sp.id))
               ? [
                   {
@@ -506,7 +512,8 @@ export const CommandMenu = observer(function CommandMenu() {
     r.name === 'space' && isBuildMode(store)
       ? store.models.spaces.get(r.id)
       : undefined;
-  const undo = openSpace ? undoState(openSpace) : null;
+  // A remote space's turns are undone on its host, not from here.
+  const undo = openSpace && !openSpace.remote ? undoState(openSpace) : null;
   const thisSpaceItems: Item[] = openSpace
     ? [
         ...(undo?.ok
@@ -519,7 +526,7 @@ export const CommandMenu = observer(function CommandMenu() {
               },
             ]
           : []),
-        ...(openSpace.status === 'archived'
+        ...(openSpace.status === 'archived' && !openSpace.remote
           ? [
               {
                 group: 'This space',
@@ -536,22 +543,18 @@ export const CommandMenu = observer(function CommandMenu() {
     ...prItems,
     ...thisSpaceItems,
     ...spaceItems,
-    // Spaces on your other devices (docs/fleet.md).
-    ...(store.fleet.enabled
+    // New space on another device (docs/fleet.md): the same dialog, on
+    // "Run on" one of them.
+    ...(isBuildMode(store) &&
+    store.fleet.enabled &&
+    startableDevices(store.fleet.devices).length > 0
       ? [
           {
             group: 'Spaces',
-            label: 'Run on another device',
-            icon: <Plus />,
-            run: () => ui.openModal('fleet-start'),
-          } satisfies Item,
-          ...store.fleet.spaceList.map((sp): Item => ({
-            group: 'Spaces',
-            label: fleetSpaceTitle(sp),
-            sub: sp.hosted_here ? `for ${sp.host_name}` : sp.host_name,
+            label: 'New space on another device',
             icon: <Display />,
-            run: () => ui.go({ name: 'fleet-space', id: sp.space }),
-          })),
+            run: () => ui.openModal('new-space', [RUN_ELSEWHERE]),
+          } satisfies Item,
         ]
       : []),
     {

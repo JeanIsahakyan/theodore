@@ -24,6 +24,8 @@ export const device = (over: Partial<FleetDevice> = {}): FleetDevice => ({
   public_key: 'pk-studio-mac',
   trusted: false,
   this_device: false,
+  delegated: false,
+  delegation_live: false,
   ...over,
 });
 

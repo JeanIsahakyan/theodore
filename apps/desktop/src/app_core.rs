@@ -1317,6 +1317,13 @@ impl CoreApi for AppCore {
     ) -> Result<theodore_contract::FleetStatus, CommandError> {
         self.core.fleet_remove_device(&device_id).await.map_err(err)
     }
+    async fn fleet_delegate(
+        &self,
+        device_id: String,
+        on: bool,
+    ) -> Result<theodore_contract::FleetStatus, CommandError> {
+        self.core.fleet_delegate(&device_id, on).await.map_err(err)
+    }
     async fn fleet_start_space(
         &self,
         req: theodore_contract::FleetStartRequest,

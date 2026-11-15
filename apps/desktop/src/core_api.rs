@@ -671,6 +671,15 @@ pub trait CoreApi: Send + Sync {
     ) -> Result<theodore_contract::FleetStatus, CommandError> {
         Err(not_ready())
     }
+    /// Sends this device's spaces' questions to a trusted phone or web app
+    /// (a signed delegation), or stops.
+    async fn fleet_delegate(
+        &self,
+        _device_id: String,
+        _on: bool,
+    ) -> Result<theodore_contract::FleetStatus, CommandError> {
+        Err(not_ready())
+    }
     /// Starts a space on another device; tracked as `starting`.
     async fn fleet_start_space(
         &self,

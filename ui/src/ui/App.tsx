@@ -35,7 +35,6 @@ import { isBuildMode } from './space/mode';
 import { isHostOn } from './settings/labs';
 import { SpacePage } from './space/SpacePage';
 import { FleetNotices } from './fleet/FleetNotices';
-import { FleetSpacePage } from './fleet/FleetSpacePage';
 import { useWelcome, Welcome } from './Welcome';
 
 /** Fallback for any surface with no menu of its own: inputs get Cut/Copy/
@@ -210,8 +209,6 @@ export const App = observer(function App() {
               buildMode ? (
                 <SpacePage key={r.id} id={r.id} />
               ) : null
-            ) : r.name === 'fleet-space' ? (
-              <FleetSpacePage key={r.id} id={r.id} />
             ) : (
               <Review key={r.pr} pr={r.pr} />
             )}

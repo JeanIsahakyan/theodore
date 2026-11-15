@@ -37,7 +37,28 @@ idle_ms: number } |
  *  drops its row and closes its socket; it can register again only as
  *  a new device.
  */
-{ type: "remove_device"; device_id: string };
+{ type: "remove_device"; device_id: string } |
+/**  This device's push token (phone app); an empty token removes it. */
+{ type: "register_push"; provider: PushProvider; token: string } |
+/**  A [`Delegation`] signed by this device as its origin. */
+{ type: "delegate"; envelope: SignedEnvelope };
+
+/**
+ *  An origin lets another of its user's devices follow the spaces it
+ *  started: subscribe to them and get their questions (docs/mobile.md
+ *  "Following a computer's spaces"). Signed by the origin
+ *  ([`Domain::Delegate`]); it grants no power on hosts, whose own trust still
+ *  decides what the delegate's requests may do.
+ */
+export type Delegation = {
+	origin_device: string,
+	delegate_device: string,
+	issued_at_ms: number,
+	/**  Unix ms; the cloud drops it after. 0: no expiry. */
+	expires_at_ms: number,
+	/**  `true` withdraws an earlier delegation to the same device. */
+	revoke: boolean,
+};
 
 /**  What a device says about itself (in `hello` and `announce`). */
 export type DeviceInfo = {
@@ -58,7 +79,11 @@ export type DeviceKind =
 /**  The desktop app: runs spaces and is where a person sits. */
 "desktop" |
 /**  `theodore daemon`: runs spaces, nobody sits there. */
-"daemon";
+"daemon" |
+/**  The phone app (docs/mobile.md): a client only, never a target. */
+"mobile" |
+/**  The web app: a client only, never a target. */
+"web";
 
 export type DeviceOs = "macos" | "linux";
 
@@ -91,6 +116,11 @@ export type ProjectRef = {
 	id: string,
 	name: string,
 };
+
+/**  Push providers the cloud can send through. */
+export type PushProvider =
+/**  Expo Push (APNs / FCM behind it). */
+"expo";
 
 export type RemoteAsk = {
 	ask_id: string,
@@ -149,7 +179,16 @@ text: string } | { kind: "tool"; turn: number; name: string;
 /**  One line, ≤ 200 chars. */
 summary: string } | { kind: "reply"; turn: number;
 /**  The agent's reply for the turn, truncated to 8000 chars. */
-text: string } | { kind: "turn_ended"; turn: number; outcome: TurnOutcome; message?: string | null } | { kind: "question"; ask_id: string; questions: RemoteQuestion[] } | { kind: "question_cleared"; ask_id: string };
+text: string } | { kind: "turn_ended"; turn: number; outcome: TurnOutcome; message?: string | null } | { kind: "question"; ask_id: string; questions: RemoteQuestion[] } | { kind: "question_cleared"; ask_id: string } |
+/**
+ *  One row of the space as the host's own UI sees it (docs/spaces.md
+ *  models): `model` is `space` (the space row, local-only fields
+ *  blanked), `chat_message` (its chat), or `turn_step` (a step of a run;
+ *  `id` = `<run>:<n>`). `data` is the contract JSON; `None` deletes it.
+ *  The origin mirrors these so a remote space renders exactly like a
+ *  local one. Each event's JSON stays under [`MIRROR_ROW_MAX_BYTES`].
+ */
+{ kind: "mirror"; model: string; id: string; data?: unknown | null };
 
 export type RemoteSpaceStatus = "running" |
 /**  Settled, waiting for the next message. */
@@ -205,7 +244,12 @@ resume: { [key in string]: number } } |
  */
 { type: "space_gap"; space: string; from: number; to: number } |
 /**  A host's signed [`RemoteAsk`], forwarded unchanged. */
-{ type: "ask"; envelope: SignedEnvelope; via: AskVia } | { type: "dismiss"; ask_id: string; reason: DismissReason } | { type: "error"; code: string; message: string };
+{ type: "ask"; envelope: SignedEnvelope; via: AskVia } | { type: "dismiss"; ask_id: string; reason: DismissReason } | { type: "error"; code: string; message: string } |
+/**
+ *  The live delegations naming this device (as origin or delegate), each
+ *  as the origin signed it; sent after welcome and on change.
+ */
+{ type: "delegations"; list: SignedEnvelope[] };
 
 /**
  *  A request body signed by its origin device. `body` is the JSON text of a

@@ -10,7 +10,7 @@ import {
   thisDevice,
   trustNeeded,
 } from '../test/fleet';
-import { FleetStore, LINE_LIMIT, mergeLines } from './FleetStore';
+import { FleetStore } from './FleetStore';
 import { RootStore } from './RootStore';
 
 let transport: FakeTransport;
@@ -20,29 +20,6 @@ beforeEach(() => {
   transport = new FakeTransport();
   setTransport(transport);
   fleet = new FleetStore();
-});
-
-describe('mergeLines', () => {
-  const l = (seq: number, text = String(seq)) => ({
-    seq,
-    kind: 'reply' as const,
-    text,
-  });
-
-  it('orders by seq and replaces a line seen twice', () => {
-    expect(mergeLines([l(3), l(1)], [l(2), l(3, 'again')])).toEqual([
-      l(1),
-      l(2),
-      l(3, 'again'),
-    ]);
-  });
-
-  it('keeps only the newest ones', () => {
-    const many = Array.from({ length: LINE_LIMIT + 5 }, (_, i) => l(i + 1));
-    const kept = mergeLines([], many);
-    expect(kept).toHaveLength(LINE_LIMIT);
-    expect(kept[0]!.seq).toBe(6);
-  });
 });
 
 describe('ephemerals', () => {
@@ -64,34 +41,20 @@ describe('ephemerals', () => {
       type: 'fleet_space',
       space: remoteSpace({ status: 'running', last_reply: 'on it' }),
     });
-    expect(fleet.spaceList).toHaveLength(1);
+    expect(fleet.spaces.size).toBe(1);
     expect(fleet.spaces.get('rs_1')?.status).toBe('running');
     expect(fleet.spaces.get('rs_1')?.last_reply).toBe('on it');
   });
 
-  it('lists waiting spaces first, then running ones', () => {
-    fleet.handle({ type: 'fleet_space', space: remoteSpace({ space: 'a' }) });
-    fleet.handle({
-      type: 'fleet_space',
-      space: remoteSpace({ space: 'b', status: 'running' }),
-    });
-    fleet.handle({
-      type: 'fleet_space',
-      space: remoteSpace({ space: 'c', status: 'waiting' }),
-    });
-    expect(fleet.spaceList.map((s) => s.space)).toEqual(['c', 'b', 'a']);
-  });
-
-  it('fleet_space_line appends in seq order, without doubles', () => {
-    const line = (seq: number) => ({
-      type: 'fleet_space_line' as const,
-      space: 'rs_1',
-      line: { seq, kind: 'reply' as const, text: `t${seq}` },
-    });
-    fleet.handle(line(2));
-    fleet.handle(line(1));
-    fleet.handle(line(2));
-    expect(fleet.lines.get('rs_1')?.map((x) => x.seq)).toEqual([1, 2]);
+  it('fleet_space_line is taken and kept nowhere: the chat is the mirrored row', () => {
+    expect(
+      fleet.handle({
+        type: 'fleet_space_line',
+        space: 'rs_1',
+        line: { seq: 1, kind: 'reply', text: 'x' },
+      }),
+    ).toBe(true);
+    expect(fleet.spaces.size).toBe(0);
   });
 
   it('fleet_ask holds a routed question until fleet_ask_dismissed', () => {
@@ -106,9 +69,7 @@ describe('ephemerals', () => {
       type: 'fleet_space',
       space: remoteSpace({ status: 'waiting', question: question() }),
     });
-    expect(fleet.questionOf('rs_1')?.ask_id).toBe('ask1');
     fleet.handle({ type: 'fleet_ask_dismissed', ask_id: 'ask1' });
-    expect(fleet.questionOf('rs_1')).toBeNull();
     expect(fleet.spaces.get('rs_1')?.question).toBeNull();
   });
 
@@ -161,27 +122,6 @@ describe('loading', () => {
     expect(fleet.status).toBeNull();
     expect(fleet.available).toBe(false);
   });
-
-  it("loads a space's lines after the last one held, merged with live ones", async () => {
-    fleet.handle({
-      type: 'fleet_space_line',
-      space: 'rs_1',
-      line: { seq: 7, kind: 'reply', text: 'live' },
-    });
-    transport.onCall('fleet_space_lines', () => [
-      { seq: 5, kind: 'turn', text: 'old' },
-      { seq: 6, kind: 'reply', text: 'older' },
-    ]);
-    await fleet.loadLines('rs_1');
-    expect(transport.calls[0]!.args).toEqual({ space: 'rs_1', since: 7 });
-    expect(fleet.lines.get('rs_1')?.map((x) => x.seq)).toEqual([5, 6, 7]);
-  });
-
-  it('first open asks from the start', async () => {
-    transport.onCall('fleet_space_lines', () => []);
-    await fleet.loadLines('rs_9');
-    expect(transport.calls[0]!.args).toEqual({ space: 'rs_9', since: 0 });
-  });
 });
 
 describe('commands', () => {
@@ -233,6 +173,23 @@ describe('commands', () => {
     ]);
     expect(fleet.device('d2')).toBeUndefined();
     expect(fleet.trustNeededList).toEqual([]);
+  });
+
+  it('delegating sends the device and the switch, and takes the new status', async () => {
+    fleet.setStatus(status());
+    transport.onCall('fleet_delegate', () =>
+      status({
+        devices: [
+          thisDevice(),
+          device({ kind: 'mobile', trusted: true, delegated: true }),
+        ],
+      }),
+    );
+    await fleet.delegate('d2', true);
+    expect(transport.calls).toEqual([
+      { cmd: 'fleet_delegate', args: { deviceId: 'd2', on: true } },
+    ]);
+    expect(fleet.device('d2')?.delegated).toBe(true);
   });
 
   it('starting lists the new space at once', async () => {

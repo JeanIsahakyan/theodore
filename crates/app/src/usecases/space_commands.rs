@@ -459,7 +459,7 @@ impl Core {
             return Ok(Vec::new());
         }
         let taken: std::collections::HashSet<u16> = self
-            .list_spaces(None)
+            .local_spaces(None)
             .await?
             .into_iter()
             .filter(|s| s.id != except && s.status != theodore_contract::SpaceStatus::Archived)

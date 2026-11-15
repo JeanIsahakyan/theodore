@@ -7,6 +7,7 @@
  */
 import type {
   ClientMessage,
+  Delegation,
   DeviceInfo,
   RemoteAsk,
   RemoteQuestion,
@@ -21,6 +22,11 @@ import {
   MAX_EVENT_BYTES,
   MAX_FRAME_BYTES,
   MAX_INFO_BYTES,
+  MAX_MIRROR_ID_CHARS,
+  MAX_PUSH_TOKEN_CHARS,
+  MIN_PROTOCOL_VERSION,
+  MIRROR_KEPT,
+  MIRROR_RELAYED,
   NONCE_BYTES,
   PROTOCOL_VERSION,
 } from './limits';
@@ -88,12 +94,22 @@ function oneOf<T extends string>(o: Obj, k: string, allowed: readonly T[]): T {
 
 const MODES = ['ask', 'plan', 'edit', 'run'] as const;
 
-function deviceInfo(v: unknown): DeviceInfo {
+/** Device kinds requests may target (`DeviceKind::hosts`). */
+export const HOST_KINDS: readonly DeviceInfo['kind'][] = ['desktop', 'daemon'];
+
+/** Whether a device of this kind runs spaces (and so may be a target). */
+export const hosts = (kind: DeviceInfo['kind']) => HOST_KINDS.includes(kind);
+
+/** Kinds a connection of `protocol` may say it is: 3 knows only hosts. */
+const kindsFor = (protocol: number): readonly DeviceInfo['kind'][] =>
+  protocol >= 4 ? [...HOST_KINDS, 'mobile', 'web'] : HOST_KINDS;
+
+function deviceInfo(v: unknown, protocol: number): DeviceInfo {
   const o = obj(v, 'info');
   const info: DeviceInfo = {
     name: str(o, 'name', 100),
     os: oneOf(o, 'os', ['macos', 'linux']),
-    kind: oneOf(o, 'kind', ['desktop', 'daemon']),
+    kind: oneOf(o, 'kind', kindsFor(protocol)),
     app_version: str(o, 'app_version', 64),
     projects: arr(o, 'projects', 200).map((p) => {
       const po = obj(p, 'project');
@@ -131,7 +147,10 @@ const EVENT_KINDS = [
   'turn_ended',
   'question',
   'question_cleared',
+  'mirror',
 ] as const;
+
+const MIRROR_MODELS: readonly string[] = [...MIRROR_KEPT, ...MIRROR_RELAYED];
 
 /** Only the kind is read; the event travels as the host signed it. */
 function spaceEvent(v: unknown): RemoteSpaceEvent {
@@ -140,6 +159,26 @@ function spaceEvent(v: unknown): RemoteSpaceEvent {
   // The cloud keeps a space's status (finished spaces go first at the cap).
   if (kind === 'status') {
     oneOf(o, 'status', ['running', 'idle', 'waiting', 'stopped', 'failed']);
+  }
+  // It decides what the cloud keeps (and under which key).
+  if (kind === 'mirror') {
+    const { model, id } = o;
+    if (typeof model !== 'string' || !MIRROR_MODELS.includes(model)) {
+      throw new BadMessage(
+        codes.INVALID,
+        `mirror model must be one of ${MIRROR_MODELS.join(', ')}`,
+      );
+    }
+    if (
+      typeof id !== 'string' ||
+      id === '' ||
+      id.length > MAX_MIRROR_ID_CHARS
+    ) {
+      throw new BadMessage(
+        codes.INVALID,
+        `mirror id must be a string of 1 to ${MAX_MIRROR_ID_CHARS} chars`,
+      );
+    }
   }
   return o as RemoteSpaceEvent;
 }
@@ -167,8 +206,24 @@ function remoteAsk(v: unknown): RemoteAsk {
   };
 }
 
-/** One frame from a device, checked. Throws [`BadMessage`]. */
-export function parseClient(raw: string): ClientMessage {
+/** `ExponentPushToken[…]` (or the newer `ExpoPushToken[…]`); '' removes. */
+const PUSH_TOKEN = /^Expo(nent)?PushToken\[[A-Za-z0-9_-]+\]$/;
+
+function pushToken(o: Obj): string {
+  const t = str(o, 'token', MAX_PUSH_TOKEN_CHARS, true);
+  if (t !== '' && !PUSH_TOKEN.test(t)) throw bad('not an Expo push token');
+  return t;
+}
+
+/**
+ * One frame from a device, checked. `protocol`: the connection's, once its
+ * hello was accepted (it decides which device kinds an `announce` may say).
+ * Throws [`BadMessage`].
+ */
+export function parseClient(
+  raw: string,
+  protocol = PROTOCOL_VERSION,
+): ClientMessage {
   let v: unknown;
   try {
     v = JSON.parse(raw);
@@ -179,19 +234,25 @@ export function parseClient(raw: string): ClientMessage {
   switch (o.type) {
     case 'hello': {
       // The version first: a future hello may not parse as this one.
-      if (o.protocol !== PROTOCOL_VERSION) {
+      const v = o.protocol;
+      if (
+        typeof v !== 'number' ||
+        !Number.isInteger(v) ||
+        v < MIN_PROTOCOL_VERSION ||
+        v > PROTOCOL_VERSION
+      ) {
         throw new BadMessage(
           codes.VERSION,
-          `protocol ${PROTOCOL_VERSION} only`,
+          `protocol ${MIN_PROTOCOL_VERSION} to ${PROTOCOL_VERSION} only`,
         );
       }
       return {
         type: 'hello',
-        protocol: PROTOCOL_VERSION,
+        protocol: v,
         device_id: optStr(o, 'device_id', 64),
         public_key: str(o, 'public_key', 64),
         signature: str(o, 'signature', 128),
-        info: deviceInfo(o.info),
+        info: deviceInfo(o.info, v),
         spaces: arr(o, 'spaces', 10_000).map(cursor),
       };
     }
@@ -205,7 +266,7 @@ export function parseClient(raw: string): ClientMessage {
         idle_ms: uint(o, 'idle_ms'),
       };
     case 'announce':
-      return { type: 'announce', info: deviceInfo(o.info) };
+      return { type: 'announce', info: deviceInfo(o.info, protocol) };
     case 'request':
       return { type: 'request', envelope: envelope(o.envelope) };
     case 'claim':
@@ -232,9 +293,41 @@ export function parseClient(raw: string): ClientMessage {
       return { type: 'unsubscribe', space: str(o, 'space') };
     case 'remove_device':
       return { type: 'remove_device', device_id: str(o, 'device_id', 64) };
+    case 'register_push':
+      if (protocol < 4) break;
+      return {
+        type: 'register_push',
+        provider: oneOf(o, 'provider', ['expo']),
+        token: pushToken(o),
+      };
+    case 'delegate':
+      if (protocol < 4) break;
+      return { type: 'delegate', envelope: envelope(o.envelope) };
     default:
-      throw bad('unknown message type');
+      break;
   }
+  throw bad('unknown message type');
+}
+
+/** The `{device_id, envelope}` of `POST /v1/fleet/request`. */
+export function parseHttpRequest(v: unknown): {
+  device_id: string;
+  envelope: SignedEnvelope;
+} {
+  const o = obj(v, 'body');
+  return { device_id: str(o, 'device_id', 64), envelope: envelope(o.envelope) };
+}
+
+/** An origin's delegation: every field, all of it decides routing. */
+export function peekDelegation(body: string): Delegation {
+  const o = parseBody(body, 'delegation body');
+  return {
+    origin_device: str(o, 'origin_device', 64),
+    delegate_device: str(o, 'delegate_device', 64),
+    issued_at_ms: uint(o, 'issued_at_ms'),
+    expires_at_ms: uint(o, 'expires_at_ms'),
+    revoke: bool(o, 'revoke'),
+  };
 }
 
 /** What the cloud reads from a signed body: routing fields, nothing else. */
@@ -322,7 +415,8 @@ export function peekAsk(body: string): RemoteAsk {
  * What a signature is for (`fleet_protocol::Domain`): each kind signs
  * `"theodore-fleet-<kind>-v3\0" ‖ bytes`, so one never verifies as another.
  */
-export type Domain = 'hello' | 'request' | 'event' | 'ask' | 'reply';
+export type Domain =
+  'hello' | 'request' | 'event' | 'ask' | 'reply' | 'delegate';
 
 /** The exact bytes signed for `msg` in `domain`. */
 export function signedBytes(domain: Domain, msg: Uint8Array): Uint8Array {

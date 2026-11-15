@@ -19,9 +19,46 @@ Why it exists:
 | `GET /v1/orgs` | bearer access JWT | the caller's active organizations, personal first: `{ organizations: [{ id, name, role, personal }] }` |
 | `POST /v1/orgs/personal` | bearer access JWT | the caller's personal org, created once: `{ organization_id, created }` |
 | `POST /v1/auth/select-organization` | none (the pending token is the credential) | finishes a sign-in that needs an org picked: `{ user, organization_id, access_token, refresh_token }` |
-| `GET /v1/fleet/ws` | bearer access JWT with `org_id` | WebSocket upgrade to the org's fleet hub (below, and `docs/fleet.md`) |
+| `GET /v1/fleet/ws` | bearer access JWT with `org_id`; from a browser, the subprotocol `bearer.<JWT>` (below) | WebSocket upgrade to the org's fleet hub (below, and `docs/fleet.md`) |
+| `POST /v1/fleet/request` | bearer access JWT with `org_id` | a one-shot signed fleet request, no socket (a phone's notification action): `{ device_id, envelope }` ─▶ `202 { accepted: true, req_id }` or `409 { accepted: false, req_id, refused: { code, message } }` (`400` for `fleet.bad_message`) |
 
 Body: JSON object, 64 KiB max. Errors: `{ "error": { "code", "message" } }`.
+
+### The web app (CORS, browser sockets)
+
+The web build of the phone app (`docs/mobile.md`) calls the cloud from a
+browser. Its origins are the Worker var `WEB_ORIGINS` (comma-separated, per
+environment in `wrangler.toml`):
+
+| | `WEB_ORIGINS` |
+| --- | --- |
+| staging | `https://theodore-web-staging.prd-instance.workers.dev` |
+| production | `https://theodore-web.prd-instance.workers.dev` |
+
+```
+OPTIONS /v1/orgs*, /v1/auth/select-organization, /v1/fleet/request
+  Origin in WEB_ORIGINS ─▶ 204 + Allow-Origin <origin>, Allow-Methods GET, POST, OPTIONS,
+                               Allow-Headers Authorization, Content-Type, Max-Age 600
+  any other Origin      ─▶ 204, no CORS headers (the browser stops)
+answers (and errors) on those routes ─▶ Allow-Origin <origin>, Vary: Origin
+```
+
+No credentials (no cookies): the bearer token is the credential. Other
+routes never carry CORS headers.
+
+A browser can't put `Authorization` on a WebSocket, so `GET /v1/fleet/ws`
+also takes the token as a subprotocol, only from an origin in
+`WEB_ORIGINS`:
+
+```
+new WebSocket(url, ['bearer', 'bearer.<access JWT>'])
+  ─▶ Origin in WEB_ORIGINS and a `bearer.<token>` offered? no ─▶ 401 fleet.unauthorized
+  ─▶ verify the token as for a header ─▶ hub; the 101 picks `bearer`
+     (offered only `bearer.<token>`: the 101 picks that entry, since a
+      browser drops a socket whose 101 names a protocol it didn't offer)
+```
+
+Offer both: then the token never comes back in the response.
 
 Rate limits (Cloudflare rate-limiting bindings, separate counters per
 environment; over: `429 cloud.rate_limited`):
@@ -29,7 +66,7 @@ environment; over: `429 cloud.rate_limited`):
 | Bucket | Key | Limit | Routes |
 | --- | --- | --- | --- |
 | `RL_PUBLIC` | client IP (`cf-connecting-ip`) | 30 / min | `POST /v1/auth/select-organization`, `GET /v1/fleet/ws` |
-| `RL_USER` | user (`sub`, after the token checks out) | 120 / min | `GET /v1/orgs`, `POST /v1/orgs/personal` |
+| `RL_USER` | user (`sub`, after the token checks out) | 120 / min | `GET /v1/orgs`, `POST /v1/orgs/personal`, `POST /v1/fleet/request` |
 
 ## Auth
 
@@ -134,6 +171,8 @@ Stable `area.kind` codes, same form as the app's `error.code`
 | Worker | `theodore-cloud-staging` | `theodore-cloud` |
 | WorkOS client id (`wrangler.toml` var) | `client_01M5RM1W36AHHEGBE37QD3PS6K` | `client_01M5RMBK860S2JJZNWJDDSH0BM` |
 | WorkOS API key | Worker secret `WORKOS_API_KEY` | Worker secret `WORKOS_API_KEY` |
+| Web app origins (`WEB_ORIGINS` var) | `https://theodore-web-staging.prd-instance.workers.dev` | `https://theodore-web.prd-instance.workers.dev` |
+| Expo access token (optional) | Worker secret `EXPO_ACCESS_TOKEN` | Worker secret `EXPO_ACCESS_TOKEN` |
 | Deployed by | push to `staging` | push to `main` |
 
 - The API key is set by the owner, never in git or CI:
@@ -141,6 +180,9 @@ Stable `area.kind` codes, same form as the app's `error.code`
   keeps it.
 - Client ids are public: plain vars in `cloud/wrangler.toml`.
 - The key is also the client secret for the organization-selection grant.
+- `EXPO_ACCESS_TOKEN` is needed only if the Expo project turns on
+  "enhanced push security"; without it pushes go out unauthenticated, as
+  Expo allows by default.
 
 ## Local dev
 
@@ -197,13 +239,26 @@ device ─GET /v1/fleet/ws, Upgrade: websocket, Bearer JWT─▶ Worker
   ─▶ acceptWebSocket(tag u:<user>) ─▶ challenge ─▶ hello ─▶ welcome ...
 ```
 
-Protocol 3 only (`fleet.version`, close 4003, for anything else).
+Protocols 3 and 4 (`fleet.version`, close 4003, for anything else). The
+hello's protocol is kept per connection:
+
+| | Protocol 3 | Protocol 4 |
+| --- | --- | --- |
+| `devices` list | computers only (`desktop`, `daemon`): it can't read `mobile` / `web` | every device |
+| its own kind | `desktop` / `daemon` (else `fleet.bad_message`) | also `mobile`, `web` |
+| `register_push`, `delegate` | unknown (`fleet.bad_message`) | accepted |
+| `delegations` | never sent | after welcome and on change |
+| `mirror` space events | never sent, live or history | sent |
+
+`DeviceInfo.os` is still `macos` / `linux` in both: a phone or browser
+sends one of those until the protocol gains its own values.
 
 - **Hibernation API**: an idle socket bills nothing. Per-socket state is its
   attachment (user, org, token expiry, device, generation, presence); the
   rest is SQLite, so a woken hub rebuilds nothing.
 - **One alarm** for every deadline (hello due, token expiry + 60 s, 10 s
-  grace, 2 min pending, 20 s escalation), set only when it moves earlier.
+  grace, 2 min pending, 20 s escalation, a delegation's expiry), set only
+  when it moves earlier.
 - **Heartbeat**: the device pings (WebSocket ping frames); the runtime
   answers without waking the hub. The hub doesn't ping.
 - Messages run one at a time, in arrival order. Everything is scoped to the
@@ -220,23 +275,47 @@ never verifies as another):
 | reply: `reply` tag ‖ `ReplyBody` | target | verifies against the sender's pinned key; `device_id` = `target_device` = sender = the pending request's target, `origin_device` = its origin; forwards unchanged |
 | space event: `event` tag ‖ `SpaceEventBody` | host | verifies against the sender's pinned key; `device_id` = `host_device` = sender = the space's host; stores and forwards unchanged |
 | ask: `ask` tag ‖ `RemoteAsk` | host | same as an event |
+| delegation: `delegate` tag ‖ `Delegation` | origin | verifies against the sender's pinned key; `device_id` = `origin_device` = sender (below) |
 
 A failed event, ask or reply check is `error{fleet.bad_signature}`, nothing
 stored or forwarded (a refused reply leaves its request pending).
 A gap the cloud can't fill is its own unsigned `space_gap{space, from, to}`:
 informational, never content.
 
+Mirrored rows (`docs/fleet.md` "One space UI: mirrored rows"): a space
+event whose `event.kind` is `mirror`, `{model, id, data}`.
+
+```
+mirror ─▶ model space | chat_message | turn_step, id 1–256 chars?  no ─▶ error fleet.invalid
+  space, chat_message ─▶ mirrors (space, model, id): the newer seq replaces
+                         the older; data = null (a tombstone) is kept too
+  turn_step           ─▶ relayed live only, never stored (last_seq moves)
+  ─▶ subscribers on protocol 4; protocol 3 gets neither live nor history
+subscribe{since} ─▶ ring events + kept mirrors with seq > since, in seq order
+```
+
+- Mirrors live apart from the ring: they never push an event out of the
+  500, but count toward the byte budgets (below).
+- **Gaps are real loss only.** A space keeps `lost_to`: the ring's oldest
+  dropped (by count, bytes or a finished space's budget) and a protocol-3
+  host's seq jump raise it. A hole in history at or below it is a
+  `space_gap`; above it (a replaced mirror, a relayed `turn_step`, a
+  protocol-4 host's compacted journal) it isn't. A protocol-4 host's seq
+  jump is never a live gap.
+
 Same-user devices aren't trusted by each other just for being the same user
-(trust is pinned per device), so the cloud keeps a space to the two devices
-it belongs to:
+(trust is pinned per device), so the cloud keeps a space to its host and
+its **followers**: the origin, and the devices the origin delegated to
+(below; with no delegation, just the origin):
 
 | What | Who |
 | --- | --- |
-| `subscribe{space}` (history and live events) | the space's origin and host only; anyone else `fleet.not_yours` |
+| `subscribe{space}` (history and live events) | the space's host and followers only; anyone else `fleet.not_yours` |
 | a question, while you're at the host | the host only (its own card) |
-| a question, otherwise | the origin if online (`active` if you're at it, else `origin`); a third device being active doesn't pull it |
-| after 20 s unanswered (or nowhere to show) | escalated to the origin, if not already there, and on its reconnect; never to every device |
-| moving between origin and host | follows you (`moved`); presence elsewhere changes nothing |
+| a question, otherwise | the follower you're at (`active`), else every follower online (`origin`); a device that isn't one doesn't pull it |
+| after 20 s unanswered (or nowhere to show) | escalated to every follower not already showing it, and on their reconnect; never to every device |
+| moving between host and followers | follows you (`moved`); presence elsewhere changes nothing |
+| a request whose target is a `mobile` / `web` device | `refused{fleet.invalid}`: phones and browsers run no spaces |
 | `answer` request | routed like any request; the question is dismissed elsewhere (`answered_elsewhere`) only after the host's signed `reply` with `ok` for it, a refusal leaves it open |
 | a request whose target is its origin | `refused{fleet.invalid}` |
 | a `start_space` whose space id is known, or has a start pending | `refused{fleet.invalid}`; the space that exists is untouched |
@@ -250,8 +329,91 @@ same user? no ─▶ fleet.not_yours      the caller itself? ─▶ fleet.invali
 connected now? ─▶ fleet.invalid (nothing changes)
 ─▶ delete its row, the spaces it hosts (events, subs; their questions dismissed `resolved`)
 ─▶ requests waiting for it ─▶ origin: refused{fleet.offline};  replies held for it dropped
+─▶ its push token and every delegation naming it dropped (the other side told)
 ─▶ devices pushed to the rest
 ```
+
+### Delegations
+
+An origin lets another of its user's devices (a phone) follow the spaces it
+started (`docs/mobile.md` "Following a computer's spaces"):
+
+```
+origin ─ delegate{envelope: Delegation{origin_device, delegate_device, issued_at_ms, expires_at_ms, revoke}}
+  device_id = origin_device = sender?          no ─▶ error fleet.not_yours
+  delegate is the sender itself?                   ─▶ error fleet.invalid
+  delegate a device of the same user?          no ─▶ error fleet.not_yours
+  issued_at_ms within 5 min of now?            no ─▶ error fleet.stale_request
+  a grant whose expires_at_ms ≠ 0 is past?         ─▶ error fleet.invalid
+  older than the one kept for this pair?           ─▶ error fleet.stale_request
+  signed (`delegate` tag) by the sender's pinned key? no ─▶ error fleet.bad_signature
+─▶ stored as signed, per (origin, delegate): the latest replaces the earlier
+─▶ delegations{list} ─▶ origin and delegate (protocol 4, online)
+revoke ─▶ kept as a tombstone 5 min (an older grant can't come back),
+          the delegate's subscriptions to the origin's spaces end,
+          its open question cards are dismissed (`resolved`)
+```
+
+- `delegations{list}`: the live delegations naming the device (origin or
+  delegate), each as the origin signed it. After every welcome (protocol
+  4) and on any change: grant, revoke, expiry, a removed device.
+- Live: not revoked, `expires_at_ms` 0 or in the future. The alarm drops
+  expired ones (both devices told) and tombstones past the 5 min window.
+- A delegate gains nothing on hosts: its requests (answers, too) still
+  need the host's own trust in its key.
+
+### Push notifications
+
+The phone registers its Expo token over the socket; the hub sends through
+the Expo Push API (`POST https://exp.host/--/api/v2/push/send`), never
+APNs or FCM directly.
+
+```
+register_push{provider: expo, token}   (a `mobile` device only, else error fleet.invalid)
+  token "" ─▶ removed     ExponentPushToken[…] / ExpoPushToken[…], ≤ 200 chars ─▶ stored
+  (the same token on another device row is dropped: one phone, one row)
+
+question from a host ─▶ followers ─▶ each with a token and not looking at it
+  (offline, or connected but not focused / locked) ─▶ one push per question
+  while you're at the host: none now; at the 20 s escalation, then
+space status running/waiting ─▶ idle | failed | stopped (from the host's
+  signed events) ─▶ one push to each such follower
+send ─▶ ctx.waitUntil (routing never waits) ─▶ tickets:
+  DeviceNotRegistered ─▶ token dropped;  any other error ─▶ kept, nothing retried
+```
+
+What a push carries (the app's contract, `mobile/src/push/README.md`;
+`askPresentation` is ported in `src/fleet/push.ts` and a test checks both
+give the same output):
+
+| Field | Question | Finished |
+| --- | --- | --- |
+| `title` | `<host> · <space>` | same |
+| `body` | the question, and `\n1) A  2) B` for 2–3 options, ≤ 180 chars | `<space> finished` / `failed` / `stopped` |
+| `categoryId` | `ask_opt2`, `ask_opt3`, else `ask_text`; none for several questions or multi-select | none |
+| `channelId` / `priority` | `default` / `high` | `default` / — |
+| `data` | `{kind: ask, ask_id, space, host_device, options}` (≤ 4; `[]` for several questions or multi-select) | `{kind: finished, ask_id: "", space, host_device, options: [], status}` |
+
+`<host>` is the host's own name (its hello), `<space>` the name in its
+host-signed `started` event (else the space id); the question and options
+come from the host-signed ask the cloud verified.
+
+### One-shot requests over HTTP
+
+`POST /v1/fleet/request` is a socket `request` without a socket (a
+notification's answer button):
+
+```
+Bearer JWT (org_id) ─▶ RL_USER ─▶ {device_id, envelope}
+  ─▶ OrgHub: device_id one of the caller's devices? no ─▶ 409 refused{fleet.not_yours}
+     envelope.device_id = device_id = body origin_device? no ─▶ 409 refused{fleet.not_yours}
+     then every check of a socket `request` (target, key, depth, busy, …)
+  ─▶ 202 {accepted: true, req_id}        (no waiting for the target)
+  target's signed reply ─▶ the origin's socket; offline: held 2 min, sent after its welcome
+```
+
+The cloud doesn't verify the request's signature (the target does), same
+as on the socket.
 
 Online devices can't be removed, so one device (a compromised one, say)
 can't knock the others out. Its key can connect again, as a new device
@@ -262,14 +424,17 @@ Storage (DO SQLite):
 | Table | Holds |
 | --- | --- |
 | `devices` | device_id, user, pinned public key, info, generation, last seen |
-| `spaces` | space, user, host, origin, parent, depth, last seq, status, last activity, its `started` envelope, stored event bytes, the start request (`req_id`) that made it |
-| `events` | the host's signed envelope and its body's bytes, the newest 500 / 4 MiB per space (gaps are what's missing) |
+| `spaces` | space, user, host, origin, parent, depth, last seq, status, last activity, its `started` envelope, stored event and mirror bytes, `lost_to` (holes at or below it are gaps), the start request (`req_id`) that made it |
+| `events` | the host's signed envelope and its body's bytes, the newest 500 per space, within its byte budget |
+| `mirrors` | (space, model, id) ─ the latest `space` / `chat_message` mirror (a tombstone too): seq, the host's signed envelope, its body's bytes |
 | `pending` | a routed request until its reply: target, generation, claimed, envelope, `ask_id` of an answer |
 | `replies` | a signed reply or a `refused` held for an origin that's offline (2 min), as the frame to send |
-| `asks` | an open question (the host's envelope): where it shows, via, escalated |
+| `asks` | an open question (the host's envelope): where it shows, via, escalated, which devices were pushed about it |
 | `subs` | (device, space) live subscriptions, dropped with the connection |
 | `conns` | per-connection deadline (hello, token expiry) |
-| `meta` | `schema` = 4; on any other value every table but `devices` and `conns` is dropped (older rows carry older signatures) |
+| `push_tokens` | device ─ its Expo token, this minute's push count |
+| `delegations` | (origin, delegate) ─ the latest signed delegation, issued/expiry, revoked (tombstone) |
+| `meta` | `schema` = 6; on any other value every table but `devices`, `conns`, `push_tokens` and `delegations` is dropped (older rows carry older signatures) |
 
 Limits:
 
@@ -285,9 +450,13 @@ Limits:
 | a space whose host is offline | 30 days | forgotten with its events and questions (checked on any hello and alarm) |
 | device info | 8 KiB | `fleet.too_large` |
 | one space event | 64 KiB | `fleet.too_large` |
-| stored event bytes per space (body length) | 4 MiB, and 500 events | its oldest events go |
-| stored event bytes per user (body length; a `started` body twice: ring and kept copy) | 64 MiB | the oldest events of finished (stopped/failed) spaces go, oldest space first; none left: `error{fleet.busy}`, the event not stored (the host keeps it in its journal and resumes from `last_seq`) |
+| stored event bytes per space (body length; ring and mirrors together) | 16 MiB, and 500 ring events (mirrors not counted) | the ring's oldest go; if the mirrors alone leave no room: `error{fleet.busy}`, not stored |
+| stored event bytes per user (body length; a `started` body twice: ring and kept copy) | 128 MiB | the oldest events of finished (stopped/failed) spaces go, oldest space first, then their mirrors; none left: `error{fleet.busy}`, the event not stored (the host keeps it in its journal and resumes from `last_seq`) |
+| a `mirror`'s `id` | 256 chars | `fleet.invalid` |
 | hello after connect | 10 s | `fleet.bad_message`, close 1008 |
+| pushes per device | 30 / min | dropped (a question isn't marked pushed, so its escalation may try again) |
+| push token | `ExponentPushToken[…]` / `ExpoPushToken[…]`, 200 chars | `fleet.bad_message` |
+| a delegation's `issued_at_ms` | within 5 min of now | `error{fleet.stale_request}` |
 | token | exp + 60 s without a `reauth` that verified | `fleet.unauthorized`, close 4001; if the last `reauth` couldn't be checked (JWKS unreachable): `fleet.unavailable`, close 1011 (redial) |
 
 The burst is above the 200 first planned so a journal replay after a

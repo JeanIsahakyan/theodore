@@ -4,7 +4,15 @@
  * carries types only); the rest are the cloud's own (docs/cloud.md "Fleet").
  */
 
-export const PROTOCOL_VERSION = 3;
+export const PROTOCOL_VERSION = 4;
+/**
+ * The oldest protocol still accepted. Protocol-3 connections never see
+ * `mobile` / `web` devices (their `DeviceKind` can't read them) nor
+ * `delegations`.
+ */
+export const MIN_PROTOCOL_VERSION = 3;
+/** A signed request or delegation older or newer than this is stale. */
+export const REQUEST_WINDOW_MS = 5 * 60_000;
 /** The challenge nonce; a hello signs exactly this many bytes. */
 export const NONCE_BYTES = 32;
 export const MAX_DEPTH = 2;
@@ -44,13 +52,31 @@ export const RATE_BURST = 500;
 export const MAX_INFO_BYTES = 8 * 1024;
 /** One stored space event (reply texts are ≤ 8000 chars). */
 export const MAX_EVENT_BYTES = 64 * 1024;
+
+/** Pushes one device may be sent per minute; over it they're dropped. */
+export const PUSH_PER_MINUTE = 30;
+/** A push token as Expo issues it. */
+export const MAX_PUSH_TOKEN_CHARS = 200;
+/** A question's text in a push body. */
+export const PUSH_BODY_CHARS = 180;
+/** Option labels a push carries as notification actions. */
+export const PUSH_ACTIONS = 4;
 /**
  * Stored event bytes (body length; a `started` body counts twice: its ring
- * copy and the one kept apart). Per space: the oldest go. Per user: the
- * oldest of finished spaces go, then new events are refused (`fleet.busy`).
+ * copy and the one kept apart). Per space, ring and mirrors together: the
+ * ring's oldest go (a long chat's mirrored rows must fit, ≤ 48 KiB each);
+ * mirrors alone over it are refused (`fleet.busy`). Per user: the oldest of
+ * finished spaces go, events then mirrors, then new events are refused.
  */
-export const MAX_SPACE_EVENT_BYTES = 4 * 1024 * 1024;
-export const MAX_USER_EVENT_BYTES = 64 * 1024 * 1024;
+export const MAX_SPACE_EVENT_BYTES = 16 * 1024 * 1024;
+export const MAX_USER_EVENT_BYTES = 128 * 1024 * 1024;
+
+/** `mirror` models the cloud keeps, the latest per `(model, id)`. */
+export const MIRROR_KEPT = ['space', 'chat_message'] as const;
+/** `mirror` models relayed live, never stored. */
+export const MIRROR_RELAYED = ['turn_step'] as const;
+/** A `mirror` event's `id`. */
+export const MAX_MIRROR_ID_CHARS = 256;
 
 export const codes = {
   BAD_SIGNATURE: 'fleet.bad_signature',
@@ -67,6 +93,7 @@ export const codes = {
   RATE_LIMITED: 'fleet.rate_limited',
   NOT_YOURS: 'fleet.not_yours',
   INVALID: 'fleet.invalid',
+  STALE_REQUEST: 'fleet.stale_request',
   // the cloud's own, not in the Rust list
   BAD_MESSAGE: 'fleet.bad_message',
   TOO_MANY_DEVICES: 'fleet.too_many_devices',
@@ -74,6 +101,9 @@ export const codes = {
   TOO_MANY_CONNECTIONS: 'fleet.too_many_connections',
   /** The cloud couldn't check a token (signing keys unreachable): redial. */
   UNAVAILABLE: 'fleet.unavailable',
+  /** The target runs a Theodore too old for this request (a phone's or the
+   * web app's, which a protocol-3 computer can't see, so can't trust). */
+  UPGRADE_REQUIRED: 'fleet.upgrade_required',
 } as const;
 
 /**

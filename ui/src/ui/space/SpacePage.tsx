@@ -15,6 +15,7 @@ import {
   ChevronRight,
   CodeMerge,
   CodePullRequest,
+  Display,
   Folder,
   FolderOpen,
   LayoutSideContentRight,
@@ -40,6 +41,7 @@ import type {
   AgentId,
   FileDiff,
   HunkId,
+  Project,
   SetSpaceSettingsRequest,
   ShipAction,
   SkillInfo,
@@ -62,6 +64,12 @@ import { scrollIntoDiff } from '../review/headerClearance';
 import type { ReviewMode } from '../GroupsPane';
 import { useAttachments } from '../attachments';
 import { SpaceLog } from './SpaceLog';
+import {
+  MODE_LABEL,
+  capMode,
+  modesUpTo,
+  startableDevices,
+} from '../fleet/fleet';
 import { sendToSpace, stopSpace } from './send';
 import type { VirtualChatControl } from './VirtualChat';
 import { canSendNow } from './queue';
@@ -126,6 +134,9 @@ import {
   liveTurns,
   spaceTitle,
   plainError,
+  RUN_ELSEWHERE,
+  remoteOf,
+  runsOnLabel,
   toggleDrawer,
   sendModel,
   sendEffort,
@@ -196,14 +207,21 @@ export const SpacePage = observer(function SpacePage({ id }: { id: string }) {
   const store = useRootStore();
   const ui = useUi();
   const space = store.models.spaces.get(id);
+  // Runs on another device (docs/fleet.md): the same page, without what
+  // only this device's worktree has.
+  const remote = space ? remoteOf(space) : null;
   const chat = useRef<ChatHandle | null>(null);
   const ship = useRef<ShipHandle | null>(null);
-  const { config, refresh: refreshConfig } = useSpaceConfig(id, space);
+  const { config, refresh: refreshConfig } = useSpaceConfig(
+    id,
+    remote ? undefined : space,
+  );
   // The changes pane can be hidden for a chat-only page; remembered for
   // every space (it's a way of working, not a per-space thing).
-  const [showChanges, setShowChanges] = useState(
+  const [changesPicked, setShowChanges] = useState(
     () => localStorage.getItem(LS_SPACE_CHANGES) !== '0',
   );
+  const showChanges = changesPicked && !remote;
   const toggleChanges = () =>
     setShowChanges((v) => {
       localStorage.setItem(LS_SPACE_CHANGES, v ? '0' : '1');
@@ -221,9 +239,10 @@ export const SpacePage = observer(function SpacePage({ id }: { id: string }) {
   // closed: its shells live in the core regardless, so reopening it (or
   // navigating back to the page) just re-lists and re-attaches them. The
   // page is keyed by space, so this reads once.
-  const [drawer, setDrawer] = useState<Drawer | null>(() =>
+  const [picked, setDrawer] = useState<Drawer | null>(() =>
     terminalOpenFor(id) ? 'terminal' : null,
   );
+  const drawer = remote ? null : picked;
   const toggle = useCallback(
     (which: Drawer) =>
       setDrawer((d) => {
@@ -247,7 +266,9 @@ export const SpacePage = observer(function SpacePage({ id }: { id: string }) {
   const toggleTerminal = () => toggle('terminal');
   // ⌃` toggles it from anywhere on the page, composer included — the same
   // reach as ⌘.'s stop, below.
+  const isRemote = remote != null;
   useEffect(() => {
+    if (isRemote) return;
     const onKey = (e: KeyboardEvent) => {
       if (!e.ctrlKey || e.key !== '`') return;
       e.preventDefault();
@@ -255,9 +276,11 @@ export const SpacePage = observer(function SpacePage({ id }: { id: string }) {
     };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
-  }, [toggle]);
-  useSpaceLogsSeed(id);
-  const run = space ? runControl(config, space) : null;
+  }, [toggle, isRemote]);
+  // Only once the row says where it runs: a remote space's logs are on its
+  // host, and a space not loaded yet (or gone) has none to read.
+  useSpaceLogsSeed(id, space != null && !isRemote);
+  const run = space && !remote ? runControl(config, space) : null;
 
   // Page keys (docs/spaces.md §3) — never while typing in the composer.
   useViewKeys(
@@ -267,6 +290,15 @@ export const SpacePage = observer(function SpacePage({ id }: { id: string }) {
       const action = spaceKeyAction(latinKey(e), e.shiftKey);
       const archived = space.status === 'archived';
       const running = space.status === 'running';
+      // A remote space: the chat, its mode and Archive; the rest is the
+      // host's.
+      if (
+        remoteOf(space) &&
+        action !== 'focus' &&
+        action !== 'mode' &&
+        action !== 'archive'
+      )
+        return false;
       switch (action) {
         case 'focus':
           chat.current?.focus();
@@ -326,7 +358,7 @@ export const SpacePage = observer(function SpacePage({ id }: { id: string }) {
   const [opened, setOpened] = useState(false);
   const live = space && space.status !== 'archived';
   useEffect(() => {
-    if (!live) return;
+    if (!live || isRemote) return;
     let on = true;
     api
       .spaceReview({ space: id, group: false })
@@ -335,7 +367,7 @@ export const SpacePage = observer(function SpacePage({ id }: { id: string }) {
     return () => {
       on = false;
     };
-  }, [id, live]);
+  }, [id, live, isRemote]);
 
   // Seen only when you can see it: a turn that ends with the window in the
   // background still counts on the dock badge until you come back.
@@ -348,13 +380,7 @@ export const SpacePage = observer(function SpacePage({ id }: { id: string }) {
     return () => window.removeEventListener('focus', mark);
   }, [id, updatedAt]);
 
-  if (!space) {
-    return (
-      <div className="view grid flex-1 place-items-center text-muted">
-        This space no longer exists.
-      </div>
-    );
-  }
+  if (!space) return <NoSpace id={id} />;
   return (
     <div className="view space-page flex min-w-0 flex-1 flex-col">
       <SpaceHeader
@@ -368,7 +394,7 @@ export const SpacePage = observer(function SpacePage({ id }: { id: string }) {
         showChanges={showChanges}
         onToggleChanges={toggleChanges}
       />
-      <UpdatingBanner space={space} />
+      {!remote && <UpdatingBanner space={space} />}
       {/* The panes clip to this row, so a drawer below never sits under them;
           the drawer is capped by the room left, so the chat keeps a usable
           height. */}
@@ -380,13 +406,15 @@ export const SpacePage = observer(function SpacePage({ id }: { id: string }) {
               : 'flex min-h-0 w-full min-w-0 flex-col bg-background'
           }
         >
-          <div className="mx-auto w-full max-w-[860px]">
-            <TrustPrompt
-              space={space}
-              config={config}
-              onChanged={refreshConfig}
-            />
-          </div>
+          {!remote && (
+            <div className="mx-auto w-full max-w-[860px]">
+              <TrustPrompt
+                space={space}
+                config={config}
+                onChanged={refreshConfig}
+              />
+            </div>
+          )}
           <SpaceChat space={space} config={config} handle={chat} />
         </section>
         {showChanges && (
@@ -425,7 +453,7 @@ export const SpacePage = observer(function SpacePage({ id }: { id: string }) {
           height={drawerH}
         />
       )}
-      {space.mirror && (
+      {space.mirror && !remote && (
         <MirrorBanner
           space={space}
           folder={
@@ -433,31 +461,69 @@ export const SpacePage = observer(function SpacePage({ id }: { id: string }) {
           }
         />
       )}
-      {space.status === 'archived' && <ArchivedBanner space={space} />}
-      <MergedBanner space={space} />
-      <Hints>
-        <K>C</K> message the agent <K>M</K> mode <K>D</K> changes <K>⌃`</K>{' '}
-        terminal <K>⌘.</K> stop <K>R</K> review <K>P</K>{' '}
-        {space.pr ? 'push' : 'ship'}
-        {space.pr ? (
-          <>
-            {' '}
-            <K>O</K> open PR
-          </>
-        ) : null}
-        {run ? (
-          <>
-            {' '}
-            <K>⇧R</K> {run.running ? 'stop' : 'run'}
-          </>
-        ) : null}{' '}
-        <K>⇧E</K> archive <K>Esc</K> back
-      </Hints>
+      {space.status === 'archived' && (
+        <ArchivedBanner space={space} canUnarchive={!remote} />
+      )}
+      {!remote && <MergedBanner space={space} />}
+      {remote ? (
+        <Hints>
+          <K>C</K> message the agent <K>M</K> mode <K>⌘.</K> stop <K>⇧E</K>{' '}
+          archive <K>Esc</K> back
+        </Hints>
+      ) : (
+        <Hints>
+          <K>C</K> message the agent <K>M</K> mode <K>D</K> changes <K>⌃`</K>{' '}
+          terminal <K>⌘.</K> stop <K>R</K> review <K>P</K>{' '}
+          {space.pr ? 'push' : 'ship'}
+          {space.pr ? (
+            <>
+              {' '}
+              <K>O</K> open PR
+            </>
+          ) : null}
+          {run ? (
+            <>
+              {' '}
+              <K>⇧R</K> {run.running ? 'stop' : 'run'}
+            </>
+          ) : null}{' '}
+          <K>⇧E</K> archive <K>Esc</K> back
+        </Hints>
+      )}
     </div>
   );
 });
 
-function ArchivedBanner({ space }: { space: Space }) {
+/** No row for `id`: a space just started on another device whose row
+ *  hasn't come yet (or failed to start), else one that is gone. */
+const NoSpace = observer(function NoSpace({ id }: { id: string }) {
+  const started = useRootStore().fleet.spaces.get(id);
+  return (
+    <div className="view grid flex-1 place-items-center text-muted">
+      {!started ? (
+        'This space no longer exists.'
+      ) : started.error || started.status === 'failed' ? (
+        <span role="alert" className="text-danger">
+          {started.error ?? `It didn't start on ${started.host_name}.`}
+        </span>
+      ) : (
+        <span className="flex items-center gap-2">
+          <Spinner />
+          Starting on {started.host_name}…
+        </span>
+      )}
+    </div>
+  );
+});
+
+function ArchivedBanner({
+  space,
+  canUnarchive,
+}: {
+  space: Space;
+  /** Not a remote space: archiving forgot its copy here. */
+  canUnarchive: boolean;
+}) {
   const [busy, setBusy] = useState(false);
   return (
     <Alert status="accent" className="m-3 w-auto shrink-0 items-center">
@@ -466,19 +532,21 @@ function ArchivedBanner({ space }: { space: Space }) {
           Archived. The transcript and the checkpoint ref are kept.
         </Alert.Description>
       </Alert.Content>
-      <Button
-        size="sm"
-        variant="secondary"
-        className="space-unarchive shrink-0"
-        isPending={busy}
-        onPress={() => {
-          setBusy(true);
-          void unarchive(space).finally(() => setBusy(false));
-        }}
-      >
-        <ArrowUturnCcwLeft className="size-3.5" />
-        Unarchive
-      </Button>
+      {canUnarchive && (
+        <Button
+          size="sm"
+          variant="secondary"
+          className="space-unarchive shrink-0"
+          isPending={busy}
+          onPress={() => {
+            setBusy(true);
+            void unarchive(space).finally(() => setBusy(false));
+          }}
+        >
+          <ArrowUturnCcwLeft className="size-3.5" />
+          Unarchive
+        </Button>
+      )}
     </Alert>
   );
 }
@@ -508,8 +576,11 @@ const SpaceHeader = observer(function SpaceHeader({
   const ui = useUi();
   const running = space.status === 'running';
   const archived = space.status === 'archived';
-  const project = store.models.projects.get(space.project);
-  const pr = space.pr ? store.models.prSummaries.get(space.pr) : undefined;
+  const remote = remoteOf(space);
+  // A remote space's project is the host's, even when one here has its id.
+  const project = remote ? undefined : store.models.projects.get(space.project);
+  const pr =
+    space.pr && !remote ? store.models.prSummaries.get(space.pr) : undefined;
   const stage = spaceStage(space, pr?.state);
   const days = autoArchiveDays(store.models.settings.all());
   return (
@@ -545,37 +616,27 @@ const SpaceHeader = observer(function SpaceHeader({
         )}
       </div>
       <div className="ml-auto flex flex-wrap items-center justify-end gap-1.5 [&>button]:shrink-0">
-        {/* Once its PR merged, Continue moves it onto the new base. */}
-        {!(space.pr && stage === 'done') && <BaseMoved space={space} />}
-        <RunButton space={space} config={config} />
-        <PortChips space={space} />
-        <LogsToggle open={logsOpen} onToggle={onToggleLogs} />
-        {!archived && (
-          <TerminalToggle open={terminalOpen} onToggle={onToggleTerminal} />
-        )}
-        <ReviewMenu space={space} />
-        {!archived && project && (
-          <ShipControls
-            space={space}
-            local={project.path != null}
-            handle={ship}
-          />
-        )}
-        {!archived && space.pr && <SpaceMergeButton space={space} />}
-        {space.pr && (
-          <Button
-            size="sm"
-            variant="ghost"
-            className="btn-collapsible"
-            aria-label="Open the PR"
-            onPress={() => openSpacePr(store, ui, space)}
+        {remote ? (
+          // Its worktree, diff, terminal and shipping are on the host:
+          // one quiet note instead of buttons that could only fail here.
+          <span
+            className="space-runs-on px-1 text-xs text-muted"
+            title={`${remote.project_name} · ${space.branch}`}
           >
-            <CodePullRequest className="size-3.5" />
-            <span className="btn-label">PR</span>
-          </Button>
-        )}
-        {!archived && project?.path != null && (
-          <MirrorToggle space={space} folder={project.path} />
+            {runsOnLabel(remote)}
+          </span>
+        ) : (
+          <SpaceLocalActions
+            space={space}
+            ship={ship}
+            config={config}
+            logsOpen={logsOpen}
+            onToggleLogs={onToggleLogs}
+            terminalOpen={terminalOpen}
+            onToggleTerminal={onToggleTerminal}
+            project={project}
+            stage={stage}
+          />
         )}
         <Tooltip>
           <Button
@@ -590,27 +651,102 @@ const SpaceHeader = observer(function SpaceHeader({
             <Archive className="size-4" />
           </Button>
           <Tooltip.Content>
-            Archive <K>⇧E</K> — removes the worktree; the transcript and
-            checkpoints are kept
+            {remote ? (
+              <>
+                Archive <K>⇧E</K> — forgets it here; it stays on{' '}
+                {remote.host_name}
+              </>
+            ) : (
+              <>
+                Archive <K>⇧E</K> — removes the worktree; the transcript and
+                checkpoints are kept
+              </>
+            )}
           </Tooltip.Content>
         </Tooltip>
-        <Tooltip>
-          <ToggleButton
-            isIconOnly
-            size="sm"
-            aria-label="Changes"
-            className="shrink-0"
-            isSelected={showChanges}
-            onChange={onToggleChanges}
-          >
-            <LayoutSideContentRight className="size-4" />
-          </ToggleButton>
-          <Tooltip.Content>
-            {showChanges ? 'Hide' : 'Show'} the changes <K>D</K>
-          </Tooltip.Content>
-        </Tooltip>
+        {!remote && (
+          <Tooltip>
+            <ToggleButton
+              isIconOnly
+              size="sm"
+              aria-label="Changes"
+              className="shrink-0"
+              isSelected={showChanges}
+              onChange={onToggleChanges}
+            >
+              <LayoutSideContentRight className="size-4" />
+            </ToggleButton>
+            <Tooltip.Content>
+              {showChanges ? 'Hide' : 'Show'} the changes <K>D</K>
+            </Tooltip.Content>
+          </Tooltip>
+        )}
       </div>
     </header>
+  );
+});
+
+/** The header's buttons that act on this device's worktree: base update,
+ *  run, ports, logs, terminal, review, ship, the PR, mirror. */
+const SpaceLocalActions = observer(function SpaceLocalActions({
+  space,
+  ship,
+  config,
+  logsOpen,
+  onToggleLogs,
+  terminalOpen,
+  onToggleTerminal,
+  project,
+  stage,
+}: {
+  space: Space;
+  ship: MutableRefObject<ShipHandle | null>;
+  config: SpaceConfigView | null;
+  logsOpen: boolean;
+  onToggleLogs: () => void;
+  terminalOpen: boolean;
+  onToggleTerminal: () => void;
+  project: Project | undefined;
+  stage: ReturnType<typeof spaceStage>;
+}) {
+  const store = useRootStore();
+  const ui = useUi();
+  const archived = space.status === 'archived';
+  return (
+    <>
+      {/* Once its PR merged, Continue moves it onto the new base. */}
+      {!(space.pr && stage === 'done') && <BaseMoved space={space} />}
+      <RunButton space={space} config={config} />
+      <PortChips space={space} />
+      <LogsToggle open={logsOpen} onToggle={onToggleLogs} />
+      {!archived && (
+        <TerminalToggle open={terminalOpen} onToggle={onToggleTerminal} />
+      )}
+      <ReviewMenu space={space} />
+      {!archived && project && (
+        <ShipControls
+          space={space}
+          local={project.path != null}
+          handle={ship}
+        />
+      )}
+      {!archived && space.pr && <SpaceMergeButton space={space} />}
+      {space.pr && (
+        <Button
+          size="sm"
+          variant="ghost"
+          className="btn-collapsible"
+          aria-label="Open the PR"
+          onPress={() => openSpacePr(store, ui, space)}
+        >
+          <CodePullRequest className="size-3.5" />
+          <span className="btn-label">PR</span>
+        </Button>
+      )}
+      {!archived && project?.path != null && (
+        <MirrorToggle space={space} folder={project.path} />
+      )}
+    </>
   );
 });
 
@@ -992,6 +1128,16 @@ const SpaceComposer = observer(function SpaceComposer({
   const files = useAttachments();
   const input = useRef<HTMLTextAreaElement>(null);
   const run = space.status === 'running' ? space.run : null;
+  // On another device: text and mode go to its host, nothing else (no
+  // files, agent or model of this device's), and only between turns —
+  // a host never queues a remote send (docs/fleet.md).
+  const remote = remoteOf(space);
+  const hostMax = remote
+    ? store.fleet.device(remote.host_device)?.max_mode
+    : undefined;
+  const modes = hostMax
+    ? MODES.filter((m) => modesUpTo(hostMax).includes(m.id))
+    : MODES;
   const planHere = actionablePlan(space);
   const [revising, setRevising] = useState(false);
   useEffect(() => {
@@ -1002,7 +1148,8 @@ const SpaceComposer = observer(function SpaceComposer({
   // it's still there after you leave the page, and changes nothing else.
   // During a turn a pick waits and goes with the next send instead.
   const own = (settings: Omit<SetSpaceSettingsRequest, 'space'>) => {
-    if (!run && space.status !== 'archived') {
+    // A remote space's settings are its host's: the mode goes with the send.
+    if (!run && space.status !== 'archived' && !remote) {
       void api
         .setSpaceSettings({ space: space.id, ...settings })
         .catch(() => {});
@@ -1016,7 +1163,9 @@ const SpaceComposer = observer(function SpaceComposer({
   const locked = space.status === 'archived';
   // `/skill` in the box: your Claude skills and the repo's.
   const [skills, setSkills] = useState<SkillInfo[]>([]);
+  const isRemote = remote != null;
   useEffect(() => {
+    if (isRemote) return;
     let live = true;
     void api
       .spaceSkills(space.id)
@@ -1025,7 +1174,7 @@ const SpaceComposer = observer(function SpaceComposer({
     return () => {
       live = false;
     };
-  }, [space.id]);
+  }, [space.id, isRemote]);
   // The agent for the next turn, with its model and effort (the chip).
   const [agent, setAgent] = useState<AgentId>(space.agent);
   useEffect(() => setAgent(space.agent), [space.agent]);
@@ -1055,7 +1204,12 @@ const SpaceComposer = observer(function SpaceComposer({
   };
   handle.current = {
     focus: () => input.current?.focus(),
-    cycleMode: () => !locked && pickMode(nextMode(mode)),
+    cycleMode: () => {
+      if (locked) return;
+      // Past what the host allows, back to the first mode.
+      const next = nextMode(mode);
+      pickMode(modes.some((m) => m.id === next) ? next : modes[0]!.id);
+    },
   };
   // A blank space is waiting for you: focus lands in the box the moment it
   // can be typed in (setup done).
@@ -1080,6 +1234,27 @@ const SpaceComposer = observer(function SpaceComposer({
     }
     if ((!t && !files.ids.length) || files.busy) return;
     if (space.status === 'archived') return;
+    if (remote) {
+      if (!t || run) return;
+      setText('');
+      setRevising(false);
+      log.current?.jumpToLatest();
+      sendToSpace(
+        store,
+        space,
+        {
+          space: space.id,
+          text: t,
+          agent: null,
+          model: null,
+          effort: null,
+          mode: mode === space.mode ? null : mode,
+          attachments: null,
+        },
+        { now: false, agent: space.agent, attachments: [] },
+      ).catch(() => setText(t));
+      return;
+    }
     const attached = files.saved;
     setText('');
     setRevising(false);
@@ -1107,19 +1282,21 @@ const SpaceComposer = observer(function SpaceComposer({
       attached.forEach(files.addSaved);
     });
   };
-  const sendNow = canSendNow(space, {
-    agent,
-    mode,
-    files: files.ids.length,
-  })
-    ? () => send(true)
-    : undefined;
+  const sendNow =
+    !remote &&
+    canSendNow(space, {
+      agent,
+      mode,
+      files: files.ids.length,
+    })
+      ? () => send(true)
+      : undefined;
   // `@terminal ` attaches the space's most recently active terminal's
   // tail (docs/spaces.md §3, §11) the way a dropped file would, instead
   // of becoming literal message text.
   const onComposerChange = (next: string) => {
     const stripped = stripTerminalMention(next);
-    if (stripped.found) {
+    if (stripped.found && !remote) {
       setText(stripped.text);
       void attachTerminalMention(space.id, files, (text) =>
         store.ephemeral.toast(text, 'info'),
@@ -1153,7 +1330,9 @@ const SpaceComposer = observer(function SpaceComposer({
               : settingUp(space)
                 ? 'Setting up…'
                 : run
-                  ? 'Queue a message for after this turn…'
+                  ? remote
+                    ? `Running on ${remote.host_name}: stop it to say something else`
+                    : 'Queue a message for after this turn…'
                   : revising
                     ? 'What should change in the plan?'
                     : 'Ask the agent to change something…'
@@ -1162,33 +1341,35 @@ const SpaceComposer = observer(function SpaceComposer({
           running={!!run}
           onStop={() => stopSpace(store, space)}
           onSendNow={sendNow}
-          queueWhileRunning
+          queueWhileRunning={!remote}
           skills={skills}
-          attachments={files}
+          attachments={remote ? undefined : files}
           chips={
             <>
-              <AgentChip
-                value={agent}
-                onChange={(a) => {
-                  setAgent(a);
-                  own({ agent: a });
-                }}
-                isDisabled={locked}
-                modelOf={(a) => spaceOwnModel(space, a, picked)}
-                onPickModel={(a, model) => {
-                  setPicked({ agent: a, model });
-                  own({ agent: a, model });
-                }}
-                effortOf={(a) => spaceOwnEffort(space, a, pickedEffort)}
-                onPickEffort={(a, effort) => {
-                  setPickedEffort({ agent: a, effort });
-                  own({ agent: a, effort });
-                }}
-              />
+              {!remote && (
+                <AgentChip
+                  value={agent}
+                  onChange={(a) => {
+                    setAgent(a);
+                    own({ agent: a });
+                  }}
+                  isDisabled={locked}
+                  modelOf={(a) => spaceOwnModel(space, a, picked)}
+                  onPickModel={(a, model) => {
+                    setPicked({ agent: a, model });
+                    own({ agent: a, model });
+                  }}
+                  effortOf={(a) => spaceOwnEffort(space, a, pickedEffort)}
+                  onPickEffort={(a, effort) => {
+                    setPickedEffort({ agent: a, effort });
+                    own({ agent: a, effort });
+                  }}
+                />
+              )}
               <ChipMenu
                 ariaLabel="Mode"
                 label={MODES.find((m) => m.id === mode)?.label ?? mode}
-                items={MODES}
+                items={modes}
                 selected={mode}
                 onSelect={pickMode}
                 isDisabled={locked}
@@ -1324,17 +1505,39 @@ const START_KIND_ITEMS: { id: StartKind; label: string; hint?: string }[] = [
   { id: 'pr', label: 'An existing PR' },
 ];
 
+/** "Run on" this device, not one of the fleet. */
+const HERE = 'here';
+
 /** New space: a composer, not a form — say what you want; the project,
  *  agent and base sit as chips around it. ⏎ creates it and sends what you
  *  typed as the first turn; nothing typed, a blank space opens instead,
  *  waiting for its first message. Picking "An existing issue / branch / PR"
  *  adopts it instead: the worktree starts on its tip, and shipping pushes
  *  back to it rather than a fresh `<login>/<slug>`. What the chips pick is
- *  this space's alone; they start from your settings and write none. */
+ *  this space's alone; they start from your settings and write none.
+ *
+ *  "Run on" another computer of the fleet (docs/fleet.md) — one you trust,
+ *  online, taking remote spaces: one of its projects, a goal and a mode up
+ *  to what it allows; it opens as an ordinary space once started. */
 export const NewSpaceModal = observer(function NewSpaceModal() {
   const store = useRootStore();
   const ui = useUi();
   const ready = store.models.projects.where((p) => p.status === 'ready');
+  const devices = store.fleet.enabled
+    ? startableDevices(store.fleet.devices)
+    : [];
+  const [runOn, setRunOn] = useState<string>(() =>
+    ui.modalTargets[0] === RUN_ELSEWHERE && devices[0]
+      ? devices[0].device_id
+      : HERE,
+  );
+  // The device picked, while it can still take one; else this device.
+  const target = devices.find((d) => d.device_id === runOn) ?? null;
+  const [remoteProjectId, setRemoteProjectId] = useState<string | null>(null);
+  const remoteProject =
+    target?.projects.find((p) => p.id === remoteProjectId) ??
+    target?.projects[0] ??
+    null;
   const [project, setProject] = useState<string | null>(
     ui.workspace !== ALL && ready.some((p) => p.id === ui.workspace)
       ? ui.workspace
@@ -1345,6 +1548,10 @@ export const NewSpaceModal = observer(function NewSpaceModal() {
   const [pickedModel, setPickedModel] = useState<ModelPick | null>(null);
   const [pickedEffort, setPickedEffort] = useState<EffortPick | null>(null);
   const [mode, setMode] = useState<SpaceMode>('edit');
+  const shownMode = target ? capMode(mode, target.max_mode) : mode;
+  const modeItems = target
+    ? MODES.filter((m) => modesUpTo(target.max_mode).includes(m.id))
+    : MODES;
   const offered = useEnabledAgents();
   const catalog = useAgentModels(offered);
   const [skills, setSkills] = useState<SkillInfo[]>([]);
@@ -1413,7 +1620,28 @@ export const NewSpaceModal = observer(function NewSpaceModal() {
     pickedModel?.agent === a ? pickedModel.model : null;
   const effortOf = (a: AgentId) =>
     pickedEffort?.agent === a ? pickedEffort.effort : null;
+  const startElsewhere = async () => {
+    const typed = goal.trim();
+    if (!target || !remoteProject || !typed || busy) return;
+    setBusy(true);
+    try {
+      const s = await store.fleet.start({
+        device_id: target.device_id,
+        project_id: remoteProject.id,
+        goal: typed,
+        mode: shownMode,
+      });
+      ui.closeModal();
+      // Its mirrored row comes from the host; the page waits for it.
+      ui.go({ name: 'space', id: s.space });
+    } catch {
+      // toasted by api.ts; the dialog stays to try again
+    } finally {
+      setBusy(false);
+    }
+  };
   const start = async () => {
+    if (target) return startElsewhere();
     if (!project || busy) return;
     if (!canStart) {
       setStartRefused(true);
@@ -1468,7 +1696,26 @@ export const NewSpaceModal = observer(function NewSpaceModal() {
           className="modal new-space flex w-[680px] max-w-[92vw] flex-col gap-3 p-3"
         >
           <header className="flex items-center gap-1.5 px-1 text-sm">
-            {ready.length > 1 ? (
+            {target ? (
+              target.projects.length > 1 ? (
+                <ChipMenu
+                  ariaLabel="Project"
+                  label={remoteProject?.name ?? 'Project'}
+                  icon={<Folder className="size-3.5" />}
+                  items={target.projects.map((p) => ({
+                    id: p.id,
+                    label: p.name,
+                  }))}
+                  selected={remoteProject?.id ?? ''}
+                  onSelect={setRemoteProjectId}
+                />
+              ) : (
+                <span className="flex items-center gap-1.5 px-2 text-xs">
+                  <Folder className="size-3.5 text-muted" />
+                  {remoteProject?.name}
+                </span>
+              )
+            ) : ready.length > 1 ? (
               <ChipMenu
                 ariaLabel="Project"
                 label={chosen ? chosen.repo.name : 'Project'}
@@ -1497,50 +1744,77 @@ export const NewSpaceModal = observer(function NewSpaceModal() {
             onChange={setGoal}
             onSubmit={() => void start()}
             placeholder={
-              startKind === 'goal'
+              target || startKind === 'goal'
                 ? 'What do you want to work on?'
                 : 'Anything else the agent should know? (optional)'
             }
             rows={5}
             quiet
             autoFocus
-            disabled={busy || !project}
-            canSubmitEmpty={canStart || startTyped}
+            disabled={busy || (target ? !remoteProject : !project)}
+            // A space elsewhere starts from its goal.
+            canSubmitEmpty={!target && (canStart || startTyped)}
             submit={busy ? 'Creating…' : 'Create'}
-            skills={skills}
+            skills={target ? [] : skills}
             chips={
               <>
-                <AgentChip
-                  value={agent}
-                  onChange={setAgent}
-                  repo={repo}
-                  modelOf={modelOf}
-                  onPickModel={(a, model) =>
-                    setPickedModel({ agent: a, model })
-                  }
-                  effortOf={effortOf}
-                  onPickEffort={(a, effort) =>
-                    setPickedEffort({ agent: a, effort })
-                  }
-                />
+                {devices.length > 0 && (
+                  <ChipMenu
+                    ariaLabel="Run on"
+                    label={target ? target.name : 'This device'}
+                    icon={<Display className="size-3.5" />}
+                    items={[
+                      { id: HERE, label: 'This device' },
+                      ...devices.map((d) => ({
+                        id: d.device_id,
+                        label: d.name,
+                        hint: `up to ${MODE_LABEL[d.max_mode]}`,
+                      })),
+                    ]}
+                    selected={target?.device_id ?? HERE}
+                    onSelect={(id) => {
+                      setRunOn(id);
+                      setRemoteProjectId(null);
+                    }}
+                  />
+                )}
+                {!target && (
+                  <AgentChip
+                    value={agent}
+                    onChange={setAgent}
+                    repo={repo}
+                    modelOf={modelOf}
+                    onPickModel={(a, model) =>
+                      setPickedModel({ agent: a, model })
+                    }
+                    effortOf={effortOf}
+                    onPickEffort={(a, effort) =>
+                      setPickedEffort({ agent: a, effort })
+                    }
+                  />
+                )}
                 <ChipMenu
                   ariaLabel="Mode"
-                  label={MODES.find((m) => m.id === mode)?.label ?? mode}
-                  items={MODES}
-                  selected={mode}
+                  label={
+                    MODES.find((m) => m.id === shownMode)?.label ?? shownMode
+                  }
+                  items={modeItems}
+                  selected={shownMode}
                   onSelect={setMode}
                   keep
                 />
-                <ChipMenu
-                  ariaLabel="Start from"
-                  label={
-                    START_KIND_ITEMS.find((i) => i.id === startKind)?.label
-                  }
-                  items={kindItems}
-                  selected={startKind}
-                  onSelect={setStartKind}
-                />
-                {startKind === 'goal' && chosen?.default_branch && (
+                {!target && (
+                  <ChipMenu
+                    ariaLabel="Start from"
+                    label={
+                      START_KIND_ITEMS.find((i) => i.id === startKind)?.label
+                    }
+                    items={kindItems}
+                    selected={startKind}
+                    onSelect={setStartKind}
+                  />
+                )}
+                {!target && startKind === 'goal' && chosen?.default_branch && (
                   <span className="flex items-center gap-1 px-2 text-xs text-muted">
                     <BranchesRight className="size-3.5" />
                     from {chosen.default_branch}
@@ -1549,7 +1823,8 @@ export const NewSpaceModal = observer(function NewSpaceModal() {
               </>
             }
           />
-          {startKind === 'issue' &&
+          {!target &&
+            startKind === 'issue' &&
             (noIssues ? (
               <span className="px-2 text-xs text-muted">
                 This project's host has no issues to start from. Start from a
@@ -1595,7 +1870,7 @@ export const NewSpaceModal = observer(function NewSpaceModal() {
                 )}
               </div>
             ))}
-          {(startKind === 'branch' || startKind === 'pr') && (
+          {!target && (startKind === 'branch' || startKind === 'pr') && (
             <div className="flex items-center gap-1.5 px-2">
               <TextField
                 value={startText}
@@ -1618,14 +1893,16 @@ export const NewSpaceModal = observer(function NewSpaceModal() {
               </TextField>
             </div>
           )}
-          {startRefused && !canStart && !noIssuesShown && (
+          {!target && startRefused && !canStart && !noIssuesShown && (
             <span role="alert" className="px-2 text-xs text-danger">
               {START_NEEDS[startKind]}
             </span>
           )}
           <span className="px-2 text-xs text-muted">
-            {startFooter(startKind, chosen?.default_branch ?? undefined)}
-            {startKind === 'goal' && (
+            {target
+              ? `Runs on ${target.name}, which allows up to ${MODE_LABEL[target.max_mode]}.`
+              : startFooter(startKind, chosen?.default_branch ?? undefined)}
+            {(target || startKind === 'goal') && (
               <>
                 {' '}
                 <K>⇧⏎</K> new line.

@@ -565,7 +565,7 @@ impl Core {
     /// Marks spaces done once their PR merged, and archives done spaces
     /// after `spaces.auto_archive_days` (0 = never). Run by the poller.
     pub(crate) async fn sweep_spaces(&self) {
-        let Ok(spaces) = self.list_spaces(None).await else {
+        let Ok(spaces) = self.local_spaces(None).await else {
             return;
         };
         let days = self

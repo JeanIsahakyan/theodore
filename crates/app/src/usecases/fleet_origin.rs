@@ -137,6 +137,10 @@ pub(crate) fn line_of(seq: u64, ev: &RemoteSpaceEvent) -> FleetSpaceLine {
         RemoteSpaceEvent::Status { status } => {
             (FleetLineKind::Status, status_word(*status).to_string())
         }
+        // Mirrored rows aren't history lines; they rebuild the space itself.
+        RemoteSpaceEvent::Mirror { model, .. } => {
+            (FleetLineKind::Status, format!("{model} updated"))
+        }
         RemoteSpaceEvent::TurnStarted { turn, text } => {
             (FleetLineKind::Turn, format!("Turn {turn}: {text}"))
         }
@@ -201,6 +205,15 @@ fn via_word(v: AskVia) -> &'static str {
     }
 }
 
+/// Refused before anything is signed: a phone or the web app is a client
+/// only (`DeviceKind::hosts`). Names the device by id: it can reach an
+/// agent.
+fn not_a_host(device: &str) -> AppError {
+    AppError::Invalid(format!(
+        "device {device} is a phone or the web app: it doesn't run spaces"
+    ))
+}
+
 /// Settled: nothing runs until someone sends something.
 pub(crate) fn settled(s: FleetSpaceStatus) -> bool {
     matches!(
@@ -227,7 +240,8 @@ impl Core {
 
     /// Signs `op` for `target` and sends it; the receiver gets its reply.
     /// Only to a target pinned here: the request names the pinned key
-    /// (`target_key`), and only a reply signed by it counts.
+    /// (`target_key`), and only a reply signed by it counts. Never to a
+    /// phone or the web app: they run no spaces.
     async fn fleet_request(
         &self,
         target: &str,
@@ -235,6 +249,14 @@ impl Core {
         start: bool,
     ) -> AppResult<oneshot::Receiver<Answer>> {
         let me = self.fleet_ready()?;
+        let client = self
+            .fleet()
+            .devices
+            .iter()
+            .any(|d| d.device_id == target && !d.info.kind.hosts());
+        if client {
+            return Err(not_a_host(target));
+        }
         let pinned = self.fleet_pinned(target).await.ok_or_else(|| {
             AppError::Invalid(format!(
                 "device {target} isn't trusted on this device: trust it in Settings → Devices first"
@@ -333,6 +355,9 @@ impl Core {
             .find(|d| d.device_id == device)
             .cloned()
             .ok_or_else(|| AppError::NotFound(format!("device {device} isn't in the fleet")))?;
+        if !target.info.kind.hosts() {
+            return Err(not_a_host(&target.device_id));
+        }
         // Only a device trusted here, with the key it had when trusted:
         // its events and questions are checked against that key.
         // Named by its pin (or its id), never the cloud's listing: this
@@ -387,6 +412,8 @@ impl Core {
                 last_seq: 0,
                 started_by,
                 agent_error: None,
+                mirrored: false,
+                live: Default::default(),
             },
         );
         let rx = match self
@@ -649,7 +676,8 @@ impl Core {
                 return;
             }
         };
-        self.fleet_apply_event(&body.space, body.seq, body.event);
+        self.fleet_apply_event(&body.space, body.seq, body.event)
+            .await;
     }
 
     /// The cloud lost events of a space followed here: a line, nothing more.
@@ -675,7 +703,30 @@ impl Core {
     }
 
     /// A verified event of a space this device follows.
-    fn fleet_apply_event(&self, space: &str, seq: u64, event: RemoteSpaceEvent) {
+    async fn fleet_apply_event(&self, space: &str, seq: u64, event: RemoteSpaceEvent) {
+        if let RemoteSpaceEvent::Mirror { model, id, data } = event {
+            // Mirrored rows rebuild the space itself (`fleet_follow`); they
+            // aren't history lines.
+            let step = model == crate::usecases::fleet_follow::TURN_STEP;
+            {
+                let mut mem = self.fleet();
+                let Some(o) = mem.outbound.get_mut(space) else {
+                    return;
+                };
+                if seq > o.last_seq {
+                    o.last_seq = seq;
+                } else if !step {
+                    // A live step is relayed, never kept: none is replayed,
+                    // so one isn't held to the order.
+                    return;
+                }
+            }
+            self.fleet_apply_mirror(space, &model, &id, data).await;
+            if !step {
+                self.fleet_keep_follow(space).await;
+            }
+            return;
+        }
         let (view, line) = {
             let mut mem = self.fleet();
             let Some(o) = mem.outbound.get_mut(space) else {
@@ -730,7 +781,8 @@ impl Core {
                 }
                 RemoteSpaceEvent::TurnStarted { .. }
                 | RemoteSpaceEvent::Tool { .. }
-                | RemoteSpaceEvent::TurnEnded { .. } => {}
+                | RemoteSpaceEvent::TurnEnded { .. }
+                | RemoteSpaceEvent::Mirror { .. } => {}
             }
             let line = line_of(seq, &event);
             o.lines.push_back(line.clone());
@@ -745,6 +797,7 @@ impl Core {
             line,
         });
         self.0.fleet.changed.notify_waiters();
+        self.fleet_keep_follow(space).await;
     }
 
     /// A question from a space elsewhere, routed to this device: only as
@@ -831,6 +884,8 @@ impl Core {
             .filter_map(|(seq, v)| {
                 serde_json::from_value::<RemoteSpaceEvent>(v)
                     .ok()
+                    // Mirrored rows are the space itself, not history.
+                    .filter(|e| !matches!(e, RemoteSpaceEvent::Mirror { .. }))
                     .map(|e| line_of(seq, &e))
             })
             .collect())

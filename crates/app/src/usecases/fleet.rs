@@ -3,7 +3,8 @@
 //! lifecycle and the inbound dispatch; `fleet_host` is this device as a
 //! target (trust gate, hosted spaces, journal), `fleet_origin` this device
 //! as an origin (remote spaces started here, questions routed here),
-//! `fleet_tools` the agent's tools.
+//! `fleet_delegate` the phones and web apps this device sends its spaces'
+//! questions to, `fleet_tools` the agent's tools.
 //!
 //! ```text
 //! enabled + signed in + cloud URL + org ─▶ FleetPort::start ─▶ link
@@ -14,7 +15,7 @@
 //! link ─▶ Connected | Message | Disconnected | Fatal ─▶ fleet_inbound
 //! ```
 
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
@@ -26,8 +27,9 @@ use theodore_contract::{
 };
 use theodore_domain::HostKind;
 use theodore_fleet_protocol::{
-    ClientMessage, DeviceInfo, DeviceKey, DeviceKind, DeviceOs, DeviceSummary, FleetMode,
-    ProjectRef, REPLAY_MEMORY_MS, RemoteRequest, ServerMessage, SpaceCursor, codes, fingerprint,
+    ClientMessage, Delegation, DeviceInfo, DeviceKey, DeviceKind, DeviceOs, DeviceSummary,
+    FleetMode, ProjectRef, REPLAY_MEMORY_MS, RemoteRequest, ServerMessage, SpaceCursor, codes,
+    fingerprint,
 };
 use theodore_ports::{FleetCommand, FleetConnect, FleetHostedRow, FleetInbound};
 use tokio::sync::{mpsc, oneshot};
@@ -108,6 +110,11 @@ pub(crate) struct FleetSettings {
     pub name: Option<String>,
     #[serde(default)]
     pub trusted_devices: Vec<TrustedDevice>,
+    /// Phones and web apps this device sends its spaces' questions to
+    /// (`fleet_delegate`), by device id: what the user asked for, signed
+    /// again for the cloud after every welcome.
+    #[serde(default)]
+    pub delegates: Vec<String>,
 }
 
 impl Default for FleetSettings {
@@ -118,6 +125,7 @@ impl Default for FleetSettings {
             max_mode: default_max_mode(),
             name: None,
             trusted_devices: Vec::new(),
+            delegates: Vec::new(),
         }
     }
 }
@@ -249,6 +257,21 @@ pub(crate) struct Outbound {
     /// Why it failed, as an agent may read it: the refusal's code alone
     /// (`view.error`, with the target's words, is the UI's).
     pub agent_error: Option<String>,
+    /// Its host's space row is kept here (docs/fleet.md "One space UI:
+    /// mirrored rows"): followed again after a restart.
+    pub mirrored: bool,
+    /// The live steps of its current run seen so far, by mirrored step id:
+    /// a step seen again is an update (a tool call's end, more text).
+    pub live: HashMap<String, LiveStep>,
+}
+
+/// A live step of a followed space's run, as last shown here.
+pub(crate) enum LiveStep {
+    Other,
+    /// A tool call, by its call id.
+    Tool(Option<String>),
+    /// The run's own text: how much of it was shown.
+    Text(String),
 }
 
 #[derive(Default)]
@@ -276,6 +299,15 @@ pub(crate) struct FleetMem {
     /// Questions from elsewhere routed here, by ask id, with the (pinned,
     /// verified) device that asked.
     pub asks: HashMap<String, (FleetQuestion, String)>,
+    /// The cloud's live delegations naming this device, each verified
+    /// (`fleet_on_delegations`).
+    pub delegations: Vec<Delegation>,
+    /// A welcome came and the wanted delegations weren't signed again yet:
+    /// done once the device list says which delegates are in this org.
+    pub delegations_due: bool,
+    /// Delegates a revocation went to on this connection: one each, so a
+    /// cloud that keeps listing one can't make this device loop.
+    pub revoked: HashSet<String>,
 }
 
 impl FleetMem {
@@ -303,10 +335,12 @@ pub struct FleetState {
     /// One reconcile at a time.
     reconcile_lock: tokio::sync::Mutex<()>,
     /// Read-modify-write of the settings.
-    settings_lock: tokio::sync::Mutex<()>,
+    pub(crate) settings_lock: tokio::sync::Mutex<()>,
     pub(crate) hosted_loaded: tokio::sync::OnceCell<()>,
     /// The persisted seen requests, read once.
     pub(crate) seen_loaded: tokio::sync::OnceCell<()>,
+    /// The mirrored spaces in the store, followed again once.
+    pub(crate) followed_loaded: tokio::sync::OnceCell<()>,
     pub(crate) observer:
         std::sync::OnceLock<mpsc::UnboundedSender<crate::usecases::fleet_host::ObserverCmd>>,
     /// Wakes `fleet_wait` on any change to a remote space.
@@ -347,7 +381,7 @@ impl Core {
         s
     }
 
-    async fn fleet_save_settings(&self, s: &FleetSettings) -> AppResult<()> {
+    pub(crate) async fn fleet_save_settings(&self, s: &FleetSettings) -> AppResult<()> {
         let store = self.0.deps.store.clone();
         let value = serde_json::to_value(s)
             .map_err(|e| AppError::Invalid(format!("fleet settings: {e}")))?;
@@ -524,7 +558,7 @@ impl Core {
     /// user compared (`req.public_key`), and only while the cloud still
     /// lists that key for the device.
     pub async fn fleet_trust_device(&self, req: FleetTrustRequest) -> AppResult<FleetStatus> {
-        {
+        let asked = {
             let _g = self.0.fleet.settings_lock.lock().await;
             let mut s = self.fleet_settings().await;
             let pin = if req.trusted {
@@ -562,7 +596,16 @@ impl Core {
             };
             s.trusted_devices.retain(|t| t.device_id != req.device_id);
             s.trusted_devices.extend(pin);
+            // Untrusted: it follows this device's spaces no more either.
+            let asked = !req.trusted && s.delegates.contains(&req.device_id);
+            if !req.trusted {
+                s.delegates.retain(|d| *d != req.device_id);
+            }
             self.fleet_save_settings(&s).await?;
+            asked
+        };
+        if !req.trusted {
+            self.fleet_revoke_if_held(&req.device_id, asked).await;
         }
         tracing::info!(device = %req.device_id, trusted = req.trusted, "fleet trust changed");
         let status = self.fleet_status().await?;
@@ -601,12 +644,16 @@ impl Core {
                 listed.info.name
             )));
         }
-        {
+        let asked = {
             let _g = self.0.fleet.settings_lock.lock().await;
             let mut s = self.fleet_settings().await;
             s.trusted_devices.retain(|t| t.device_id != device_id);
+            let asked = s.delegates.iter().any(|d| d == device_id);
+            s.delegates.retain(|d| d != device_id);
             self.fleet_save_settings(&s).await?;
-        }
+            asked
+        };
+        self.fleet_revoke_if_held(device_id, asked).await;
         if !self.fleet_send_msg(ClientMessage::RemoveDevice {
             device_id: device_id.to_string(),
         }) {
@@ -768,6 +815,8 @@ impl Core {
                 kind: match d.info.kind {
                     DeviceKind::Desktop => "desktop".into(),
                     DeviceKind::Daemon => "daemon".into(),
+                    DeviceKind::Mobile => "mobile".into(),
+                    DeviceKind::Web => "web".into(),
                 },
                 online: d.online,
                 last_seen_ms: d.last_seen_ms,
@@ -789,6 +838,12 @@ impl Core {
                     .iter()
                     .any(|t| t.device_id == d.device_id && t.public_key == d.public_key),
                 this_device: mem.device_id.as_deref() == Some(d.device_id.as_str()),
+                delegated: wants_delegate(&s, d),
+                delegation_live: mem.device_id.as_deref().is_some_and(|me| {
+                    mem.delegations
+                        .iter()
+                        .any(|g| g.origin_device == me && g.delegate_device == d.device_id)
+                }),
             })
             .collect();
         Ok(FleetStatus {
@@ -920,12 +975,17 @@ impl Core {
         mem.device_id = None;
         mem.devices.clear();
         mem.drop_claims();
+        mem.delegations.clear();
+        mem.delegations_due = false;
+        mem.revoked.clear();
         mem.error = None;
         self.0.fleet.tools_on.store(false, Ordering::SeqCst);
     }
 
     async fn fleet_start_link(&self, w: Wanted) -> AppResult<()> {
         self.fleet_load_hosted().await;
+        // Subscribed again on the welcome.
+        self.fleet_load_followed().await;
         let key = self.fleet_key().await?;
         let s = self.fleet_settings().await;
         let info = self.fleet_info(&s).await;
@@ -1002,6 +1062,10 @@ impl Core {
                     mem.device_id = Some(device_id.clone());
                     mem.generation = conn_generation;
                     mem.error = None;
+                    // The cloud may have lost them: signed again once the
+                    // device list comes.
+                    mem.delegations_due = true;
+                    mem.revoked.clear();
                 }
                 self.0.fleet.tools_on.store(true, Ordering::SeqCst);
                 let store = self.0.deps.store.clone();
@@ -1071,6 +1135,7 @@ impl Core {
                     );
                 }
                 self.fleet().devices = devices;
+                self.fleet_resend_delegations().await;
                 self.fleet_emit_status().await;
             }
             ServerMessage::Request { envelope, .. } => self.fleet_on_request(envelope).await,
@@ -1088,19 +1153,21 @@ impl Core {
                 self.fleet().asks.remove(&ask_id);
                 self.emit(Ephemeral::FleetAskDismissed { ask_id });
             }
+            ServerMessage::Delegations { list } => self.fleet_on_delegations(list).await,
             // Challenge and welcome are the adapter's.
             ServerMessage::Challenge { .. } | ServerMessage::Welcome { .. } => {}
             ServerMessage::Error { code, message } => {
                 tracing::warn!(error.code = %code, error = %message, "the fleet cloud reported an error");
                 // The cloud's text is unsigned: the user hears our words.
-                // `fleet.invalid` after the welcome is a refused removal (an
-                // online device); `fleet.busy` an event over the budget,
-                // replayed from the journal on the next welcome.
+                // `fleet.invalid` after the welcome: a refused removal (an
+                // online device) or delegation; `fleet.busy` an event over the
+                // budget, replayed from the journal on the next welcome.
                 if code == codes::INVALID {
                     self.emit(Ephemeral::Toast {
                         level: theodore_contract::ToastLevel::Warn,
-                        text: "The fleet refused that (fleet.invalid): a device can be removed \
-                               only while it's offline"
+                        text: "The fleet refused that (fleet.invalid). Removing a device works \
+                               only while it's offline; sending questions to a device needs \
+                               it trusted here"
                             .into(),
                     });
                 }
@@ -1111,12 +1178,21 @@ impl Core {
     /// After a welcome: hosted spaces replay what the cloud lacks, remote
     /// ones are subscribed again from the last seq seen here.
     fn fleet_on_connected(&self, resume: BTreeMap<String, u64>) {
-        let subs: Vec<(String, u64)> = self
-            .fleet()
-            .outbound
-            .iter()
-            .map(|(id, o)| (id.clone(), o.last_seq))
-            .collect();
+        let subs: Vec<(String, u64)> = {
+            let mut mem = self.fleet();
+            let me = mem.device_id.clone().unwrap_or_default();
+            mem.outbound
+                .iter_mut()
+                .map(|(id, o)| {
+                    // Followed again from the store before this device
+                    // knew its id.
+                    if o.view.origin_device.is_empty() {
+                        o.view.origin_device = me.clone();
+                    }
+                    (id.clone(), o.last_seq)
+                })
+                .collect()
+        };
         for (space, since) in subs {
             self.fleet_send_msg(ClientMessage::Subscribe { space, since });
         }
@@ -1134,6 +1210,17 @@ impl Core {
         });
         Ok(())
     }
+}
+
+/// Whether this device should be sending its spaces' questions to `d`:
+/// asked for here, `d` is a client (phone, web app), and it's pinned with
+/// the key the cloud lists now.
+pub(crate) fn wants_delegate(s: &FleetSettings, d: &DeviceSummary) -> bool {
+    !d.info.kind.hosts()
+        && s.delegates.contains(&d.device_id)
+        && s.trusted_devices
+            .iter()
+            .any(|t| t.device_id == d.device_id && t.public_key == d.public_key)
 }
 
 /// The machine's name: the Mac's computer name, else the host name.

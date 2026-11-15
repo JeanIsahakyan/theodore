@@ -69,7 +69,7 @@ pub(crate) async fn apply(
     let mut patch = serde_json::json!({ "title": identity.title });
     if !user_named && space.shipped.is_none() {
         let siblings = core
-            .list_spaces(Some(space.project.clone()))
+            .local_spaces(Some(space.project.clone()))
             .await
             .unwrap_or_default();
         let taken: Vec<&str> = siblings
