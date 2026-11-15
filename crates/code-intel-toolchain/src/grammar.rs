@@ -2,10 +2,10 @@
 //!
 //! ```text
 //! <root>/grammars/<package>-<version>/        one dir per grammar package
-//!   ├─ grammar.dylib                           sha256 checked before every first load
+//!   ├─ grammar.dylib (macOS) / grammar.so      sha256 checked before every first load
 //!   └─ <language>.tags.scm                     one per language of the package
 //!
-//! dylib ─▶ dlopen (kept for the process) ─▶ tree_sitter_<lang>() ─▶ ABI in range? ─▶ Language
+//! library ─▶ dlopen (kept for the process) ─▶ tree_sitter_<lang>() ─▶ ABI in range? ─▶ Language
 //!                                                                    └─ no ─▶ error, not loaded
 //! ```
 
@@ -44,7 +44,14 @@ pub fn check_abi(abi: usize, supported: &RangeInclusive<usize>) -> CodeIntelResu
     }
 }
 
-pub(crate) const LIB_FILE: &str = "grammar.dylib";
+/// The grammar library's file name in the cache: the host's shared-library
+/// extension. Install, verify and load all use it, so the manifest's
+/// download can be named anything.
+pub const LIB_FILE: &str = if cfg!(target_os = "macos") {
+    "grammar.dylib"
+} else {
+    "grammar.so"
+};
 
 pub(crate) fn tags_file(language: &LanguageId) -> String {
     format!("{language}.tags.scm")

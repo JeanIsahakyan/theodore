@@ -80,7 +80,7 @@ question ─▶ language server ready? ── yes ─▶ semantic layer (LSP)   
 ┌─ on disk ──────────────────────────────────────────────────────────────────┐
 │  <data dir>/code-intel/                                                    │
 │   ├─ index.sqlite        symbols by blob sha · what is installed (a cache) │
-│   ├─ grammars/<pkg>-<ver>.dylib                                            │
+│   ├─ grammars/<pkg>-<ver>/grammar.dylib (.so on Linux)                     │
 │   ├─ servers/<name>/<ver>/                                                 │
 │   └─ server-data/<name>/<hash>/   a server's {data}: per worktree and trust │
 │                                                                            │
@@ -88,9 +88,9 @@ question ─▶ language server ready? ── yes ─▶ semantic layer (LSP)   
 └────────────────────────────────────────────────────────────────────────────┘
          ▲                                        ▲
 ┌─ CI ───┴────────────────────────┐      ┌────────┴───────────────────────────┐
-│ grammars.toml ─▶ cc ─▶ arm64    │      │ upstream releases · npm tgz · wheel│
+│ grammars.toml ─▶ cc ─▶ mac+linux│      │ upstream releases · npm tgz · wheel│
 │ ─▶ sha256 ─▶ release assets     │      │ built by us where upstream has no  │
-│ ─▶ manifest (generated)         │      │ macOS binary (gopls)               │
+│ ─▶ manifest (generated)         │      │ binary (gopls)                     │
 └─────────────────────────────────┘      └────────────────────────────────────┘
 ```
 
@@ -181,9 +181,9 @@ code_intel:
 
 ## 4. Artifacts
 
-### 4.1 Grammars: one dylib per grammar package
+### 4.1 Grammars: one native library per grammar package
 
-| Package | In one dylib |
+| Package | In one library |
 | --- | --- |
 | `tree-sitter-typescript` | `typescript` + `tsx` |
 | `tree-sitter-markdown` | `markdown` + `markdown_inline` |
@@ -191,17 +191,27 @@ code_intel:
 | `tree-sitter-python` | `python` |
 
 ```
-grammars.toml (repo, commit) ─▶ cc parser.c + scanner.c ─▶ arm64
+grammars.toml (repo, commit) ─▶ cc parser.c + scanner.c, per platform:
+    macos-26          ─▶ <pkg>-<ver>.dylib               darwin-arm64
+    ubuntu-24.04      ─▶ <pkg>-<ver>-linux-x64.so        linux-x64
+    ubuntu-24.04-arm  ─▶ <pkg>-<ver>-linux-arm64.so      linux-arm64
   ─▶ sha256 ─▶ release assets
-  ─▶ manifest entries (generated, never edited by hand)
+  ─▶ per-platform grammars.json, merged ─▶ manifest entries
+     (generated, never edited by hand)
 ```
 
-- arm64 only, like the app (`build.yml` builds `aarch64-apple-darwin`). The
-  manifest is keyed by platform, so another target is one more build line
-  (and `lipo` for a universal file).
+- Native libraries, not WASM, so each platform has its own build. macOS is
+  arm64 only, like the app (`build.yml` builds `aarch64-apple-darwin`); Linux
+  is x64 and arm64, each built natively on its own runner
+  (`.github/workflows/grammars.yml`). The manifest is keyed by platform
+  (`darwin-arm64`, `linux-x64`, `linux-arm64`), and a platform with no entry
+  has no syntax layer: nothing crashes.
+- The cache names the file for the host (`grammar.dylib`, `grammar.so`), so a
+  download can be called anything; the loader is `dlopen` through `libloading`
+  on both.
 - One CI job builds every grammar from a pinned list. A new language is one
   line in `grammars.toml`.
-- The tags query (`tags.scm`, defs and refs) ships next to its dylib. Most
+- The tags query (`tags.scm`, defs and refs) ships next to its library. Most
   come from upstream; a few languages ship none (json, yaml, toml, bash,
   markdown, kotlin — `markdown_inline` has nothing of its own to tag and
   stays without one on purpose), so `scripts/build-grammars.sh` falls back to
@@ -226,7 +236,7 @@ grammars.toml (repo, commit) ─▶ cc parser.c + scanner.c ─▶ arm64
   (`ts_language_version`) is checked against the range the linked tree-sitter
   runtime supports; out of range → not loaded, the language has no syntax
   layer, nothing crashes.
-- Signing: the app is signed ad-hoc **with** the hardened runtime
+- Signing (macOS): the app is signed ad-hoc **with** the hardened runtime
   (`codesign … -o runtime`, as Tauri bundles it). Its library validation
   loads only dylibs of the app's own Team ID, and an ad-hoc signature has
   none, so the app carries `com.apple.security.cs.disable-library-validation`
@@ -237,6 +247,9 @@ grammars.toml (repo, commit) ─▶ cc parser.c + scanner.c ─▶ arm64
   | --- | --- | --- |
   | ad-hoc + runtime | ad-hoc | only with the entitlement |
   | Developer ID + runtime | same Team ID | yes; the entitlement can go |
+
+  Linux has no library validation: the `.so` is not signed, and the sha256
+  check is the whole gate.
 - No language packs (several languages in one file): they download languages
   nobody asked for and save little.
 
@@ -244,7 +257,8 @@ grammars.toml (repo, commit) ─▶ cc parser.c + scanner.c ─▶ arm64
 
 ```
 manifest entry ─▶ download ─▶ sha256 (required) ─▶ unpack ─▶ servers/<name>/<ver>/
-                                                  └─ unsigned? codesign -s -
+                                                  └─ macOS, unsigned Mach-O? codesign -s -
+                                                     Linux: executable bit only
 ```
 
 | Question | Answer |
@@ -253,9 +267,11 @@ manifest entry ─▶ download ─▶ sha256 (required) ─▶ unpack ─▶ ser
 | Checksum | sha256 in the manifest, always. No hash → the entry is invalid |
 | Hosts | each entry names its host; a redirect elsewhere fails the download |
 | Formats | `tar.gz`, `zip` (a `.nupkg` and JetBrains' `.sit` are zips), `gz`, `binary`, npm `tgz`, wheel (a zip). Archive paths are checked: nothing escapes the target directory |
-| No macOS binary upstream | built in our CI and published as our asset (gopls: Go, cross-compiles, BSD) |
+| No upstream binary | built in our CI and published as our asset (gopls: Go, cross-compiles, BSD; `scripts/build-servers.sh` builds darwin-arm64, linux-x64 and linux-arm64) |
+| Platforms | the manifest's download is keyed `darwin-arm64`, `linux-x64`, `linux-arm64` (`current_platform`); a server with no entry for this one is detect-only here. Linux uses the upstream glibc builds |
+| One archive, per-platform files | a download may name a `platform_dir`, which `{platform_dir}` in `launch` expands to (jdtls's `config_linux`, `config_linux_arm`, `config_mac_arm`) |
 | Upstream deletes a release | mirror into our assets (MIT / Apache / BSD allow it); policy open (§11) |
-| Signing | a server runs as a child process, so our hardened runtime does not apply to it. An unsigned arm64 binary does not start, so it gets an ad-hoc signature after download |
+| Signing | a server runs as a child process, so our hardened runtime does not apply to it. On macOS an unsigned arm64 binary does not start, so it gets an ad-hoc signature after download. On Linux there is nothing to sign: every unpacked binary gets the executable bit |
 | Updates | a new manifest version in a Theodore release. The old version stays until the new one has started once, then it is removed |
 | Licence | checked per entry, in the manifest's comment: nothing is fetched behind our prompt whose licence asks the user to accept it personally (intelephense stays detect-only) |
 
@@ -280,7 +296,7 @@ manifest entry ─▶ download ─▶ sha256 (required) ─▶ unpack ─▶ ser
 | | phpactor | download | PHP 8.2+ |
 | Ruby | ruby-lsp³ | found on the machine | Ruby 3+ |
 
-¹ zigtools/zls only publishes darwin-arm64 as `.tar.xz`; `ArchiveFormat`
+¹ zigtools/zls only publishes `.tar.xz` (macOS and Linux); `ArchiveFormat`
 (`crates/code-intel-toolchain/src/manifest.rs`) has no xz variant yet, so zls
 is detect-only for now.
 
@@ -289,6 +305,19 @@ agree"), for one person using it with an editor. That is yours to accept, not
 a download behind our prompt or `install: always`.
 
 ³ A gem with native dependencies and no standalone build.
+
+On Linux (`linux-x64`, `linux-arm64`) the table holds, with these differences:
+
+| Server | Linux |
+| --- | --- |
+| clangd | `linux-x64` only: upstream publishes no Linux arm64 build, so arm64 is detect-only (`apt install clangd`) |
+| gopls | built by `servers.yml` for both; the manifest's Linux entries are pasted in from that run's snippet |
+| sourcekit-lsp | from the Swift toolchain on `PATH` (no `xcrun`) |
+| zls, pyright, intelephense, ruby-lsp | found on the machine, as on macOS |
+| everything else | downloaded: the upstream glibc build (rust-analyzer, ty, taplo, marksman), or the same file as macOS (phpactor's phar, csharp-ls's nupkg, jdtls's tarball) |
+
+Java is found by `JAVA_HOME`, then `PATH`, then Homebrew's prefixes (including
+`/home/linuxbrew`); `/usr/libexec/java_home` is macOS only.
 
 A server's runtime is real data: `requires: { runtime: java, min: 21 }` in the
 manifest, checked by running it, because `which` lies (macOS's `/usr/bin/java`

@@ -66,12 +66,19 @@ pub const DIR_PLACEHOLDER: &str = "{dir}";
 /// A writable directory per worktree and trust mode, under the toolchain's
 /// root, never inside the worktree; may sit inside an argument.
 pub const DATA_PLACEHOLDER: &str = "{data}";
+/// The download's `platform_dir`, inside the unpacked directory: for an
+/// archive that carries one directory per platform (jdtls's `config_linux`,
+/// `config_mac_arm`). May sit inside an argument; only for a server never
+/// found on the machine, like [`DIR_PLACEHOLDER`], and every download of it
+/// must name one.
+pub const PLATFORM_DIR_PLACEHOLDER: &str = "{platform_dir}";
 
 const PLACEHOLDERS: &[&str] = &[
     BIN_PLACEHOLDER,
     RUNTIME_PLACEHOLDER,
     DIR_PLACEHOLDER,
     DATA_PLACEHOLDER,
+    PLATFORM_DIR_PLACEHOLDER,
 ];
 
 /// A downloadable file, pinned by hash.
@@ -122,6 +129,10 @@ pub struct ServerDownload {
     pub format: ArchiveFormat,
     /// The binary's path inside the unpacked archive (`/` separators).
     pub bin: String,
+    /// A directory inside the unpacked archive that differs per platform,
+    /// for [`PLATFORM_DIR_PLACEHOLDER`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub platform_dir: Option<String>,
 }
 
 impl ServerDownload {
@@ -151,7 +162,8 @@ pub struct ServerSpec {
     #[serde(default)]
     pub download: Option<BTreeMap<String, ServerDownload>>,
     /// argv; [`BIN_PLACEHOLDER`], [`RUNTIME_PLACEHOLDER`],
-    /// [`DIR_PLACEHOLDER`] and [`DATA_PLACEHOLDER`] are replaced.
+    /// [`DIR_PLACEHOLDER`], [`DATA_PLACEHOLDER`] and
+    /// [`PLATFORM_DIR_PLACEHOLDER`] are replaced.
     pub launch: Vec<String>,
     #[serde(default)]
     pub init_options: serde_json::Value,
@@ -476,6 +488,10 @@ fn validate_servers(raw: Vec<ServerSpec>, warnings: &mut Vec<String>) -> Vec<Ser
             }
             ok
         });
+        let uses_platform_dir = s
+            .launch
+            .iter()
+            .any(|a| a.contains(PLATFORM_DIR_PLACEHOLDER));
         if let Some(downloads) = s.download.take() {
             let mut kept = BTreeMap::new();
             for (platform, mut d) in downloads {
@@ -486,6 +502,19 @@ fn validate_servers(raw: Vec<ServerSpec>, warnings: &mut Vec<String>) -> Vec<Ser
                 }
                 if !is_safe_relative(&d.bin) {
                     warnings.push(format!("{what}: bad bin path {:?}, skipped", d.bin));
+                    continue;
+                }
+                if d.platform_dir
+                    .as_deref()
+                    .is_some_and(|p| !is_safe_relative(p))
+                {
+                    warnings.push(format!("{what}: bad platform_dir, skipped"));
+                    continue;
+                }
+                if uses_platform_dir && d.platform_dir.is_none() {
+                    warnings.push(format!(
+                        "{what}: launch has {PLATFORM_DIR_PLACEHOLDER} but the download has no platform_dir, skipped"
+                    ));
                     continue;
                 }
                 match check_artifact(&d.url, &d.sha256) {
@@ -579,6 +608,11 @@ fn check_launch(s: &ServerSpec) -> Result<(), String> {
     if uses(DIR_PLACEHOLDER) && !s.detect.is_empty() {
         return Err(format!(
             "launch has {DIR_PLACEHOLDER}, which a server found by detect does not have"
+        ));
+    }
+    if uses(PLATFORM_DIR_PLACEHOLDER) && !s.detect.is_empty() {
+        return Err(format!(
+            "launch has {PLATFORM_DIR_PLACEHOLDER}, which a server found by detect does not have"
         ));
     }
     if let Some(r) = &s.requires
@@ -911,6 +945,123 @@ mod tests {
                 assert!(s.hint.is_some(), "{}: detect-only with no hint", s.name);
             }
         }
+    }
+
+    /// Every download of the built-in manifest is keyed by a platform
+    /// `current_platform` can return, and the Linux ones are real entries.
+    #[test]
+    fn builtin_downloads_use_known_platform_keys() {
+        const KNOWN: &[&str] = &["darwin-arm64", "darwin-x64", "linux-x64", "linux-arm64"];
+        let m = Manifest::builtin();
+        for s in m.servers() {
+            for platform in s.download.iter().flat_map(|d| d.keys()) {
+                assert!(KNOWN.contains(&platform.as_str()), "{}: {platform}", s.name);
+            }
+        }
+        for g in m.grammars() {
+            for platform in g.downloads.keys() {
+                assert!(
+                    KNOWN.contains(&platform.as_str()),
+                    "{}: {platform}",
+                    g.package
+                );
+            }
+        }
+        for name in [
+            "rust-analyzer",
+            "ty",
+            "tsgo",
+            "clangd",
+            "lua-language-server",
+            "taplo",
+            "marksman",
+            "terraform-ls",
+            "phpactor",
+            "jdtls",
+            "kotlin-lsp",
+            "csharp-ls",
+        ] {
+            let s = m.server(name).unwrap();
+            assert!(s.download_for("linux-x64").is_some(), "{name}: linux-x64");
+            // clangd publishes no Linux arm64 build.
+            if name != "clangd" {
+                assert!(
+                    s.download_for("linux-arm64").is_some(),
+                    "{name}: linux-arm64"
+                );
+            }
+        }
+        // Detect-only on Linux as on macOS: nothing to download.
+        for name in [
+            "zls",
+            "pyright",
+            "intelephense",
+            "ruby-lsp",
+            "sourcekit-lsp",
+        ] {
+            assert!(m.server(name).unwrap().download.is_none(), "{name}");
+        }
+        // jdtls: one shared archive, a config directory per platform.
+        let jdtls = m.server("jdtls").unwrap();
+        for (platform, dir) in [
+            ("darwin-arm64", "config_mac_arm"),
+            ("linux-x64", "config_linux"),
+            ("linux-arm64", "config_linux_arm"),
+        ] {
+            let d = jdtls.download_for(platform).unwrap();
+            assert_eq!(d.platform_dir.as_deref(), Some(dir), "{platform}");
+        }
+    }
+
+    #[test]
+    fn platform_dir_needs_a_download_that_names_one() {
+        let yaml = format!(
+            r#"
+servers:
+  - name: ok
+    version: "1.0"
+    download:
+      linux-x64: {{ url: "https://example.com/a.gz", sha256: "{SHA}", format: gz, bin: ok, platform_dir: config_linux }}
+      linux-arm64: {{ url: "https://example.com/b.gz", sha256: "{SHA}", format: gz, bin: ok }}
+      darwin-arm64: {{ url: "https://example.com/c.gz", sha256: "{SHA}", format: gz, bin: ok, platform_dir: "../up" }}
+    launch: ["{{bin}}", "-c={{platform_dir}}"]
+  - name: found
+    detect: [["found"]]
+    launch: ["{{bin}}", "-c={{platform_dir}}"]
+languages:
+  - id: x
+    globs: ["*.x"]
+    servers: [ok]
+"#
+        );
+        let (m, warnings) = Manifest::parse(&yaml, r#"{"schema":1,"grammars":[]}"#).unwrap();
+        let platforms: Vec<_> = m
+            .server("ok")
+            .unwrap()
+            .download
+            .as_ref()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect();
+        assert_eq!(platforms, vec!["linux-x64".to_string()]);
+        assert!(m.server("found").is_none());
+        assert_eq!(warnings.len(), 3, "{warnings:?}");
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.contains("linux-arm64") && w.contains("no platform_dir"))
+        );
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.contains("darwin-arm64") && w.contains("bad platform_dir"))
+        );
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.contains("found") && w.contains("{platform_dir}"))
+        );
     }
 
     #[test]

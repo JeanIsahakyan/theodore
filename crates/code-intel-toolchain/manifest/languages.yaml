@@ -55,6 +55,21 @@ servers:
         format: gz
         bin: rust-analyzer
         redirect_hosts: [release-assets.githubusercontent.com, objects.githubusercontent.com]
+      # Linux: the glibc builds (the musl one is x64 only).
+      linux-x64:
+        url: https://github.com/rust-lang/rust-analyzer/releases/download/2026-10-26/rust-analyzer-x86_64-unknown-linux-gnu.gz
+        sha256: 4c83773525f93b636ed79761389568b4d2a89c05fa7ecc440245032d49ad80ce
+        size: 15084499
+        format: gz
+        bin: rust-analyzer
+        redirect_hosts: [release-assets.githubusercontent.com, objects.githubusercontent.com]
+      linux-arm64:
+        url: https://github.com/rust-lang/rust-analyzer/releases/download/2026-10-26/rust-analyzer-aarch64-unknown-linux-gnu.gz
+        sha256: 1b225c4c9ae329ca96e8a75a5bbcb5562a7f1d25c57c8b55d3e02299a3dbe836
+        size: 14498733
+        format: gz
+        bin: rust-analyzer
+        redirect_hosts: [release-assets.githubusercontent.com, objects.githubusercontent.com]
     launch: ["{bin}"]
     workspace_folders: true
     # Build scripts, proc macros and `cargo check` run the project's code.
@@ -73,6 +88,20 @@ servers:
         size: 13068441
         format: tar.gz
         bin: ty-aarch64-apple-darwin/ty
+        redirect_hosts: [release-assets.githubusercontent.com, objects.githubusercontent.com]
+      linux-x64:
+        url: https://github.com/astral-sh/ty/releases/download/0.0.95/ty-x86_64-unknown-linux-gnu.tar.gz
+        sha256: 3f00a15c1e4234113db8764a06082ac2c00ddf2ecae66d18430ce767e40b4e17
+        size: 16263419
+        format: tar.gz
+        bin: ty-x86_64-unknown-linux-gnu/ty
+        redirect_hosts: [release-assets.githubusercontent.com, objects.githubusercontent.com]
+      linux-arm64:
+        url: https://github.com/astral-sh/ty/releases/download/0.0.95/ty-aarch64-unknown-linux-gnu.tar.gz
+        sha256: bdf63065cdc0cd27ed0e3412251548aa1c957d186052b82ace08c95a087786e5
+        size: 13409776
+        format: tar.gz
+        bin: ty-aarch64-unknown-linux-gnu/ty
         redirect_hosts: [release-assets.githubusercontent.com, objects.githubusercontent.com]
     launch: ["{bin}", "server"]
     workspace_folders: true
@@ -117,13 +146,28 @@ servers:
         size: 9270694
         format: npm-tgz
         bin: lib/tsgo
+      linux-x64:
+        url: https://registry.npmjs.org/@typescript/native-preview-linux-x64/-/native-preview-linux-x64-7.0.0-dev.20260707.2.tgz
+        sha256: 5e6ee1052190526ae0ac277b2fb52ba0c7e880619201493bd5342976a0b33eb6
+        size: 9669830
+        format: npm-tgz
+        bin: lib/tsgo
+      linux-arm64:
+        url: https://registry.npmjs.org/@typescript/native-preview-linux-arm64/-/native-preview-linux-arm64-7.0.0-dev.20260707.2.tgz
+        sha256: ebd9e2f6d7483151ad856faefac5d796de65bda5bdbcbda4cabc3e911910b638
+        size: 8901078
+        format: npm-tgz
+        bin: lib/tsgo
     launch: ["{bin}", "--lsp", "--stdio"]
     workspace_folders: true
 
   - name: gopls
-    # No macOS binary upstream; built by us (docs/code-intel.md §4.2):
-    # scripts/build-servers.sh + .github/workflows/servers.yml, pinned to
-    # that workflow's published build.
+    # No binary upstream on any platform; built by us (docs/code-intel.md
+    # §4.2): scripts/build-servers.sh + .github/workflows/servers.yml, pinned
+    # to that workflow's published build. The script now builds darwin-arm64,
+    # linux-x64 and linux-arm64; the Linux entries are added here from the
+    # workflow's gopls-manifest-snippet.yaml once a run has published them
+    # (a hash taken from a local cross-build would not match CI's).
     version: "0.24.0"
     detect: [["gopls", "version"]]
     download:
@@ -148,27 +192,37 @@ servers:
         format: zip
         bin: clangd_23.1.0/bin/clangd
         redirect_hosts: [release-assets.githubusercontent.com, objects.githubusercontent.com]
+      # Upstream publishes Linux x64 only (no arm64 build).
+      linux-x64:
+        url: https://github.com/clangd/clangd/releases/download/23.1.0/clangd-linux-23.1.0.zip
+        sha256: e53b1a96196095faedb7642cf64964f7fb9ad4a0c1f00dd2c172a3d9dcbafdfd
+        size: 117949007
+        format: zip
+        bin: clangd_23.1.0/bin/clangd
+        redirect_hosts: [release-assets.githubusercontent.com, objects.githubusercontent.com]
     launch: ["{bin}"]
     workspace_folders: false
 
   - name: sourcekit-lsp
-    # Ships with Xcode / the Swift toolchain; found through `xcrun --find`.
+    # Ships with Xcode / the Swift toolchain; found through `xcrun --find`,
+    # or on PATH (Linux: the Swift toolchain from swift.org or swiftly).
     detect: [["sourcekit-lsp"]]
     launch: ["{bin}"]
     workspace_folders: true
-    hint: Install Xcode or the Swift toolchain
+    hint: Install Xcode or the Swift toolchain (swift.org)
 
   - name: zls
-    # Upstream only publishes .tar.xz for darwin-arm64 (zigtools/zls
-    # release 0.17.0); ArchiveFormat has no xz variant (tar.gz, zip, gz,
-    # binary, npm-tgz, wheel — crates/code-intel-toolchain/src/manifest.rs),
-    # so there is no `download` here yet. Detect-only until that format
-    # exists: found on the machine, never downloaded (docs/code-intel.md
-    # §4.3 right column, same as sourcekit-lsp above).
+    # Upstream only publishes .tar.xz (zigtools/zls release 0.17.0: macOS
+    # and Linux alike; Windows is a zip); ArchiveFormat has no xz variant
+    # (tar.gz, zip, gz, binary, npm-tgz, wheel —
+    # crates/code-intel-toolchain/src/manifest.rs), so there is no `download`
+    # here yet. Detect-only until that format exists: found on the machine,
+    # never downloaded (docs/code-intel.md §4.3 right column, same as
+    # sourcekit-lsp above).
     detect: [["zls", "--version"]]
     launch: ["{bin}"]
     workspace_folders: true
-    hint: brew install zls
+    hint: brew install zls, or a release from github.com/zigtools/zls
 
   - name: lua-language-server
     version: "3.19.2"
@@ -178,6 +232,20 @@ servers:
         url: https://github.com/LuaLS/lua-language-server/releases/download/3.19.2/lua-language-server-3.19.2-darwin-arm64.tar.gz
         sha256: 79149584320a23bd5fcd5bc31f47a1975acd8a4560a0e89036bb1016fa61687f
         size: 3286148
+        format: tar.gz
+        bin: bin/lua-language-server
+        redirect_hosts: [release-assets.githubusercontent.com, objects.githubusercontent.com]
+      linux-x64:
+        url: https://github.com/LuaLS/lua-language-server/releases/download/3.19.2/lua-language-server-3.19.2-linux-x64.tar.gz
+        sha256: 93ad326b10f6c00911dd8c450fa098332dbd8f9f45d1052f5636a2d54479b947
+        size: 3696210
+        format: tar.gz
+        bin: bin/lua-language-server
+        redirect_hosts: [release-assets.githubusercontent.com, objects.githubusercontent.com]
+      linux-arm64:
+        url: https://github.com/LuaLS/lua-language-server/releases/download/3.19.2/lua-language-server-3.19.2-linux-arm64.tar.gz
+        sha256: 17b8e401a874440adeb649e5024c364f2bb9d15156c74a40e56d1ae9a1b2e4f2
+        size: 2633728
         format: tar.gz
         bin: bin/lua-language-server
         redirect_hosts: [release-assets.githubusercontent.com, objects.githubusercontent.com]
@@ -192,6 +260,20 @@ servers:
         url: https://github.com/tamasfe/taplo/releases/download/0.10.0/taplo-darwin-aarch64.gz
         sha256: 713734314c3e71894b9e77513c5349835eefbd52908445a0d73b0c7dc469347d
         size: 4616415
+        format: gz
+        bin: taplo
+        redirect_hosts: [release-assets.githubusercontent.com, objects.githubusercontent.com]
+      linux-x64:
+        url: https://github.com/tamasfe/taplo/releases/download/0.10.0/taplo-linux-x86_64.gz
+        sha256: 8fe196b894ccf9072f98d4e1013a180306e17d244830b03986ee5e8eabeb6156
+        size: 5116068
+        format: gz
+        bin: taplo
+        redirect_hosts: [release-assets.githubusercontent.com, objects.githubusercontent.com]
+      linux-arm64:
+        url: https://github.com/tamasfe/taplo/releases/download/0.10.0/taplo-linux-aarch64.gz
+        sha256: 033681d01eec8376c3fd38fa3703c79316f5e14bb013d859943b60a07bccdcc3
+        size: 4631779
         format: gz
         bin: taplo
         redirect_hosts: [release-assets.githubusercontent.com, objects.githubusercontent.com]
@@ -211,6 +293,21 @@ servers:
         format: binary
         bin: marksman
         redirect_hosts: [release-assets.githubusercontent.com, objects.githubusercontent.com]
+      # The glibc builds (marksman-linux-musl-* exist for Alpine).
+      linux-x64:
+        url: https://github.com/artempyanykh/marksman/releases/download/2026-02-08/marksman-linux-x64
+        sha256: be5098e8213219269c47fc0d916a66fa31ce0602ec967475c722260aabf26087
+        size: 22500875
+        format: binary
+        bin: marksman
+        redirect_hosts: [release-assets.githubusercontent.com, objects.githubusercontent.com]
+      linux-arm64:
+        url: https://github.com/artempyanykh/marksman/releases/download/2026-02-08/marksman-linux-arm64
+        sha256: db8e124527f7f8048e3e6c91821b9c52ef173d92c01e47d221bf1337afd962fb
+        size: 21851058
+        format: binary
+        bin: marksman
+        redirect_hosts: [release-assets.githubusercontent.com, objects.githubusercontent.com]
     launch: ["{bin}", "server"]
     workspace_folders: true
 
@@ -224,6 +321,18 @@ servers:
         url: https://releases.hashicorp.com/terraform-ls/0.39.1/terraform-ls_0.39.1_darwin_arm64.zip
         sha256: 07748aa989fc3b9f6e4538ff83bc2e607ebc20c7587ce6556ae555d631e70b1b
         size: 34111708
+        format: zip
+        bin: terraform-ls
+      linux-x64:
+        url: https://releases.hashicorp.com/terraform-ls/0.39.1/terraform-ls_0.39.1_linux_amd64.zip
+        sha256: fe2a158e4a1a8ec8047dae9e06c439b468412aa579929ba28b2e1258cedef9c0
+        size: 34430497
+        format: zip
+        bin: terraform-ls
+      linux-arm64:
+        url: https://releases.hashicorp.com/terraform-ls/0.39.1/terraform-ls_0.39.1_linux_arm64.zip
+        sha256: a72a6d9f72580cfc30cc06d3c973fd5f55790f62e3ddb195998435070d9af36d
+        size: 33677998
         format: zip
         bin: terraform-ls
     launch: ["{bin}", "serve"]
@@ -261,6 +370,21 @@ servers:
         format: binary
         bin: phpactor.phar
         redirect_hosts: [release-assets.githubusercontent.com, objects.githubusercontent.com]
+      # The same phar on every platform.
+      linux-x64:
+        url: https://github.com/phpactor/phpactor/releases/download/2026.10.07.0/phpactor.phar
+        sha256: b28bf6166e016d539fc2f2aec18ef918b12590e436a6f1ccbdf30b5bbdbdb16b
+        size: 4815663
+        format: binary
+        bin: phpactor.phar
+        redirect_hosts: [release-assets.githubusercontent.com, objects.githubusercontent.com]
+      linux-arm64:
+        url: https://github.com/phpactor/phpactor/releases/download/2026.10.07.0/phpactor.phar
+        sha256: b28bf6166e016d539fc2f2aec18ef918b12590e436a6f1ccbdf30b5bbdbdb16b
+        size: 4815663
+        format: binary
+        bin: phpactor.phar
+        redirect_hosts: [release-assets.githubusercontent.com, objects.githubusercontent.com]
     # The index goes under {data}, not ~/.cache/phpactor: Remove deletes it.
     launch: ["{bin}", "language-server", '--config-extra={"indexer.index_path": "{data}/index"}']
     requires: { runtime: php, min: "8.2" }
@@ -282,8 +406,10 @@ servers:
 
   - name: jdtls
     # Eclipse JDT LS, EPL-2.0. Pure Java, so the same tarball runs anywhere a
-    # JVM does; config_mac_arm makes this entry arm64 only. No `detect`: a
-    # system jdtls is a Python wrapper with another command line.
+    # JVM does; it carries one config_* directory per platform, which each
+    # download names as its `platform_dir` (config_mac_arm, config_linux,
+    # config_linux_arm). No `detect`: a system jdtls is a Python wrapper with
+    # another command line.
     # `-configuration` must be writable and a running instance locks it, so
     # the shipped one is a read-only parent of one per worktree. One process
     # per worktree: Eclipse project names would collide across folders.
@@ -295,12 +421,27 @@ servers:
         size: 51143565
         format: tar.gz
         bin: plugins/org.eclipse.equinox.launcher_1.8.0.v20260804-1928.jar
+        platform_dir: config_mac_arm
+      linux-x64:
+        url: https://download.eclipse.org/jdtls/milestones/1.63.0/jdt-language-server-1.63.0-202610191322.tar.gz
+        sha256: b1f2abe0b3cccb462cf64fb4a5587c7d09df60cf8be7748b152cbd89d018bdc4
+        size: 51143565
+        format: tar.gz
+        bin: plugins/org.eclipse.equinox.launcher_1.8.0.v20260804-1928.jar
+        platform_dir: config_linux
+      linux-arm64:
+        url: https://download.eclipse.org/jdtls/milestones/1.63.0/jdt-language-server-1.63.0-202610191322.tar.gz
+        sha256: b1f2abe0b3cccb462cf64fb4a5587c7d09df60cf8be7748b152cbd89d018bdc4
+        size: 51143565
+        format: tar.gz
+        bin: plugins/org.eclipse.equinox.launcher_1.8.0.v20260804-1928.jar
+        platform_dir: config_linux_arm
     launch:
       - "{runtime}"
       - -Declipse.application=org.eclipse.jdt.ls.core.id1
       - -Dosgi.bundles.defaultStartLevel=4
       - -Declipse.product=org.eclipse.jdt.ls.core.product
-      - -Dosgi.sharedConfiguration.area={dir}/config_mac_arm
+      - -Dosgi.sharedConfiguration.area={platform_dir}
       - -Dosgi.sharedConfiguration.area.readOnly=true
       - -Dosgi.checkConfiguration=true
       - -Dosgi.configuration.cascaded=true
@@ -341,7 +482,7 @@ servers:
     # JetBrains', Apache-2.0 repository, alpha, and "partially closed-source"
     # by its README: the archive is theirs, fetched from their CDN. Brings
     # its own JBR, so no `requires`, at a price: 360 MB down, 1.1 GB unpacked.
-    # `.sit` here is a plain zip. Sends nothing (--data-sharing defaults to none).
+    # `.sit` here is a plain zip; the Linux builds are tar.gz. Sends nothing (--data-sharing defaults to none).
     # Trusted only: it imports through Gradle or Maven, which evaluates the
     # build (a marker file in settings.gradle.kts is written), with no
     # documented switch.
@@ -353,6 +494,20 @@ servers:
         sha256: b403bf8a54bd458e3ba6731cf8abb3340be08b439c03576dfc02b13faf3694b8
         size: 360201117
         format: zip
+        bin: kotlin-server-263.7084.0/bin/intellij-server
+        redirect_hosts: [download-cdn.jetbrains.com]
+      linux-x64:
+        url: https://download.jetbrains.com/language-server/kotlin-server/263.7084.0/kotlin-server-263.7084.0.tar.gz
+        sha256: ae0c4b01e17ab73a4a5227a78ea99e6dcbe3e499600315b22759a4e4cddd11df
+        size: 368521225
+        format: tar.gz
+        bin: kotlin-server-263.7084.0/bin/intellij-server
+        redirect_hosts: [download-cdn.jetbrains.com]
+      linux-arm64:
+        url: https://download.jetbrains.com/language-server/kotlin-server/263.7084.0/kotlin-server-263.7084.0-aarch64.tar.gz
+        sha256: 450ab7c1d80e48106aa429b48cb4226d82ca12a8a2400447ae02386794780cac
+        size: 367531638
+        format: tar.gz
         bin: kotlin-server-263.7084.0/bin/intellij-server
         redirect_hosts: [download-cdn.jetbrains.com]
     launch: ["{bin}", "--stdio", "--system-path={data}/system"]
@@ -376,6 +531,19 @@ servers:
     version: "0.28.0"
     download:
       darwin-arm64:
+        url: https://api.nuget.org/v3-flatcontainer/csharp-ls/0.28.0/csharp-ls.0.28.0.nupkg
+        sha256: 8f815e4f22674106a8244beba07e4b4b062e31528e404aa8489312effb8c0e0c
+        size: 21643814
+        format: zip
+        bin: tools/net10.0/any/CSharpLanguageServer.dll
+      # Any-architecture dll: the same nupkg on every platform.
+      linux-x64:
+        url: https://api.nuget.org/v3-flatcontainer/csharp-ls/0.28.0/csharp-ls.0.28.0.nupkg
+        sha256: 8f815e4f22674106a8244beba07e4b4b062e31528e404aa8489312effb8c0e0c
+        size: 21643814
+        format: zip
+        bin: tools/net10.0/any/CSharpLanguageServer.dll
+      linux-arm64:
         url: https://api.nuget.org/v3-flatcontainer/csharp-ls/0.28.0/csharp-ls.0.28.0.nupkg
         sha256: 8f815e4f22674106a8244beba07e4b4b062e31528e404aa8489312effb8c0e0c
         size: 21643814
