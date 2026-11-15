@@ -5,8 +5,8 @@
  *
  * | Platform | Browser                                   | Redirect                  | Session store |
  * | -------- | ----------------------------------------- | ------------------------- | ------------- |
- * | iOS      | ASWebAuthenticationSession                | `theodore://callback`     | Keychain, after first unlock |
- * | Android  | Custom Tab + the scheme's intent          | `theodore://callback`     | Keystore-backed secure store |
+ * | iOS      | ASWebAuthenticationSession                | `theodore-mobile://callback`     | Keychain, after first unlock |
+ * | Android  | Custom Tab + the scheme's intent          | `theodore-mobile://callback`     | Keystore-backed secure store |
  * | web      | popup; `/callback` posts back to the opener | `<origin>/callback`     | `localStorage` |
  * | Expo Go  | as iOS / Android                          | `exp://…/--/callback`     | as iOS / Android |
  *
@@ -79,7 +79,7 @@ async function openBrowser(
 
 /**
  * The redirect AuthKit sends the code to: the app's scheme on a device
- * (from app.json, `theodore://callback`), `<origin>/callback` on the web.
+ * (from app.json, `theodore-mobile://callback`), `<origin>/callback` on the web.
  */
 export function redirectUri(): string {
   return makeRedirectUri({ path: 'callback' });

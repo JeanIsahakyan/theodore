@@ -257,37 +257,71 @@ describe('refresh', () => {
 describe('cloud', () => {
   const SELECT = `POST ${CLOUD}/v1/auth/select-organization`;
 
-  it('finishes an org selection, signature always checked', async () => {
-    const body = authBody(key, {
+  it("finishes an org selection by trading the cloud's refresh token with WorkOS", async () => {
+    // The cloud's own access token isn't kept (or even checked): its refresh
+    // token goes straight to WorkOS, whose answer is the session — so this
+    // works on the web, where WorkOS's JWKS has no CORS.
+    const fromCloud = authBody(key, {
       organization_id: 'org_b',
       claims: { org_id: 'org_b' },
+      refresh_token: 'rt_from_cloud',
+    });
+    const fromWorkos = authBody(key, {
+      organization_id: 'org_b',
+      claims: { org_id: 'org_b' },
+      refresh_token: 'rt_workos',
     });
     const f = fakeFetch({
-      [SELECT]: () => ({ status: 200, body }),
-      [JWKS]: jwksOk,
+      [SELECT]: () => ({ status: 200, body: fromCloud }),
+      [AUTH]: () => ({ status: 200, body: fromWorkos }),
+      [JWKS]: () => new TypeError('no CORS'),
     });
     const s = await api(f).selectOrganization('pending_1', 'org_b');
     expect(s.organizationId).toBe('org_b');
+    expect(s.refreshToken).toBe('rt_workos');
     expect(JSON.parse(f.calls[0].body!)).toEqual({
       pending_authentication_token: 'pending_1',
       organization_id: 'org_b',
     });
-
-    const noJwks = fakeFetch({
-      [SELECT]: () => ({ status: 200, body }),
-      [JWKS]: () => new TypeError('offline'),
-    });
+    const refresh = f.calls.find((c) =>
+      c.url.endsWith('/user_management/authenticate'),
+    );
     expect(
-      (await errorOf(api(noJwks).selectOrganization('p', 'org_b'))).kind,
-    ).toBe('network');
+      Object.fromEntries(new URLSearchParams(refresh!.body!)),
+    ).toMatchObject({
+      grant_type: 'refresh_token',
+      refresh_token: 'rt_from_cloud',
+      organization_id: 'org_b',
+    });
+  });
+
+  it("refuses a cloud selection WorkOS won't refresh (a forged token)", async () => {
+    const f = fakeFetch({
+      [SELECT]: () => ({
+        status: 200,
+        body: authBody(key, { organization_id: 'org_b' }),
+      }),
+      [AUTH]: () => ({
+        status: 400,
+        body: '{"error":"invalid_grant","error_description":"bad refresh token"}',
+      }),
+      [JWKS]: jwksOk,
+    });
+    expect((await errorOf(api(f).selectOrganization('p', 'org_b'))).kind).toBe(
+      'rejected',
+    );
   });
 
   it('refuses a selected session in another org', async () => {
     const f = fakeFetch({
       [SELECT]: () => ({
         status: 200,
+        body: authBody(key, { organization_id: 'org_b' }),
+      }),
+      [AUTH]: () => ({
+        status: 200,
         body: authBody(key, {
-          organization_id: 'org_b',
+          organization_id: 'org_a',
           claims: { org_id: 'org_a' },
         }),
       }),

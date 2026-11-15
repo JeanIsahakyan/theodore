@@ -63,7 +63,7 @@ push main    ─ mobile/** ─▶ theodore-web
 
 Same `CLOUDFLARE_*` secrets as the Worker, the same `THEODORE_WORKOS_CLIENT_ID[_STAGING]`
 and `THEODORE_CLOUD_URL[_STAGING]` variables as the desktop builds. The web
-origins and `theodore://callback` also need registering in WorkOS (table
+origins and `theodore-mobile://callback` also need registering in WorkOS (table
 below); one-time steps: `docs/mobile.md` "Build and release".
 
 ## One-time: updater signing key (required before any release works)
@@ -381,7 +381,7 @@ with an invalid redirect error:
 
 A nightly bakes in whichever client id the shell exported; register
 `theodore-nightly://callback` on the environment it uses. The mobile app adds
-`theodore://callback` and its web origin's `/callback`
+`theodore-mobile://callback` and its web origin's `/callback`
 (`https://theodore-web[-staging].pages.dev`) to each environment.
 
 ## Build colours

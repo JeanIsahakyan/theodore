@@ -114,7 +114,7 @@ mobile/
   both sides honest.
 - Keys never leave secure storage except to sign; on web the private key is a
   non-extractable WebCrypto key in IndexedDB.
-- Redirect URIs to register in WorkOS: `theodore://callback` (native, per
+- Redirect URIs to register in WorkOS: `theodore-mobile://callback` (native, per
   channel scheme) and the web origin's `/callback`.
 
 ### Sign-in
@@ -123,7 +123,7 @@ The desktop's flow (plan §6.12), in TypeScript (`src/auth`):
 
 ```
 Sign in ─▶ PKCE S256 + 256-bit state ─▶ hosted AuthKit page
-   native: ASWebAuthenticationSession / Custom Tab ─▶ theodore://callback
+   native: ASWebAuthenticationSession / Custom Tab ─▶ theodore-mobile://callback
    web:    popup ─▶ <origin>/callback ─▶ root layout posts the URL to the opener
  ─▶ state matches ─▶ POST /user_management/authenticate (code + verifier, no secret)
  ─▶ RS256 vs JWKS, iss, exp (60 s), client_id, sub ─▶ secure store ─▶ (app)
@@ -176,7 +176,7 @@ eas build --profile production ─▶ store build (production cloud) ─▶ eas 
   staging cloud (`src/config.ts`).
 - Expo Go is enough for the screens, sign-in on web, and the fleet client. It is
   **not** enough for what needs our own native config: remote push
-  (remote push isn't supported in Expo Go) and the `theodore://`
+  (remote push isn't supported in Expo Go) and the `theodore-mobile://`
   scheme. For those, build a dev client once:
   `npx eas-cli@latest build --profile development` (iOS simulator build,
   installable by dragging it onto the simulator), then `pnpm -C mobile start`
@@ -263,7 +263,7 @@ production  ─▶ eas submit --platform ios     ─▶ App Store Connect ─▶
 | 4 | iOS push key | `eas credentials` → iOS → Push Notifications: set up a new key (an APNs `.p8`); EAS hands it to Expo's push service. Never commit it |
 | 5 | Google Play Console | pay, create the app `app.theodore.mobile`; make a service account key for `eas submit` (`eas credentials` → Android) |
 | 6 | FCM for Android push | create a Firebase project, add the Android app, download `google-services.json`, point `expo.android.googleServicesFile` at it (upload it as an EAS file env var, not in git), then `eas credentials` → Android → FCM V1 service account key |
-| 7 | WorkOS redirects | add `theodore://callback` and `https://theodore-web-staging.pages.dev/callback` to the staging environment, `theodore://callback` and `https://theodore-web.pages.dev/callback` to production (docs/releasing.md "WorkOS redirects to register") |
+| 7 | WorkOS redirects | add `theodore-mobile://callback` and `https://theodore-web-staging.pages.dev/callback` to the staging environment, `theodore-mobile://callback` and `https://theodore-web.pages.dev/callback` to production (docs/releasing.md "WorkOS redirects to register") |
 | 8 | Pages projects | `wrangler pages project create theodore-web-staging --production-branch staging` and `wrangler pages project create theodore-web --production-branch main` |
 | 9 | Cloud CORS | the two `pages.dev` origins in the Worker's CORS config ("Cloud" above) |
 

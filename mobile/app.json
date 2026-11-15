@@ -41,7 +41,7 @@
       ],
       "expo-web-browser"
     ],
-    "scheme": "theodore",
+    "scheme": "theodore-mobile",
     "experiments": {
       "typedRoutes": true
     }

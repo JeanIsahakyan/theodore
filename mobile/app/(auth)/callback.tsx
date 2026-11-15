@@ -3,7 +3,7 @@
  *
  * - web: this page is the sign-in popup; the root layout already handed
  *   its URL to the opener (`maybeCompleteAuthSession`), which closes it.
- * - Android: the `theodore://callback` intent may also reach the router
+ * - Android: the `theodore-mobile://callback` intent may also reach the router
  *   while the browser session resolves; step back to the sign-in, which
  *   finishes the exchange.
  * - signed in: the gate never shows this route.

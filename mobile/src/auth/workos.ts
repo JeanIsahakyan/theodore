@@ -439,7 +439,30 @@ export class WorkosApi implements AccountApi {
       pending_authentication_token: pendingToken,
       organization_id: organizationId,
     });
-    return this.sessionFrom(body, { kind: 'cloud_selected', organizationId });
+    // The cloud's session isn't taken as is: its refresh token is traded
+    // straight with WorkOS (over TLS, CORS-allowed on the web), so the
+    // session kept comes from WorkOS itself. A forged token fails there.
+    // Needed on the web, where WorkOS's JWKS has no CORS and the cloud's
+    // access token couldn't be signature-checked.
+    const handed = parseAuthResponse(body);
+    const direct = await this.refresh(handed.refreshToken, organizationId);
+    if (direct.kind !== 'session') {
+      throw new AuthError(
+        'protocol',
+        'WorkOS asked for another organization choice',
+      );
+    }
+    const session = direct.session;
+    if (
+      session.userId !== handed.userId ||
+      session.organizationId !== organizationId
+    ) {
+      throw new AuthError(
+        'invalid_token',
+        "the session isn't in the organization chosen",
+      );
+    }
+    return session;
   }
 
   async ensurePersonalOrganization(accessToken: string): Promise<string> {
