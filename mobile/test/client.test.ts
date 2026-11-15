@@ -886,6 +886,140 @@ describe('events', () => {
   });
 });
 
+describe('mirrored rows', () => {
+  const row = (space: string, over: object = {}) => ({
+    id: space,
+    name: 'fix-bug',
+    goal: 'Fix the login bug',
+    title: 'Login fix',
+    branch: 'th/login',
+    status: 'running',
+    agent: 'claude',
+    mode: 'plan',
+    turns: 1,
+    run: `space:${space}:m1`,
+    created_at: 1,
+    updated_at: 2,
+    ...over,
+  });
+  const mirror = (model: string, id: string, data: unknown) => ({
+    kind: 'mirror',
+    model,
+    id,
+    data,
+  });
+  const chatRow = (space: string, over: object) => ({
+    pr: `space:${space}`,
+    author: { kind: 'me' },
+    at: 1,
+    ...over,
+  });
+
+  it('keeps only verified mirror rows, and the space row speaks for the list', async () => {
+    const { sock, space } = await runningSpace();
+    const run = `space:${space}:m1`;
+    const send = async (seq: number, ev: object, key = hostKey) =>
+      sock.deliver({
+        type: 'space_event',
+        envelope: await event(space, seq, ev, key),
+      });
+    await send(3, mirror('space', space, row(space)));
+    await send(
+      4,
+      mirror(
+        'chat_message',
+        'm1',
+        chatRow(space, { id: 'm1', text: 'forged' }),
+      ),
+      strangerKey,
+    );
+    await send(
+      7,
+      mirror(
+        'chat_message',
+        'm1',
+        chatRow(space, { id: 'm1', text: 'Fix it' }),
+      ),
+    );
+    await send(
+      8,
+      mirror('turn_step', `${run}:0`, { kind: 'text', text: 'Looking' }),
+    );
+    await waitFor(
+      () => Object.keys(state().mirrors[space]?.steps ?? {}).length === 1,
+      'step',
+    );
+    const m = state().mirrors[space]!;
+    expect(m.space).toMatchObject({ id: space, title: 'Login fix' });
+    expect(Object.values(m.messages).map((x) => x.text)).toEqual(['Fix it']);
+    expect(state().spaces[0]).toMatchObject({
+      name: 'Login fix',
+      branch: 'th/login',
+      mode: 'plan',
+      status: 'running',
+    });
+    // Summary events still apply around them (holes in seq aren't gaps).
+    await send(9, { kind: 'reply', turn: 1, text: 'sum' });
+    await waitFor(() => state().spaces[0]?.lastReply === 'sum', 'reply line');
+    expect(state().lines[space]!.map((l) => l.seq)).toEqual([9]);
+
+    // The reply lands, then the row asks a question.
+    await send(
+      10,
+      mirror(
+        'chat_message',
+        'm2',
+        chatRow(space, {
+          id: 'm2',
+          author: { kind: 'agent', agent: 'claude' },
+          text: 'The plan',
+          at: 2,
+          run,
+        }),
+      ),
+    );
+    const question = {
+      id: 'ask_9',
+      run,
+      questions: [{ question: 'Which?', options: ['A', 'B'] }],
+      asked_at: 3,
+    };
+    await send(11, mirror('space', space, row(space, { question })));
+    await waitFor(() => state().spaces[0]?.status === 'waiting', 'waiting');
+    expect(state().mirrors[space]!.steps).toEqual({});
+    expect(state().spaces[0]!.lastReply).toBe('The plan');
+    expect(state().spaces[0]!.question).toMatchObject({
+      askId: 'ask_9',
+      questions: [{ question: 'Which?', options: ['A', 'B'], multi: false }],
+    });
+    await send(
+      12,
+      mirror('space', space, row(space, { status: 'idle', run: null })),
+    );
+    await waitFor(() => state().spaces[0]?.status === 'idle', 'idle');
+    expect(state().spaces[0]!.question).toBeNull();
+    expect(JSON.stringify(state())).not.toContain('forged');
+  });
+
+  it('sends with the mode picked', async () => {
+    const { client, sock, space } = await runningSpace();
+    const sent = client.send(space, 'Plan approved, implement it.', 'edit');
+    await waitFor(() => sock.of('request').length === 2, 'send');
+    const req = lastRequest(sock);
+    expect(req.op).toEqual({
+      op: 'send',
+      space,
+      text: 'Plan approved, implement it.',
+      mode: 'edit',
+    });
+    sock.deliver({
+      type: 'reply',
+      envelope: await reply(req, { outcome: 'ok', value: null }),
+    });
+    await sent;
+  });
+});
+
 describe('steering', () => {
   it('sends, and puts the status back when the host refuses', async () => {
     const { client, sock, space } = await runningSpace();

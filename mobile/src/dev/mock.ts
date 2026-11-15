@@ -17,6 +17,8 @@ import type {
   SpaceLine,
   SpaceView,
 } from '../fleet/types';
+import type { ChatMessage } from '../fleet/contract';
+import type { SpaceMirror } from '../fleet/mirror';
 import type { Services } from '../services';
 import { initialFleet, useFleetState } from '../state/fleet';
 
@@ -207,6 +209,150 @@ export const mockLines: Record<string, SpaceLine[]> = {
   ],
 };
 
+const T0 = Date.UTC(2026, 10, 14, 15, 0, 0);
+const msg = (
+  m: Partial<ChatMessage> & Pick<ChatMessage, 'id'>,
+): ChatMessage => ({
+  pr: 'space:sp-idle',
+  author: { kind: 'agent', agent: 'claude' },
+  text: '',
+  at: T0,
+  ...m,
+});
+
+/** Mirrored rows: sp-idle ends in a plan to approve, sp-running is mid-turn. */
+export const mockMirrors: Record<string, SpaceMirror> = {
+  'sp-idle': {
+    space: {
+      id: 'sp-idle',
+      name: 'tidy-settings',
+      goal: 'Tidy the settings page',
+      title: 'Tidy the settings page',
+      branch: 'agent/tidy-settings',
+      status: 'idle',
+      agent: 'claude',
+      mode: 'plan',
+      turns: 1,
+      run: null,
+      turn_log: [
+        { message: 'm1', reply: 'm2', plan: 'Move the account card…' },
+      ],
+      build_mode: 'edit',
+      question: null,
+      created_at: T0,
+      updated_at: T0 + 90_000,
+    },
+    messages: {
+      m1: msg({
+        id: 'm1',
+        author: { kind: 'me' },
+        text: 'Tidy the settings page.',
+      }),
+      m2: msg({
+        id: 'm2',
+        at: T0 + 72_000,
+        duration_ms: 72_000,
+        run: 'space:sp-idle:m1',
+        activity: [
+          { kind: 'thinking', text: 'The page mixes **account** and _labs_.' },
+          {
+            kind: 'tool',
+            name: 'Read',
+            target: 'ui/Settings.tsx',
+            ok: true,
+            summary: '412 lines',
+          },
+          {
+            kind: 'tool',
+            name: 'Read',
+            target: 'ui/AccountCard.tsx',
+            ok: true,
+            summary: '88 lines',
+          },
+          {
+            kind: 'tool',
+            name: 'Grep',
+            target: 'ui',
+            detail: 'AccountCard',
+            ok: true,
+            summary: '3 matches',
+          },
+          {
+            kind: 'tool',
+            name: 'Bash',
+            target: 'pnpm test settings',
+            detail: 'Run the settings tests',
+            ok: false,
+          },
+        ],
+        changed_files: [
+          { path: 'ui/Settings.tsx', additions: 12, deletions: 40 },
+          { path: 'ui/AccountCard.tsx', additions: 30, deletions: 2 },
+        ],
+        text: [
+          '## Plan',
+          '',
+          '1. Move the **account** card into `AccountCard.tsx`.',
+          '2. Keep labs under one heading:',
+          '   - `spaces.notify`',
+          '   - `fleet.remote`',
+          '3. Verify with `pnpm test settings`.',
+          '',
+          'See [the design](https://example.com/design) — no image: ![shot](https://example.com/a.png)',
+          '',
+          '```ts',
+          'export function AccountCard() {}',
+          '```',
+        ].join('\n'),
+      }),
+    },
+    steps: {},
+  },
+  'sp-running': {
+    space: null,
+    messages: {
+      r1: msg({
+        id: 'r1',
+        pr: 'space:sp-running',
+        author: { kind: 'me' },
+        text: 'Speed up the build.',
+      }),
+    },
+    steps: {
+      'space:sp-running:r1:0': {
+        run: 'space:sp-running:r1',
+        n: 0,
+        step: {
+          kind: 'tool',
+          name: 'Bash',
+          target: 'cargo build --timings',
+          ok: true,
+        },
+      },
+      'space:sp-running:r1:1': {
+        run: 'space:sp-running:r1',
+        n: 1,
+        step: {
+          kind: 'text',
+          text: 'The `grouping` crate takes 40% of the build.',
+        },
+      },
+      'space:sp-running:r1:2': {
+        run: 'space:sp-running:r1',
+        n: 2,
+        step: {
+          kind: 'tool',
+          name: 'Edit',
+          target: 'Cargo.toml',
+          ok: null,
+          added: 3,
+          removed: 1,
+        },
+      },
+    },
+  },
+};
+
 export const mockSession: Session = {
   userId: 'user-1',
   email: 'jean@example.com',
@@ -252,6 +398,7 @@ export function mockSnapshot(over: Partial<FleetSnapshot> = {}): FleetSnapshot {
     devices: mockDevices.map((d) => ({ ...d })),
     spaces: mockSpaces.map((s) => ({ ...s })),
     lines: { ...mockLines },
+    mirrors: { ...mockMirrors },
     questions: [{ ...mockQuestion, questions: [...mockQuestion.questions] }],
     ...over,
   };
@@ -314,8 +461,8 @@ export function createMock(options: MockOptions = {}): Mock {
       useFleetState.setState((s) => ({ spaces: [space, ...s.spaces] }));
       return space;
     },
-    async send(space, text) {
-      await call('send', space, text);
+    async send(space, text, mode = null) {
+      await call('send', space, text, mode);
       appendLine(space, 'turn', text);
       patchSpace(space, { status: 'running' });
     },

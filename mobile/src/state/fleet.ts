@@ -13,6 +13,7 @@ export const initialFleet: FleetSnapshot = {
   devices: [],
   spaces: [],
   lines: {},
+  mirrors: {},
   questions: [],
 };
 

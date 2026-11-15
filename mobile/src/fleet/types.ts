@@ -5,6 +5,7 @@
  * zustand store in `src/state/fleet.ts` and call the client's methods.
  */
 import type { FleetMode } from '../gen/fleet';
+import type { SpaceMirror } from './mirror';
 
 export type ConnectionState = 'off' | 'connecting' | 'connected' | 'error';
 
@@ -78,6 +79,8 @@ export interface FleetSnapshot {
   devices: FleetDeviceView[];
   spaces: SpaceView[];
   lines: Record<string, SpaceLine[]>;
+  /** The host's own rows of a space, when it mirrors them (`src/fleet/mirror.ts`). */
+  mirrors: Record<string, SpaceMirror>;
   /** Questions routed to this device that aren't answered yet. */
   questions: QuestionView[];
 }
@@ -92,7 +95,8 @@ export interface FleetClient {
     goal: string;
     mode: FleetMode;
   }): Promise<SpaceView>;
-  send(space: string, text: string): Promise<void>;
+  /** `mode`: the turn's, when it isn't the space's own. */
+  send(space: string, text: string, mode?: FleetMode | null): Promise<void>;
   stopSpace(space: string): Promise<void>;
   /** One entry per question: chosen options, or one free text. */
   answer(space: string, askId: string, answers: string[][]): Promise<void>;

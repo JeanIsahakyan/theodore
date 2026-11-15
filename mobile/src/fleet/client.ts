@@ -17,6 +17,8 @@
  *   ─▶ seal{target_key: pin} ─▶ starting ─▶ reply opened with that pin ─▶ ok: subscribe
  *                                        └▶ refused (the cloud's): its code only
  * space_event / ask ─▶ opened with the host's pin (Event / Ask) ─▶ store   else dropped
+ *   mirror{model, id, data} ─▶ the space's mirror (src/fleet/mirror.ts); its
+ *   space row names the space and says its status, mode, question
  * space_gap ─▶ a gap line; dismiss ─▶ question gone; delegations ─▶ verified, kept
  * ```
  *
@@ -49,6 +51,14 @@ import { storageKey, type SecretStorage } from '../keys/storage-types';
 import type { DeviceKey, KeyStore } from '../keys/types';
 import { initialFleet, useFleetState } from '../state/fleet';
 import { open, peek, seal, signHello } from './crypto';
+import {
+  applyMirror,
+  emptyMirror,
+  latestReply,
+  mirrorStatus,
+  mirrorTitle,
+  type SpaceMirror,
+} from './mirror';
 import { pinStore, type Pin, type PinStore } from './pins';
 import { defaultPlatform } from './platform';
 import type { FleetPlatform, FleetSocket } from './platform-types';
@@ -176,6 +186,8 @@ interface Tracked {
   lines: SpaceLine[];
   lastSeq: number;
   startedName: string | null;
+  /** The host's own rows, when it mirrors them. */
+  mirror: SpaceMirror;
   /** Subscribed (after a verified ok start, or followed). */
   subscribed: boolean;
 }
@@ -248,6 +260,10 @@ export function createFleetClient(
   const publishLines = (space: string) => {
     const x = tracked.get(space);
     if (x) set((s) => ({ lines: { ...s.lines, [space]: [...x.lines] } }));
+  };
+  const publishMirror = (space: string) => {
+    const x = tracked.get(space);
+    if (x) set((s) => ({ mirrors: { ...s.mirrors, [space]: x.mirror } }));
   };
   const publishQuestions = () =>
     set({ questions: [...questions.values()].map((q) => q.view) });
@@ -652,6 +668,7 @@ export function createFleetClient(
       lines: [],
       lastSeq: 0,
       startedName: null,
+      mirror: emptyMirror(),
       subscribed: true,
     };
     tracked.set(space, x);
@@ -692,8 +709,47 @@ export function createFleetClient(
       x.lines.splice(0, x.lines.length - LINES_KEPT);
   };
 
+  /** The host's own row: kept, and the space row speaks for the list. */
+  const applyMirrorEvent = (x: Tracked, seq: number, ev: RemoteSpaceEvent) => {
+    if (ev.kind !== 'mirror') return;
+    // Compaction leaves holes in seq: they aren't gaps.
+    x.lastSeq = seq;
+    const before = x.mirror;
+    const next = applyMirror(before, x.view.space, ev.model, ev.id, ev.data);
+    if (next === before) return;
+    x.mirror = next;
+    const v = x.view;
+    const row = next.space;
+    if (row) {
+      const title = mirrorTitle(row);
+      if (title) v.name = title;
+      if (row.branch) v.branch = row.branch;
+      if (isMode(row.mode)) v.mode = row.mode;
+      v.status = mirrorStatus(row);
+      const q = row.question;
+      if (q) {
+        v.question = {
+          askId: q.id,
+          space: v.space,
+          from: `${v.hostName} · ${x.startedName || title}`,
+          questions: uiQuestions(q.questions),
+        };
+      } else if (
+        v.question &&
+        v.question.askId === before.space?.question?.id
+      ) {
+        v.question = null;
+      }
+    }
+    const reply = latestReply(next);
+    if (reply !== null) v.lastReply = truncate(reply, 8000);
+    publishSpaces();
+    publishMirror(v.space);
+  };
+
   const applyEvent = (x: Tracked, seq: number, ev: RemoteSpaceEvent) => {
     if (seq <= x.lastSeq || !isObj(ev)) return;
+    if (ev.kind === 'mirror') return applyMirrorEvent(x, seq, ev);
     const line = lineOf(seq, ev);
     if (!line) return;
     x.lastSeq = seq;
@@ -943,6 +999,7 @@ export function createFleetClient(
         lines: [],
         lastSeq: 0,
         startedName: null,
+        mirror: emptyMirror(),
         subscribed: false,
       };
       tracked.set(space, x);
@@ -973,7 +1030,7 @@ export function createFleetClient(
       return { ...(tracked.get(space)?.view ?? x.view) };
     },
 
-    async send(space, text) {
+    async send(space, text, mode = null) {
       if (!text.trim()) throw new FleetError('empty message');
       const x = tracked.get(space);
       const before = x?.view.status;
@@ -983,7 +1040,12 @@ export function createFleetClient(
         publishSpaces();
       }
       try {
-        await steer(space, { op: 'send', space, text, mode: null });
+        await steer(space, {
+          op: 'send',
+          space,
+          text,
+          mode: isMode(mode) ? mode : null,
+        });
       } catch (e) {
         if (x && before && x.view.status === 'running') {
           x.view.status = before;
