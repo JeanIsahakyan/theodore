@@ -14,6 +14,7 @@ import {
   ToggleButtonGroup,
   Typography,
 } from '@heroui/react';
+import { Display, Globe, Server, Smartphone } from '@gravity-ui/icons';
 import { observer } from 'mobx-react-lite';
 import type { FleetDevice, SpaceMode } from '../../gen/contract';
 import { useRootStore, useUi } from '../../stores/context';
@@ -21,6 +22,8 @@ import {
   MODE_HINT,
   MODE_LABEL,
   MODE_ORDER,
+  isClient,
+  kindLabel,
   lastSeenLabel,
   startableDevices,
 } from './fleet';
@@ -181,6 +184,83 @@ const ThisDevice = observer(function ThisDevice() {
   );
 });
 
+/** A phone, a browser, a server or a computer. */
+function KindIcon({ device }: { device: FleetDevice }) {
+  const Icon =
+    device.kind === 'mobile'
+      ? Smartphone
+      : device.kind === 'web'
+        ? Globe
+        : device.kind === 'daemon'
+          ? Server
+          : Display;
+  return (
+    <Icon
+      aria-hidden
+      data-kind={device.kind}
+      className="fleet-kind size-4 shrink-0 text-muted"
+    />
+  );
+}
+
+/** "Send my spaces' questions here", on a trusted phone or web app: this
+ *  device signs a delegation the cloud routes by (docs/mobile.md). */
+const DelegateRow = observer(function DelegateRow({
+  device,
+}: {
+  device: FleetDevice;
+}) {
+  const fleet = useRootStore().fleet;
+  const [busy, setBusy] = useState(false);
+  const label = "Send my spaces' questions here";
+  const pending =
+    device.delegated && fleet.status?.connected && !device.delegation_live;
+  return (
+    <div className="fleet-delegate flex items-center gap-4 rounded-lg bg-default/50 px-3 py-2">
+      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+        <span className="text-sm">{label}</span>
+        <span className="text-xs text-muted">
+          Questions from spaces you start on this computer also go to{' '}
+          {device.name}, which can follow those spaces. Its answers still run
+          only on computers that trust it.
+        </span>
+        {pending && (
+          <span className="fleet-delegate-pending text-xs text-warning">
+            Waiting for the cloud to confirm.
+          </span>
+        )}
+      </div>
+      <Switch
+        size="sm"
+        aria-label={label}
+        isSelected={device.delegated}
+        isDisabled={busy}
+        onChange={(on) => {
+          setBusy(true);
+          void fleet
+            .delegate(device.device_id, on)
+            .catch(swallow)
+            .finally(() => setBusy(false));
+        }}
+      >
+        <Switch.Content>
+          <Switch.Control>
+            <Switch.Thumb />
+          </Switch.Control>
+        </Switch.Content>
+      </Switch>
+    </div>
+  );
+});
+
+/** What a device does for the fleet, in a few words. */
+function roleLabel(device: FleetDevice): string {
+  if (isClient(device)) return 'starts and answers spaces, runs none';
+  return device.accepts_remote
+    ? `runs spaces up to ${MODE_LABEL[device.max_mode]}`
+    : 'does not run remote spaces';
+}
+
 const DeviceRow = observer(function DeviceRow({
   device,
   now,
@@ -210,6 +290,7 @@ const DeviceRow = observer(function DeviceRow({
         />
         <div className="flex min-w-0 flex-1 flex-col gap-0.5">
           <span className="flex items-center gap-2 text-sm font-medium">
+            <KindIcon device={device} />
             <span className="truncate">{device.name}</span>
             {device.this_device && (
               <Chip size="sm" variant="soft" className="fleet-this-chip">
@@ -217,12 +298,10 @@ const DeviceRow = observer(function DeviceRow({
               </Chip>
             )}
           </span>
-          <span className="text-xs text-muted">
-            {device.os === 'macos' ? 'macOS' : 'Linux'} ·{' '}
+          <span className="fleet-device-meta text-xs text-muted">
+            {kindLabel(device)} ·{' '}
             {lastSeenLabel(device.last_seen_ms, device.online, now)} ·{' '}
-            {device.accepts_remote
-              ? `runs spaces up to ${MODE_LABEL[device.max_mode]}`
-              : 'does not run remote spaces'}
+            {roleLabel(device)}
           </span>
           <span className="text-xs text-muted">
             <Fingerprint value={device.fingerprint} />
@@ -268,6 +347,9 @@ const DeviceRow = observer(function DeviceRow({
           </div>
         )}
       </div>
+      {!device.this_device && isClient(device) && device.trusted && (
+        <DelegateRow device={device} />
+      )}
       {!device.this_device && device.online && (
         <span
           id={`fleet-remove-why-${device.device_id}`}
@@ -364,8 +446,8 @@ export const DevicesPage = observer(function DevicesPage() {
         </Card>
         {!canStart && fleet.devices.length > 0 && (
           <span className="text-xs text-muted">
-            A space can start on a device you trust that is online and lets
-            trusted devices run spaces.
+            A space can start on a computer you trust that is online and lets
+            trusted devices run spaces. Phones and the web app don't run spaces.
           </span>
         )}
       </section>

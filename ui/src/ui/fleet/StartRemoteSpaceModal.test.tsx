@@ -73,6 +73,16 @@ describe('Run on another device', () => {
     expect(texts('.fleet-pick-device')).toEqual(['Studio Mac']);
   });
 
+  it('never lists a phone or the web app, whatever they list', async () => {
+    await open([
+      thisDevice(),
+      device({ device_id: 'ok', name: 'Studio Mac' }),
+      device({ device_id: 'ph', name: 'iPhone', kind: 'mobile' }),
+      device({ device_id: 'wb', name: 'Browser', kind: 'web' }),
+    ]);
+    expect(texts('.fleet-pick-device')).toEqual(['Studio Mac']);
+  });
+
   it('never lists a device that is not trusted here', async () => {
     await open([
       thisDevice(),

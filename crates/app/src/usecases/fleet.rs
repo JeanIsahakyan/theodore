@@ -3,7 +3,8 @@
 //! lifecycle and the inbound dispatch; `fleet_host` is this device as a
 //! target (trust gate, hosted spaces, journal), `fleet_origin` this device
 //! as an origin (remote spaces started here, questions routed here),
-//! `fleet_tools` the agent's tools.
+//! `fleet_delegate` the phones and web apps this device sends its spaces'
+//! questions to, `fleet_tools` the agent's tools.
 //!
 //! ```text
 //! enabled + signed in + cloud URL + org ─▶ FleetPort::start ─▶ link
@@ -14,7 +15,7 @@
 //! link ─▶ Connected | Message | Disconnected | Fatal ─▶ fleet_inbound
 //! ```
 
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
@@ -26,8 +27,9 @@ use theodore_contract::{
 };
 use theodore_domain::HostKind;
 use theodore_fleet_protocol::{
-    ClientMessage, DeviceInfo, DeviceKey, DeviceKind, DeviceOs, DeviceSummary, FleetMode,
-    ProjectRef, REPLAY_MEMORY_MS, RemoteRequest, ServerMessage, SpaceCursor, codes, fingerprint,
+    ClientMessage, Delegation, DeviceInfo, DeviceKey, DeviceKind, DeviceOs, DeviceSummary,
+    FleetMode, ProjectRef, REPLAY_MEMORY_MS, RemoteRequest, ServerMessage, SpaceCursor, codes,
+    fingerprint,
 };
 use theodore_ports::{FleetCommand, FleetConnect, FleetHostedRow, FleetInbound};
 use tokio::sync::{mpsc, oneshot};
@@ -108,6 +110,11 @@ pub(crate) struct FleetSettings {
     pub name: Option<String>,
     #[serde(default)]
     pub trusted_devices: Vec<TrustedDevice>,
+    /// Phones and web apps this device sends its spaces' questions to
+    /// (`fleet_delegate`), by device id: what the user asked for, signed
+    /// again for the cloud after every welcome.
+    #[serde(default)]
+    pub delegates: Vec<String>,
 }
 
 impl Default for FleetSettings {
@@ -118,6 +125,7 @@ impl Default for FleetSettings {
             max_mode: default_max_mode(),
             name: None,
             trusted_devices: Vec::new(),
+            delegates: Vec::new(),
         }
     }
 }
@@ -276,6 +284,15 @@ pub(crate) struct FleetMem {
     /// Questions from elsewhere routed here, by ask id, with the (pinned,
     /// verified) device that asked.
     pub asks: HashMap<String, (FleetQuestion, String)>,
+    /// The cloud's live delegations naming this device, each verified
+    /// (`fleet_on_delegations`).
+    pub delegations: Vec<Delegation>,
+    /// A welcome came and the wanted delegations weren't signed again yet:
+    /// done once the device list says which delegates are in this org.
+    pub delegations_due: bool,
+    /// Delegates a revocation went to on this connection: one each, so a
+    /// cloud that keeps listing one can't make this device loop.
+    pub revoked: HashSet<String>,
 }
 
 impl FleetMem {
@@ -303,7 +320,7 @@ pub struct FleetState {
     /// One reconcile at a time.
     reconcile_lock: tokio::sync::Mutex<()>,
     /// Read-modify-write of the settings.
-    settings_lock: tokio::sync::Mutex<()>,
+    pub(crate) settings_lock: tokio::sync::Mutex<()>,
     pub(crate) hosted_loaded: tokio::sync::OnceCell<()>,
     /// The persisted seen requests, read once.
     pub(crate) seen_loaded: tokio::sync::OnceCell<()>,
@@ -347,7 +364,7 @@ impl Core {
         s
     }
 
-    async fn fleet_save_settings(&self, s: &FleetSettings) -> AppResult<()> {
+    pub(crate) async fn fleet_save_settings(&self, s: &FleetSettings) -> AppResult<()> {
         let store = self.0.deps.store.clone();
         let value = serde_json::to_value(s)
             .map_err(|e| AppError::Invalid(format!("fleet settings: {e}")))?;
@@ -524,7 +541,7 @@ impl Core {
     /// user compared (`req.public_key`), and only while the cloud still
     /// lists that key for the device.
     pub async fn fleet_trust_device(&self, req: FleetTrustRequest) -> AppResult<FleetStatus> {
-        {
+        let asked = {
             let _g = self.0.fleet.settings_lock.lock().await;
             let mut s = self.fleet_settings().await;
             let pin = if req.trusted {
@@ -562,7 +579,16 @@ impl Core {
             };
             s.trusted_devices.retain(|t| t.device_id != req.device_id);
             s.trusted_devices.extend(pin);
+            // Untrusted: it follows this device's spaces no more either.
+            let asked = !req.trusted && s.delegates.contains(&req.device_id);
+            if !req.trusted {
+                s.delegates.retain(|d| *d != req.device_id);
+            }
             self.fleet_save_settings(&s).await?;
+            asked
+        };
+        if !req.trusted {
+            self.fleet_revoke_if_held(&req.device_id, asked).await;
         }
         tracing::info!(device = %req.device_id, trusted = req.trusted, "fleet trust changed");
         let status = self.fleet_status().await?;
@@ -601,12 +627,16 @@ impl Core {
                 listed.info.name
             )));
         }
-        {
+        let asked = {
             let _g = self.0.fleet.settings_lock.lock().await;
             let mut s = self.fleet_settings().await;
             s.trusted_devices.retain(|t| t.device_id != device_id);
+            let asked = s.delegates.iter().any(|d| d == device_id);
+            s.delegates.retain(|d| d != device_id);
             self.fleet_save_settings(&s).await?;
-        }
+            asked
+        };
+        self.fleet_revoke_if_held(device_id, asked).await;
         if !self.fleet_send_msg(ClientMessage::RemoveDevice {
             device_id: device_id.to_string(),
         }) {
@@ -791,6 +821,12 @@ impl Core {
                     .iter()
                     .any(|t| t.device_id == d.device_id && t.public_key == d.public_key),
                 this_device: mem.device_id.as_deref() == Some(d.device_id.as_str()),
+                delegated: wants_delegate(&s, d),
+                delegation_live: mem.device_id.as_deref().is_some_and(|me| {
+                    mem.delegations
+                        .iter()
+                        .any(|g| g.origin_device == me && g.delegate_device == d.device_id)
+                }),
             })
             .collect();
         Ok(FleetStatus {
@@ -922,6 +958,9 @@ impl Core {
         mem.device_id = None;
         mem.devices.clear();
         mem.drop_claims();
+        mem.delegations.clear();
+        mem.delegations_due = false;
+        mem.revoked.clear();
         mem.error = None;
         self.0.fleet.tools_on.store(false, Ordering::SeqCst);
     }
@@ -1004,6 +1043,10 @@ impl Core {
                     mem.device_id = Some(device_id.clone());
                     mem.generation = conn_generation;
                     mem.error = None;
+                    // The cloud may have lost them: signed again once the
+                    // device list comes.
+                    mem.delegations_due = true;
+                    mem.revoked.clear();
                 }
                 self.0.fleet.tools_on.store(true, Ordering::SeqCst);
                 let store = self.0.deps.store.clone();
@@ -1073,6 +1116,7 @@ impl Core {
                     );
                 }
                 self.fleet().devices = devices;
+                self.fleet_resend_delegations().await;
                 self.fleet_emit_status().await;
             }
             ServerMessage::Request { envelope, .. } => self.fleet_on_request(envelope).await,
@@ -1090,11 +1134,9 @@ impl Core {
                 self.fleet().asks.remove(&ask_id);
                 self.emit(Ephemeral::FleetAskDismissed { ask_id });
             }
-            // Challenge and welcome are the adapter's. Delegations matter to
-            // the desktop only once it delegates (docs/mobile.md): not yet.
-            ServerMessage::Challenge { .. }
-            | ServerMessage::Welcome { .. }
-            | ServerMessage::Delegations { .. } => {}
+            ServerMessage::Delegations { list } => self.fleet_on_delegations(list).await,
+            // Challenge and welcome are the adapter's.
+            ServerMessage::Challenge { .. } | ServerMessage::Welcome { .. } => {}
             ServerMessage::Error { code, message } => {
                 tracing::warn!(error.code = %code, error = %message, "the fleet cloud reported an error");
                 // The cloud's text is unsigned: the user hears our words.
@@ -1139,6 +1181,17 @@ impl Core {
         });
         Ok(())
     }
+}
+
+/// Whether this device should be sending its spaces' questions to `d`:
+/// asked for here, `d` is a client (phone, web app), and it's pinned with
+/// the key the cloud lists now.
+pub(crate) fn wants_delegate(s: &FleetSettings, d: &DeviceSummary) -> bool {
+    !d.info.kind.hosts()
+        && s.delegates.contains(&d.device_id)
+        && s.trusted_devices
+            .iter()
+            .any(|t| t.device_id == d.device_id && t.public_key == d.public_key)
 }
 
 /// The machine's name: the Mac's computer name, else the host name.

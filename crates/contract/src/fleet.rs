@@ -4,7 +4,7 @@
 //! `theodore-fleet-protocol`; these are the UI's.
 //!
 //! Commands: `fleet_status`, `fleet_set_settings`, `fleet_trust_device`,
-//! `fleet_remove_device`, `fleet_start_space`, `fleet_send`, `fleet_stop`, `fleet_answer`,
+//! `fleet_remove_device`, `fleet_delegate`, `fleet_start_space`, `fleet_send`, `fleet_stop`, `fleet_answer`,
 //! `fleet_spaces`, `fleet_space_lines`, `fleet_presence`.
 //! Ephemerals: `fleet_status`, `fleet_space`, `fleet_space_line`,
 //! `fleet_ask`, `fleet_ask_dismissed`, `fleet_trust_needed`.
@@ -32,7 +32,8 @@ pub struct FleetDevice {
     pub device_id: String,
     pub name: String,
     pub os: FleetOs,
-    /// `desktop` or `daemon`.
+    /// `desktop` or `daemon` (computers: they run spaces), `mobile` or `web`
+    /// (the phone and web app: clients only, never a space's target).
     pub kind: String,
     pub online: bool,
     /// Unix ms; 0 if never.
@@ -51,6 +52,11 @@ pub struct FleetDevice {
     /// This device trusts it (its key is pinned here).
     pub trusted: bool,
     pub this_device: bool,
+    /// This device sends its spaces' questions there (docs/mobile.md
+    /// "Following a computer's spaces"): asked for here, and still trusted.
+    pub delegated: bool,
+    /// The cloud holds that delegation, as this device signed it.
+    pub delegation_live: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]

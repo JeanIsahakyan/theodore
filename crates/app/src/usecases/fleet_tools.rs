@@ -204,7 +204,7 @@ impl Core {
         Ok(mem
             .devices
             .iter()
-            .filter(|d| d.online && d.info.accepts_remote)
+            .filter(|d| d.online && d.info.accepts_remote && d.info.kind.hosts())
             .filter(|d| me.as_deref() != Some(d.device_id.as_str()))
             .filter_map(|d| {
                 let pin = pin_of(d, &s)?;
@@ -253,6 +253,8 @@ impl Core {
                 .devices
                 .iter()
                 .filter(|d| me.as_deref() != Some(d.device_id.as_str()))
+                // A phone or the web app runs no spaces.
+                .filter(|d| d.info.kind.hosts())
                 .filter_map(|d| pin_of(d, &s).map(|p| (d, p)))
                 .collect();
             // By id; else by a pinned name no other trusted device has.

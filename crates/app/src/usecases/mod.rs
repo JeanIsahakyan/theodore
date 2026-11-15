@@ -7,6 +7,7 @@ pub mod code_intel;
 pub mod config_editor;
 pub mod file_preview;
 pub mod fleet;
+mod fleet_delegate;
 mod fleet_host;
 mod fleet_origin;
 mod fleet_tools;

@@ -15,8 +15,8 @@ use theodore_contract::{
 };
 use theodore_domain::{Sha, Usage};
 use theodore_fleet_protocol::{
-    ClientMessage, DeviceInfo, DeviceKey, DeviceKind, DeviceOs, DeviceSummary, Domain, FleetMode,
-    ProjectRef, REQUEST_WINDOW_MS, RemoteAsk, RemoteOp, RemoteQuestion, RemoteRequest,
+    ClientMessage, Delegation, DeviceInfo, DeviceKey, DeviceKind, DeviceOs, DeviceSummary, Domain,
+    FleetMode, ProjectRef, REQUEST_WINDOW_MS, RemoteAsk, RemoteOp, RemoteQuestion, RemoteRequest,
     RemoteSpaceEvent, RemoteSpaceStatus, ReplyBody, ReplyOutcome, ServerMessage, SignedEnvelope,
     SpaceEventBody, StartedSpace, TurnOutcome, codes, fingerprint, fresh,
 };
@@ -2977,4 +2977,485 @@ async fn a_new_access_token_lifts_a_fatal_refusal() {
     );
     wait_until("redialed", || f.fleet.starts() == 2).await;
     assert_eq!(f.fleet.connect(1).access_token, "at-rt_2");
+}
+
+// ── phones, the web app and delegations (docs/mobile.md) ──────────────────
+
+const PHONE: &str = "dev_00000000-0000-4000-8000-000000000005";
+const WEB: &str = "dev_00000000-0000-4000-8000-000000000006";
+
+/// A client device: lists what a computer would (a lying cloud could), but
+/// its kind says it runs no spaces.
+fn client(id: &str, key: &DeviceKey, name: &str, kind: DeviceKind) -> DeviceSummary {
+    let mut d = summary(id, key, name, vec![app_project()]);
+    d.info.kind = kind;
+    d
+}
+
+/// A request from `origin` (key `key`) for this device.
+fn sealed_from(
+    f: &Fixtures,
+    origin: &str,
+    key: &DeviceKey,
+    op: RemoteOp,
+) -> (String, SignedEnvelope) {
+    let req = RemoteRequest {
+        req_id: uuid::Uuid::new_v4().to_string(),
+        origin_device: origin.into(),
+        target_device: ME.into(),
+        target_key: my_key(f),
+        issued_at_ms: now(f),
+        op,
+    };
+    (req.req_id.clone(), SignedEnvelope::seal(&req, key))
+}
+
+/// Delivers `origin`'s request and, once claimed, the cloud's yes.
+async fn run_from(f: &Fixtures, origin: &str, key: &DeviceKey, op: RemoteOp) -> ReplyOutcome {
+    let (id, env) = sealed_from(f, origin, key, op);
+    deliver(f, env);
+    wait_until("the claim", || {
+        claimed(f, &id) || reply_of(f, &id).is_some()
+    })
+    .await;
+    if reply_of(f, &id).is_none() {
+        claim_result(f, &id, true);
+    }
+    wait_until("the reply", || reply_of(f, &id).is_some()).await;
+    reply_of(f, &id).unwrap()
+}
+
+/// Delegations this device sent, each opened with its own key.
+fn delegations_sent(f: &Fixtures) -> Vec<Delegation> {
+    f.fleet
+        .sent()
+        .into_iter()
+        .filter_map(|m| match m {
+            ClientMessage::Delegate { envelope } => Some(
+                envelope
+                    .open_as(&my_key(f), Domain::Delegate)
+                    .expect("signed by this device as the origin"),
+            ),
+            _ => None,
+        })
+        .collect()
+}
+
+fn delegation(
+    (origin, delegate): (&str, &str),
+    at: u64,
+    key: &DeviceKey,
+    revoke: bool,
+    expires_at_ms: u64,
+) -> SignedEnvelope {
+    SignedEnvelope::seal_as(
+        &Delegation {
+            origin_device: origin.into(),
+            delegate_device: delegate.into(),
+            issued_at_ms: at,
+            expires_at_ms,
+            revoke,
+        },
+        key,
+        Domain::Delegate,
+    )
+}
+
+async fn device_view(core: &Core, id: &str) -> theodore_contract::FleetDevice {
+    core.fleet_status()
+        .await
+        .unwrap()
+        .devices
+        .into_iter()
+        .find(|d| d.device_id == id)
+        .expect("listed")
+}
+
+/// Phones and the web app are listed with their kind and can be trusted,
+/// but nothing from here ever targets them: not the start, not the agent's
+/// tools, not the outbound path a question's answer takes.
+#[tokio::test]
+async fn a_phone_or_the_web_app_is_trusted_but_never_a_target() {
+    let f = fixtures();
+    let (core, _recv) = start(&f);
+    let (mac, phone, web) = (
+        DeviceKey::generate().unwrap(),
+        DeviceKey::generate().unwrap(),
+        DeviceKey::generate().unwrap(),
+    );
+    connect(
+        &f,
+        &core,
+        false,
+        vec![
+            summary(TARGET, &mac, "mac1", vec![app_project()]),
+            client(PHONE, &phone, "iPhone", DeviceKind::Mobile),
+            client(WEB, &web, "Browser", DeviceKind::Web),
+        ],
+    )
+    .await;
+    for d in [TARGET, PHONE, WEB] {
+        trust(&core, d).await;
+    }
+    let (p, w) = (
+        device_view(&core, PHONE).await,
+        device_view(&core, WEB).await,
+    );
+    assert_eq!((p.kind.as_str(), p.trusted), ("mobile", true));
+    assert_eq!((w.kind.as_str(), w.trusted), ("web", true));
+
+    // The start: refused here, nothing signed.
+    for d in [PHONE, WEB] {
+        let e = core
+            .fleet_start_space(FleetStartRequest {
+                device_id: d.into(),
+                project_id: "local:app".into(),
+                goal: "Port it".into(),
+                mode: SpaceMode::Edit,
+            })
+            .await
+            .unwrap_err();
+        assert!(e.to_string().contains("doesn't run spaces"), "{e}");
+    }
+    // The agent's tools: neither listed nor reachable, by id or by name.
+    let listed = core.fleet_tool_devices().await.unwrap();
+    assert_eq!(
+        listed
+            .iter()
+            .map(|d| d.device_id.as_str())
+            .collect::<Vec<_>>(),
+        [TARGET]
+    );
+    for d in [PHONE, "iPhone", WEB, "Browser"] {
+        let e = core
+            .fleet_tool_start("mine", SpaceMode::Edit, d, "local:app", "Look", "ask")
+            .await
+            .unwrap_err();
+        assert!(e.to_string().contains("no trusted device"), "{e}");
+    }
+    // The outbound path itself: a question claiming a phone as its host
+    // gets no answer signed for it.
+    f.fleet.push(FleetInbound::Message(signed_ask(
+        &phone,
+        RemoteAsk {
+            ask_id: "q5".into(),
+            space: "rs_5".into(),
+            host_device: PHONE.into(),
+            from: "iPhone".into(),
+            questions: vec![],
+        },
+    )));
+    wait_until("the ask", || core.fleet().asks.contains_key("q5")).await;
+    let e = core
+        .fleet_answer(theodore_contract::FleetAnswerRequest {
+            space: "rs_5".into(),
+            ask_id: "q5".into(),
+            answers: vec![],
+        })
+        .await
+        .unwrap_err();
+    assert!(e.to_string().contains("doesn't run spaces"), "{e}");
+    assert!(requests(&f).is_empty(), "nothing signed for a client");
+}
+
+/// A trusted phone's signed requests run here like a computer's, within
+/// max_mode: it starts a space, and answers a question of a space another
+/// device started (the one it follows). An untrusted one's don't.
+#[tokio::test]
+async fn a_trusted_phone_starts_and_answers_here_like_a_computer() {
+    let f = fixtures();
+    let (core, _recv) = start(&f);
+    let project = project(&f, &core).await;
+    let (origin, phone, web) = (
+        DeviceKey::generate().unwrap(),
+        DeviceKey::generate().unwrap(),
+        DeviceKey::generate().unwrap(),
+    );
+    connect(
+        &f,
+        &core,
+        true,
+        vec![
+            summary(ORIGIN, &origin, "mac1", vec![]),
+            client(PHONE, &phone, "iPhone", DeviceKind::Mobile),
+            client(WEB, &web, "Browser", DeviceKind::Web),
+        ],
+    )
+    .await;
+    trust(&core, ORIGIN).await;
+    trust(&core, PHONE).await;
+
+    // Untrusted: refused like any device.
+    let (id, env) = sealed_from(&f, WEB, &web, start_op(&project.id, "rs_w"));
+    deliver(&f, env);
+    assert_eq!(refusal(&f, &id).await, codes::UNTRUSTED_DEVICE);
+    // Above max_mode: refused like any device.
+    let (id, env) = sealed_from(
+        &f,
+        PHONE,
+        &phone,
+        start_with(&project.id, "rs_r", FleetMode::Run, None, 0),
+    );
+    deliver(&f, env);
+    assert_eq!(refusal(&f, &id).await, codes::MODE_NOT_ALLOWED);
+    // Trusted: its start runs.
+    let ok = run_from(&f, PHONE, &phone, start_op(&project.id, "rs_p")).await;
+    assert!(matches!(ok, ReplyOutcome::Ok { .. }), "{ok:?}");
+    let row = f
+        .store
+        .fleet_hosted_all()
+        .unwrap()
+        .into_iter()
+        .find(|r| r.space == "rs_p")
+        .expect("hosted");
+    assert_eq!(row.origin_device, PHONE);
+
+    // A space mac1 started asks; the phone answers it.
+    f.agents.hang_next_run();
+    run(&f, &origin, start_op(&project.id, "rs_1")).await;
+    let local = local_of(&f, "rs_1");
+    wait_until("running", || space(&f, &local).run.is_some()).await;
+    let run_id = space(&f, &local).run.unwrap();
+    let asking = tokio::spawn({
+        let (core, local, run_id) = (core.clone(), local.clone(), run_id.clone());
+        async move { core.space_tool_ask(&local, &run_id, which_store()).await }
+    });
+    wait_until("the ask", || asks(&f).iter().any(|a| a.space == "rs_1")).await;
+    let ask = asks(&f).into_iter().find(|a| a.space == "rs_1").unwrap();
+    let ok = run_from(
+        &f,
+        PHONE,
+        &phone,
+        RemoteOp::Answer {
+            space: "rs_1".into(),
+            ask_id: ask.ask_id.clone(),
+            answers: vec![vec!["Postgres".into()]],
+        },
+    )
+    .await;
+    assert!(matches!(ok, ReplyOutcome::Ok { .. }), "{ok:?}");
+    assert_eq!(asking.await.unwrap().unwrap()[0].selected, ["Postgres"]);
+    wait_until("resolved", || resolved(&f, &ask.ask_id)).await;
+    core.space_stop(&local).await.unwrap();
+}
+
+/// "Send my spaces' questions here": signed by this device for a trusted
+/// phone only, kept, signed again after a welcome, and revoked when
+/// turned off, untrusted or removed.
+#[tokio::test]
+async fn a_delegation_is_signed_kept_resent_and_revoked() {
+    let f = fixtures();
+    let (core, _recv) = start(&f);
+    let (mac, phone) = (
+        DeviceKey::generate().unwrap(),
+        DeviceKey::generate().unwrap(),
+    );
+    let devices = vec![
+        summary(TARGET, &mac, "mac1", vec![app_project()]),
+        client(PHONE, &phone, "iPhone", DeviceKind::Mobile),
+    ];
+    connect(&f, &core, false, devices.clone()).await;
+
+    let e = core.fleet_delegate(PHONE, true).await.unwrap_err();
+    assert!(e.to_string().contains("trust iPhone first"), "{e}");
+    trust(&core, TARGET).await;
+    let e = core.fleet_delegate(TARGET, true).await.unwrap_err();
+    assert!(e.to_string().contains("is a computer"), "{e}");
+    assert!(delegations_sent(&f).is_empty());
+
+    trust(&core, PHONE).await;
+    let status = core.fleet_delegate(PHONE, true).await.unwrap();
+    let row = status
+        .devices
+        .iter()
+        .find(|d| d.device_id == PHONE)
+        .unwrap();
+    assert_eq!((row.delegated, row.delegation_live), (true, false));
+    let sent = delegations_sent(&f);
+    assert_eq!(
+        sent,
+        [Delegation {
+            origin_device: ME.into(),
+            delegate_device: PHONE.into(),
+            issued_at_ms: now(&f),
+            expires_at_ms: 0,
+            revoke: false,
+        }]
+    );
+    assert_eq!(core.fleet_settings().await.delegates, [PHONE]);
+
+    // The cloud lists it: live.
+    let my = core.fleet_key().await.unwrap();
+    f.fleet
+        .push(FleetInbound::Message(ServerMessage::Delegations {
+            list: vec![delegation((ME, PHONE), now(&f), &my, false, 0)],
+        }));
+    eventually("live", || async {
+        device_view(&core, PHONE).await.delegation_live
+    })
+    .await;
+
+    // A new welcome: signed again once the devices are listed.
+    f.fleet.push(FleetInbound::Disconnected {
+        reason: "dropped".into(),
+        retry_in_ms: 500,
+    });
+    f.fleet.push(FleetInbound::Connected {
+        device_id: ME.into(),
+        generation: GENERATION + 1,
+        resume: BTreeMap::new(),
+    });
+    f.fleet.push(FleetInbound::Message(ServerMessage::Devices {
+        devices: devices.clone(),
+    }));
+    wait_until("signed again", || delegations_sent(&f).len() == 2).await;
+    assert!(!delegations_sent(&f)[1].revoke);
+
+    // Off: revoked.
+    let status = core.fleet_delegate(PHONE, false).await.unwrap();
+    let row = status
+        .devices
+        .iter()
+        .find(|d| d.device_id == PHONE)
+        .unwrap();
+    assert!(!row.delegated);
+    let last = delegations_sent(&f).pop().unwrap();
+    assert_eq!((last.delegate_device.as_str(), last.revoke), (PHONE, true));
+    assert!(core.fleet_settings().await.delegates.is_empty());
+
+    // On again, then untrusted: revoked, and not wanted any more.
+    core.fleet_delegate(PHONE, true).await.unwrap();
+    core.fleet_trust_device(FleetTrustRequest {
+        device_id: PHONE.into(),
+        trusted: false,
+        public_key: None,
+    })
+    .await
+    .unwrap();
+    let last = delegations_sent(&f).pop().unwrap();
+    assert_eq!((last.delegate_device.as_str(), last.revoke), (PHONE, true));
+    assert!(core.fleet_settings().await.delegates.is_empty());
+
+    // On again, then removed (offline): revoked before it goes.
+    trust(&core, PHONE).await;
+    core.fleet_delegate(PHONE, true).await.unwrap();
+    let mut gone = client(PHONE, &phone, "iPhone", DeviceKind::Mobile);
+    gone.online = false;
+    f.fleet.push(FleetInbound::Message(ServerMessage::Devices {
+        devices: vec![devices[0].clone(), gone],
+    }));
+    eventually("offline", || async {
+        !device_view(&core, PHONE).await.online
+    })
+    .await;
+    let before = delegations_sent(&f).len();
+    core.fleet_remove_device(PHONE).await.unwrap();
+    let sent = delegations_sent(&f);
+    assert_eq!(sent.len(), before + 1);
+    assert_eq!(
+        (sent[before].delegate_device.as_str(), sent[before].revoke),
+        (PHONE, true)
+    );
+    assert!(core.fleet_settings().await.delegates.is_empty());
+}
+
+/// The cloud's list: only delegations that verify are kept (this device's
+/// own against its key, another's against that origin's pin); one of its
+/// own it no longer wants is revoked, once per connection.
+#[tokio::test]
+async fn the_clouds_delegations_count_only_when_they_verify() {
+    let f = fixtures();
+    let (core, _recv) = start(&f);
+    let (mac, phone, web, stranger) = (
+        DeviceKey::generate().unwrap(),
+        DeviceKey::generate().unwrap(),
+        DeviceKey::generate().unwrap(),
+        DeviceKey::generate().unwrap(),
+    );
+    connect(
+        &f,
+        &core,
+        false,
+        vec![
+            summary(TARGET, &mac, "mac1", vec![]),
+            summary(STRANGER, &stranger, "macU", vec![]),
+            client(PHONE, &phone, "iPhone", DeviceKind::Mobile),
+            client(WEB, &web, "Browser", DeviceKind::Web),
+        ],
+    )
+    .await;
+    trust(&core, TARGET).await;
+    trust(&core, PHONE).await;
+    trust(&core, WEB).await;
+    core.fleet_delegate(PHONE, true).await.unwrap();
+    let my = core.fleet_key().await.unwrap();
+    let at = now(&f);
+    let list = vec![
+        // Forged: claims to be this device's, signed by another key.
+        delegation((ME, WEB), at, &stranger, false, 0),
+        // Mine, wanted.
+        delegation((ME, PHONE), at, &my, false, 0),
+        // Mine, expired.
+        delegation((ME, WEB), at, &my, false, at - 1),
+        // To this device from a pinned origin: kept.
+        delegation((TARGET, ME), at, &mac, false, 0),
+        // From an origin not trusted here: dropped.
+        delegation((STRANGER, ME), at, &stranger, false, 0),
+        // Naming neither: dropped.
+        delegation((TARGET, PHONE), at, &mac, false, 0),
+        // A revocation isn't a live one.
+        delegation((TARGET, ME), at - 10, &mac, true, 0),
+    ];
+    f.fleet
+        .push(FleetInbound::Message(ServerMessage::Delegations { list }));
+    eventually("kept", || async {
+        device_view(&core, PHONE).await.delegation_live
+    })
+    .await;
+    let kept: Vec<(String, String)> = core
+        .fleet()
+        .delegations
+        .iter()
+        .map(|d| (d.origin_device.clone(), d.delegate_device.clone()))
+        .collect();
+    assert_eq!(
+        kept,
+        [
+            (ME.to_string(), PHONE.to_string()),
+            (TARGET.to_string(), ME.to_string())
+        ]
+    );
+    assert!(!device_view(&core, WEB).await.delegation_live);
+    assert_eq!(delegations_sent(&f).len(), 1, "nothing revoked: all wanted");
+
+    // One of mine the user turned off while the cloud still holds it (an
+    // earlier session's): revoked once, however often it's listed.
+    let held = || {
+        FleetInbound::Message(ServerMessage::Delegations {
+            list: vec![
+                delegation((ME, PHONE), at, &my, false, 0),
+                delegation((ME, WEB), at, &my, false, 0),
+            ],
+        })
+    };
+    f.fleet.push(held());
+    wait_until("revoked", || {
+        delegations_sent(&f)
+            .iter()
+            .any(|d| d.delegate_device == WEB && d.revoke)
+    })
+    .await;
+    f.fleet.push(held());
+    eventually("listed again", || async {
+        device_view(&core, WEB).await.delegation_live
+    })
+    .await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let revokes = |id: &str| {
+        delegations_sent(&f)
+            .iter()
+            .filter(|d| d.delegate_device == id && d.revoke)
+            .count()
+    };
+    assert_eq!((revokes(WEB), revokes(PHONE)), (1, 0));
 }

@@ -235,6 +235,23 @@ describe('commands', () => {
     expect(fleet.trustNeededList).toEqual([]);
   });
 
+  it('delegating sends the device and the switch, and takes the new status', async () => {
+    fleet.setStatus(status());
+    transport.onCall('fleet_delegate', () =>
+      status({
+        devices: [
+          thisDevice(),
+          device({ kind: 'mobile', trusted: true, delegated: true }),
+        ],
+      }),
+    );
+    await fleet.delegate('d2', true);
+    expect(transport.calls).toEqual([
+      { cmd: 'fleet_delegate', args: { deviceId: 'd2', on: true } },
+    ]);
+    expect(fleet.device('d2')?.delegated).toBe(true);
+  });
+
   it('starting lists the new space at once', async () => {
     transport.onCall('fleet_start_space', () =>
       remoteSpace({ status: 'starting' }),

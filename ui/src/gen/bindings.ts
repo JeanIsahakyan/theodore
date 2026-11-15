@@ -260,6 +260,7 @@ export const commands = {
 	fleetSetSettings: (req: FleetSettingsRequest) => typedError<FleetStatus, CommandError>(__TAURI_INVOKE("fleet_set_settings", { req })),
 	fleetTrustDevice: (req: FleetTrustRequest) => typedError<FleetStatus, CommandError>(__TAURI_INVOKE("fleet_trust_device", { req })),
 	fleetRemoveDevice: (deviceId: string) => typedError<FleetStatus, CommandError>(__TAURI_INVOKE("fleet_remove_device", { deviceId })),
+	fleetDelegate: (deviceId: string, on: boolean) => typedError<FleetStatus, CommandError>(__TAURI_INVOKE("fleet_delegate", { deviceId, on })),
 	fleetStartSpace: (req: FleetStartRequest) => typedError<FleetRemoteSpace, CommandError>(__TAURI_INVOKE("fleet_start_space", { req })),
 	fleetSend: (req: FleetSendRequest) => typedError<null, CommandError>(__TAURI_INVOKE("fleet_send", { req })),
 	fleetStop: (space: string) => typedError<null, CommandError>(__TAURI_INVOKE("fleet_stop", { space })),
@@ -1176,7 +1177,10 @@ export type FleetDevice = {
 	device_id: string,
 	name: string,
 	os: FleetOs,
-	/**  `desktop` or `daemon`. */
+	/**
+	 *  `desktop` or `daemon` (computers: they run spaces), `mobile` or `web`
+	 *  (the phone and web app: clients only, never a space's target).
+	 */
 	kind: string,
 	online: boolean,
 	/**  Unix ms; 0 if never. */
@@ -1201,6 +1205,13 @@ export type FleetDevice = {
 	/**  This device trusts it (its key is pinned here). */
 	trusted: boolean,
 	this_device: boolean,
+	/**
+	 *  This device sends its spaces' questions there (docs/mobile.md
+	 *  "Following a computer's spaces"): asked for here, and still trusted.
+	 */
+	delegated: boolean,
+	/**  The cloud holds that delegation, as this device signed it. */
+	delegation_live: boolean,
 };
 
 export type FleetLineKind = "started" | "status" | "turn" | "tool" | "reply" | "ended" | "question" | "gap";

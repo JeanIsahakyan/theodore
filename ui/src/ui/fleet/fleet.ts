@@ -36,15 +36,30 @@ export function capMode(mode: SpaceMode, max: SpaceMode): SpaceMode {
   return modesUpTo(max).includes(mode) ? mode : max;
 }
 
-/** Devices a space can be started on from here: another device you trust
- *  (its key is pinned here, so what it sends back is checked), online,
- *  taking remote spaces and with a project to offer. */
+/** A phone or the web app (docs/mobile.md): a client only. It starts,
+ *  follows and answers spaces on your computers, and never runs one. */
+export const isClient = (d: Pick<FleetDevice, 'kind'>): boolean =>
+  d.kind === 'mobile' || d.kind === 'web';
+
+/** What a device is, for people: "Phone", "Web app", else its OS. */
+export function kindLabel(d: Pick<FleetDevice, 'kind' | 'os'>): string {
+  if (d.kind === 'mobile') return 'Phone';
+  if (d.kind === 'web') return 'Web app';
+  const os = d.os === 'macos' ? 'macOS' : 'Linux';
+  return d.kind === 'daemon' ? `${os} server` : os;
+}
+
+/** Devices a space can be started on from here: another computer you
+ *  trust (its key is pinned here, so what it sends back is checked),
+ *  online, taking remote spaces and with a project to offer. Never a
+ *  phone or the web app, whatever it lists. */
 export function startableDevices(
   devices: readonly FleetDevice[],
 ): FleetDevice[] {
   return devices.filter(
     (d) =>
       !d.this_device &&
+      !isClient(d) &&
       d.trusted &&
       d.online &&
       d.accepts_remote &&

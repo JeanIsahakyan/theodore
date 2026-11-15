@@ -495,6 +495,10 @@ export const api = {
    *  as a new device. */
   fleetRemoveDevice: (deviceId: string) =>
     call<FleetStatus>('fleet_remove_device', { deviceId }),
+  /** Sends this device's spaces' questions to a trusted phone or web app
+   *  (a delegation it signs), or stops. */
+  fleetDelegate: (deviceId: string, on: boolean) =>
+    call<FleetStatus>('fleet_delegate', { deviceId, on }),
   fleetStartSpace: (req: FleetStartRequest) =>
     call<FleetRemoteSpace>('fleet_start_space', { req }),
   fleetSend: (req: FleetSendRequest) => call<null>('fleet_send', { req }),

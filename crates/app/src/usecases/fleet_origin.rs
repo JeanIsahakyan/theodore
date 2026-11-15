@@ -201,6 +201,15 @@ fn via_word(v: AskVia) -> &'static str {
     }
 }
 
+/// Refused before anything is signed: a phone or the web app is a client
+/// only (`DeviceKind::hosts`). Names the device by id: it can reach an
+/// agent.
+fn not_a_host(device: &str) -> AppError {
+    AppError::Invalid(format!(
+        "device {device} is a phone or the web app: it doesn't run spaces"
+    ))
+}
+
 /// Settled: nothing runs until someone sends something.
 pub(crate) fn settled(s: FleetSpaceStatus) -> bool {
     matches!(
@@ -227,7 +236,8 @@ impl Core {
 
     /// Signs `op` for `target` and sends it; the receiver gets its reply.
     /// Only to a target pinned here: the request names the pinned key
-    /// (`target_key`), and only a reply signed by it counts.
+    /// (`target_key`), and only a reply signed by it counts. Never to a
+    /// phone or the web app: they run no spaces.
     async fn fleet_request(
         &self,
         target: &str,
@@ -235,6 +245,14 @@ impl Core {
         start: bool,
     ) -> AppResult<oneshot::Receiver<Answer>> {
         let me = self.fleet_ready()?;
+        let client = self
+            .fleet()
+            .devices
+            .iter()
+            .any(|d| d.device_id == target && !d.info.kind.hosts());
+        if client {
+            return Err(not_a_host(target));
+        }
         let pinned = self.fleet_pinned(target).await.ok_or_else(|| {
             AppError::Invalid(format!(
                 "device {target} isn't trusted on this device: trust it in Settings → Devices first"
@@ -333,6 +351,9 @@ impl Core {
             .find(|d| d.device_id == device)
             .cloned()
             .ok_or_else(|| AppError::NotFound(format!("device {device} isn't in the fleet")))?;
+        if !target.info.kind.hosts() {
+            return Err(not_a_host(&target.device_id));
+        }
         // Only a device trusted here, with the key it had when trusted:
         // its events and questions are checked against that key.
         // Named by its pin (or its id), never the cloud's listing: this

@@ -261,6 +261,12 @@ export class FleetStore {
     this.dismissTrustNeeded(deviceId);
   }
 
+  /** "Send my spaces' questions here" on a trusted phone or web app, or
+   *  off. Answered with the new status. */
+  async delegate(deviceId: string, on: boolean): Promise<void> {
+    this.setStatus(await api.fleetDelegate(deviceId, on));
+  }
+
   /** Starts a space on another device; it is listed at once. */
   async start(
     req: Parameters<typeof api.fleetStartSpace>[0],

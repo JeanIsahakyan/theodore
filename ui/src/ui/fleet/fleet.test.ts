@@ -5,6 +5,8 @@ import {
   canStop,
   capMode,
   isAnswered,
+  isClient,
+  kindLabel,
   lastSeenLabel,
   modesUpTo,
   pickOption,
@@ -41,6 +43,33 @@ describe('startableDevices', () => {
       device({ device_id: 'empty', trusted: true, projects: [] }),
     ];
     expect(startableDevices(list).map((d) => d.device_id)).toEqual(['ok']);
+  });
+
+  it('never a phone or the web app, even one that claims projects', () => {
+    const list = [
+      device({ device_id: 'ok', trusted: true }),
+      device({ device_id: 'phone', trusted: true, kind: 'mobile' }),
+      device({ device_id: 'web', trusted: true, kind: 'web' }),
+    ];
+    expect(startableDevices(list).map((d) => d.device_id)).toEqual(['ok']);
+  });
+});
+
+describe('kinds', () => {
+  it('a phone and the web app are clients; computers are not', () => {
+    expect(isClient(device({ kind: 'mobile' }))).toBe(true);
+    expect(isClient(device({ kind: 'web' }))).toBe(true);
+    expect(isClient(device({ kind: 'desktop' }))).toBe(false);
+    expect(isClient(device({ kind: 'daemon' }))).toBe(false);
+  });
+
+  it('reads as Phone, Web app, or the OS', () => {
+    expect(kindLabel(device({ kind: 'mobile' }))).toBe('Phone');
+    expect(kindLabel(device({ kind: 'web' }))).toBe('Web app');
+    expect(kindLabel(device({ kind: 'desktop', os: 'macos' }))).toBe('macOS');
+    expect(kindLabel(device({ kind: 'daemon', os: 'linux' }))).toBe(
+      'Linux server',
+    );
   });
 });
 

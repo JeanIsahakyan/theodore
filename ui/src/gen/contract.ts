@@ -1036,7 +1036,10 @@ export type FleetDevice = {
 	device_id: string,
 	name: string,
 	os: FleetOs,
-	/**  `desktop` or `daemon`. */
+	/**
+	 *  `desktop` or `daemon` (computers: they run spaces), `mobile` or `web`
+	 *  (the phone and web app: clients only, never a space's target).
+	 */
 	kind: string,
 	online: boolean,
 	/**  Unix ms; 0 if never. */
@@ -1061,6 +1064,13 @@ export type FleetDevice = {
 	/**  This device trusts it (its key is pinned here). */
 	trusted: boolean,
 	this_device: boolean,
+	/**
+	 *  This device sends its spaces' questions there (docs/mobile.md
+	 *  "Following a computer's spaces"): asked for here, and still trusted.
+	 */
+	delegated: boolean,
+	/**  The cloud holds that delegation, as this device signed it. */
+	delegation_live: boolean,
 };
 
 export type FleetLineKind = "started" | "status" | "turn" | "tool" | "reply" | "ended" | "question" | "gap";
