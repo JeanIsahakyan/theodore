@@ -78,6 +78,28 @@ describe('GET /v1/fleet/ws', async () => {
     });
   });
 
+  it('answers a JWKS outage with 503, which the device redials', async () => {
+    const t = await sign({ sub: 'user_1', org_id: 'org_7' });
+    const r = await handle(
+      new Request('https://cloud.test/v1/fleet/ws', {
+        headers: { ...ws, authorization: `Bearer ${t}` },
+      }),
+      () => ({
+        ...deps(),
+        verify: (tok) =>
+          verifyAccessToken(tok, {
+            apiBase: API,
+            clientId: CLIENT,
+            keys: async () => {
+              throw new TypeError('fetch failed');
+            },
+          }),
+      }),
+    );
+    expect(r.status).toBe(503);
+    expect(await code(r)).toBe('cloud.jwks_unavailable');
+  });
+
   it('answers cloud.config without the hub binding', async () => {
     const t = await sign({ sub: 'user_1', org_id: 'org_7' });
     const r = await call({ ...ws, authorization: `Bearer ${t}` }, false);

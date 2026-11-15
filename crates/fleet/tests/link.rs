@@ -648,6 +648,37 @@ async fn too_many_connections_redials() {
     assert!(cloud.redials(WAIT).await);
 }
 
+/// The cloud couldn't check a token (JWKS down): error + close 1011
+/// `fleet.unavailable`, never the end of the link.
+#[tokio::test]
+async fn close_1011_unavailable_redials() {
+    let cloud = Cloud::new().await;
+    let (mut link, _key) = start(&cloud, timing());
+    let mut conn = cloud.accept().await;
+    conn.handshake("dev_1", 1, BTreeMap::new()).await;
+    connected(&mut link).await;
+    conn.send(&ServerMessage::Error {
+        code: codes::UNAVAILABLE.into(),
+        message: "signing keys unavailable".into(),
+    })
+    .await;
+    conn.ws
+        .close(Some(CloseFrame {
+            code: CloseCode::Error,
+            reason: codes::UNAVAILABLE.into(),
+        }))
+        .await
+        .unwrap();
+    assert!(matches!(
+        next(&mut link).await,
+        FleetInbound::Message(ServerMessage::Error { code, .. }) if code == codes::UNAVAILABLE
+    ));
+    assert!(disconnected(&mut link).await.contains(codes::UNAVAILABLE));
+    let mut again = cloud.accept().await;
+    again.handshake("dev_1", 2, BTreeMap::new()).await;
+    assert_eq!(connected(&mut link).await.1, 2);
+}
+
 #[tokio::test]
 async fn http_401_on_upgrade_is_fatal() {
     let cloud = Cloud::new().await;

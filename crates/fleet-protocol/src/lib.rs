@@ -422,6 +422,9 @@ pub mod codes {
     /// Too many open connections for this user (close 1008, redial).
     pub const TOO_MANY_CONNECTIONS: &str = "fleet.too_many_connections";
     pub const UPGRADE_REQUIRED: &str = "fleet.upgrade_required";
+    /// The cloud couldn't check the token (its signing keys unreachable):
+    /// close 1011, redial with backoff. Never fatal.
+    pub const UNAVAILABLE: &str = "fleet.unavailable";
     // the device adapter's own
     pub const BAD_URL: &str = "fleet.bad_url";
     pub const TLS: &str = "fleet.tls";

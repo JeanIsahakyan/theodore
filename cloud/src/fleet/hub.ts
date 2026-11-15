@@ -32,6 +32,7 @@ import type {
   SignedEnvelope,
   SpaceEventBody,
 } from '../gen/fleet';
+import { CloudError } from '../errors';
 import {
   ACTIVE_IDLE_MS,
   close,
@@ -108,6 +109,12 @@ export interface ConnState {
   device?: string;
   generation?: number;
   presence?: Presence;
+  /**
+   * The last reauth couldn't be checked (signing keys unreachable): when
+   * the deadline passes, the close is `fleet.unavailable` (1011, redial),
+   * not `fleet.unauthorized` (4001, fatal).
+   */
+  authUnavailable?: boolean;
 }
 
 export interface Conn {
@@ -303,9 +310,14 @@ export class Hub {
           .conns(row.user_id)
           .find((c) => c.open && c.state().id === row.conn_id);
         if (!conn) continue;
-        if (conn.state().phase === 'challenged') {
+        const st = conn.state();
+        if (st.phase === 'challenged') {
           // Slow, not unauthorized: the device may redial.
           this.fail(conn, codes.BAD_MESSAGE, 'no hello in time');
+        } else if (st.authUnavailable) {
+          // Its newer token was never checked, through no fault of its own:
+          // it redials, and the Worker checks the token then.
+          this.fail(conn, codes.UNAVAILABLE, 'signing keys unavailable');
         } else {
           this.fail(conn, codes.UNAUTHORIZED, 'access token expired');
         }
@@ -477,11 +489,23 @@ export class Hub {
     }
   }
 
+  /**
+   * A refreshed token. Refused for what it is (JOSE or claim errors): an
+   * `error{fleet.unauthorized}`, which the device takes as fatal. Not
+   * checked because the signing keys are unreachable: nothing is said
+   * now, the old deadline stands, and the close it brings is non-fatal
+   * (`alarm`), so a JWKS outage never ends a device's fleet for good.
+   */
   private async reauth(r: Ready, msg: Of<'reauth'>) {
     let t: VerifiedToken;
     try {
       t = await this.env.verify(msg.access_token);
-    } catch {
+    } catch (e) {
+      if (!r.conn.open) return;
+      const s = r.conn.state();
+      s.authUnavailable = !badToken(e);
+      r.conn.save(s);
+      if (s.authUnavailable) return;
       return this.error(r.conn, codes.UNAUTHORIZED, 'access token refused');
     }
     if (!r.conn.open) return;
@@ -493,6 +517,7 @@ export class Hub {
     }
     const s = r.conn.state();
     s.expMs = (t.expiresAt ?? 0) * 1000;
+    s.authUnavailable = undefined;
     r.conn.save(s);
     this.store.setDeadline(s.id, s.user, s.expMs + REAUTH_LEEWAY_MS);
     // A long-lived connection stays fresh for the 30-day prune.
@@ -567,6 +592,18 @@ export class Hub {
       return refuse(codes.NOT_YOURS, 'no such space');
     }
     if (route.op === 'start_space') {
+      // A space id is started once. A second start of a known id (or of
+      // one whose start is still pending) would only be refused by the
+      // target, and its refusal must not cost the space that exists.
+      if (
+        space ||
+        this.store.one(
+          `SELECT 1 AS x FROM pending WHERE op = 'start_space' AND space = ?`,
+          route.space,
+        )
+      ) {
+        return refuse(codes.INVALID, 'this space was started already');
+      }
       const parent = route.parent ? this.store.space(route.parent) : undefined;
       if (parent && parent.user_id !== user) {
         return refuse(codes.NOT_YOURS, 'no such parent space');
@@ -741,7 +778,7 @@ export class Hub {
     this.store.run('DELETE FROM pending WHERE req_id = ?', p.req_id);
     if (p.op === 'start_space') {
       if (ok) this.recordSpace(p);
-      else this.forgetSpaces([p.space]);
+      else this.forgetStart(p);
     }
     if (p.op === 'answer' && p.ask_id && ok) {
       const a = this.store.ask(p.ask_id);
@@ -765,11 +802,29 @@ export class Hub {
     });
   }
 
+  /**
+   * A refused start: forgets the space only if this very request made its
+   * row (at its claim): same host, same origin, same `req_id`. A row made
+   * by any other start stays.
+   */
+  private forgetStart(p: PendingRow) {
+    const row = this.store.space(p.space);
+    if (
+      row &&
+      row.req_id === p.req_id &&
+      row.host_device === p.target_device &&
+      row.origin_device === p.origin_device
+    ) {
+      this.forgetSpaces([p.space]);
+    }
+  }
+
   private recordSpace(p: PendingRow) {
     this.store.run(
       `INSERT INTO spaces
-       (space, user_id, host_device, origin_device, parent, depth, last_ms)
-       VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT (space) DO NOTHING`,
+       (space, user_id, host_device, origin_device, parent, depth, last_ms,
+        req_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (space) DO NOTHING`,
       p.space,
       p.user_id,
       p.target_device,
@@ -777,6 +832,7 @@ export class Hub {
       p.parent,
       p.depth,
       this.env.now(),
+      p.req_id,
     );
   }
 
@@ -1358,6 +1414,15 @@ export class Hub {
     }
     if (wasReady) this.gone(s);
   }
+}
+
+/**
+ * Whether `verify` refused the token itself (a bad signature, an expired or
+ * foreign token: `cloud.unauthorized`), rather than failing to check it
+ * (`cloud.jwks_unavailable`, or anything unexpected).
+ */
+function badToken(e: unknown): boolean {
+  return e instanceof CloudError && e.code === 'cloud.unauthorized';
 }
 
 /** A socket's state; none before `open` saved it (a fresh DO socket). */
