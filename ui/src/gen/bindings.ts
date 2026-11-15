@@ -2501,6 +2501,8 @@ export type SpaceRemote = {
 	host_device: string,
 	/**  The host's name as pinned on this device. */
 	host_name: string,
+	/**  The host's project name (`project` is the host's id, not one here). */
+	project_name: string,
 	/**  Started from this device (vs followed through a delegation). */
 	started_here: boolean,
 };

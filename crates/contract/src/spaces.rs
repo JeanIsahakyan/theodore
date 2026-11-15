@@ -370,6 +370,8 @@ pub struct SpaceRemote {
     pub host_device: String,
     /// The host's name as pinned on this device.
     pub host_name: String,
+    /// The host's project name (`project` is the host's id, not one here).
+    pub project_name: String,
     /// Started from this device (vs followed through a delegation).
     pub started_here: bool,
 }

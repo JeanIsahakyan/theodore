@@ -336,6 +336,43 @@ restart forgets them. `fleet_send`/`fleet_stop`/`fleet_answer` wait up to
 15 s for the host's reply and return its refusal; not connected, or the
 host no longer pinned here, they fail here without sending.
 
+### One space UI: mirrored rows
+
+A remote space is shown exactly like a local one: same list, same page,
+chat, plan, questions and composer. The host sends its own rows; every
+follower (the origin, delegated phones and browsers) keeps a copy.
+
+```
+host                                   cloud                    follower
+space / chat_message row changes ─▶ mirror{model,id,data} ─▶ keep latest ─▶ upsert row,
+run step (live)                  ─▶ mirror{turn_step}     ─▶ relay only  ─▶ RunStep
+                                     signed Event, seq + 1    per key         Space.remote set
+```
+
+| Model | `id` | `data` | Host sends | Cloud keeps |
+| --- | --- | --- | --- | --- |
+| `space` | `rs_…` (the fleet id) | `Space`, local-only fields blanked | on change, ≤ 1 per second | latest |
+| `chat_message` | the message id | `ChatMessage`, `pr = "space:rs_…"` | on change, ≤ 1 per second per row | latest |
+| `turn_step` | `<run>:<n>` | `TurnStep`, `run = "space:rs_…:<message>"` | as it happens | relayed, not kept |
+
+- **Ids.** The host rewrites its local space id to the fleet id in every
+  row (`id`, `pr`, `run`), so all followers share one id. Message ids stay.
+- **Blanked on the host:** `worktree`, `ports`, `agent_session`,
+  `sent_feedback`, `review_pr`. `remote` is never sent; the follower sets it.
+- **`data = null`** deletes the row. A row whose JSON is over
+  `MIRROR_ROW_MAX_BYTES` (48 KiB) has its longest texts cut with a note.
+- **Compaction.** Host journal and cloud keep the latest `mirror` per
+  `(model, id)`; holes in `seq` this leaves are not gaps. `turn_step` is never
+  journaled nor stored: a finished turn's steps are in its reply's `activity`.
+- **Protocol 3** devices never get `mirror` (the cloud drops it for them).
+- **Follower.** A verified `mirror` is written to the local store, so the
+  UI's sync shows it; it survives a restart and resubscribes from the last
+  seq. Local-only parts (diff, terminal, files, ship, undo) say "Runs on
+  <host>". Send, stop, answer and approve go through `fleet_send` /
+  `fleet_stop` / `fleet_answer`; archive forgets the copy (and stops a
+  running turn). The space poller, recovery and git work skip mirrored
+  spaces.
+
 ### Phones and the web app
 
 The phone and web app (docs/mobile.md) join as devices of kind `mobile` /
