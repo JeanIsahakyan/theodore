@@ -768,6 +768,8 @@ impl Core {
                 kind: match d.info.kind {
                     DeviceKind::Desktop => "desktop".into(),
                     DeviceKind::Daemon => "daemon".into(),
+                    DeviceKind::Mobile => "mobile".into(),
+                    DeviceKind::Web => "web".into(),
                 },
                 online: d.online,
                 last_seen_ms: d.last_seen_ms,
@@ -1088,8 +1090,11 @@ impl Core {
                 self.fleet().asks.remove(&ask_id);
                 self.emit(Ephemeral::FleetAskDismissed { ask_id });
             }
-            // Challenge and welcome are the adapter's.
-            ServerMessage::Challenge { .. } | ServerMessage::Welcome { .. } => {}
+            // Challenge and welcome are the adapter's. Delegations matter to
+            // the desktop only once it delegates (docs/mobile.md): not yet.
+            ServerMessage::Challenge { .. }
+            | ServerMessage::Welcome { .. }
+            | ServerMessage::Delegations { .. } => {}
             ServerMessage::Error { code, message } => {
                 tracing::warn!(error.code = %code, error = %message, "the fleet cloud reported an error");
                 // The cloud's text is unsigned: the user hears our words.

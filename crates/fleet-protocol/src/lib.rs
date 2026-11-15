@@ -28,7 +28,10 @@ pub use keys::{DeviceKey, KeyError, fingerprint, verify};
 
 /// Protocol version sent in `hello`; the cloud refuses others with
 /// `fleet.version`.
-pub const PROTOCOL_VERSION: u32 = 3;
+pub const PROTOCOL_VERSION: u32 = 4;
+/// The oldest protocol the cloud still accepts (it hides `mobile` / `web`
+/// devices from those connections, whose `DeviceKind` can't read them).
+pub const MIN_PROTOCOL_VERSION: u32 = 3;
 /// A signed request older or newer than this is refused (`fleet.stale_request`).
 pub const REQUEST_WINDOW_MS: u64 = 5 * 60 * 1000;
 /// How long a target remembers `req_id`s to refuse replays.
@@ -67,6 +70,17 @@ pub enum DeviceKind {
     Desktop,
     /// `theodore daemon`: runs spaces, nobody sits there.
     Daemon,
+    /// The phone app (docs/mobile.md): a client only, never a target.
+    Mobile,
+    /// The web app: a client only, never a target.
+    Web,
+}
+
+impl DeviceKind {
+    /// Whether requests may be addressed to it.
+    pub fn hosts(self) -> bool {
+        matches!(self, DeviceKind::Desktop | DeviceKind::Daemon)
+    }
 }
 
 /// A space mode as the fleet speaks it; ordered from least to most power,
@@ -228,6 +242,8 @@ pub enum Domain {
     Ask,
     /// A [`ReplyBody`] from a request's target.
     Reply,
+    /// A [`Delegation`] from the origin device.
+    Delegate,
 }
 
 impl Domain {
@@ -238,6 +254,7 @@ impl Domain {
             Domain::Event => b"theodore-fleet-event-v3\0",
             Domain::Ask => b"theodore-fleet-ask-v3\0",
             Domain::Reply => b"theodore-fleet-reply-v3\0",
+            Domain::Delegate => b"theodore-fleet-delegate-v3\0",
         }
     }
 
@@ -278,6 +295,12 @@ impl Signer for RemoteRequest {
 impl Signer for SpaceEventBody {
     fn signer(&self) -> &str {
         &self.host_device
+    }
+}
+
+impl Signer for Delegation {
+    fn signer(&self) -> &str {
+        &self.origin_device
     }
 }
 
@@ -366,6 +389,30 @@ pub enum ReplyOutcome {
         code: String,
         message: String,
     },
+}
+
+/// An origin lets another of its user's devices follow the spaces it
+/// started: subscribe to them and get their questions (docs/mobile.md
+/// "Following a computer's spaces"). Signed by the origin
+/// ([`Domain::Delegate`]); it grants no power on hosts, whose own trust still
+/// decides what the delegate's requests may do.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct Delegation {
+    pub origin_device: DeviceId,
+    pub delegate_device: DeviceId,
+    pub issued_at_ms: u64,
+    /// Unix ms; the cloud drops it after. 0: no expiry.
+    pub expires_at_ms: u64,
+    /// `true` withdraws an earlier delegation to the same device.
+    pub revoke: bool,
+}
+
+/// Push providers the cloud can send through.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum PushProvider {
+    /// Expo Push (APNs / FCM behind it).
+    Expo,
 }
 
 /// A target's answer to a request, signed by the target
@@ -620,6 +667,15 @@ pub enum ClientMessage {
     RemoveDevice {
         device_id: DeviceId,
     },
+    /// This device's push token (phone app); an empty token removes it.
+    RegisterPush {
+        provider: PushProvider,
+        token: String,
+    },
+    /// A [`Delegation`] signed by this device as its origin.
+    Delegate {
+        envelope: SignedEnvelope,
+    },
 }
 
 /// Device ⇄ cloud, cloud side.
@@ -690,6 +746,11 @@ pub enum ServerMessage {
         code: String,
         message: String,
     },
+    /// The live delegations naming this device (as origin or delegate), each
+    /// as the origin signed it; sent after welcome and on change.
+    Delegations {
+        list: Vec<SignedEnvelope>,
+    },
 }
 
 /// Every type the Worker needs, for the TS export.
@@ -700,6 +761,7 @@ pub fn types() -> specta::Types {
         .register::<RemoteRequest>()
         .register::<SpaceEventBody>()
         .register::<ReplyBody>()
+        .register::<Delegation>()
         .register::<RemoteAsk>()
         .register::<StartedSpace>();
     // JS numbers: seqs, generations and unix-ms timestamps stay far below

@@ -35,6 +35,16 @@ impl DeviceKey {
         Self::from_pkcs8(doc.as_ref())
     }
 
+    /// A key from a fixed 32-byte seed: only for shared test vectors
+    /// (`cloud/src/gen/fleet-vectors.json`), never for a device.
+    pub fn from_seed_for_vectors(seed: &[u8; 32]) -> Result<Self, KeyError> {
+        let pair = Ed25519KeyPair::from_seed_unchecked(seed).map_err(|_| KeyError::Unreadable)?;
+        Ok(DeviceKey {
+            pair,
+            pkcs8_b64: String::new(),
+        })
+    }
+
     fn from_pkcs8(bytes: &[u8]) -> Result<Self, KeyError> {
         let pair = Ed25519KeyPair::from_pkcs8(bytes).map_err(|_| KeyError::Unreadable)?;
         Ok(DeviceKey {
