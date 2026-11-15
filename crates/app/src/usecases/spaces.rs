@@ -101,7 +101,7 @@ impl Core {
             // Named after the goal; a second "fix login" in the project
             // becomes `fix-login-2`, and so does its branch.
             None => {
-                let siblings = self.list_spaces(Some(project.id.clone())).await?;
+                let siblings = self.local_spaces(Some(project.id.clone())).await?;
                 let taken: Vec<&str> = siblings.iter().map(|s| s.name.as_str()).collect();
                 unique_name(&slug(name_seed(&req.goal, start.title.as_deref())), &taken)
             }
@@ -319,7 +319,18 @@ impl Core {
         self.space_row(&id).await
     }
 
-    /// Every space, or one project's; newest activity first.
+    /// The spaces of this device's own (not mirrors of spaces running on
+    /// another device), or one project's; newest activity first. What
+    /// everything but the UI's list goes through: sweeps, recovery, ports,
+    /// names and branches.
+    pub(crate) async fn local_spaces(&self, project: Option<String>) -> AppResult<Vec<Space>> {
+        let mut spaces = self.list_spaces(project).await?;
+        spaces.retain(|s| s.remote.is_none());
+        Ok(spaces)
+    }
+
+    /// Every space, mirrored ones included, or one project's; newest
+    /// activity first.
     pub async fn list_spaces(&self, project: Option<String>) -> AppResult<Vec<Space>> {
         let store = self.0.deps.store.clone();
         let rows = tokio::task::spawn_blocking(move || store.all(models::SPACE))
@@ -339,6 +350,9 @@ impl Core {
     /// (docs/spaces.md §8). Returns the message id; the reply arrives as a
     /// `chat_message` row.
     pub async fn space_send(&self, req: SpaceSendRequest) -> AppResult<String> {
+        if let Some(r) = self.space_remote_of(&req.space).await {
+            return self.remote_space_send(&r, req).await;
+        }
         let queue = self.space_queue_lock(&req.space).await;
         // Yours, so a blank space's first one: that's what starts it.
         let start = self.begin_blank(&req).await?;
@@ -719,6 +733,9 @@ impl Core {
 
     /// Cancels the turn in flight; its edits are still checkpointed.
     pub async fn space_stop(&self, space: &str) -> AppResult<()> {
+        if let Some(r) = self.space_remote_of(space).await {
+            return self.remote_space_stop(&r).await;
+        }
         if self.cancel_space_run(space).await? {
             crate::usecases::telemetry::space_action("stop");
             return Ok(());
@@ -766,7 +783,13 @@ impl Core {
 
     /// Checkpoints uncommitted edits, removes the worktree and the review;
     /// the checkpoint ref and the transcript stay.
+    ///
+    /// A mirrored space (docs/fleet.md): its turn stopped on the host if
+    /// one runs, then the copy here forgotten and unfollowed.
     pub async fn archive_space(&self, space: &str) -> AppResult<()> {
+        if let Some(r) = self.space_remote_of(space).await {
+            return self.remote_space_archive(&r).await;
+        }
         // Not while a turn hands over to the next queued message.
         let _queue = self.space_queue_lock(space).await;
         let space = self.space_row(space).await?;
@@ -976,8 +999,9 @@ impl Core {
         self.space_row(&req.space).await
     }
 
+    /// Pinning is this device's own: a mirrored space keeps it here.
     pub async fn set_space_pinned(&self, space: &str, pinned: bool) -> AppResult<Space> {
-        let row = self.space_row(space).await?;
+        let row = self.space_row_any(space).await?;
         if row.pinned == pinned {
             return Ok(row);
         }
@@ -988,14 +1012,15 @@ impl Core {
             data: Some(serde_json::json!({ "pinned": pinned })),
         }])
         .await?;
-        self.space_row(space).await
+        self.space_row_any(space).await
     }
 
     /// Turns left `running` by a previous process can never finish
     /// (docs/spaces.md §7 "Crash recovery"). Their worktree keeps whatever
-    /// the agent wrote; the next turn or archive checkpoints it.
+    /// the agent wrote; the next turn or archive checkpoints it. A mirrored
+    /// space's turn runs on its host: nothing of it is here to fail.
     pub(crate) async fn fail_interrupted_spaces(&self) {
-        let Ok(spaces) = self.list_spaces(None).await else {
+        let Ok(spaces) = self.local_spaces(None).await else {
             return;
         };
         let now = self.0.deps.clock.now();
@@ -1024,7 +1049,7 @@ impl Core {
     /// point and display names.
     pub(crate) async fn reopen_space_review(&self, pr: &PrId) -> AppResult<()> {
         let space = self
-            .list_spaces(None)
+            .local_spaces(None)
             .await?
             .into_iter()
             .find(|s| s.review_pr.as_ref() == Some(pr))
@@ -1085,12 +1110,16 @@ impl Core {
         Ok(opened)
     }
 
+    /// A space of this device's own. One that runs on another device (a
+    /// mirror, docs/fleet.md) is refused, saying where it runs: its
+    /// worktree, checkpoints, terminal and commands are the host's.
+    /// `space_row_any` reads either.
     pub(crate) async fn space_row(&self, id: &str) -> AppResult<Space> {
-        let data = self
-            .get_row(models::SPACE, id)
-            .await?
-            .ok_or_else(|| AppError::NotFound(format!("space {id}")))?;
-        serde_json::from_value(data).map_err(|e| AppError::Invalid(e.to_string()))
+        let space = self.space_row_any(id).await?;
+        match &space.remote {
+            Some(r) => Err(crate::usecases::fleet_follow::runs_elsewhere(r)),
+            None => Ok(space),
+        }
     }
 
     pub(crate) async fn space_project(&self, space: &Space) -> AppResult<Project> {

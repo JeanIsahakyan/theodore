@@ -165,8 +165,12 @@ impl Core {
     }
 
     /// Your answers to the question card: one per question, each an
-    /// option (several where `multi`) or "Other" text.
+    /// option (several where `multi`) or "Other" text. A mirrored space's
+    /// question waits on its host: the answers go there.
     pub async fn answer_space_question(&self, req: SpaceAnswerRequest) -> AppResult<()> {
+        if let Some(r) = self.space_remote_of(&req.space).await {
+            return self.remote_space_answer(&r, req).await;
+        }
         let mut pending = self.questions();
         let p = pending
             .get(&req.question)

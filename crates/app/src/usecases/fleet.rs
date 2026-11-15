@@ -257,6 +257,9 @@ pub(crate) struct Outbound {
     /// Why it failed, as an agent may read it: the refusal's code alone
     /// (`view.error`, with the target's words, is the UI's).
     pub agent_error: Option<String>,
+    /// Its host's space row is kept here (docs/fleet.md "One space UI:
+    /// mirrored rows"): followed again after a restart.
+    pub mirrored: bool,
 }
 
 #[derive(Default)]
@@ -324,6 +327,8 @@ pub struct FleetState {
     pub(crate) hosted_loaded: tokio::sync::OnceCell<()>,
     /// The persisted seen requests, read once.
     pub(crate) seen_loaded: tokio::sync::OnceCell<()>,
+    /// The mirrored spaces in the store, followed again once.
+    pub(crate) followed_loaded: tokio::sync::OnceCell<()>,
     pub(crate) observer:
         std::sync::OnceLock<mpsc::UnboundedSender<crate::usecases::fleet_host::ObserverCmd>>,
     /// Wakes `fleet_wait` on any change to a remote space.
@@ -967,6 +972,8 @@ impl Core {
 
     async fn fleet_start_link(&self, w: Wanted) -> AppResult<()> {
         self.fleet_load_hosted().await;
+        // Subscribed again on the welcome.
+        self.fleet_load_followed().await;
         let key = self.fleet_key().await?;
         let s = self.fleet_settings().await;
         let info = self.fleet_info(&s).await;
@@ -1159,12 +1166,21 @@ impl Core {
     /// After a welcome: hosted spaces replay what the cloud lacks, remote
     /// ones are subscribed again from the last seq seen here.
     fn fleet_on_connected(&self, resume: BTreeMap<String, u64>) {
-        let subs: Vec<(String, u64)> = self
-            .fleet()
-            .outbound
-            .iter()
-            .map(|(id, o)| (id.clone(), o.last_seq))
-            .collect();
+        let subs: Vec<(String, u64)> = {
+            let mut mem = self.fleet();
+            let me = mem.device_id.clone().unwrap_or_default();
+            mem.outbound
+                .iter_mut()
+                .map(|(id, o)| {
+                    // Followed again from the store before this device
+                    // knew its id.
+                    if o.view.origin_device.is_empty() {
+                        o.view.origin_device = me.clone();
+                    }
+                    (id.clone(), o.last_seq)
+                })
+                .collect()
+        };
         for (space, since) in subs {
             self.fleet_send_msg(ClientMessage::Subscribe { space, since });
         }

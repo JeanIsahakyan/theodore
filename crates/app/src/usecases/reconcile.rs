@@ -132,7 +132,7 @@ impl Core {
     /// what marks the space done. An archived space's has no such sweep.
     async fn prs_behind_live_spaces(&self) -> AppResult<HashSet<PrId>> {
         Ok(self
-            .list_spaces(None)
+            .local_spaces(None)
             .await?
             .into_iter()
             .filter(|s| s.status != SpaceStatus::Archived)

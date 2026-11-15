@@ -91,7 +91,7 @@ impl Core {
             })?;
         // First: what another space mirrored here isn't the folder's own
         // change, and it refuses if the folder was edited meanwhile.
-        for other in self.list_spaces(Some(project.id.clone())).await? {
+        for other in self.local_spaces(Some(project.id.clone())).await? {
             if other.id != space.id && other.mirror.is_some() {
                 self.unmirror_space_inner(&other, &folder, false, true)
                     .await?;
@@ -303,7 +303,7 @@ impl Core {
     /// nothing auto-writes into a folder on startup (docs/spaces.md
     /// "Mirror into a local folder").
     pub(crate) async fn pause_resumed_mirrors(&self) {
-        let Ok(spaces) = self.list_spaces(None).await else {
+        let Ok(spaces) = self.local_spaces(None).await else {
             return;
         };
         for space in spaces {

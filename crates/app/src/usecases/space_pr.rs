@@ -392,7 +392,7 @@ impl Core {
     async fn continued_branch(&self, space: &Space, repo_path: &Path) -> AppResult<String> {
         let project = self.space_project(space).await?;
         let mut taken: Vec<String> = self
-            .list_spaces(Some(space.project.clone()))
+            .local_spaces(Some(space.project.clone()))
             .await?
             .into_iter()
             .filter(|s| s.id != space.id)

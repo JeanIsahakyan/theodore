@@ -867,6 +867,8 @@ impl Core {
             .unwrap_or_default()
             .into_iter()
             .filter_map(|r| serde_json::from_value::<Space>(r.data).ok())
+            // A mirrored space's worktree is its host's.
+            .filter(|s| s.remote.is_none())
             .collect();
         let mut parts: Vec<String> = Vec::new();
         let mut reviews = 0;

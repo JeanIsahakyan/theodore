@@ -412,6 +412,7 @@ impl Core {
                 last_seq: 0,
                 started_by,
                 agent_error: None,
+                mirrored: false,
             },
         );
         let rx = match self
@@ -674,7 +675,8 @@ impl Core {
                 return;
             }
         };
-        self.fleet_apply_event(&body.space, body.seq, body.event);
+        self.fleet_apply_event(&body.space, body.seq, body.event)
+            .await;
     }
 
     /// The cloud lost events of a space followed here: a line, nothing more.
@@ -700,7 +702,30 @@ impl Core {
     }
 
     /// A verified event of a space this device follows.
-    fn fleet_apply_event(&self, space: &str, seq: u64, event: RemoteSpaceEvent) {
+    async fn fleet_apply_event(&self, space: &str, seq: u64, event: RemoteSpaceEvent) {
+        if let RemoteSpaceEvent::Mirror { model, id, data } = event {
+            // Mirrored rows rebuild the space itself (`fleet_follow`); they
+            // aren't history lines.
+            let step = model == crate::usecases::fleet_follow::TURN_STEP;
+            {
+                let mut mem = self.fleet();
+                let Some(o) = mem.outbound.get_mut(space) else {
+                    return;
+                };
+                if seq > o.last_seq {
+                    o.last_seq = seq;
+                } else if !step {
+                    // A live step is relayed, never kept: none is replayed,
+                    // so one isn't held to the order.
+                    return;
+                }
+            }
+            self.fleet_apply_mirror(space, &model, &id, data).await;
+            if !step {
+                self.fleet_keep_follow(space).await;
+            }
+            return;
+        }
         let (view, line) = {
             let mut mem = self.fleet();
             let Some(o) = mem.outbound.get_mut(space) else {
@@ -771,6 +796,7 @@ impl Core {
             line,
         });
         self.0.fleet.changed.notify_waiters();
+        self.fleet_keep_follow(space).await;
     }
 
     /// A question from a space elsewhere, routed to this device: only as

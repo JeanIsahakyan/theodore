@@ -3764,3 +3764,6 @@ async fn a_live_step_is_sent_as_turn_step_and_not_journaled() {
     .unwrap();
     assert!(stored.track.seq >= steps[1].0);
 }
+
+#[path = "fleet_follow_tests.rs"]
+mod follow;

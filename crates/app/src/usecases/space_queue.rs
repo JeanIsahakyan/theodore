@@ -366,8 +366,12 @@ impl Core {
     /// "Send now": into the running turn when its agent takes messages
     /// mid-run and the message needs nothing the run can't change (another
     /// agent, model or mode, attachments); otherwise the usual send, so
-    /// queued while a turn runs.
+    /// queued while a turn runs. A mirrored space's is a send to its host,
+    /// which takes it only once the turn settled.
     pub async fn space_send_now(&self, req: SpaceSendRequest) -> AppResult<String> {
+        if let Some(r) = self.space_remote_of(&req.space).await {
+            return self.remote_space_send(&r, req).await;
+        }
         let queue = self.space_queue_lock(&req.space).await;
         let space = self.space_row(&req.space).await?;
         let text = req.text.trim().to_string();
