@@ -680,6 +680,22 @@ export class Hub {
     if (!hosts(infoOf(target).kind)) {
       return refuse(codes.INVALID, 'that device runs no spaces');
     }
+    // A phone's or the web app's request to a computer on protocol 3: that
+    // computer never lists them, so it can't trust them and would only show
+    // a dead-end prompt. Say so instead.
+    const origin = this.store.device(sender);
+    const targetConn = this.readyDevice(user, route.target_device);
+    if (
+      origin &&
+      !hosts(infoOf(origin).kind) &&
+      targetConn &&
+      protocolOf(targetConn.state) < V4
+    ) {
+      return refuse(
+        codes.UPGRADE_REQUIRED,
+        'that computer runs an older Theodore: update it to take requests from a phone or the web',
+      );
+    }
     // The target checks this too: a key the cloud doesn't pin for that id
     // was signed for another machine.
     if (route.target_key !== target.public_key) {

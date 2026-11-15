@@ -153,6 +153,28 @@ describe('targets', () => {
     expect(phone.take('request')).toEqual([]);
   });
 
+  it('tells a phone a protocol-3 computer must update first', async () => {
+    // A protocol-3 computer never lists phones, so it can't trust one: the
+    // phone hears why instead of a dead-end "untrusted" refusal.
+    const h = new Harness();
+    const old = await h.device('user_1', 'old-mac');
+    old.protocol = 3;
+    const phone = await h.phone();
+    await old.connect();
+    await phone.connect();
+    const { reqId } = await phone.request(old.id!, {
+      op: 'stop',
+      space: 'rs_1',
+    });
+    expect(phone.take('refused')).toEqual([
+      expect.objectContaining({
+        req_id: reqId,
+        code: 'fleet.upgrade_required',
+      }),
+    ]);
+    expect(old.take('request')).toEqual([]);
+  });
+
   it('routes a phone’s request to a computer', async () => {
     const { mac2, phone } = await setup();
     await phone.request(mac2.id!, { op: 'stop', space: 'rs_1' });

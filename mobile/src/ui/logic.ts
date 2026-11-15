@@ -205,11 +205,30 @@ export function switchErrorText(raw: string): string {
   return `Couldn't switch organization. ${s.charAt(0).toUpperCase()}${s.slice(1)}`;
 }
 
-/** Any thrown value as a sentence. */
+/** What to do about a fleet refusal, by its code (the words are ours: a
+ * refusal's own text isn't trusted). */
+const FLEET_HINTS: Record<string, string> = {
+  'fleet.untrusted_device':
+    "That computer doesn't trust this device yet. On the computer, open Settings → Devices, compare this device's fingerprint and choose Trust.",
+  'fleet.upgrade_required':
+    'That computer runs an older Theodore. Update it, then try again.',
+  'fleet.remote_off':
+    'That computer doesn’t take spaces from other devices. Turn it on in its Settings → Devices.',
+  'fleet.mode_not_allowed':
+    'That computer doesn’t allow this mode. Pick a lower one, or raise its limit in its Settings → Devices.',
+  'fleet.offline':
+    'That computer is offline. Open Theodore on it and try again.',
+  'fleet.busy': 'The space is still working. Wait until it settles, then send.',
+  'fleet.unknown_project': 'That project isn’t on that computer anymore.',
+  'fleet.unknown_space': 'That space isn’t on that computer anymore.',
+};
+
+/** Any thrown value as a sentence; a fleet refusal by what to do about it. */
 export function errorText(e: unknown): string {
-  if (e instanceof Error) return e.message;
-  if (typeof e === 'string') return e;
-  return 'Something went wrong. Try again.';
+  const raw = e instanceof Error ? e.message : typeof e === 'string' ? e : null;
+  if (raw === null) return 'Something went wrong. Try again.';
+  const code = /\bfleet\.[a-z_]+/.exec(raw)?.[0];
+  return (code && FLEET_HINTS[code]) || raw;
 }
 
 /** "role" → "Role". */

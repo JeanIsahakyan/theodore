@@ -227,3 +227,19 @@ describe('organization switch error', () => {
     expect(switchErrorText('account:')).toBe("Couldn't switch organization.");
   });
 });
+
+describe('errorText for fleet refusals', () => {
+  it('turns a refusal code into what to do', async () => {
+    const { errorText } = await import('../src/ui/logic');
+    expect(
+      errorText(
+        new Error('the other device refused: fleet.untrusted_device: whatever'),
+      ),
+    ).toMatch(/doesn't trust this device yet/);
+    expect(
+      errorText(new Error('refused by the cloud: fleet.upgrade_required')),
+    ).toMatch(/older Theodore/);
+    expect(errorText(new Error('plain failure'))).toBe('plain failure');
+    expect(errorText(42)).toBe('Something went wrong. Try again.');
+  });
+});

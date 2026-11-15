@@ -92,6 +92,9 @@ export const codes = {
   TOO_MANY_CONNECTIONS: 'fleet.too_many_connections',
   /** The cloud couldn't check a token (signing keys unreachable): redial. */
   UNAVAILABLE: 'fleet.unavailable',
+  /** The target runs a Theodore too old for this request (a phone's or the
+   * web app's, which a protocol-3 computer can't see, so can't trust). */
+  UPGRADE_REQUIRED: 'fleet.upgrade_required',
 } as const;
 
 /**
