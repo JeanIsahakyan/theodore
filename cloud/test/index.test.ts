@@ -204,3 +204,77 @@ describe('worker', () => {
     expect(remoteKeys(API, CLIENT)).toBe(remoteKeys(API, CLIENT));
   });
 });
+
+describe('rate limits', async () => {
+  const { keys, sign } = await signer();
+  const workos = new FakeWorkos();
+  const seen: Array<[string, string]> = [];
+  let allow = true;
+  const deps = (): Deps => ({
+    workos,
+    clientId: CLIENT,
+    verify: (t) =>
+      verifyAccessToken(t, { apiBase: API, clientId: CLIENT, keys }),
+    limit: async (bucket, key) => {
+      seen.push([bucket, key]);
+      return allow;
+    },
+  });
+  const call = (path: string, init: RequestInit = {}) =>
+    handle(new Request(`https://cloud.test${path}`, init), deps);
+
+  it('limits org selection per client IP', async () => {
+    seen.length = 0;
+    allow = false;
+    const r = await call('/v1/auth/select-organization', {
+      method: 'POST',
+      headers: { 'cf-connecting-ip': '203.0.113.7' },
+      body: JSON.stringify({
+        pending_authentication_token: 'p',
+        organization_id: 'o',
+      }),
+    });
+    expect(r.status).toBe(429);
+    expect(seen).toEqual([['public', '203.0.113.7']]);
+    expect(workos.selections).toEqual([]);
+  });
+
+  it('limits the org routes per user, after the token checks out', async () => {
+    seen.length = 0;
+    allow = false;
+    const t = await sign({ sub: 'user_rl' });
+    const r = await call('/v1/orgs', {
+      headers: { authorization: `Bearer ${t}` },
+    });
+    expect(r.status).toBe(429);
+    expect(seen).toEqual([['user', 'user_rl']]);
+    // A bad token is refused before it can spend anyone's budget.
+    seen.length = 0;
+    const bad = await call('/v1/orgs', {
+      headers: { authorization: 'Bearer a.b.c' },
+    });
+    expect(bad.status).toBe(401);
+    expect(seen).toEqual([]);
+  });
+
+  it('limits fleet upgrades per client IP', async () => {
+    seen.length = 0;
+    allow = false;
+    const r = await call('/v1/fleet/ws', {
+      headers: { 'cf-connecting-ip': '198.51.100.9', upgrade: 'websocket' },
+    });
+    expect(r.status).toBe(429);
+    expect(seen).toEqual([['public', '198.51.100.9']]);
+  });
+
+  it('lets traffic through under the limit', async () => {
+    allow = true;
+    expect((await call('/v1/health')).status).toBe(200);
+    const t = await sign({ sub: 'user_ok' });
+    const r = await call('/v1/orgs/personal', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${t}` },
+    });
+    expect(r.status).toBe(200);
+  });
+});

@@ -13,6 +13,10 @@
  * | POST /v1/auth/select-organization | finishes a sign-in that needs an org picked (needs the secret) |
  * | GET  /v1/fleet/ws | WebSocket to the org's fleet hub (src/fleet/, docs/fleet.md) |
  *
+ * Rate limits (Cloudflare's rate-limiting bindings; 429 `cloud.rate_limited`):
+ * the unauthenticated routes (org selection, the fleet upgrade) per client
+ * IP, the authenticated ones per user.
+ *
  * ```text
  * app sign-in ─▶ 403 organization_selection_required {pending_authentication_token, organizations}
  *   ─▶ user picks ─▶ POST /v1/auth/select-organization {pending_authentication_token, organization_id}
@@ -32,6 +36,10 @@ export interface Env {
   WORKOS_CLIENT_ID: string;
   WORKOS_API_BASE?: string;
   ORG_HUB?: DurableObjectNamespace;
+  /** Per client IP: routes without a session, and fleet upgrades. */
+  RL_PUBLIC?: RateLimit;
+  /** Per signed-in user: the org routes. */
+  RL_USER?: RateLimit;
 }
 
 export { OrgHub } from './fleet/org-hub';
@@ -42,7 +50,23 @@ export interface Deps {
   verify: (token: string) => Promise<Caller>;
   /** The org's fleet hub; absent: the fleet route answers cloud.config. */
   hub?: HubFor;
+  /** `false`: over the limit for `key` in `bucket`. Absent: no limits. */
+  limit?: (bucket: 'public' | 'user', key: string) => Promise<boolean>;
 }
+
+async function within(
+  deps: Deps,
+  bucket: 'public' | 'user',
+  key: string,
+): Promise<void> {
+  if (deps.limit && !(await deps.limit(bucket, key))) {
+    throw new CloudError(429, 'cloud.rate_limited', 'too many requests');
+  }
+}
+
+/** The client's IP as Cloudflare saw it; one bucket for unknowns. */
+const clientIp = (request: Request) =>
+  request.headers.get('cf-connecting-ip') ?? 'unknown';
 
 /** A declared body over this is refused unread; `readJson` caps the rest. */
 const MAX_BODY_BYTES = 64 * 1024;
@@ -58,6 +82,11 @@ export function depsFor(env: Env): Deps {
     clientId: env.WORKOS_CLIENT_ID,
     verify: verifierFor(apiBase, env.WORKOS_CLIENT_ID),
     hub: ns ? (orgId) => ns.get(ns.idFromName(orgId)) : undefined,
+    limit: async (bucket, key) => {
+      const rl = bucket === 'public' ? env.RL_PUBLIC : env.RL_USER;
+      if (!rl) return true;
+      return (await rl.limit({ key })).success;
+    },
   };
 }
 
@@ -68,6 +97,7 @@ const routes: Record<string, Partial<Record<string, Route>>> = {
   '/v1/orgs': {
     GET: async (request, deps) => {
       const caller = await deps.verify(bearer(request));
+      await within(deps, 'user', caller.userId);
       return json({
         organizations: await listOrganizations(caller.userId, deps.workos),
       });
@@ -76,16 +106,21 @@ const routes: Record<string, Partial<Record<string, Route>>> = {
   '/v1/orgs/personal': {
     POST: async (request, deps) => {
       const caller = await deps.verify(bearer(request));
+      await within(deps, 'user', caller.userId);
       return json(await ensurePersonalOrganization(caller.userId, deps.workos));
     },
   },
   '/v1/fleet/ws': {
-    GET: (request, deps) => fleetConnect(request, deps.verify, deps.hub),
+    GET: async (request, deps) => {
+      await within(deps, 'public', clientIp(request));
+      return fleetConnect(request, deps.verify, deps.hub);
+    },
   },
   // No bearer: the user has no session yet. The pending token is the
   // credential (single use, short-lived, issued by WorkOS to this user).
   '/v1/auth/select-organization': {
     POST: async (request, deps) => {
+      await within(deps, 'public', clientIp(request));
       const body = await readJson(request, MAX_BODY_BYTES);
       const session = await deps.workos.selectOrganization({
         clientId: deps.clientId,

@@ -23,6 +23,14 @@ Why it exists:
 
 Body: JSON object, 64 KiB max. Errors: `{ "error": { "code", "message" } }`.
 
+Rate limits (Cloudflare rate-limiting bindings, separate counters per
+environment; over: `429 cloud.rate_limited`):
+
+| Bucket | Key | Limit | Routes |
+| --- | --- | --- | --- |
+| `RL_PUBLIC` | client IP (`cf-connecting-ip`) | 30 / min | `POST /v1/auth/select-organization`, `GET /v1/fleet/ws` |
+| `RL_USER` | user (`sub`, after the token checks out) | 120 / min | `GET /v1/orgs`, `POST /v1/orgs/personal` |
+
 ## Auth
 
 ```
@@ -116,6 +124,7 @@ Stable `area.kind` codes, same form as the app's `error.code`
 | `cloud.method` | 405 | method not allowed on that route |
 | `cloud.membership_inactive` | 409 | the caller's personal-org membership is inactive or pending |
 | `cloud.config` | 500 | `WORKOS_API_KEY` or `WORKOS_CLIENT_ID` missing |
+| `cloud.rate_limited` | 429 | over a rate limit (above) |
 | `cloud.internal` | 500 | anything unexpected; the log names the error kind, never the request |
 
 ## Environments and secrets
