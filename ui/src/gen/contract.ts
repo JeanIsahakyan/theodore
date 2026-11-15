@@ -2262,6 +2262,12 @@ export type Space = {
 	 *  can be dismissed in bulk once that turn ends.
 	 */
 	sent_feedback?: SentFeedback[],
+	/**
+	 *  Set when this space runs on another device (docs/fleet.md, a
+	 *  mirror of the host's space): actions go to the host through the
+	 *  fleet; local-only parts (worktree, diff, terminal) are the host's.
+	 */
+	remote?: SpaceRemote | null,
 	created_at: number,
 	updated_at: number,
 	/**
@@ -2554,6 +2560,21 @@ export type SpaceQueuedRequest = {
 	action: QueuedAction,
 };
 
+/**
+ *  One agent turn of a space: the messages it answered and the checkpoint
+ *  it moved the space from and to.
+ *  Where a mirrored space runs.
+ */
+export type SpaceRemote = {
+	/**  The fleet id (`rs_…`). */
+	space: string,
+	host_device: string,
+	/**  The host's name as pinned on this device. */
+	host_name: string,
+	/**  Started from this device (vs followed through a delegation). */
+	started_here: boolean,
+};
+
 /**  Where "Revert" takes a file back to. */
 export type SpaceRevertFrom =
 /**  As it is in the base: the space's change to it is gone. */
@@ -2708,10 +2729,6 @@ export type SpaceTrustRequest = {
 	hash: string,
 };
 
-/**
- *  One agent turn of a space: the messages it answered and the checkpoint
- *  it moved the space from and to.
- */
 export type SpaceTurn = {
 	/**
 	 *  The `chat_message` id of your message that started it; the reply's

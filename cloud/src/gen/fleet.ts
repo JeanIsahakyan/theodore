@@ -179,7 +179,16 @@ text: string } | { kind: "tool"; turn: number; name: string;
 /**  One line, ≤ 200 chars. */
 summary: string } | { kind: "reply"; turn: number;
 /**  The agent's reply for the turn, truncated to 8000 chars. */
-text: string } | { kind: "turn_ended"; turn: number; outcome: TurnOutcome; message?: string | null } | { kind: "question"; ask_id: string; questions: RemoteQuestion[] } | { kind: "question_cleared"; ask_id: string };
+text: string } | { kind: "turn_ended"; turn: number; outcome: TurnOutcome; message?: string | null } | { kind: "question"; ask_id: string; questions: RemoteQuestion[] } | { kind: "question_cleared"; ask_id: string } |
+/**
+ *  One row of the space as the host's own UI sees it (docs/spaces.md
+ *  models): `model` is `space` (the space row, local-only fields
+ *  blanked), `chat_message` (its chat), or `turn_step` (a step of a run;
+ *  `id` = `<run>:<n>`). `data` is the contract JSON; `None` deletes it.
+ *  The origin mirrors these so a remote space renders exactly like a
+ *  local one. Each event's JSON stays under [`MIRROR_ROW_MAX_BYTES`].
+ */
+{ kind: "mirror"; model: string; id: string; data?: unknown | null };
 
 export type RemoteSpaceStatus = "running" |
 /**  Settled, waiting for the next message. */

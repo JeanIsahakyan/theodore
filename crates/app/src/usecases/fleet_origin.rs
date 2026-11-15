@@ -137,6 +137,10 @@ pub(crate) fn line_of(seq: u64, ev: &RemoteSpaceEvent) -> FleetSpaceLine {
         RemoteSpaceEvent::Status { status } => {
             (FleetLineKind::Status, status_word(*status).to_string())
         }
+        // Mirrored rows aren't history lines; they rebuild the space itself.
+        RemoteSpaceEvent::Mirror { model, .. } => {
+            (FleetLineKind::Status, format!("{model} updated"))
+        }
         RemoteSpaceEvent::TurnStarted { turn, text } => {
             (FleetLineKind::Turn, format!("Turn {turn}: {text}"))
         }
@@ -751,7 +755,8 @@ impl Core {
                 }
                 RemoteSpaceEvent::TurnStarted { .. }
                 | RemoteSpaceEvent::Tool { .. }
-                | RemoteSpaceEvent::TurnEnded { .. } => {}
+                | RemoteSpaceEvent::TurnEnded { .. }
+                | RemoteSpaceEvent::Mirror { .. } => {}
             }
             let line = line_of(seq, &event);
             o.lines.push_back(line.clone());

@@ -188,6 +188,11 @@ pub struct Space {
     /// can be dismissed in bulk once that turn ends.
     #[serde(default)]
     pub sent_feedback: Vec<SentFeedback>,
+    /// Set when this space runs on another device (docs/fleet.md, a
+    /// mirror of the host's space): actions go to the host through the
+    /// fleet; local-only parts (worktree, diff, terminal) are the host's.
+    #[serde(default)]
+    pub remote: Option<SpaceRemote>,
     pub created_at: Millis,
     pub updated_at: Millis,
     /// When the space last had something for you: a turn ended or failed
@@ -357,6 +362,18 @@ pub struct AgentSession {
 
 /// One agent turn of a space: the messages it answered and the checkpoint
 /// it moved the space from and to.
+/// Where a mirrored space runs.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct SpaceRemote {
+    /// The fleet id (`rs_…`).
+    pub space: String,
+    pub host_device: String,
+    /// The host's name as pinned on this device.
+    pub host_name: String,
+    /// Started from this device (vs followed through a delegation).
+    pub started_here: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
 pub struct SpaceTurn {
     /// The `chat_message` id of your message that started it; the reply's

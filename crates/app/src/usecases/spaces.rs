@@ -250,6 +250,7 @@ impl Core {
             question: None,
             mirror: None,
             worktree_head: None,
+            remote: None,
         };
         self.apply(vec![NewAction {
             model: models::SPACE.into(),

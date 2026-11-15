@@ -555,7 +555,26 @@ pub enum RemoteSpaceEvent {
     QuestionCleared {
         ask_id: String,
     },
+    /// One row of the space as the host's own UI sees it (docs/spaces.md
+    /// models): `model` is `space` (the space row, local-only fields
+    /// blanked), `chat_message` (its chat), or `turn_step` (a step of a run;
+    /// `id` = `<run>:<n>`). `data` is the contract JSON; `None` deletes it.
+    /// The origin mirrors these so a remote space renders exactly like a
+    /// local one. Each event's JSON stays under [`MIRROR_ROW_MAX_BYTES`].
+    Mirror {
+        model: String,
+        id: String,
+        #[serde(default)]
+        #[specta(type = Option<specta_typescript::Unknown>)]
+        data: Option<serde_json::Value>,
+    },
 }
+
+/// The largest mirrored row a host sends (its JSON); longer texts are cut
+/// with a note, the host's copy stays whole.
+pub const MIRROR_ROW_MAX_BYTES: usize = 48 * 1024;
+/// Models a host mirrors to the origin and its delegates.
+pub const MIRROR_MODELS: &[&str] = &["space", "chat_message", "turn_step"];
 
 /// One event of a hosted space, as its host signs it ([`Domain::Event`]).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
