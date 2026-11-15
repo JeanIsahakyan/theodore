@@ -413,6 +413,7 @@ impl Core {
                 started_by,
                 agent_error: None,
                 mirrored: false,
+                live: Default::default(),
             },
         );
         let rx = match self
@@ -883,6 +884,8 @@ impl Core {
             .filter_map(|(seq, v)| {
                 serde_json::from_value::<RemoteSpaceEvent>(v)
                     .ok()
+                    // Mirrored rows are the space itself, not history.
+                    .filter(|e| !matches!(e, RemoteSpaceEvent::Mirror { .. }))
                     .map(|e| line_of(seq, &e))
             })
             .collect())

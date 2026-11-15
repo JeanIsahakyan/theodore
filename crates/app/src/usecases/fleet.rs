@@ -260,6 +260,18 @@ pub(crate) struct Outbound {
     /// Its host's space row is kept here (docs/fleet.md "One space UI:
     /// mirrored rows"): followed again after a restart.
     pub mirrored: bool,
+    /// The live steps of its current run seen so far, by mirrored step id:
+    /// a step seen again is an update (a tool call's end, more text).
+    pub live: HashMap<String, LiveStep>,
+}
+
+/// A live step of a followed space's run, as last shown here.
+pub(crate) enum LiveStep {
+    Other,
+    /// A tool call, by its call id.
+    Tool(Option<String>),
+    /// The run's own text: how much of it was shown.
+    Text(String),
 }
 
 #[derive(Default)]

@@ -48,6 +48,13 @@ pub(crate) struct Mirror {
     seeded: HashSet<String>,
     /// Local run → its steps so far (the next step's `n`). One run per space.
     steps: HashMap<String, u32>,
+    /// The current runs' steps by mirrored id, with their local run: what a
+    /// tool call's end or more text updates and sends again.
+    live: HashMap<String, (String, TurnStep)>,
+    /// `(local run, tool call id)` → its step's mirrored id.
+    tools: HashMap<(String, String), String>,
+    /// Local run → the mirrored id of the text row being written.
+    text: HashMap<String, String>,
 }
 
 impl Mirror {
@@ -88,6 +95,9 @@ impl Mirror {
         if !self.steps.contains_key(run) {
             let prefix = format!("space:{local}:");
             self.steps.retain(|r, _| !r.starts_with(&prefix));
+            self.live.retain(|_, (r, _)| !r.starts_with(&prefix));
+            self.tools.retain(|(r, _), _| !r.starts_with(&prefix));
+            self.text.retain(|r, _| !r.starts_with(&prefix));
         }
         let n = self.steps.entry(run.to_string()).or_insert(0);
         let at = *n;
@@ -138,6 +148,12 @@ pub(crate) fn mirror_space(mut v: Value, local: &str, remote: &str) -> Value {
         o.insert("agent_session".into(), Value::Null);
         o.insert("sent_feedback".into(), Value::Array(vec![]));
         o.insert("review_pr".into(), Value::Null);
+        // The local folder it mirrors into, and the run command's process.
+        o.insert("mirror".into(), Value::Null);
+        if let Some(p) = o.get_mut("process").and_then(Value::as_object_mut) {
+            p.remove("pgid");
+            p.remove("script");
+        }
         o.remove("remote");
     }
     v
@@ -346,6 +362,10 @@ impl Core {
             return;
         };
         let (remote, model, id) = &key;
+        if model == TURN_STEP {
+            self.fleet_mirror_live_out(m, remote, &local, id).await;
+            return;
+        }
         let data = self.fleet_mirror_row(&local, remote, model, id).await;
         let host = self.fleet_name(&self.fleet_settings().await).await;
         let Some(data) = fit(model, id, data, &host) else {
@@ -545,29 +565,136 @@ impl Core {
     }
 
     /// A live step of run `run`: sent as `turn_step`, never journaled (a
-    /// finished turn's steps are in its reply's `activity`).
+    /// finished turn's steps are in its reply's `activity`). The run's text
+    /// row being written goes first, so followers keep the order.
     pub(crate) async fn fleet_mirror_step(&self, m: &mut Mirror, run: &str, step: &TurnStep) {
-        let Some(local) = run.strip_prefix("space:").and_then(|r| r.split(':').next()) else {
+        let Some((local, remote)) = self.fleet_mirror_run(run) else {
             return;
         };
-        let Some(remote) = self.fleet_by_local().get(local).cloned() else {
+        self.fleet_mirror_text_end(m, run, &remote, &local).await;
+        let id = mirrored_step_id(run, &local, &remote, m.next_step(run, &local));
+        if let TurnStep::Tool { id: Some(call), .. } = step {
+            m.tools.insert((run.to_string(), call.clone()), id.clone());
+        }
+        m.live.insert(id.clone(), (run.to_string(), step.clone()));
+        self.fleet_mirror_live_out(m, &remote, &local, &id).await;
+    }
+
+    /// Tool call `call` of `run` ended or learned its summary: its step
+    /// again, under the same id.
+    pub(crate) async fn fleet_mirror_step_done(
+        &self,
+        m: &mut Mirror,
+        run: &str,
+        call: &str,
+        done: (Option<bool>, Option<String>, bool),
+    ) {
+        let Some((local, remote)) = self.fleet_mirror_run(run) else {
+            return;
+        };
+        let Some(id) = m.tools.get(&(run.to_string(), call.to_string())).cloned() else {
+            return;
+        };
+        let (ok, summary, background) = done;
+        if let Some((
+            _,
+            TurnStep::Tool {
+                ok: o,
+                summary: s,
+                background: b,
+                ..
+            },
+        )) = m.live.get_mut(&id)
+        {
+            if ok.is_some() {
+                *o = ok;
+            }
+            if summary.is_some() {
+                *s = summary;
+            }
+            *b |= background;
+        }
+        self.fleet_mirror_live_out(m, &remote, &local, &id).await;
+    }
+
+    /// More of `run`'s own text: its text row (a new one after a break or a
+    /// step), held like any row so a stream goes at most once a second.
+    pub(crate) async fn fleet_mirror_delta(&self, m: &mut Mirror, run: &str, text: &str) {
+        let Some((local, remote)) = self.fleet_mirror_run(run) else {
+            return;
+        };
+        let id = match m.text.get(run) {
+            Some(id) => id.clone(),
+            None => {
+                let id = mirrored_step_id(run, &local, &remote, m.next_step(run, &local));
+                m.text.insert(run.to_string(), id.clone());
+                let row = TurnStep::Text {
+                    text: String::new(),
+                    parent: None,
+                };
+                m.live.insert(id.clone(), (run.to_string(), row));
+                id
+            }
+        };
+        if let Some((_, TurnStep::Text { text: t, .. })) = m.live.get_mut(&id) {
+            t.push_str(text);
+        }
+        let key = (remote.clone(), TURN_STEP.to_string(), id.clone());
+        if m.may_send(&key, self.0.deps.clock.now()) {
+            self.fleet_mirror_live_out(m, &remote, &local, &id).await;
+        }
+    }
+
+    /// The next text of `run` is a new row: the current one goes as it is.
+    pub(crate) async fn fleet_mirror_text_break(&self, m: &mut Mirror, run: &str) {
+        if let Some((local, remote)) = self.fleet_mirror_run(run) {
+            self.fleet_mirror_text_end(m, run, &remote, &local).await;
+        }
+    }
+
+    async fn fleet_mirror_text_end(&self, m: &mut Mirror, run: &str, remote: &str, local: &str) {
+        let Some(id) = m.text.remove(run) else {
+            return;
+        };
+        let key = (remote.to_string(), TURN_STEP.to_string(), id.clone());
+        if m.due.contains_key(&key) {
+            self.fleet_mirror_live_out(m, remote, local, &id).await;
+        }
+    }
+
+    /// `run`'s `(local space, remote space)`, when it's a hosted space's.
+    fn fleet_mirror_run(&self, run: &str) -> Option<(String, String)> {
+        let local = run.strip_prefix("space:")?.split(':').next()?.to_string();
+        let remote = self.fleet_by_local().get(&local).cloned()?;
+        Some((local, remote))
+    }
+
+    /// Live step `id` as it is now: sent, not journaled.
+    async fn fleet_mirror_live_out(&self, m: &mut Mirror, remote: &str, local: &str, id: &str) {
+        let Some((_, step)) = m.live.get(id) else {
             return;
         };
         let Ok(mut data) = serde_json::to_value(step) else {
             return;
         };
-        rewrite_ids(&mut data, local, &remote);
-        let mut run_id = Value::String(run.to_string());
-        rewrite_ids(&mut run_id, local, &remote);
-        let n = m.next_step(run, local);
-        let id = format!("{}:{n}", run_id.as_str().unwrap_or_default());
+        rewrite_ids(&mut data, local, remote);
         let host = self.fleet_name(&self.fleet_settings().await).await;
-        let Some(data) = fit(TURN_STEP, &id, Some(data), &host) else {
+        let Some(data) = fit(TURN_STEP, id, Some(data), &host) else {
             return;
         };
-        self.fleet_mirror_emit(&remote, TURN_STEP, &id, data, false)
+        let key = (remote.to_string(), TURN_STEP.to_string(), id.to_string());
+        m.due.remove(&key);
+        m.sent_at.insert(key, self.0.deps.clock.now());
+        self.fleet_mirror_emit(remote, TURN_STEP, id, data, false)
             .await;
     }
+}
+
+/// The mirrored id of step `n` of local run `run`: `<run as rs_>:<n>`.
+fn mirrored_step_id(run: &str, local: &str, remote: &str, n: u32) -> String {
+    let mut run_id = Value::String(run.to_string());
+    rewrite_ids(&mut run_id, local, remote);
+    format!("{}:{n}", run_id.as_str().unwrap_or_default())
 }
 
 #[cfg(test)]

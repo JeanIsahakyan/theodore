@@ -358,7 +358,8 @@ run step (live)                  ─▶ mirror{turn_step}     ─▶ relay only 
 - **Ids.** The host rewrites its local space id to the fleet id in every
   row (`id`, `pr`, `run`), so all followers share one id. Message ids stay.
 - **Blanked on the host:** `worktree`, `ports`, `agent_session`,
-  `sent_feedback`, `review_pr`. `remote` is never sent; the follower sets it.
+  `sent_feedback`, `review_pr`, `mirror`, the process's `pgid` and `script`. `remote`
+  is never sent; the follower sets it.
 - **`data = null`** deletes the row. A row whose JSON is over
   `MIRROR_ROW_MAX_BYTES` (48 KiB) has its longest texts cut with a note.
 - **Compaction.** Host journal and cloud keep the latest `mirror` per

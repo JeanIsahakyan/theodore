@@ -685,7 +685,14 @@ async fn a_started_space_is_mapped_and_its_events_journaled_in_order() {
             .is_some_and(|r| r.contains("All fixed"))
     );
     let lines = core.fleet_space_lines("rs_1", 1).await.unwrap();
-    let after_started = f.store.fleet_journal_since("rs_1", 1, 100).unwrap().len();
+    // Mirrored rows are the space itself, not history lines.
+    let after_started = f
+        .store
+        .fleet_journal_since("rs_1", 1, 100)
+        .unwrap()
+        .iter()
+        .filter(|(_, v)| v["kind"] != "mirror")
+        .count();
     assert_eq!(lines.len(), after_started);
 
     // A reconnect replays what the cloud lacks.
@@ -3763,6 +3770,73 @@ async fn a_live_step_is_sent_as_turn_step_and_not_journaled() {
     )
     .unwrap();
     assert!(stored.track.seq >= steps[1].0);
+}
+
+#[tokio::test]
+async fn a_tool_calls_end_and_the_runs_text_go_as_live_steps() {
+    use theodore_contract::TurnStep;
+    let f = fixtures();
+    let (core, _recv, local) = mirrored_space(&f, "done").await;
+    let run = format!("space:{local}:m1");
+    let tool = TurnStep::Tool {
+        name: "Bash".into(),
+        target: Some("ls".into()),
+        ok: None,
+        id: Some("t1".into()),
+        parent: None,
+        detail: None,
+        summary: None,
+        added: None,
+        removed: None,
+        background: false,
+    };
+    core.emit(Ephemeral::RunStep {
+        run: run.clone(),
+        step: tool,
+    });
+    core.emit(Ephemeral::RunStepDone {
+        run: run.clone(),
+        id: "t1".into(),
+        ok: Some(true),
+        summary: Some("2 files".into()),
+        background: false,
+    });
+    let delta = |t: &str| Ephemeral::AgentDelta {
+        run: run.clone(),
+        agent: theodore_domain::AgentId::Claude,
+        text: t.into(),
+    };
+    core.emit(delta("Hel"));
+    // The clock doesn't move: this one is held, and goes at the break.
+    core.emit(delta("lo"));
+    core.emit(Ephemeral::RunTextBreak { run: run.clone() });
+    core.emit(delta("Bye"));
+    let steps = |f: &Fixtures| -> Vec<(String, serde_json::Value)> {
+        mirrors(f, "rs_1")
+            .into_iter()
+            .filter(|(_, m, _, _)| m == "turn_step")
+            .map(|(_, _, id, d)| (id, d.unwrap()))
+            .collect()
+    };
+    wait_until("five steps", || steps(&f).len() == 5).await;
+    let s = steps(&f);
+    assert_eq!(s[0].0, "space:rs_1:m1:0");
+    assert_eq!(s[0].1["ok"], serde_json::Value::Null);
+    assert_eq!(s[1].0, "space:rs_1:m1:0");
+    assert_eq!(s[1].1["ok"], true);
+    assert_eq!(s[1].1["summary"], "2 files");
+    assert_eq!(
+        (s[2].0.as_str(), &s[2].1["text"]),
+        ("space:rs_1:m1:1", &"Hel".into())
+    );
+    assert_eq!(
+        (s[3].0.as_str(), &s[3].1["text"]),
+        ("space:rs_1:m1:1", &"Hello".into())
+    );
+    assert_eq!(
+        (s[4].0.as_str(), &s[4].1["text"]),
+        ("space:rs_1:m1:2", &"Bye".into())
+    );
 }
 
 #[path = "fleet_follow_tests.rs"]

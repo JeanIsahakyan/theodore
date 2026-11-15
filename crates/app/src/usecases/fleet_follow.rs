@@ -19,7 +19,7 @@
 //! anything local-only ─▶ "runs on <host>"       rows deleted, unsubscribed
 //! ```
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 
 use serde::{Deserialize, Serialize};
 use theodore_contract::{
@@ -198,6 +198,7 @@ impl Core {
                             started_by: rec.started_by,
                             agent_error: None,
                             mirrored: true,
+                            live: Default::default(),
                         },
                     );
                 }
@@ -294,7 +295,7 @@ impl Core {
         let applied = match model {
             models::SPACE => self.fleet_mirror_space(space, id, data).await,
             models::CHAT_MESSAGE => self.fleet_mirror_chat(space, id, data).await,
-            _ => self.fleet_follow_step(space, id, data),
+            _ => self.fleet_follow_step(space, id, data).await,
         };
         match applied {
             Ok(()) => {}
@@ -463,8 +464,11 @@ impl Core {
     }
 
     /// A live step of a run: shown, never kept (a finished turn's steps
-    /// are in its reply's `activity`).
-    fn fleet_follow_step(
+    /// are in its reply's `activity`). A step seen again is an update: a
+    /// tool call's end goes as `RunStepDone`, the run's own text as the
+    /// `AgentDelta` of what's new (a new text row after `RunTextBreak`), as
+    /// the host's own UI gets them.
+    async fn fleet_follow_step(
         &self,
         space: &str,
         id: &str,
@@ -491,10 +495,33 @@ impl Core {
                 wrapped.step
             }
         };
-        self.emit(Ephemeral::RunStep {
-            run: run.to_string(),
-            step,
-        });
+        let own_text = matches!(&step, TurnStep::Text { parent: None, .. });
+        let agent = if own_text {
+            match self.space_row_any(space).await {
+                Ok(s) => Some(s.agent),
+                Err(_) => return Err(Dropped::Invalid("text of a space not kept here")),
+            }
+        } else {
+            None
+        };
+        let out = {
+            let mut mem = self.fleet();
+            let Some(o) = mem.outbound.get_mut(space) else {
+                return Err(Dropped::Invalid("a step of a space not followed here"));
+            };
+            // A new run: what the last one showed is done.
+            if o.live
+                .keys()
+                .next()
+                .is_some_and(|k| !k.starts_with(&format!("{run}:")))
+            {
+                o.live.clear();
+            }
+            live_out(&mut o.live, run, id, step, agent)
+        };
+        for e in out {
+            self.emit(e);
+        }
         Ok(())
     }
 
@@ -610,4 +637,160 @@ enum Dropped {
     Invalid(&'static str),
     /// The store failed.
     Store(AppError),
+}
+
+/// What showing live step `id` of `run` takes, given what `o` showed so far.
+fn live_out(
+    live: &mut HashMap<String, crate::usecases::fleet::LiveStep>,
+    run: &str,
+    id: &str,
+    step: TurnStep,
+    agent: Option<theodore_domain::AgentId>,
+) -> Vec<Ephemeral> {
+    use crate::usecases::fleet::LiveStep;
+    let run = run.to_string();
+    match (live.get_mut(id), step) {
+        (None, TurnStep::Text { text, parent: None }) => {
+            let Some(agent) = agent else {
+                return vec![];
+            };
+            let had_text = live.values().any(|l| matches!(l, LiveStep::Text(_)));
+            live.insert(id.to_string(), LiveStep::Text(text.clone()));
+            let mut out = Vec::new();
+            if had_text {
+                out.push(Ephemeral::RunTextBreak { run: run.clone() });
+            }
+            if !text.is_empty() {
+                out.push(Ephemeral::AgentDelta { run, agent, text });
+            }
+            out
+        }
+        (None, step) => {
+            let seen = match &step {
+                TurnStep::Tool { id, .. } => LiveStep::Tool(id.clone()),
+                _ => LiveStep::Other,
+            };
+            live.insert(id.to_string(), seen);
+            vec![Ephemeral::RunStep { run, step }]
+        }
+        (Some(LiveStep::Text(shown)), TurnStep::Text { text, .. }) => {
+            // Only what follows what was shown; a cut or rewritten text
+            // waits for the reply.
+            let Some(more) = text.strip_prefix(shown.as_str()).filter(|m| !m.is_empty()) else {
+                return vec![];
+            };
+            let Some(agent) = agent else {
+                return vec![];
+            };
+            let more = more.to_string();
+            *shown = text;
+            vec![Ephemeral::AgentDelta {
+                run,
+                agent,
+                text: more,
+            }]
+        }
+        (
+            Some(LiveStep::Tool(Some(call))),
+            TurnStep::Tool {
+                ok,
+                summary,
+                background,
+                ..
+            },
+        ) => vec![Ephemeral::RunStepDone {
+            run,
+            id: call.clone(),
+            ok,
+            summary,
+            background,
+        }],
+        _ => vec![],
+    }
+}
+
+#[cfg(test)]
+mod live_tests {
+    use super::*;
+    use crate::usecases::fleet::LiveStep;
+    use theodore_domain::AgentId;
+
+    const RUN: &str = "space:rs_1:m1";
+
+    fn text(t: &str) -> TurnStep {
+        TurnStep::Text {
+            text: t.into(),
+            parent: None,
+        }
+    }
+
+    fn tool(ok: Option<bool>) -> TurnStep {
+        TurnStep::Tool {
+            name: "Bash".into(),
+            target: Some("ls".into()),
+            ok,
+            id: Some("t1".into()),
+            parent: None,
+            detail: None,
+            summary: ok.map(|_| "2 files".into()),
+            added: None,
+            removed: None,
+            background: false,
+        }
+    }
+
+    fn deltas(out: &[Ephemeral]) -> Vec<String> {
+        out.iter()
+            .filter_map(|e| match e {
+                Ephemeral::AgentDelta { text, .. } => Some(text.clone()),
+                Ephemeral::RunTextBreak { .. } => Some("|".into()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_runs_text_streams_as_deltas_of_whats_new() {
+        let mut live: HashMap<String, LiveStep> = HashMap::new();
+        let a = Some(AgentId::Claude);
+        let id = format!("{RUN}:0");
+        assert_eq!(
+            deltas(&live_out(&mut live, RUN, &id, text("Hel"), a)),
+            ["Hel"]
+        );
+        assert_eq!(
+            deltas(&live_out(&mut live, RUN, &id, text("Hello"), a)),
+            ["lo"]
+        );
+        // Same again, or rewritten: nothing.
+        assert!(live_out(&mut live, RUN, &id, text("Hello"), a).is_empty());
+        assert!(live_out(&mut live, RUN, &id, text("Bye"), a).is_empty());
+        // A second text row starts with a break.
+        let id2 = format!("{RUN}:2");
+        assert_eq!(
+            deltas(&live_out(&mut live, RUN, &id2, text("Next"), a)),
+            ["|", "Next"]
+        );
+    }
+
+    #[test]
+    fn a_tool_seen_again_is_its_end() {
+        let mut live: HashMap<String, LiveStep> = HashMap::new();
+        let id = format!("{RUN}:1");
+        let out = live_out(&mut live, RUN, &id, tool(None), None);
+        assert!(matches!(&out[..], [Ephemeral::RunStep { .. }]));
+        let out = live_out(&mut live, RUN, &id, tool(Some(true)), None);
+        match &out[..] {
+            [
+                Ephemeral::RunStepDone {
+                    id, ok, summary, ..
+                },
+            ] => {
+                assert_eq!(id, "t1");
+                assert_eq!(*ok, Some(true));
+                assert_eq!(summary.as_deref(), Some("2 files"));
+            }
+            other => panic!("{other:?}"),
+        }
+    }
 }

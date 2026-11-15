@@ -966,6 +966,15 @@ impl Core {
                         self.fleet_observe_step(&run, &step).await;
                         self.fleet_mirror_step(&mut mirror, &run, &step).await;
                     }
+                    Ok(Ephemeral::RunStepDone { run, id, ok, summary, background }) => {
+                        self.fleet_mirror_step_done(&mut mirror, &run, &id, (ok, summary, background)).await;
+                    }
+                    Ok(Ephemeral::AgentDelta { run, text, .. }) => {
+                        self.fleet_mirror_delta(&mut mirror, &run, &text).await;
+                    }
+                    Ok(Ephemeral::RunTextBreak { run }) => {
+                        self.fleet_mirror_text_break(&mut mirror, &run).await;
+                    }
                     Ok(_) | Err(RecvError::Lagged(_)) => {}
                     Err(RecvError::Closed) => return,
                 },

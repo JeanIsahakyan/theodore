@@ -246,7 +246,7 @@ async fn a_followed_space_is_kept_as_an_ordinary_space_row() {
         5,
         "turn_step",
         &format!("{run}:0"),
-        json!({ "kind": "text", "text": "Looking" }),
+        json!({ "kind": "thinking", "text": "Looking" }),
     );
     let mut seen = Vec::new();
     ephemeral(&mut recv, &mut seen, |e| {
@@ -341,7 +341,7 @@ async fn mirrors_naming_another_space_or_not_parsing_are_dropped() {
         10,
         "turn_step",
         &format!("space:{other}:m1:0"),
-        json!({ "kind": "text", "text": "no" }),
+        json!({ "kind": "thinking", "text": "no" }),
     );
     mirror(
         &f,
@@ -441,7 +441,7 @@ async fn a_mirror_never_writes_over_a_local_space_or_its_chat() {
         5,
         "turn_step",
         &format!("{run}:0"),
-        json!({ "kind": "text", "text": "." }),
+        json!({ "kind": "thinking", "text": "." }),
     );
     let mut seen = Vec::new();
     ephemeral(&mut recv, &mut seen, |e| {
