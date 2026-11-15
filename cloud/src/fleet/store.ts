@@ -12,11 +12,16 @@
  * pending  req_id ─ a routed request until its reply (or 2 min)
  * replies  req_id ─ a reply or refusal held for an origin that's offline
  *          (2 min), as the frame to send
- * asks     ask_id ─ an open question (the host's envelope): where it shows
+ * asks     ask_id ─ an open question (the host's envelope): where it shows,
+ *          which devices were pushed about it
  * subs     (device, space) ─ who gets a space's live events
  * conns    conn_id ─ a deadline: hello due, or access token expiry + 60 s
- * meta     schema ─ SCHEMA_VERSION; on any other, every table but devices
- *          and conns is dropped (older rows carry older signatures)
+ * push_tokens  device_id ─ its Expo push token, this minute's push count
+ * delegations  (origin, delegate) ─ the origin's latest signed delegation;
+ *          a revocation stays as a tombstone for the 5 min freshness window
+ * meta     schema ─ SCHEMA_VERSION; on any other, every table but devices,
+ *          conns, push_tokens and delegations is dropped (older rows carry
+ *          older signatures)
  * ```
  */
 import { CLOUD_RING, MAX_SPACE_EVENT_BYTES } from './limits';
@@ -28,7 +33,7 @@ export interface Sql {
   exec(query: string, ...binds: SqlValue[]): Record<string, unknown>[];
 }
 
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 
 /** Relay state that a schema change throws away; devices stay pinned. */
 const RESET = ['spaces', 'events', 'pending', 'replies', 'asks', 'subs'];
@@ -97,7 +102,8 @@ const SCHEMA = [
     shown_on TEXT NOT NULL,
     via TEXT,
     escalated INTEGER NOT NULL DEFAULT 0,
-    created_ms INTEGER NOT NULL)`,
+    created_ms INTEGER NOT NULL,
+    pushed TEXT NOT NULL DEFAULT '[]')`,
   `CREATE INDEX IF NOT EXISTS asks_user ON asks (user_id)`,
   `CREATE INDEX IF NOT EXISTS asks_space ON asks (space)`,
   `CREATE TABLE IF NOT EXISTS subs (
@@ -109,6 +115,23 @@ const SCHEMA = [
     conn_id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL,
     deadline_ms INTEGER NOT NULL)`,
+  `CREATE TABLE IF NOT EXISTS push_tokens (
+    device_id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    token TEXT NOT NULL,
+    window_ms INTEGER NOT NULL DEFAULT 0,
+    sent INTEGER NOT NULL DEFAULT 0)`,
+  `CREATE TABLE IF NOT EXISTS delegations (
+    origin_device TEXT NOT NULL,
+    delegate_device TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    envelope TEXT NOT NULL,
+    issued_at_ms INTEGER NOT NULL,
+    expires_at_ms INTEGER NOT NULL,
+    revoked INTEGER NOT NULL,
+    PRIMARY KEY (origin_device, delegate_device))`,
+  `CREATE INDEX IF NOT EXISTS delegations_delegate ON delegations (delegate_device)`,
 ];
 
 export interface DeviceRow {
@@ -170,6 +193,32 @@ export interface AskRow {
   via: string | null;
   escalated: number;
   created_ms: number;
+  /** Devices pushed about it (JSON list): one push per device. */
+  pushed: string;
+}
+
+export interface PushTokenRow {
+  device_id: string;
+  user_id: string;
+  provider: string;
+  token: string;
+  /** Start of the current one-minute window, unix ms. */
+  window_ms: number;
+  /** Pushes sent in it. */
+  sent: number;
+}
+
+export interface DelegationRow {
+  origin_device: string;
+  delegate_device: string;
+  user_id: string;
+  /** The origin's signed envelope, as JSON. */
+  envelope: string;
+  issued_at_ms: number;
+  /** 0: no expiry. */
+  expires_at_ms: number;
+  /** 1: a revocation, kept to refuse an older grant replayed. */
+  revoked: number;
 }
 
 /** Typed queries over [`Sql`]. */

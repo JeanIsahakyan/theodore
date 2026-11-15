@@ -10,8 +10,14 @@
  *              ─▶ reply (target-signed) ─▶ origin
  *              └─ refused{code} ─▶ origin   (offline: 10 s grace, 2 min ttl)
  *   ─▶ space_event (host-signed) ─▶ ring 500 / 4 MB ─▶ subscribers
- *   ─▶ ask (host-signed) ─▶ active if origin/host │ origin; 20 s ─▶ origin
+ *   ─▶ ask (host-signed) ─▶ active if a follower/host │ followers; 20 s ─▶ followers
+ *                          └─ push (Expo) to followers away from a screen
+ *   ─▶ delegate (origin-signed) ─▶ delegations{list} ─▶ origin, delegate
+ * POST /v1/fleet/request ─▶ routed like a socket request
  * ```
+ *
+ * A space's followers are its origin and the origin's live delegates
+ * (docs/mobile.md "Following a computer's spaces"); its host is never one.
  *
  * The cloud reads signed bodies only to route and checks event, ask and
  * reply signatures against the sender's pinned key (devices check them
@@ -24,6 +30,7 @@
 import type {
   AskVia,
   ClientMessage,
+  Delegation,
   DeviceInfo,
   DeviceSummary,
   DismissReason,
@@ -54,16 +61,30 @@ import {
   MAX_USER_EVENT_BYTES,
   NONCE_BYTES,
   PENDING_TTL_MS,
+  PROTOCOL_VERSION,
+  PUSH_ACTIONS,
+  PUSH_BODY_CHARS,
+  PUSH_PER_MINUTE,
   RATE_BURST,
   RATE_PER_SECOND,
   REAUTH_LEEWAY_MS,
+  REQUEST_WINDOW_MS,
 } from './limits';
+import {
+  askPresentation,
+  clip,
+  type PushMessage,
+  type PushSender,
+} from './push';
 import {
   Store,
   type AskRow,
+  type DelegationRow,
   type DeviceRow,
   type PendingRow,
+  type PushTokenRow,
   type Sql,
+  type SpaceRow,
 } from './store';
 import {
   type Domain,
@@ -72,8 +93,10 @@ import {
   b64,
   BadMessage,
   byteLength,
+  hosts,
   parseClient,
   peekAsk,
+  peekDelegation,
   peekEvent,
   peekReply,
   peekRequest,
@@ -108,6 +131,8 @@ export interface ConnState {
   nonce?: string;
   device?: string;
   generation?: number;
+  /** The hello's protocol; absent on attachments older than v4 (= 3). */
+  protocol?: number;
   presence?: Presence;
   /**
    * The last reauth couldn't be checked (signing keys unreachable): when
@@ -140,7 +165,32 @@ export interface HubEnv {
   verify(token: string): Promise<VerifiedToken>;
   /** Wake `alarm()` at or before this unix ms; null: nothing due. */
   schedule(atMs: number | null): void | Promise<void>;
+  /** Push notifications out (Expo); absent: none are sent. */
+  push?: PushSender;
+  /** Keeps work alive past the message (`ctx.waitUntil`); never awaited. */
+  defer?(work: Promise<unknown>): void;
 }
+
+/** What `POST /v1/fleet/request` answers. */
+export type HttpRequestOutcome =
+  | { accepted: true; req_id: string }
+  | {
+      accepted: false;
+      req_id: string | null;
+      refused: { code: string; message: string };
+    };
+
+/** A request routed (or not) by `Hub.route`. */
+type RouteOutcome =
+  | { kind: 'routed'; req_id: string }
+  | { kind: 'refused'; req_id: string; code: string; message: string }
+  | { kind: 'error'; code: string; message: string };
+
+/** Statuses that end a turn: a space's followers get a push for them. */
+const FINISHED = ['idle', 'failed', 'stopped'];
+
+/** Protocol 3 knew neither phones nor delegations. */
+const V4 = 4;
 
 interface Ready {
   conn: Conn;
@@ -215,7 +265,10 @@ export class Hub {
       }
       let msg;
       try {
-        msg = parseClient(data);
+        msg = parseClient(
+          data,
+          s.phase === 'challenged' ? PROTOCOL_VERSION : protocolOf(s),
+        );
       } catch (e) {
         if (!(e instanceof BadMessage)) throw e;
         if (s.phase === 'challenged') return this.fail(conn, e.code, e.message);
@@ -262,6 +315,10 @@ export class Hub {
           return this.askResolved(r, msg.ask_id);
         case 'remove_device':
           return this.removeDevice(r, msg.device_id);
+        case 'register_push':
+          return this.registerPush(r, msg);
+        case 'delegate':
+          return this.delegate(r, msg.envelope);
       }
     });
   }
@@ -347,6 +404,7 @@ export class Hub {
         this.escalate(a);
       }
       this.pruneStale(now);
+      this.pruneDelegations(now);
     });
   }
 
@@ -429,6 +487,7 @@ export class Hub {
     s.phase = 'ready';
     s.device = deviceId;
     s.generation = generation;
+    s.protocol = msg.protocol;
     conn.save(s);
     this.store.setDeadline(s.id, s.user, s.expMs + REAUTH_LEEWAY_MS);
     this.store.run('DELETE FROM subs WHERE device_id = ?', deviceId);
@@ -447,6 +506,12 @@ export class Hub {
       resume,
     });
     this.pushDevices(s.user);
+    if (msg.protocol >= V4) {
+      this.send(conn, {
+        type: 'delegations',
+        list: this.delegationsNaming(deviceId),
+      });
+    }
 
     // Unclaimed requests for it, under the new generation.
     this.store.run(
@@ -473,7 +538,7 @@ export class Hub {
       this.send(conn, JSON.parse(r.message) as ServerMessage);
     }
     this.store.run('DELETE FROM replies WHERE origin_device = ?', deviceId);
-    // Open questions it was showing, or escalated ones of spaces it started.
+    // Open questions it was showing, or escalated ones of spaces it follows.
     for (const a of this.store.rows<AskRow>(
       'SELECT * FROM asks WHERE user_id = ? ORDER BY created_ms',
       s.user,
@@ -482,7 +547,7 @@ export class Hub {
       const shown = shownOn(a);
       if (shown.includes(deviceId)) {
         this.showAsk(conn, a, (a.via ?? 'escalated') as AskVia);
-      } else if (a.escalated && a.origin_device === deviceId) {
+      } else if (a.escalated && this.followers(a).includes(deviceId)) {
         this.showAsk(conn, a, 'escalated');
         this.setShown(a.ask_id, [...shown, deviceId]);
       }
@@ -540,27 +605,68 @@ export class Hub {
   // ── requests ───────────────────────────────────────────────────────────
 
   private request(r: Ready, msg: Of<'request'>) {
-    const { envelope } = msg;
+    const out = this.route(r.state.user, r.state.device, msg.envelope);
+    if (out.kind === 'error') return this.error(r.conn, out.code, out.message);
+    if (out.kind === 'refused') {
+      const { req_id, code, message } = out;
+      this.send(r.conn, { type: 'refused', req_id, code, message });
+    }
+  }
+
+  /**
+   * `POST /v1/fleet/request`: a one-shot signed request from `deviceId`
+   * (a notification action, no socket), routed like a socket `request`.
+   * The target's reply reaches the origin later, over its socket (held
+   * 2 min while it's away).
+   */
+  requestOverHttp(
+    caller: FleetCaller,
+    deviceId: string,
+    envelope: SignedEnvelope,
+  ): Promise<HttpRequestOutcome> {
+    let out: HttpRequestOutcome = {
+      accepted: false,
+      req_id: null,
+      refused: { code: codes.INTERNAL, message: 'internal error' },
+    };
+    return this.run(() => {
+      const dev = this.store.device(deviceId);
+      const r: RouteOutcome =
+        !dev || dev.user_id !== caller.userId
+          ? { kind: 'error', code: codes.NOT_YOURS, message: 'no such device' }
+          : this.route(caller.userId, deviceId, envelope);
+      out =
+        r.kind === 'routed'
+          ? { accepted: true, req_id: r.req_id }
+          : {
+              accepted: false,
+              req_id: r.kind === 'refused' ? r.req_id : null,
+              refused: { code: r.code, message: r.message },
+            };
+    }).then(() => out);
+  }
+
+  /** Routes `envelope`, sent by `sender` (one of `user`'s devices). */
+  private route(
+    user: string,
+    sender: string,
+    envelope: SignedEnvelope,
+  ): RouteOutcome {
     let parsed: Routing;
     try {
       parsed = peekRequest(envelope.body);
     } catch (e) {
       if (!(e instanceof BadMessage)) throw e;
-      return this.error(r.conn, e.code, e.message);
+      return { kind: 'error', code: e.code, message: e.message };
     }
     const route = parsed;
-    const user = r.state.user;
-    const refuse = (code: string, message: string) =>
-      this.send(r.conn, {
-        type: 'refused',
-        req_id: route.req_id,
-        code,
-        message,
-      });
-    if (
-      envelope.device_id !== r.state.device ||
-      route.origin_device !== r.state.device
-    ) {
+    const refuse = (code: string, message: string): RouteOutcome => ({
+      kind: 'refused',
+      req_id: route.req_id,
+      code,
+      message,
+    });
+    if (envelope.device_id !== sender || route.origin_device !== sender) {
       return refuse(codes.NOT_YOURS, 'a request must come from its origin');
     }
     if (route.target_device === route.origin_device) {
@@ -570,6 +676,10 @@ export class Hub {
     if (!target || target.user_id !== user) {
       return refuse(codes.NOT_YOURS, 'no such device');
     }
+    // Phones and browsers follow spaces; they never run one.
+    if (!hosts(infoOf(target).kind)) {
+      return refuse(codes.INVALID, 'that device runs no spaces');
+    }
     // The target checks this too: a key the cloud doesn't pin for that id
     // was signed for another machine.
     if (route.target_key !== target.public_key) {
@@ -577,7 +687,11 @@ export class Hub {
     }
     const existing = this.store.pending(route.req_id);
     if (existing) {
-      return this.error(r.conn, codes.BAD_MESSAGE, 'req_id already pending');
+      return {
+        kind: 'error',
+        code: codes.BAD_MESSAGE,
+        message: 'req_id already pending',
+      };
     }
     const open =
       this.store.num(
@@ -649,6 +763,7 @@ export class Hub {
         generation: target.generation,
       });
     }
+    return { kind: 'routed', req_id: route.req_id };
   }
 
   /** MAX_DEPTH / MAX_CHILDREN, as the origin core checks them too. */
@@ -927,6 +1042,14 @@ export class Hub {
       sp.space,
     );
     this.fanOut(sp.user_id, sp.space, gap, forward);
+    // A turn that ended (not a status repeated): one push to its followers.
+    if (
+      ev.kind === 'status' &&
+      FINISHED.includes(ev.status) &&
+      !FINISHED.includes(sp.status ?? '')
+    ) {
+      this.pushFinished(sp, ev.status);
+    }
   }
 
   private fanOut(
@@ -951,14 +1074,14 @@ export class Hub {
     }
   }
 
-  /** History then live, for the space's origin and its host only. */
+  /** History then live, for the space's host and its followers only. */
   private subscribe(r: Ready, msg: Of<'subscribe'>) {
     const sp = this.store.space(msg.space);
     const d = r.state.device;
     if (
       !sp ||
       sp.user_id !== r.state.user ||
-      (d !== sp.origin_device && d !== sp.host_device)
+      (d !== sp.host_device && !this.followers(sp).includes(d))
     ) {
       return this.error(r.conn, codes.NOT_YOURS, 'no such space');
     }
@@ -1063,32 +1186,32 @@ export class Hub {
     const where = this.whereToAsk(row);
     if (where === 'host') return; // the host shows its own card
     if (where === null) return this.escalate(row);
-    const to = this.readyDevice(row.user_id, where.device)!;
-    this.showAsk(to.conn, row, where.via);
-    this.setShown(row.ask_id, [where.device], where.via);
+    for (const d of where.devices) {
+      this.showAsk(this.readyDevice(row.user_id, d)!.conn, row, where.via);
+    }
+    this.setShown(row.ask_id, where.devices, where.via);
+    this.pushAsk(row.ask_id);
   }
 
   /**
-   * Only the space's host and origin see its questions: the host when it is
-   * your active device (it shows its own card), else the origin if online
-   * (`active` when you're at it), else nobody yet (escalate). Another
-   * device being active doesn't pull a question to it.
+   * Only the space's host and followers see its questions: the host when it
+   * is your active device (it shows its own card), else the follower you're
+   * at (`active`), else every follower online (`origin`), else nobody yet
+   * (escalate). Another device being active doesn't pull a question to it.
    */
   private whereToAsk(
     a: AskRow,
-  ): 'host' | { device: string; via: AskVia } | null {
+  ): 'host' | { devices: string[]; via: AskVia } | null {
     const active = this.activeDevice(a.user_id);
     if (active === a.host_device) return 'host';
-    if (
-      a.origin_device === a.host_device ||
-      !this.readyDevice(a.user_id, a.origin_device)
-    ) {
-      return null;
+    const online = this.followers(a).filter((d) =>
+      this.readyDevice(a.user_id, d),
+    );
+    if (online.length === 0) return null;
+    if (active !== null && online.includes(active)) {
+      return { devices: [active], via: 'active' };
     }
-    return {
-      device: a.origin_device,
-      via: active === a.origin_device ? 'active' : 'origin',
-    };
+    return { devices: online, via: 'origin' };
   }
 
   private activeDevice(user: string): string | null {
@@ -1115,14 +1238,16 @@ export class Hub {
     r.conn.save(s);
     r.state.presence = s.presence;
     // Open, not yet escalated questions follow you between their space's
-    // host and origin; any other device you're at doesn't take them.
+    // host and followers; any other device you're at doesn't take them.
     const active = this.activeDevice(r.state.user);
     if (!active) return;
     for (const a of this.store.rows<AskRow>(
       'SELECT * FROM asks WHERE user_id = ? AND escalated = 0',
       r.state.user,
     )) {
-      if (active !== a.host_device && active !== a.origin_device) continue;
+      if (active !== a.host_device && !this.followers(a).includes(active)) {
+        continue;
+      }
       const shown = shownOn(a);
       if (active === a.host_device) {
         if (shown.length === 0) continue;
@@ -1138,15 +1263,18 @@ export class Hub {
     }
   }
 
-  /** Unanswered for 20 s, or nowhere to show: the origin too, not everyone. */
+  /**
+   * Unanswered for 20 s, or nowhere to show: every follower too (not every
+   * device), and a push to those away from a screen.
+   */
   private escalate(a: AskRow) {
     const shown = shownOn(a);
-    const o = a.origin_device;
-    if (o !== a.host_device && !shown.includes(o)) {
-      const to = this.readyDevice(a.user_id, o);
+    for (const d of this.followers(a)) {
+      if (shown.includes(d)) continue;
+      const to = this.readyDevice(a.user_id, d);
       if (to) {
         this.showAsk(to.conn, a, 'escalated');
-        shown.push(o);
+        shown.push(d);
       }
     }
     this.store.run(
@@ -1155,6 +1283,7 @@ export class Hub {
       JSON.stringify(shown),
       a.ask_id,
     );
+    this.pushAsk(a.ask_id);
   }
 
   private askResolved(r: Ready, askId: string) {
@@ -1239,7 +1368,362 @@ export class Hub {
     }
     this.store.run('DELETE FROM replies WHERE origin_device = ?', deviceId);
     this.store.run('DELETE FROM subs WHERE device_id = ?', deviceId);
+    this.store.run('DELETE FROM push_tokens WHERE device_id = ?', deviceId);
+    const named = this.store.rows<DelegationRow>(
+      `SELECT * FROM delegations
+       WHERE origin_device = ? OR delegate_device = ?`,
+      deviceId,
+      deviceId,
+    );
+    for (const d of named) this.endDelegation(d);
     this.pushDevices(user);
+    this.pushDelegations(
+      user,
+      named.flatMap((d) => [d.origin_device, d.delegate_device]),
+    );
+  }
+
+  // ── push and delegations ───────────────────────────────────────────────
+
+  /** A phone's Expo token: stored, replaced, or ('' ) removed. */
+  private registerPush(r: Ready, msg: Of<'register_push'>) {
+    const dev = this.store.device(r.state.device);
+    if (!dev || infoOf(dev).kind !== 'mobile') {
+      return this.error(r.conn, codes.INVALID, 'push is for the phone app');
+    }
+    if (msg.token === '') {
+      this.store.run(
+        'DELETE FROM push_tokens WHERE device_id = ?',
+        r.state.device,
+      );
+      return;
+    }
+    // One phone, one row: a token another device (an old install, another
+    // account) still holds would push this phone someone else's questions.
+    this.store.run(
+      'DELETE FROM push_tokens WHERE token = ? AND device_id != ?',
+      msg.token,
+      r.state.device,
+    );
+    this.store.run(
+      `INSERT INTO push_tokens (device_id, user_id, provider, token)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT (device_id) DO UPDATE SET
+         provider = excluded.provider, token = excluded.token`,
+      r.state.device,
+      r.state.user,
+      msg.provider,
+      msg.token,
+    );
+  }
+
+  /**
+   * An origin's signed delegation (`Domain::Delegate`): checked against the
+   * sender's pinned key, stored as signed, then the live list goes to both
+   * devices. A revocation stays as a tombstone until no older grant could
+   * still pass the freshness check.
+   */
+  private async delegate(r: Ready, envelope: SignedEnvelope) {
+    let d: Delegation;
+    try {
+      d = peekDelegation(envelope.body);
+    } catch (e) {
+      if (!(e instanceof BadMessage)) throw e;
+      return this.error(r.conn, e.code, e.message);
+    }
+    const me = r.state.device;
+    const user = r.state.user;
+    if (envelope.device_id !== me || d.origin_device !== me) {
+      return this.error(
+        r.conn,
+        codes.NOT_YOURS,
+        'a delegation must come from its origin',
+      );
+    }
+    if (d.delegate_device === me) {
+      return this.error(r.conn, codes.INVALID, 'a device can’t follow itself');
+    }
+    const to = this.store.device(d.delegate_device);
+    if (!to || to.user_id !== user) {
+      return this.error(r.conn, codes.NOT_YOURS, 'no such device');
+    }
+    const now = this.env.now();
+    if (Math.abs(d.issued_at_ms - now) > REQUEST_WINDOW_MS) {
+      return this.error(r.conn, codes.STALE_REQUEST, 'delegation not fresh');
+    }
+    if (!d.revoke && d.expires_at_ms !== 0 && d.expires_at_ms <= now) {
+      return this.error(r.conn, codes.INVALID, 'delegation already expired');
+    }
+    const prev = this.store.one<DelegationRow>(
+      `SELECT * FROM delegations
+       WHERE origin_device = ? AND delegate_device = ?`,
+      me,
+      d.delegate_device,
+    );
+    if (prev && d.issued_at_ms < prev.issued_at_ms) {
+      return this.error(
+        r.conn,
+        codes.STALE_REQUEST,
+        'older than the delegation kept',
+      );
+    }
+    if (!(await this.signedBySender(r, envelope, 'delegate'))) {
+      return this.error(
+        r.conn,
+        codes.BAD_SIGNATURE,
+        'delegation not signed by its origin',
+      );
+    }
+    if (!r.conn.open) return;
+    this.store.run(
+      `INSERT OR REPLACE INTO delegations (origin_device, delegate_device,
+         user_id, envelope, issued_at_ms, expires_at_ms, revoked)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      me,
+      d.delegate_device,
+      user,
+      JSON.stringify(forwardOf(envelope)),
+      d.issued_at_ms,
+      d.expires_at_ms,
+      d.revoke ? 1 : 0,
+    );
+    if (d.revoke) this.unfollow(user, me, d.delegate_device);
+    this.pushDelegations(user, [me, d.delegate_device]);
+  }
+
+  /** Expired grants go (both devices told); old tombstones are dropped. */
+  private pruneDelegations(now: number) {
+    const expired = this.store.rows<DelegationRow>(
+      `SELECT * FROM delegations
+       WHERE revoked = 0 AND expires_at_ms > 0 AND expires_at_ms <= ?`,
+      now,
+    );
+    for (const d of expired) {
+      this.endDelegation(d);
+      this.pushDelegations(d.user_id, [d.origin_device, d.delegate_device]);
+    }
+    this.store.run(
+      'DELETE FROM delegations WHERE revoked = 1 AND issued_at_ms < ?',
+      now - REQUEST_WINDOW_MS,
+    );
+  }
+
+  /** A delegation's row deleted and its delegate's following undone. */
+  private endDelegation(d: DelegationRow) {
+    this.store.run(
+      `DELETE FROM delegations
+       WHERE origin_device = ? AND delegate_device = ?`,
+      d.origin_device,
+      d.delegate_device,
+    );
+    this.unfollow(d.user_id, d.origin_device, d.delegate_device);
+  }
+
+  /**
+   * `delegate` no longer follows `origin`'s spaces: its subscriptions to
+   * them end and the questions it shows are dismissed there.
+   */
+  private unfollow(user: string, origin: string, delegate: string) {
+    this.store.run(
+      `DELETE FROM subs WHERE device_id = ? AND space IN
+         (SELECT space FROM spaces
+          WHERE origin_device = ? AND host_device != ?)`,
+      delegate,
+      origin,
+      delegate,
+    );
+    for (const a of this.store.rows<AskRow>(
+      'SELECT * FROM asks WHERE user_id = ? AND origin_device = ?',
+      user,
+      origin,
+    )) {
+      const shown = shownOn(a);
+      if (!shown.includes(delegate) || a.host_device === delegate) continue;
+      this.dismiss(a, [delegate], 'resolved');
+      this.setShown(
+        a.ask_id,
+        shown.filter((x) => x !== delegate),
+      );
+    }
+  }
+
+  /** Live delegations of `origin`: the devices following its spaces. */
+  private delegatesOf(origin: string): string[] {
+    return this.store
+      .rows<{ delegate_device: string }>(
+        `SELECT delegate_device FROM delegations
+         WHERE origin_device = ? AND revoked = 0
+           AND (expires_at_ms = 0 OR expires_at_ms > ?)
+         ORDER BY delegate_device`,
+        origin,
+        this.env.now(),
+      )
+      .map((x) => x.delegate_device);
+  }
+
+  /** A space's followers: its origin and the origin's delegates, not its host. */
+  private followers(sp: { origin_device: string; host_device: string }) {
+    return [sp.origin_device, ...this.delegatesOf(sp.origin_device)].filter(
+      (d) => d !== sp.host_device,
+    );
+  }
+
+  /** The live delegations naming `device`, as their origins signed them. */
+  private delegationsNaming(device: string): SignedEnvelope[] {
+    return this.store
+      .rows<{ envelope: string }>(
+        `SELECT envelope FROM delegations
+         WHERE (origin_device = ? OR delegate_device = ?) AND revoked = 0
+           AND (expires_at_ms = 0 OR expires_at_ms > ?)
+         ORDER BY origin_device, delegate_device`,
+        device,
+        device,
+        this.env.now(),
+      )
+      .map((x) => JSON.parse(x.envelope) as SignedEnvelope);
+  }
+
+  /** `delegations{list}` to those of `devices` online on protocol 4. */
+  private pushDelegations(user: string, devices: string[]) {
+    const to = new Set(devices);
+    for (const c of this.ready(user)) {
+      if (!to.has(c.state.device) || protocolOf(c.state) < V4) continue;
+      this.send(c.conn, {
+        type: 'delegations',
+        list: this.delegationsNaming(c.state.device),
+      });
+    }
+  }
+
+  /** You're looking at it: connected, focused and unlocked. */
+  private attending(user: string, device: string): boolean {
+    const p = this.readyDevice(user, device)?.state.presence;
+    return !!p && p.focused && !p.locked;
+  }
+
+  /** An open question, pushed once to each follower away from a screen. */
+  private pushAsk(askId: string) {
+    const a = this.store.ask(askId);
+    const sp = a && this.store.space(a.space);
+    if (!a || !sp) return;
+    const pushed = JSON.parse(a.pushed) as string[];
+    const to = this.followers(a).filter(
+      (d) => !pushed.includes(d) && !this.attending(a.user_id, d),
+    );
+    if (to.length === 0) return;
+    // The host's signed question set, verified when it came in.
+    const ask = JSON.parse(
+      (JSON.parse(a.envelope) as SignedEnvelope).body,
+    ) as RemoteAsk;
+    const { title } = this.pushTitle(sp);
+    const sent = this.sendPushes(a.user_id, to, () => askPush(title, ask));
+    if (sent.length === 0) return;
+    this.store.run(
+      'UPDATE asks SET pushed = ? WHERE ask_id = ?',
+      JSON.stringify([...pushed, ...sent]),
+      a.ask_id,
+    );
+  }
+
+  /** A space that turned idle, failed or stopped: one push per follower. */
+  private pushFinished(sp: SpaceRow, status: string) {
+    const to = this.followers(sp).filter((d) => !this.attending(sp.user_id, d));
+    if (to.length === 0) return;
+    const { title, space } = this.pushTitle(sp);
+    const word = status === 'idle' ? 'finished' : status;
+    this.sendPushes(sp.user_id, to, () => ({
+      title,
+      body: clip(`${space} ${word}`, PUSH_BODY_CHARS),
+      channelId: 'default',
+      data: {
+        kind: 'finished',
+        ask_id: '',
+        space: sp.space,
+        host_device: sp.host_device,
+        options: [],
+        status,
+      },
+    }));
+  }
+
+  /**
+   * "<host> · <space>" from what the cloud holds: the host's name from its
+   * own hello, the space's from its host-signed `started` event (else its id).
+   */
+  private pushTitle(sp: SpaceRow): { title: string; space: string } {
+    const host = this.store.device(sp.host_device);
+    const hostName = host ? infoOf(host).name : 'Theodore';
+    let space = sp.space;
+    try {
+      const body = JSON.parse(
+        (JSON.parse(sp.started ?? 'null') as SignedEnvelope | null)?.body ??
+          'null',
+      ) as SpaceEventBody | null;
+      if (
+        body?.event.kind === 'started' &&
+        typeof body.event.name === 'string' &&
+        body.event.name !== ''
+      ) {
+        space = body.event.name;
+      }
+    } catch {
+      // a malformed started body: the id stands in
+    }
+    return {
+      title: clip(`${hostName} · ${space}`, 120),
+      space: clip(space, 100),
+    };
+  }
+
+  /**
+   * Builds one push per device of `devices` that has a token and room in
+   * its minute (30), sends them in the background, and drops tokens Expo
+   * says are gone. Returns the devices pushed.
+   */
+  private sendPushes(
+    user: string,
+    devices: string[],
+    build: () => Omit<PushMessage, 'to'>,
+  ): string[] {
+    const push = this.env.push;
+    if (!push) return [];
+    const now = this.env.now();
+    const msgs: PushMessage[] = [];
+    const sent: string[] = [];
+    for (const d of devices) {
+      const t = this.store.one<PushTokenRow>(
+        'SELECT * FROM push_tokens WHERE device_id = ? AND user_id = ?',
+        d,
+        user,
+      );
+      if (!t) continue;
+      const fresh = now - t.window_ms >= 60_000;
+      const count = fresh ? 0 : t.sent;
+      if (count >= PUSH_PER_MINUTE) continue;
+      this.store.run(
+        'UPDATE push_tokens SET window_ms = ?, sent = ? WHERE device_id = ?',
+        fresh ? now : t.window_ms,
+        count + 1,
+        d,
+      );
+      msgs.push({ to: t.token, ...build() });
+      sent.push(d);
+    }
+    if (msgs.length === 0) return sent;
+    const work = push(msgs).then((results) => {
+      const dead = msgs
+        .filter((_, i) => results[i] === 'unregistered')
+        .map((m) => m.to);
+      if (dead.length === 0) return;
+      return this.run(() => {
+        for (const token of dead) {
+          this.store.run('DELETE FROM push_tokens WHERE token = ?', token);
+        }
+      });
+    });
+    if (this.env.defer) this.env.defer(work);
+    else void work;
+    return sent;
   }
 
   /** Spaces gone for good: their questions are dismissed, then dropped. */
@@ -1305,8 +1789,12 @@ export class Hub {
       s.num('SELECT MIN(created_ms) FROM pending'),
       s.num('SELECT MIN(created_ms) FROM replies'),
       s.num('SELECT MIN(created_ms) FROM asks WHERE escalated = 0'),
+      s.num(
+        `SELECT MIN(expires_at_ms) FROM delegations
+         WHERE revoked = 0 AND expires_at_ms > 0`,
+      ),
     ];
-    const ttl = [0, 0, PENDING_TTL_MS, PENDING_TTL_MS, ESCALATE_MS];
+    const ttl = [0, 0, PENDING_TTL_MS, PENDING_TTL_MS, ESCALATE_MS, 0];
     const at = due
       .map((v, i) => (v === null ? null : v + ttl[i]!))
       .filter((v): v is number => v !== null);
@@ -1384,7 +1872,14 @@ export class Hub {
         last_seen_ms: d.last_seen_ms,
         public_key: d.public_key,
       }));
-    for (const c of conns) this.send(c.conn, { type: 'devices', devices });
+    // Protocol 3 can't read a `mobile` / `web` kind: it never sees them.
+    const hostsOnly = devices.filter((d) => hosts(d.info.kind));
+    for (const c of conns) {
+      this.send(c.conn, {
+        type: 'devices',
+        devices: protocolOf(c.state) >= V4 ? devices : hostsOnly,
+      });
+    }
   }
 
   private send(conn: Conn, msg: ServerMessage) {
@@ -1423,6 +1918,43 @@ export class Hub {
  */
 function badToken(e: unknown): boolean {
   return e instanceof CloudError && e.code === 'cloud.unauthorized';
+}
+
+/** A connection's protocol: 3 for attachments saved before v4. */
+function protocolOf(s: ConnState): number {
+  return s.protocol ?? 3;
+}
+
+/** A device's stored info (checked by `wire.ts` when it came in). */
+function infoOf(d: DeviceRow): DeviceInfo {
+  return JSON.parse(d.info) as DeviceInfo;
+}
+
+/**
+ * The push for a question (docs/mobile.md, mobile/src/push/README.md): one
+ * single-choice or free-text question gets the body and category the app
+ * registered buttons for; several questions or multi-select get no
+ * category (answered in the app) and no options.
+ */
+function askPush(title: string, ask: RemoteAsk): Omit<PushMessage, 'to'> {
+  const q = ask.questions[0];
+  const single = ask.questions.length === 1 && q !== undefined && !q.multi;
+  const shown = single
+    ? askPresentation(q.question, q.options)
+    : { body: clip(q?.question ?? 'A question', PUSH_BODY_CHARS) };
+  return {
+    title,
+    ...shown,
+    channelId: 'default',
+    priority: 'high',
+    data: {
+      kind: 'ask',
+      ask_id: ask.ask_id,
+      space: ask.space,
+      host_device: ask.host_device,
+      options: single ? q.options.slice(0, PUSH_ACTIONS) : [],
+    },
+  };
 }
 
 /** A socket's state; none before `open` saved it (a fresh DO socket). */

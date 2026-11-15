@@ -4,7 +4,15 @@
  * carries types only); the rest are the cloud's own (docs/cloud.md "Fleet").
  */
 
-export const PROTOCOL_VERSION = 3;
+export const PROTOCOL_VERSION = 4;
+/**
+ * The oldest protocol still accepted. Protocol-3 connections never see
+ * `mobile` / `web` devices (their `DeviceKind` can't read them) nor
+ * `delegations`.
+ */
+export const MIN_PROTOCOL_VERSION = 3;
+/** A signed request or delegation older or newer than this is stale. */
+export const REQUEST_WINDOW_MS = 5 * 60_000;
 /** The challenge nonce; a hello signs exactly this many bytes. */
 export const NONCE_BYTES = 32;
 export const MAX_DEPTH = 2;
@@ -44,6 +52,15 @@ export const RATE_BURST = 500;
 export const MAX_INFO_BYTES = 8 * 1024;
 /** One stored space event (reply texts are ≤ 8000 chars). */
 export const MAX_EVENT_BYTES = 64 * 1024;
+
+/** Pushes one device may be sent per minute; over it they're dropped. */
+export const PUSH_PER_MINUTE = 30;
+/** A push token as Expo issues it. */
+export const MAX_PUSH_TOKEN_CHARS = 200;
+/** A question's text in a push body. */
+export const PUSH_BODY_CHARS = 180;
+/** Option labels a push carries as notification actions. */
+export const PUSH_ACTIONS = 4;
 /**
  * Stored event bytes (body length; a `started` body counts twice: its ring
  * copy and the one kept apart). Per space: the oldest go. Per user: the
@@ -67,6 +84,7 @@ export const codes = {
   RATE_LIMITED: 'fleet.rate_limited',
   NOT_YOURS: 'fleet.not_yours',
   INVALID: 'fleet.invalid',
+  STALE_REQUEST: 'fleet.stale_request',
   // the cloud's own, not in the Rust list
   BAD_MESSAGE: 'fleet.bad_message',
   TOO_MANY_DEVICES: 'fleet.too_many_devices',

@@ -365,6 +365,18 @@ pins down what this doc leaves open:
 - Stored events are capped by bytes: 4 MB per space (oldest out), 64 MB
   per user (finished spaces' oldest out first, else `error{fleet.busy}`
   and the host keeps the event in its journal).
+- Protocols 3 and 4 are accepted. A protocol-3 connection never sees
+  `mobile` / `web` devices in `devices` nor gets `delegations`; a request
+  to a `mobile` / `web` device is `refused{fleet.invalid}`.
+- A space's followers are its origin and the origin's live delegates
+  (`docs/mobile.md`): they may subscribe, and its questions reach them as
+  they reach the origin (escalation too). A delegation is signed by the
+  origin, checked against its pinned key, and pushed to both devices as
+  `delegations{list}`.
+- Phones get Expo pushes for a follower's question (when not looking at
+  it) and for a followed space turning idle, failed or stopped; 30 a
+  minute per device. `POST /v1/fleet/request` routes a one-shot request
+  like a socket `request`; the reply comes later over the socket.
 - Cloud-only codes: `fleet.bad_message` (malformed or out-of-order frame),
   `fleet.too_many_devices` (20 per user), `fleet.too_many_connections` (10
   sockets per user), `fleet.too_many_spaces` (200 per user),
