@@ -1,14 +1,17 @@
 /**
  * A question an agent on another device asks (`ask_user`): options, several
  * when the question allows, "Other…" free text, answered through
- * `fleet.answer(space, askId, answers)`. Same card as the desktop's.
+ * `fleet.answer(space, askId, answers)`. Same card as the desktop's, with
+ * native controls: option chips (`OptionChip`), the "Other…" field
+ * (`ChatField`) and Send answer (the kit's `Button`).
  */
 import { useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { useServices } from '../services';
 import { useFleetState } from '../state/fleet';
 import type { QuestionView } from '../fleet/types';
-import { Button, Card, Chip, Field, Notice } from './kit';
+import { ChatField } from './ChatField';
+import { Card, Notice } from './kit';
 import {
   emptyDraft,
   errorText,
@@ -19,6 +22,8 @@ import {
   typeOther,
   type Draft,
 } from './logic';
+import { Button } from './native';
+import { OptionChip } from './OptionChip';
 import { usePalette } from './theme';
 
 export function QuestionCard({
@@ -66,7 +71,7 @@ export function QuestionCard({
             </Text>
             <View style={styles.options}>
               {q.options.map((o) => (
-                <Chip
+                <OptionChip
                   key={o}
                   label={o}
                   selected={d.selected.includes(o)}
@@ -75,15 +80,15 @@ export function QuestionCard({
                 />
               ))}
             </View>
-            <Field
-              label={`Other answer to: ${q.question}`}
+            <ChatField
+              accessibilityLabel={`Other answer to: ${q.question}`}
               placeholder="Other…"
               value={d.other}
-              editable={!busy}
+              disabled={busy}
               onChangeText={(t) => set(i, typeOther(q, d, t))}
               onFocus={onFocusAnswer}
-              onSubmitEditing={send}
-              returnKeyType="send"
+              onSubmit={send}
+              submitLabel="send"
             />
             {q.multi ? (
               <Text style={[styles.hint, { color: p.muted }]}>
@@ -96,9 +101,10 @@ export function QuestionCard({
       {error ? <Notice tone="danger">{error}</Notice> : null}
       <Button
         label="Send answer"
-        kind="primary"
+        variant="primary"
+        fullWidth
         disabled={!isAnswered(drafts)}
-        busy={busy}
+        loading={busy}
         onPress={send}
       />
     </Card>

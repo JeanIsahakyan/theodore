@@ -12,6 +12,10 @@
  *              register_push again, subscribe{space, since: last seq} again
  *   close 4001/4003, error{fatal code} ─▶ error state, no redial until start()
  *                                          (or a refreshed token)
+ *   close 4000 (another connection of this device took over)
+ *        ─▶ that one is a client of this JS context ─▶ this one goes quiet for good
+ *        └▶ else (another tab, window) ─▶ "connected elsewhere", no redial until
+ *           the app comes to the foreground / the tab is shown, or start()
  *   anything else ─▶ redial, 0.5 s doubling to 30 s, ±25 %
  * startSpace ─▶ target listed, hosts, pinned with the key listed now
  *   ─▶ seal{target_key: pin} ─▶ starting ─▶ reply opened with that pin ─▶ ok: subscribe
@@ -112,6 +116,21 @@ export const FATAL_CODES = [
   'fleet.removed',
 ] as const;
 const FATAL_CLOSE = [4001, 4003];
+/** The cloud closed this link: a newer connection of the same device took over. */
+export const REPLACED_CLOSE = 4000;
+
+export const REPLACED_TEXT =
+  'this device connected from another tab or window; back here, it connects again';
+
+/**
+ * The fleet clients of this JS context, each saying which org it is linked
+ * to (or dialing) right now. Two of them on one device key take the link
+ * from each other forever (close 4000 both ways); this lets the one that
+ * was replaced tell "a twin in this same app" from "another tab".
+ */
+type LiveProbe = () => string | null;
+const g = globalThis as { __theodoreFleetLinks?: Set<LiveProbe> };
+const liveLinks = (g.__theodoreFleetLinks ??= new Set<LiveProbe>());
 
 export interface FleetTiming {
   backoffBaseMs: number;
@@ -268,6 +287,13 @@ export function createFleetClient(
   let attempt = 0;
   let redial: ReturnType<typeof setTimeout> | null = null;
   let background = false;
+  /**
+   * Another connection of this device took the link (close 4000): no
+   * redial until the app is in front again, or start().
+   */
+  let heldOff = false;
+  /** A twin client of this JS context has the link: this one stays quiet. */
+  let superseded = false;
   let session: Session | null = null;
   let me: string | null = null;
   let devices: DeviceSummary[] = [];
@@ -327,7 +353,14 @@ export function createFleetClient(
   const setConnection = (
     connection: 'off' | 'connecting' | 'connected' | 'error',
     error: string | null = null,
-  ) => set({ connection, error, deviceId: me });
+  ) => {
+    if (!superseded) set({ connection, error, deviceId: me });
+  };
+  const liveProbe: LiveProbe = () =>
+    wanted && !superseded && (link || dialing)
+      ? (link?.org ?? session?.organizationId ?? null)
+      : null;
+  liveLinks.add(liveProbe);
 
   /** Sign-out or org switch: nothing of the old fleet stays on screen. */
   const forgetFleet = () => {
@@ -387,15 +420,19 @@ export function createFleetClient(
     scheduleSave();
   };
 
-  /** Sign-out or org switch: the saved set of the account left goes. */
-  const leaveScope = () => {
+  /**
+   * Leaves the listed account / org. Sign-out (`forget`) removes its saved
+   * set; an org switch keeps it (sets are per org), so switching back lists
+   * that org's spaces again.
+   */
+  const leaveScope = (forget: boolean) => {
     const old = scope;
     scope = null;
     savedFor = null;
     dirty = new Set();
     if (saveTimer) clearTimeout(saveTimer);
     saveTimer = null;
-    if (old) void queue(() => saved.clear(old));
+    if (old && forget) void queue(() => saved.clear(old));
   };
 
   /** Spaces gone from the list: their lines and mirror leave the store too. */
@@ -422,8 +459,9 @@ export function createFleetClient(
   const restore = async (next: string, device: string | null) => {
     if (scope === next) return;
     if (scope !== null) {
-      // Another account or org than the one listed: nothing of it stays.
-      leaveScope();
+      // Another account or org than the one listed: none of it stays shown
+      // (its saved set stays for when it's back).
+      leaveScope(false);
       forgetFleet();
     }
     const list = await saved.load(next, device);
@@ -520,10 +558,29 @@ export function createFleetClient(
     setConnection('error', fatalText(code));
   };
 
+  /** Close 4000: another connection of this device has the link now. */
+  const replaced = (l: Link) => {
+    if (link !== l) return;
+    closeLink();
+    const probe = liveProbe;
+    const twin = [...liveLinks].some((p) => p !== probe && p() === l.org);
+    if (twin) {
+      // A second client in this same app (a dev reload kept the old one):
+      // never dial again and never write the shared store again.
+      superseded = true;
+      wanted = false;
+      liveLinks.delete(probe);
+      return;
+    }
+    heldOff = true;
+    setConnection('error', REPLACED_TEXT);
+  };
+
   const scheduleRedial = () => {
     if (
       !wanted ||
       fatal ||
+      heldOff ||
       redial ||
       (background && platform.closeInBackground)
     )
@@ -538,7 +595,7 @@ export function createFleetClient(
   };
 
   const connect = async (): Promise<void> => {
-    if (!wanted || fatal || link || dialing) return;
+    if (!wanted || fatal || heldOff || link || dialing) return;
     if (background && platform.closeInBackground) return;
     dialing = true;
     const mine = epoch;
@@ -570,7 +627,7 @@ export function createFleetClient(
         savedScope(s.userId, s.organizationId),
         validDeviceId(stored) ? stored : null,
       );
-      if (mine !== epoch || !wanted || fatal || link) return;
+      if (mine !== epoch || !wanted || fatal || heldOff || link) return;
       if (background && platform.closeInBackground) return;
       setConnection('connecting');
       const socket = platform.openSocket(wsUrl(deps.cloudUrl), token);
@@ -601,7 +658,9 @@ export function createFleetClient(
       socket.onclose = (ev) => {
         if (link !== l) return;
         const code = ev?.code ?? 1006;
-        if (FATAL_CLOSE.includes(code)) {
+        if (code === REPLACED_CLOSE) {
+          replaced(l);
+        } else if (FATAL_CLOSE.includes(code)) {
           const reason = ev?.reason ?? '';
           void toFatal(
             l,
@@ -1140,15 +1199,19 @@ export function createFleetClient(
 
   const client: FleetClient = {
     async start() {
+      if (superseded) return;
       wanted = true;
       fatal = null;
+      heldOff = false;
       attempt = 0;
       await connect();
     },
 
     stop() {
       wanted = false;
+      heldOff = false;
       closeLink();
+      if (superseded) return;
       setConnection('off');
       void flush();
     },
@@ -1358,6 +1421,7 @@ export function createFleetClient(
 
   // ── account and app lifecycle ───────────────────────────────────────────
   auth.onChange((s) => {
+    if (superseded) return;
     const before = session;
     session = s;
     if (!s) {
@@ -1369,7 +1433,7 @@ export function createFleetClient(
       push = null;
       epoch++;
       closeLink();
-      leaveScope();
+      leaveScope(true);
       forgetFleet();
       return;
     }
@@ -1377,9 +1441,10 @@ export function createFleetClient(
     if (before && before.organizationId !== s.organizationId) {
       epoch++;
       closeLink();
-      leaveScope();
+      leaveScope(false);
       forgetFleet();
       fatal = null;
+      heldOff = false;
       attempt = 0;
       void connect();
       return;
@@ -1405,6 +1470,7 @@ export function createFleetClient(
   });
 
   platform.onActive((active) => {
+    if (superseded) return;
     background = !active;
     if (!active) {
       // iOS may kill the app from here on: what changed is saved now.
@@ -1415,6 +1481,8 @@ export function createFleetClient(
       }
       return;
     }
+    // Back in front: this app (or tab) takes the link again.
+    heldOff = false;
     if (!wanted || fatal || link) return;
     if (redial) clearTimeout(redial);
     redial = null;

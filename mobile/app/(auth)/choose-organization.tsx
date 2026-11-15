@@ -2,19 +2,28 @@
  * The organization picker for a sign-in that needs one (you're in several).
  * The pick is finished through the cloud; the pending sign-in is single-use,
  * so a failure goes back to "Sign in".
+ *
+ * ```text
+ * Form (grouped list, like Settings)
+ *   Organizations   one row per org ›  ─tap─▶ spinner + "Signing in…",
+ *                   the others dimmed     the gate moves on when signed in
+ *   footer          what this is for, or the error
+ * no pending sign-in (expired, or it failed):
+ *   footer "This sign-in has expired…" / the error, "Sign in again" row
+ * ```
  */
 import { router, type Href } from 'expo-router';
 import { useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useServices } from '../../src/services';
 import { useAuthState } from '../../src/shell/AppProviders';
-import { Button, Card, Notice } from '../../src/ui/kit';
-import { usePalette } from '../../src/ui/theme';
+import { Button, Form, Row, Section } from '../../src/ui/native';
+
+const LEAD =
+  'Your account is in several organizations. Pick the one to use on this device; you can switch later in Settings.';
 
 export default function ChooseOrganization() {
   const { auth } = useServices();
   const { choices, setChoices } = useAuthState();
-  const p = usePalette();
   const [picking, setPicking] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -46,86 +55,31 @@ export default function ChooseOrganization() {
   const list = choices ?? [];
 
   return (
-    <ScrollView
-      contentInsetAdjustmentBehavior="automatic"
-      contentContainerStyle={styles.content}
-    >
-      <Text style={[styles.lead, { color: p.muted }]}>
-        Your account is in several organizations. Pick the one to use on this
-        device; you can switch later in Settings.
-      </Text>
+    <Form testID="choose-organization">
       {list.length > 0 ? (
-        <Card style={styles.card}>
-          {list.map((o, i) => (
-            <Pressable
+        <Section title="Organizations" footer={error ?? LEAD}>
+          {list.map((o) => (
+            <Row
               key={o.id}
-              accessibilityRole="button"
+              label={o.name || 'Unnamed organization'}
+              detail={picking === o.id ? 'Signing in…' : undefined}
+              chevron
+              loading={picking === o.id}
+              disabled={!!picking && picking !== o.id}
               accessibilityLabel={`Use ${o.name || o.id}`}
-              accessibilityState={{
-                busy: picking === o.id,
-                disabled: !!picking,
-              }}
-              disabled={!!picking}
               onPress={() => pick(o.id)}
-              style={({ pressed }) => [
-                styles.row,
-                i > 0 && {
-                  borderTopWidth: StyleSheet.hairlineWidth,
-                  borderTopColor: p.border,
-                },
-                {
-                  opacity:
-                    picking && picking !== o.id ? 0.45 : pressed ? 0.6 : 1,
-                },
-              ]}
-            >
-              <View style={styles.rowText}>
-                <Text style={[styles.name, { color: p.text }]}>
-                  {o.name || 'Unnamed organization'}
-                </Text>
-                {picking === o.id ? (
-                  <Text style={{ color: p.muted }}>Signing in…</Text>
-                ) : null}
-              </View>
-              <Text style={{ color: p.muted, fontSize: 20 }}>›</Text>
-            </Pressable>
+            />
           ))}
-        </Card>
-      ) : null}
-      {error ? <Notice tone="danger">{error}</Notice> : null}
-      {list.length === 0 ? (
-        <View style={styles.actions}>
-          {!error ? (
-            <Notice tone="neutral">
-              This sign-in has expired. Sign in again.
-            </Notice>
-          ) : null}
-          <Button kind="primary" label="Sign in again" onPress={backToSignIn} />
-        </View>
-      ) : null}
-    </ScrollView>
+        </Section>
+      ) : (
+        <Section footer={error ?? 'This sign-in has expired. Sign in again.'}>
+          <Button
+            variant="primary"
+            label="Sign in again"
+            onPress={backToSignIn}
+          />
+        </Section>
+      )}
+    </Form>
   );
 }
-
-const styles = StyleSheet.create({
-  content: {
-    padding: 20,
-    gap: 16,
-    width: '100%',
-    maxWidth: 520,
-    alignSelf: 'center',
-  },
-  lead: { fontSize: 15, lineHeight: 21 },
-  card: { padding: 0 },
-  row: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    gap: 12,
-    minHeight: 52,
-  },
-  rowText: { flex: 1, gap: 2 },
-  name: { fontSize: 17, fontWeight: '500' },
-  actions: { gap: 12 },
-});

@@ -3,29 +3,29 @@
  * spaces), one of its projects, the goal, and a mode up to what that device
  * allows. Then straight into the new space.
  *
- * The keyboard never hides Start: the form scrolls above it, a drag or a
- * tap outside the goal closes it (the goal is multiline: return is a
- * newline).
+ * A native grouped form (docs/mobile.md "Native UI"):
+ *
+ * ```text
+ * header      ‹ Back      Start a space      Start      (iOS, Android)
+ * (no title)  Device   mac-A ⌄      Project   theodore ⌄
+ * Goal        multiline field
+ * Mode        Ask | Plan | Edit (up to the device's max)   footer: hint
+ *             run warning, error
+ *             Start                                      (web only)
+ * ```
+ *
+ * The keyboard never hides Start: on iOS and Android it is in the header.
+ * The goal is multiline (return is a newline); dragging the form closes the
+ * keyboard, and on iOS so does a tap off a control.
  */
 import { useMemo, useState } from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 import { Stack, router, type Href } from 'expo-router';
-import {
-  DismissKeyboard,
-  KeyboardScreen,
-  keyboardDismissMode,
-} from '../../src/ui/KeyboardSafe';
+import { KeyboardScreen } from '../../src/ui/KeyboardSafe';
 import type { FleetMode } from '../../src/gen/fleet';
 import { useServices } from '../../src/services';
 import { useFleetState } from '../../src/state/fleet';
-import {
-  Button,
-  Chip,
-  Empty,
-  Field,
-  Notice,
-  SectionTitle,
-} from '../../src/ui/kit';
+import { Empty, Notice } from '../../src/ui/kit';
 import {
   MODE_HINT,
   MODE_LABEL,
@@ -35,11 +35,22 @@ import {
   modesUpTo,
   startableDevices,
 } from '../../src/ui/logic';
-import { usePalette } from '../../src/ui/theme';
+import {
+  Button,
+  FormSlot,
+  Section,
+  Segmented,
+  Select,
+  TextField,
+} from '../../src/ui/native';
+import { ActionHeader } from '../../src/ui/start/ActionHeader';
+import { KeyboardForm } from '../../src/ui/start/KeyboardForm';
+
+const TITLE = 'Start a space';
+const web = process.env.EXPO_OS === 'web';
 
 export default function StartScreen() {
   const { fleet } = useServices();
-  const p = usePalette();
   const allDevices = useFleetState((s) => s.devices);
   const devices = useMemo(() => startableDevices(allDevices), [allDevices]);
   const [deviceId, setDeviceId] = useState<string | null>(null);
@@ -72,101 +83,122 @@ export default function StartScreen() {
       .finally(() => setBusy(false));
   };
 
-  return (
-    <KeyboardScreen>
-      <Stack.Screen options={{ title: 'Start a space' }} />
-      <ScrollView
-        contentInsetAdjustmentBehavior="automatic"
-        contentContainerStyle={styles.scroll}
-        keyboardShouldPersistTaps="handled"
-        keyboardDismissMode={keyboardDismissMode}
+  const startButton = (inHeader: boolean) => (
+    <Button
+      label="Start"
+      variant={inHeader ? 'plain' : 'primary'}
+      disabled={!ready}
+      loading={busy}
+      onPress={start}
+    />
+  );
+
+  const header = (
+    <Stack.Screen
+      options={{
+        title: TITLE,
+        header: () => (
+          <ActionHeader
+            title={TITLE}
+            action={!web && device ? startButton(true) : undefined}
+          />
+        ),
+      }}
+    />
+  );
+
+  if (devices.length === 0 || !device) {
+    return (
+      <View style={styles.empty}>
+        {header}
+        <Empty
+          title="No computer can take a space right now"
+          hint="It has to be one you trust, online, and set to let trusted devices run spaces. Trust it under Devices."
+        />
+      </View>
+    );
+  }
+
+  const form = (
+    <KeyboardForm testID="start-space">
+      <Section>
+        <Select
+          label="Device"
+          choices={devices.map((d) => ({ value: d.deviceId, label: d.name }))}
+          value={device.deviceId}
+          onChange={(id) => {
+            const d = devices.find((x) => x.deviceId === id);
+            setDeviceId(id);
+            setProjectId(null);
+            if (d) setMode((m) => capMode(m, d.maxMode));
+          }}
+        />
+        <Select
+          label="Project"
+          choices={device.projects.map((x) => ({ value: x.id, label: x.name }))}
+          value={project?.id ?? null}
+          onChange={setProjectId}
+        />
+      </Section>
+
+      <Section title="Goal">
+        <TextField
+          multiline
+          minLines={4}
+          placeholder="What should the agent work on?"
+          value={goal}
+          onChangeText={setGoal}
+        />
+      </Section>
+
+      <Section
+        title="Mode"
+        footer={`${MODE_HINT[shownMode]}. ${device.name} allows up to ${MODE_LABEL[device.maxMode]}.`}
       >
-        <DismissKeyboard style={styles.content}>
-          {devices.length === 0 || !device ? (
-            <Empty
-              title="No computer can take a space right now"
-              hint="It has to be one you trust, online, and set to let trusted devices run spaces. Trust it under Devices."
-            />
-          ) : (
-            <>
-              <SectionTitle>Device</SectionTitle>
-              <View style={styles.choices}>
-                {devices.map((d) => (
-                  <Chip
-                    key={d.deviceId}
-                    label={d.name}
-                    selected={d.deviceId === device.deviceId}
-                    onPress={() => {
-                      setDeviceId(d.deviceId);
-                      setProjectId(null);
-                      setMode((m) => capMode(m, d.maxMode));
-                    }}
-                  />
-                ))}
-              </View>
+        <Segmented
+          label="Mode"
+          choices={modesUpTo(device.maxMode).map((m) => ({
+            value: m,
+            label: MODE_LABEL[m],
+          }))}
+          value={shownMode}
+          onChange={setMode}
+        />
+      </Section>
 
-              <SectionTitle>Project</SectionTitle>
-              <View style={styles.choices}>
-                {device.projects.map((x) => (
-                  <Chip
-                    key={x.id}
-                    label={x.name}
-                    selected={x.id === project?.id}
-                    onPress={() => setProjectId(x.id)}
-                  />
-                ))}
-              </View>
+      {shownMode === 'run' ? (
+        <Section>
+          <FormSlot>
+            <Notice tone="warning">{RUN_WARNING}</Notice>
+          </FormSlot>
+        </Section>
+      ) : null}
 
-              <SectionTitle>Goal</SectionTitle>
-              <Field
-                label="Goal"
-                multiline
-                numberOfLines={4}
-                placeholder="What should the agent work on?"
-                value={goal}
-                onChangeText={setGoal}
-                style={styles.goal}
-              />
+      {error ? (
+        <Section>
+          <FormSlot>
+            <Notice tone="danger">{error}</Notice>
+          </FormSlot>
+        </Section>
+      ) : null}
 
-              <SectionTitle>Mode</SectionTitle>
-              <View style={styles.choices}>
-                {modesUpTo(device.maxMode).map((m) => (
-                  <Chip
-                    key={m}
-                    label={MODE_LABEL[m]}
-                    selected={m === shownMode}
-                    onPress={() => setMode(m)}
-                  />
-                ))}
-              </View>
-              <Text style={[styles.hint, { color: p.muted }]}>
-                {MODE_HINT[shownMode]}. {device.name} allows up to{' '}
-                {MODE_LABEL[device.maxMode]}.
-              </Text>
-              {shownMode === 'run' ? (
-                <Notice tone="warning">{RUN_WARNING}</Notice>
-              ) : null}
+      {web ? <Section>{startButton(false)}</Section> : null}
+    </KeyboardForm>
+  );
 
-              {error ? <Notice tone="danger">{error}</Notice> : null}
-              <Button
-                label="Start"
-                kind="primary"
-                disabled={!ready}
-                busy={busy}
-                onPress={start}
-              />
-            </>
-          )}
-        </DismissKeyboard>
-      </ScrollView>
-    </KeyboardScreen>
+  return (
+    <>
+      {header}
+      {/* iOS: SwiftUI keeps the focused field above the keyboard itself. */}
+      {process.env.EXPO_OS === 'android' ? (
+        <KeyboardScreen>{form}</KeyboardScreen>
+      ) : (
+        form
+      )}
+    </>
   );
 }
 
 const styles = StyleSheet.create({
-  scroll: { flexGrow: 1 },
-  content: { flexGrow: 1, padding: 16, gap: 12 },
-  choices: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  goal: { minHeight: 110, textAlignVertical: 'top' },
-  hint: { fontSize: 13 },
+  empty: { flex: 1, padding: 16 },
 });

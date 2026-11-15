@@ -10,15 +10,10 @@
  * ```
  */
 import { memo, useMemo, useState, type ReactNode } from 'react';
-import {
-  ActivityIndicator,
-  Pressable,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import type { TurnStep } from '../fleet/contract';
 import { Markdown } from './Markdown';
+import { Spinner } from './Spinner';
 import { mono, usePalette } from './theme';
 import {
   foldLine,
@@ -72,7 +67,7 @@ function Icon({ busy, glyph }: { busy: boolean; glyph: string }) {
   return (
     <View style={styles.icon}>
       {busy ? (
-        <ActivityIndicator size="small" color={p.muted} />
+        <Spinner color={p.muted} />
       ) : (
         <Text style={[styles.glyph, { color: p.muted }]}>{glyph}</Text>
       )}

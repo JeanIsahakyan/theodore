@@ -50,16 +50,23 @@ interface Clients {
   services: Services;
 }
 
-let clients: Clients | null = null;
+/**
+ * One set per JS runtime, kept on `globalThis`: Fast Refresh re-runs this
+ * module, and a module-level `let` would start a second fleet client on
+ * the same device key while the first one still runs. The cloud keeps one
+ * connection per device (close 4000), so the two would take the link from
+ * each other forever. Editing the fleet or auth client in dev therefore
+ * needs a full reload to take effect.
+ */
+const runtime = globalThis as { __theodoreClients?: Clients };
 
-/** One set per JS runtime (fast refresh and remounts reuse them). */
 function getClients(): Clients {
-  if (!clients) {
+  if (!runtime.__theodoreClients) {
     const auth = createAuthClient();
     const fleet = createFleetClient(auth);
-    clients = { services: { auth, fleet } };
+    runtime.__theodoreClients = { services: { auth, fleet } };
   }
-  return clients;
+  return runtime.__theodoreClients;
 }
 
 const sameAccount = (a: Session | null, b: Session | null) =>

@@ -1,105 +1,64 @@
 /**
  * Devices: this phone's fingerprint (to show on your computer so it can trust
- * this phone), and every device with trust / untrust. Trusting always goes
- * through the fingerprint confirm.
+ * this phone), and every other device with trust / untrust, as one grouped
+ * native `Form` (docs/mobile.md "Native UI"):
+ *
+ * ```text
+ * This device     fingerprint, large
+ * Your devices    one section per device:
+ *                   name ● · kind · OS · online · max mode · fingerprint · Trusted
+ *                   Trust ─▶ fingerprint confirm ─▶ trusted   | Untrust
+ *                   (a failed trust / untrust is said under its section)
+ * ```
  */
-import { useMemo, useState } from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
-import { useServices } from '../../../src/services';
-import { useFleetState } from '../../../src/state/fleet';
+import { useMemo } from 'react';
+import { View } from 'react-native';
 import type { FleetDeviceView } from '../../../src/fleet/types';
+import { useFleetState } from '../../../src/state/fleet';
 import { ConnectionBanner } from '../../../src/ui/ConnectionBanner';
-import {
-  Badge,
-  Button,
-  Card,
-  Dot,
-  Empty,
-  Fingerprint,
-  Notice,
-  SectionTitle,
-} from '../../../src/ui/kit';
-import {
-  MODE_LABEL,
-  errorText,
-  kindGlyph,
-  kindLabel,
-  osLabel,
-  sortDevices,
-} from '../../../src/ui/logic';
-import { TrustConfirm } from '../../../src/ui/TrustConfirm';
+import { DeviceItem, FingerprintItem } from '../../../src/ui/DeviceItem';
+import { deviceDetail } from '../../../src/ui/deviceView';
+import { sortDevices } from '../../../src/ui/logic';
+import { Button, Form, Row, Section } from '../../../src/ui/native';
 import { usePalette } from '../../../src/ui/theme';
+import { useTrust } from '../../../src/ui/TrustConfirm';
 
-function DeviceRow({ device }: { device: FleetDeviceView }) {
-  const { fleet } = useServices();
-  const p = usePalette();
-  const [confirming, setConfirming] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const untrust = () => {
-    setBusy(true);
-    setError(null);
-    fleet
-      .untrust(device.deviceId)
-      .catch((e: unknown) => setError(errorText(e)))
-      .finally(() => setBusy(false));
-  };
-
+function DeviceSection({
+  device,
+  title,
+}: {
+  device: FleetDeviceView;
+  title?: string;
+}) {
+  const { trust, untrust, busy, error } = useTrust(device);
   return (
-    <Card>
-      <View style={styles.top}>
-        <Text accessible={false} style={styles.glyph}>
-          {kindGlyph(device.kind)}
-        </Text>
-        <View style={styles.flex}>
-          <View style={styles.nameRow}>
-            <Text numberOfLines={1} style={[styles.name, { color: p.text }]}>
-              {device.name}
-            </Text>
-            <Dot
-              on={device.online}
-              label={device.online ? 'Online' : 'Offline'}
-            />
-          </View>
-          <Text style={[styles.meta, { color: p.muted }]}>
-            {kindLabel(device.kind)} · {osLabel(device.os)} ·{' '}
-            {device.online ? 'online' : 'offline'}
-            {device.acceptsRemote
-              ? ` · runs spaces up to ${MODE_LABEL[device.maxMode]}`
-              : ''}
-          </Text>
-        </View>
-        {device.trusted ? <Badge label="Trusted" tone="success" /> : null}
-      </View>
-      <Fingerprint value={device.fingerprint} />
-      {device.thisDevice ? null : device.trusted ? (
-        <View style={styles.actions}>
-          <Button
-            label="Untrust"
-            kind="secondary"
-            busy={busy}
-            onPress={untrust}
-          />
-        </View>
-      ) : confirming ? (
-        <TrustConfirm
-          device={device}
-          onCancel={() => setConfirming(false)}
-          onTrusted={() => setConfirming(false)}
+    <Section title={title} footer={error ?? undefined}>
+      <DeviceItem
+        name={device.name}
+        kind={device.kind}
+        online={device.online}
+        detail={deviceDetail(device)}
+        fingerprint={device.fingerprint}
+        trusted={device.trusted}
+      />
+      {device.trusted ? (
+        <Button
+          label="Untrust"
+          variant="destructive"
+          loading={busy}
+          accessibilityLabel={`Untrust ${device.name}`}
+          onPress={untrust}
         />
       ) : (
-        <View style={styles.actions}>
-          <Button
-            label="Trust"
-            kind="primary"
-            accessibilityLabel={`Trust ${device.name}`}
-            onPress={() => setConfirming(true)}
-          />
-        </View>
+        <Button
+          label="Trust"
+          variant="primary"
+          loading={busy}
+          accessibilityLabel={`Trust ${device.name}`}
+          onPress={() => void trust()}
+        />
       )}
-      {error ? <Notice tone="danger">{error}</Notice> : null}
-    </Card>
+    </Section>
   );
 }
 
@@ -113,39 +72,33 @@ export default function DevicesScreen() {
   );
 
   return (
-    <ScrollView
-      contentInsetAdjustmentBehavior="automatic"
-      contentContainerStyle={styles.content}
-    >
+    <View style={{ flex: 1, backgroundColor: p.background }}>
       <ConnectionBanner />
-      <SectionTitle>This device</SectionTitle>
-      <Card>
-        <Fingerprint value={fingerprint} large />
-        <Text style={[styles.meta, { color: p.muted }]}>
-          Show this on your computer to trust this phone.
-        </Text>
-      </Card>
+      <Form testID="devices">
+        <Section
+          title="This device"
+          footer="Show this on your computer to trust this phone."
+        >
+          <FingerprintItem value={fingerprint} />
+        </Section>
 
-      <SectionTitle>Your devices</SectionTitle>
-      {devices.length === 0 ? (
-        <Empty
-          title="No other devices yet"
-          hint="Open Theodore on a computer signed in to the same account."
-        />
-      ) : (
-        devices.map((d) => <DeviceRow key={d.deviceId} device={d} />)
-      )}
-    </ScrollView>
+        {devices.length === 0 ? (
+          <Section
+            title="Your devices"
+            footer="Open Theodore on a computer signed in to the same account."
+          >
+            <Row label="No other devices yet" />
+          </Section>
+        ) : (
+          devices.map((d, i) => (
+            <DeviceSection
+              key={d.deviceId}
+              device={d}
+              title={i === 0 ? 'Your devices' : undefined}
+            />
+          ))
+        )}
+      </Form>
+    </View>
   );
 }
-
-const styles = StyleSheet.create({
-  content: { padding: 16, gap: 12 },
-  flex: { flex: 1, gap: 2 },
-  top: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  glyph: { fontSize: 26 },
-  nameRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  name: { flexShrink: 1, fontSize: 17, fontWeight: '600' },
-  meta: { fontSize: 13 },
-  actions: { flexDirection: 'row', justifyContent: 'flex-end' },
-});
