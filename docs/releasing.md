@@ -57,7 +57,7 @@ push touches `mobile/**`; iOS and Android are EAS builds started by hand
 (`eas build --profile preview|production`), with remote version numbers.
 
 ```
-push staging ─ mobile/** ─▶ theodore-web-staging  (pages.dev)
+push staging ─ mobile/** ─▶ theodore-web-staging  (static assets Worker)
 push main    ─ mobile/** ─▶ theodore-web
 ```
 
@@ -382,7 +382,7 @@ with an invalid redirect error:
 A nightly bakes in whichever client id the shell exported; register
 `theodore-nightly://callback` on the environment it uses. The mobile app adds
 `theodore-mobile://callback` and its web origin's `/callback`
-(`https://theodore-web[-staging].pages.dev`) to each environment.
+(`https://theodore-web[-staging].prd-instance.workers.dev`) to each environment.
 
 ## Build colours
 

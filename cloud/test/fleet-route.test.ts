@@ -110,7 +110,7 @@ describe('GET /v1/fleet/ws', async () => {
   });
 });
 
-const WEB = 'https://theodore-web-staging.pages.dev';
+const WEB = 'https://theodore-web-staging.prd-instance.workers.dev';
 
 describe('browser sockets: the token as a subprotocol', async () => {
   const { keys, sign } = await signer();

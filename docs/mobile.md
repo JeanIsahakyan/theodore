@@ -90,7 +90,7 @@ requests still need the host's own trust in the phone's key.
 - `POST /v1/fleet/request` routes like a socket `request`; rate-limited per user.
 - Delegations stored per origin; subscribe/ask routing = origin, host, and the
   origin's live delegates.
-- CORS for the web app's origin only (`https://<web>.pages.dev` per env).
+- CORS for the web app's origin only (`https://theodore-web[-staging].<account>.workers.dev` per env).
 - Requests targeting a `mobile` / `web` device: `refused{fleet.invalid}`.
 
 ## App (mobile/)
@@ -263,9 +263,9 @@ production  ─▶ eas submit --platform ios     ─▶ App Store Connect ─▶
 | 4 | iOS push key | `eas credentials` → iOS → Push Notifications: set up a new key (an APNs `.p8`); EAS hands it to Expo's push service. Never commit it |
 | 5 | Google Play Console | pay, create the app `app.theodore.mobile`; make a service account key for `eas submit` (`eas credentials` → Android) |
 | 6 | FCM for Android push | create a Firebase project, add the Android app, download `google-services.json`, point `expo.android.googleServicesFile` at it (upload it as an EAS file env var, not in git), then `eas credentials` → Android → FCM V1 service account key |
-| 7 | WorkOS redirects | add `theodore-mobile://callback` and `https://theodore-web-staging.pages.dev/callback` to the staging environment, `theodore-mobile://callback` and `https://theodore-web.pages.dev/callback` to production (docs/releasing.md "WorkOS redirects to register") |
+| 7 | WorkOS redirects | add `theodore-mobile://callback` and `https://theodore-web-staging.prd-instance.workers.dev/callback` to the staging environment, `theodore-mobile://callback` and `https://theodore-web.prd-instance.workers.dev/callback` to production (docs/releasing.md "WorkOS redirects to register") |
 | 8 | Pages projects | `wrangler pages project create theodore-web-staging --production-branch staging` and `wrangler pages project create theodore-web --production-branch main` |
-| 9 | Cloud CORS | the two `pages.dev` origins in the Worker's CORS config ("Cloud" above) |
+| 9 | Cloud CORS | the two web origins in the Worker's CORS config ("Cloud" above) |
 
 `mobile-web.yml` reuses `CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID`; the
 token must also carry "Cloudflare Pages: Edit". No other secret is added to

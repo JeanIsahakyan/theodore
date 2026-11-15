@@ -32,8 +32,8 @@ environment in `wrangler.toml`):
 
 | | `WEB_ORIGINS` |
 | --- | --- |
-| staging | `https://theodore-web-staging.pages.dev` |
-| production | `https://theodore-web.pages.dev` |
+| staging | `https://theodore-web-staging.prd-instance.workers.dev` |
+| production | `https://theodore-web.prd-instance.workers.dev` |
 
 ```
 OPTIONS /v1/orgs*, /v1/auth/select-organization, /v1/fleet/request
@@ -171,7 +171,7 @@ Stable `area.kind` codes, same form as the app's `error.code`
 | Worker | `theodore-cloud-staging` | `theodore-cloud` |
 | WorkOS client id (`wrangler.toml` var) | `client_01M5RM1W36AHHEGBE37QD3PS6K` | `client_01M5RMBK860S2JJZNWJDDSH0BM` |
 | WorkOS API key | Worker secret `WORKOS_API_KEY` | Worker secret `WORKOS_API_KEY` |
-| Web app origins (`WEB_ORIGINS` var) | `https://theodore-web-staging.pages.dev` | `https://theodore-web.pages.dev` |
+| Web app origins (`WEB_ORIGINS` var) | `https://theodore-web-staging.prd-instance.workers.dev` | `https://theodore-web.prd-instance.workers.dev` |
 | Expo access token (optional) | Worker secret `EXPO_ACCESS_TOKEN` | Worker secret `EXPO_ACCESS_TOKEN` |
 | Deployed by | push to `staging` | push to `main` |
 
