@@ -1107,6 +1107,11 @@ Claude runner; the others follow in M4 behind the same runner trait.
 - Keychain: one item for all Theodore secrets (one prompt). On macOS through
   `/usr/bin/security` so the prompt survives rebuilds; secret passed on stdin,
   not as an argument.
+  On Linux: the Secret Service (GNOME Keyring, KWallet) through `secret-tool`,
+  same single JSON item, secret on stdin. No Secret Service (headless, no
+  D-Bus, no `libsecret-tools`) → `$XDG_DATA_HOME/theodore/<service>.vault`,
+  0600 in a 0700 dir, plain text, one warning logged; chosen once per process,
+  never migrated. Windows: not supported yet (calls return an error).
 
 ---
 

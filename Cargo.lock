@@ -6224,8 +6224,11 @@ dependencies = [
 name = "theodore-secrets"
 version = "0.1.20"
 dependencies = [
+ "dirs 6.0.0",
  "serde_json",
+ "tempfile",
  "theodore-ports",
+ "tracing",
 ]
 
 [[package]]
