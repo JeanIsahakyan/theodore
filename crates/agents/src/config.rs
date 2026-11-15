@@ -49,6 +49,8 @@ pub fn common_install_dirs() -> Vec<PathBuf> {
         dirs.push(home.join(".local/bin"));
     }
     dirs.push(PathBuf::from("/opt/homebrew/bin"));
+    // Homebrew on Linux.
+    dirs.push(PathBuf::from("/home/linuxbrew/.linuxbrew/bin"));
     dirs.push(PathBuf::from("/usr/local/bin"));
     if let Some(home) = &home {
         dirs.push(home.join(".npm-global/bin"));

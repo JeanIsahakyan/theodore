@@ -1,7 +1,8 @@
 //! A GUI app started from Finder or the Dock gets launchd's minimal `PATH`
 //! (`/usr/bin:/bin:/usr/sbin:/sbin`), so `claude`, `codex`, `gemini` and
 //! `gh` — usually in `~/.local/bin`, Homebrew or a version manager — would
-//! all read as "not found". At startup the app takes the user's login-shell
+//! all read as "not found" (a Linux desktop session's `PATH` is just as
+//! bare for apps started from the launcher). At startup the app takes the user's login-shell
 //! `PATH`, adds the usual install dirs, and re-execs itself with it (the
 //! workspace forbids `unsafe`, so `std::env::set_var` is out; `exec` keeps
 //! the same process and pid).
@@ -36,30 +37,59 @@ pub fn merge_paths(shell: Option<&str>, current: &str, extra: &[PathBuf]) -> Str
     out.join(":")
 }
 
-/// The `PATH` an interactive login shell would have, or `None` if the
-/// shell fails or takes longer than two seconds (a slow rc file must not
-/// hold up launch).
-fn login_shell_path() -> Option<String> {
-    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
-    let (tx, rx) = mpsc::channel();
-    std::thread::spawn(move || {
-        let out = Command::new(shell)
-            .args([
-                "-l",
-                "-i",
-                "-c",
-                &format!("printf '{MARK}%s{MARK}' \"$PATH\""),
-            ])
-            .stdin(Stdio::null())
-            .stderr(Stdio::null())
-            .output();
-        let _ = tx.send(out);
-    });
-    let out = rx.recv_timeout(Duration::from_secs(2)).ok()?.ok()?;
-    let text = String::from_utf8_lossy(&out.stdout);
+/// The shells to ask, in order: the user's, then bash when that is a
+/// different one that exists (a shell that can't print `$PATH` — a broken
+/// rc file, an exotic `$SHELL` — shouldn't leave the app with the bare
+/// launch `PATH`).
+fn shells_to_ask(user: String, bash_exists: bool) -> Vec<String> {
+    let mut out = vec![user];
+    if bash_exists && !out[0].ends_with("/bash") {
+        out.push("/bin/bash".to_string());
+    }
+    out
+}
+
+/// The text between the two `MARK`s, if both are there.
+fn parse_marked(text: &str) -> Option<String> {
     let start = text.find(MARK)? + MARK.len();
     let end = start + text[start..].find(MARK)?;
     Some(text[start..end].to_string())
+}
+
+/// What one shell prints for `$PATH` as an interactive login shell (`-l -i`
+/// reads both the profile and the rc file: Linux distros put `PATH` edits
+/// in either, and Ubuntu's `.bashrc` returns early unless interactive).
+fn ask_shell(shell: &str) -> Option<String> {
+    let out = Command::new(shell)
+        .args([
+            "-l",
+            "-i",
+            "-c",
+            &format!("printf '{MARK}%s{MARK}' \"$PATH\""),
+        ])
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .ok()?;
+    parse_marked(&String::from_utf8_lossy(&out.stdout)).filter(|p| !p.is_empty())
+}
+
+/// The `PATH` an interactive login shell would have, or `None` if no shell
+/// answers within two seconds in total (a slow rc file must not hold up
+/// launch).
+fn login_shell_path() -> Option<String> {
+    let user = theodore_ports::login_shell::login_shell();
+    let shells = shells_to_ask(user, std::path::Path::new("/bin/bash").is_file());
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        for shell in shells {
+            if let Some(path) = ask_shell(&shell) {
+                let _ = tx.send(path);
+                return;
+            }
+        }
+    });
+    rx.recv_timeout(Duration::from_secs(2)).ok()
 }
 
 fn common_dirs() -> Vec<PathBuf> {
@@ -69,6 +99,8 @@ fn common_dirs() -> Vec<PathBuf> {
     [
         home.join(".local/bin"),
         PathBuf::from("/opt/homebrew/bin"),
+        // Homebrew on Linux.
+        PathBuf::from("/home/linuxbrew/.linuxbrew/bin"),
         PathBuf::from("/usr/local/bin"),
         home.join(".cargo/bin"),
         home.join(".bun/bin"),
@@ -123,6 +155,30 @@ mod tests {
         assert_eq!(
             merged,
             "/Users/me/.local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/local/bin"
+        );
+    }
+
+    #[test]
+    fn the_path_is_read_between_the_marks() {
+        let out = format!("motd noise{MARK}/a:/b{MARK}trailing");
+        assert_eq!(parse_marked(&out).as_deref(), Some("/a:/b"));
+        assert_eq!(parse_marked("no marks"), None);
+        assert_eq!(parse_marked(&format!("{MARK}/a")), None);
+    }
+
+    #[test]
+    fn bash_is_the_second_try_unless_it_was_the_first() {
+        assert_eq!(
+            shells_to_ask("/usr/bin/fish".into(), true),
+            ["/usr/bin/fish", "/bin/bash"]
+        );
+        assert_eq!(
+            shells_to_ask("/usr/bin/bash".into(), true),
+            ["/usr/bin/bash"]
+        );
+        assert_eq!(
+            shells_to_ask("/usr/bin/fish".into(), false),
+            ["/usr/bin/fish"]
         );
     }
 

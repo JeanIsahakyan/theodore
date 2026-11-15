@@ -33,6 +33,13 @@ From then on it updates itself.
 
 Phone and web: an Expo app (`mobile/`) follows and answers your computers' spaces; see [docs/mobile.md](docs/mobile.md).
 
+**Linux** (work in progress, built from source): needs a login shell (`$SHELL`, else bash),
+`git`, `ps` and `kill` (procps), WebKitGTK 4.1 and GTK 3 (`libwebkit2gtk-4.1-dev`, `libgtk-3-dev`,
+`libayatana-appindicator3-dev`, `librsvg2-dev` on Debian/Ubuntu), and a Secret Service provider
+(libsecret with GNOME Keyring or KWallet) for stored tokens. The app takes your login shell's
+`PATH` at start, so `claude`, `codex`, `gemini` and `gh` are found wherever your shell finds them.
+Links and folders open through `xdg-open`.
+
 Building from source is for developing Theodore, not for using it. A local build has no sign-in and
 no diagnostics: the release's client id and keys are added only by the release pipeline, so the app
 behaves differently from the release. Don't use one as your daily app.
@@ -462,7 +469,8 @@ Git hooks (`lefthook install` once per clone):
 
 - Notarization and a Developer ID (the release workflow has the steps, no secrets yet); builds are
   ad-hoc signed.
-- Linux and Windows builds — macOS (Apple Silicon) only.
+- Linux release builds and Windows — releases are macOS (Apple Silicon) only; Linux builds from
+  source.
 - GitLab OAuth/PKCE sign-in — personal access token only.
 - A Theodore server: the account sign-in is client-only; billing and sync need one.
 - Spaces: feedback tracked as tasks, a "Drafting" group in My PRs, a per-turn diff view, deleting a

@@ -75,9 +75,15 @@ fn insets(window: &tauri::WebviewWindow) -> Option<Insets> {
     })
 }
 
+/// Everywhere else the window controls sit in the native title bar, above
+/// the webview, so nothing overlaps the page: zero out the CSS defaults
+/// (which leave room for macOS's traffic lights).
 #[cfg(not(target_os = "macos"))]
 fn insets(_window: &tauri::WebviewWindow) -> Option<Insets> {
-    None
+    Some(Insets {
+        controls_end: 0.0,
+        controls_bottom: 0.0,
+    })
 }
 
 /// Sends the current insets to the page. Run on load and on every resize:

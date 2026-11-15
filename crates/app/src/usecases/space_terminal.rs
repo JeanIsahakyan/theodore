@@ -392,11 +392,10 @@ fn info_of(id: &str, t: &TerminalEntry) -> SpaceTerminalInfo {
     }
 }
 
-/// `$SHELL -l`; a bare `/bin/sh` if the environment doesn't say (never the
-/// case for a real login session, but tests and odd setups shouldn't panic
-/// over it).
+/// `$SHELL -l`; bash or `/bin/sh` if the environment doesn't say or names
+/// a shell that isn't there (`theodore_ports::login_shell`).
 fn login_shell() -> String {
-    std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into())
+    theodore_ports::login_shell::login_shell()
 }
 
 /// Appends `bytes` to a capped ring buffer, dropping from the front.
