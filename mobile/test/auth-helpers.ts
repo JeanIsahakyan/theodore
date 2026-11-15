@@ -101,5 +101,6 @@ export function fakeFetch(routes: Record<string, Handler>): HttpFetch & {
   return f;
 }
 
+/** The fields of a WorkOS `authenticate` call (sent as JSON). */
 export const form = (body: string | undefined) =>
-  Object.fromEntries(new URLSearchParams(body ?? ''));
+  JSON.parse(body ?? '{}') as Record<string, string>;

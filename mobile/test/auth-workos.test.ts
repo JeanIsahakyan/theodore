@@ -286,9 +286,7 @@ describe('cloud', () => {
     const refresh = f.calls.find((c) =>
       c.url.endsWith('/user_management/authenticate'),
     );
-    expect(
-      Object.fromEntries(new URLSearchParams(refresh!.body!)),
-    ).toMatchObject({
+    expect(form(refresh!.body!)).toMatchObject({
       grant_type: 'refresh_token',
       refresh_token: 'rt_from_cloud',
       organization_id: 'org_b',

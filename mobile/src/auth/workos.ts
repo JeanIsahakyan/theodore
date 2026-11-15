@@ -17,7 +17,6 @@
  */
 import type { Organization, OrganizationChoice, Session } from './types';
 import { AuthError } from './errors';
-import { formEncode } from './encoding';
 import {
   checkClaims,
   findKey,
@@ -232,11 +231,13 @@ export class WorkosApi implements AccountApi {
     try {
       res = await this.fetch(`${this.api}/${path}`, {
         method: 'POST',
+        // JSON, not a form: WorkOS sends CORS headers only on JSON
+        // requests, and the web app can't read a form post's answer.
         headers: {
           accept: 'application/json',
-          'content-type': 'application/x-www-form-urlencoded',
+          'content-type': 'application/json',
         },
-        body: formEncode(form),
+        body: JSON.stringify(form),
       });
       text = await res.text();
     } catch (e) {
