@@ -439,9 +439,11 @@ pins down what this doc leaves open:
   waits for its reply (the target's outbox) until the 2 min expiry.
 - A reply or refusal to an origin that's offline is held 2 min and sent
   after its welcome.
-- Stored events are capped by bytes: 4 MB per space (oldest out), 64 MB
-  per user (finished spaces' oldest out first, else `error{fleet.busy}`
-  and the host keeps the event in its journal).
+- Stored events and mirrors are capped by bytes: 16 MiB per space (the
+  ring's oldest out first), 128 MiB per user (finished spaces' events out
+  first, then their mirrors, else `error{fleet.busy}` and the host keeps
+  the event in its journal). Only ring loss is a `space_gap`; seq holes
+  from compaction or relayed `turn_step`s are not.
 - Protocols 3 and 4 are accepted. A protocol-3 connection never sees
   `mobile` / `web` devices in `devices` nor gets `delegations`; a request
   to a `mobile` / `web` device is `refused{fleet.invalid}`.
