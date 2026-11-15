@@ -21,6 +21,7 @@
 //!   question set / cleared ─▶ also ask{seal_as(RemoteAsk, Domain::Ask)} /
 //!   ask_resolved
 //! welcome{resume} ─▶ replay the journal after the cloud's seq, re-ask
+//! hosting starts, sync frames, run steps ─▶ mirrored rows (fleet_mirror)
 //! ```
 //!
 //! The observer only reads: it never takes a space's locks and the space
@@ -48,6 +49,7 @@ use crate::error::AppError;
 use crate::usecases::fleet::{
     Claimed, FleetSettings, Hosted, Reserved, Seen, fleet_mode, mode_str, space_mode,
 };
+use crate::usecases::fleet_mirror::Mirror;
 use crate::usecases::fleet_origin::{line_of, truncate};
 use crate::usecases::spaces::space_chat_key;
 
@@ -833,7 +835,7 @@ impl Core {
         .unwrap_or_default())
     }
 
-    async fn fleet_put_hosted(&self, row: &FleetHostedRow) {
+    pub(super) async fn fleet_put_hosted(&self, row: &FleetHostedRow) {
         let store = self.0.deps.store.clone();
         let row = row.clone();
         let stored = tokio::task::spawn_blocking(move || store.fleet_hosted_put(&row)).await;
@@ -917,32 +919,62 @@ impl Core {
         mut eph: broadcast::Receiver<Ephemeral>,
     ) {
         use broadcast::error::RecvError;
+        let mut mirror = Mirror::default();
         loop {
+            // A held mirrored row goes when it's due (its latest value).
+            let due = mirror.next_due();
+            let clock = self.0.deps.clock.clone();
+            let held = async move {
+                match due {
+                    Some(at) => {
+                        let wait = (at - clock.now()).max(0) as u64;
+                        clock.sleep(std::time::Duration::from_millis(wait)).await;
+                    }
+                    None => std::future::pending::<()>().await,
+                }
+            };
             // Frames first: a turn's start is published before its steps.
             tokio::select! {
                 biased;
                 _ = self.0.shutdown.cancelled() => return,
                 frame = sync.recv() => match frame {
-                    Ok(f) => self.fleet_observe_frame(&f).await,
-                    Err(RecvError::Lagged(_)) => self.fleet_pass_all().await,
+                    Ok(f) => {
+                        self.fleet_observe_frame(&f).await;
+                        self.fleet_mirror_frame(&mut mirror, &f).await;
+                    }
+                    Err(RecvError::Lagged(_)) => {
+                        self.fleet_pass_all().await;
+                        self.fleet_mirror_resync_all(&mut mirror).await;
+                    }
                     Err(RecvError::Closed) => return,
                 },
                 cmd = cmds.recv() => match cmd {
-                    Some(ObserverCmd::Hosted(remote)) => self.fleet_pass(&remote, true).await,
+                    Some(ObserverCmd::Hosted(remote)) => {
+                        self.fleet_pass(&remote, true).await;
+                        // The snapshot, after `started`.
+                        self.fleet_mirror_resync(&mut mirror, &remote).await;
+                    }
                     Some(ObserverCmd::Replay(resume)) => self.fleet_replay(resume).await,
-                    Some(ObserverCmd::PassAll) => self.fleet_pass_all().await,
+                    Some(ObserverCmd::PassAll) => {
+                        self.fleet_pass_all().await;
+                        self.fleet_mirror_resync_all(&mut mirror).await;
+                    }
                     None => return,
                 },
                 ev = eph.recv() => match ev {
-                    Ok(Ephemeral::RunStep { run, step }) => self.fleet_observe_step(&run, &step).await,
+                    Ok(Ephemeral::RunStep { run, step }) => {
+                        self.fleet_observe_step(&run, &step).await;
+                        self.fleet_mirror_step(&mut mirror, &run, &step).await;
+                    }
                     Ok(_) | Err(RecvError::Lagged(_)) => {}
                     Err(RecvError::Closed) => return,
                 },
+                () = held => self.fleet_mirror_flush(&mut mirror).await,
             }
         }
     }
 
-    fn fleet_by_local(&self) -> HashMap<String, String> {
+    pub(super) fn fleet_by_local(&self) -> HashMap<String, String> {
         self.fleet()
             .hosted
             .values()
@@ -1263,7 +1295,7 @@ impl Core {
     }
 
     /// Sends event `seq` of hosted space `remote`, signed as its host.
-    async fn fleet_send_event(&self, remote: &str, seq: u64, event: RemoteSpaceEvent) {
+    pub(super) async fn fleet_send_event(&self, remote: &str, seq: u64, event: RemoteSpaceEvent) {
         let Some(me) = self.fleet().device_id.clone() else {
             return;
         };

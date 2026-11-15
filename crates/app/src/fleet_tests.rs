@@ -660,9 +660,18 @@ async fn a_started_space_is_mapped_and_its_events_journaled_in_order() {
             ..
         }
     )));
-    // Journaled as sent.
+    // Journaled as sent (mirrored rows: only the latest of each, and they
+    // may still be going out).
+    let not_mirror = |e: &RemoteSpaceEvent| !matches!(e, RemoteSpaceEvent::Mirror { .. });
     let journal = f.store.fleet_journal_since("rs_1", 0, 100).unwrap();
-    assert_eq!(journal.len(), evs.len());
+    let journaled: Vec<(u64, RemoteSpaceEvent)> = journal
+        .iter()
+        .map(|(s, v)| (*s, serde_json::from_value(v.clone()).unwrap()))
+        .filter(|(_, e)| not_mirror(e))
+        .collect();
+    let sent: Vec<(u64, RemoteSpaceEvent)> =
+        evs.iter().filter(|(_, e)| not_mirror(e)).cloned().collect();
+    assert_eq!(journaled, sent);
 
     let listed = core.fleet_spaces().await.unwrap();
     let hosted = listed.iter().find(|v| v.space == "rs_1").unwrap();
@@ -676,7 +685,8 @@ async fn a_started_space_is_mapped_and_its_events_journaled_in_order() {
             .is_some_and(|r| r.contains("All fixed"))
     );
     let lines = core.fleet_space_lines("rs_1", 1).await.unwrap();
-    assert_eq!(lines.len(), evs.len() - 1);
+    let after_started = f.store.fleet_journal_since("rs_1", 1, 100).unwrap().len();
+    assert_eq!(lines.len(), after_started);
 
     // A reconnect replays what the cloud lacks.
     f.fleet.push(FleetInbound::Disconnected {
@@ -690,21 +700,28 @@ async fn a_started_space_is_mapped_and_its_events_journaled_in_order() {
         generation: GENERATION + 1,
         resume: BTreeMap::from([("rs_1".to_string(), 2)]),
     });
-    let last = evs.len() as u64;
-    wait_until("the replay", || {
+    // The journal after seq 2, in order (holes where older mirrors went).
+    let replayed = || -> Vec<u64> {
         f.fleet.sent()[before..]
             .iter()
             .filter_map(|m| sent_event(&f, m))
-            .any(|b| b.space == "rs_1" && b.seq == last)
+            .filter(|b| b.space == "rs_1")
+            .map(|b| b.seq)
+            .collect()
+    };
+    let expected = || -> Vec<u64> {
+        f.store
+            .fleet_journal_since("rs_1", 2, 100)
+            .unwrap()
+            .into_iter()
+            .map(|(s, _)| s)
+            .collect()
+    };
+    wait_until("the replay", || {
+        replayed().last().is_some() && replayed().last() == expected().last()
     })
     .await;
-    let replayed: Vec<u64> = f.fleet.sent()[before..]
-        .iter()
-        .filter_map(|m| sent_event(&f, m))
-        .filter(|b| b.space == "rs_1")
-        .map(|b| b.seq)
-        .collect();
-    assert_eq!(replayed, (3..=last).collect::<Vec<_>>());
+    assert_eq!(replayed(), expected());
 }
 
 #[tokio::test]
@@ -3458,4 +3475,292 @@ async fn the_clouds_delegations_count_only_when_they_verify() {
             .count()
     };
     assert_eq!((revokes(WEB), revokes(PHONE)), (1, 0));
+}
+
+// ── mirrored rows ─────────────────────────────────────────────────────────
+
+type Mirrored = (u64, String, String, Option<serde_json::Value>);
+
+/// The `mirror` events of `space` as sent: `(seq, model, id, data)`.
+fn mirrors(f: &Fixtures, space: &str) -> Vec<Mirrored> {
+    events(f, space)
+        .into_iter()
+        .filter_map(|(seq, e)| match e {
+            RemoteSpaceEvent::Mirror { model, id, data } => Some((seq, model, id, data)),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The last `mirror` of row `(model, id)` sent for `space`.
+fn last_mirror(
+    f: &Fixtures,
+    space: &str,
+    model: &str,
+    id: &str,
+) -> Option<Option<serde_json::Value>> {
+    mirrors(f, space)
+        .into_iter()
+        .rev()
+        .find(|(_, m, i, _)| m == model && i == id)
+        .map(|(_, _, _, d)| d)
+}
+
+fn space_mirrors(f: &Fixtures) -> usize {
+    mirrors(f, "rs_1")
+        .iter()
+        .filter(|(_, m, _, _)| m == models::SPACE)
+        .count()
+}
+
+fn goal_mirror(f: &Fixtures) -> Option<serde_json::Value> {
+    mirrors(f, "rs_1")
+        .into_iter()
+        .filter(|(_, m, _, _)| m == models::CHAT_MESSAGE)
+        .find_map(|(_, _, _, d)| d.filter(|d| d["text"] == "Fix it"))
+}
+
+/// `rs_1` started from `ORIGIN`, its first turn done and its snapshot sent
+/// (the goal message is only in the snapshot: it was written before the
+/// space was hosted). The clock never moved: rows changed after they went
+/// are held.
+async fn mirrored_space(f: &Fixtures, reply: &str) -> (Core, Receivers, String) {
+    let (core, recv, project, origin) = target(f).await;
+    f.agents.push_script(done(reply));
+    run(f, &origin, start_op(&project.id, "rs_1")).await;
+    let local = local_of(f, "rs_1");
+    wait_until("idle", || {
+        events(f, "rs_1").iter().any(|(_, e)| {
+            matches!(
+                e,
+                RemoteSpaceEvent::Status {
+                    status: RemoteSpaceStatus::Idle
+                }
+            )
+        })
+    })
+    .await;
+    wait_until("the snapshot", || {
+        goal_mirror(f).is_some() && space_mirrors(f) > 0
+    })
+    .await;
+    (core, recv, local)
+}
+
+/// Sets the space row's `title` through a sync frame, as any write does.
+async fn retitle(core: &Core, local: &str, title: &str) {
+    core.apply(vec![theodore_ports::NewAction {
+        model: models::SPACE.into(),
+        model_id: local.into(),
+        action: theodore_ports::SyncActionCode::C,
+        data: Some(json!({ "title": title })),
+    }])
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn a_hosted_space_mirrors_its_rows_after_started_with_ids_rewritten() {
+    let f = fixtures();
+    let (core, _recv, local) = mirrored_space(&f, "All fixed").await;
+    let evs = events(&f, "rs_1");
+    assert!(matches!(evs[0].1, RemoteSpaceEvent::Started { .. }));
+    let ms = mirrors(&f, "rs_1");
+    assert!(ms.iter().all(|(seq, ..)| *seq > evs[0].0));
+    // The snapshot: the space row and its chat, under the fleet id.
+    assert!(
+        ms.iter()
+            .any(|(_, m, id, _)| m == models::SPACE && id == "rs_1")
+    );
+    assert_eq!(goal_mirror(&f).unwrap()["pr"], "space:rs_1");
+    // Changed again within the second: held, then only the latest goes.
+    assert_eq!(space_mirrors(&f), 1);
+    retitle(&core, &local, "First").await;
+    retitle(&core, &local, "Last").await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert_eq!(space_mirrors(&f), 1);
+    f.clock.advance(1000);
+    wait_until("the held space row", || space_mirrors(&f) == 2).await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert_eq!(space_mirrors(&f), 2);
+    let row = last_mirror(&f, "rs_1", models::SPACE, "rs_1")
+        .unwrap()
+        .unwrap();
+    assert_eq!(row["title"], "Last");
+    assert_eq!(row["status"], "idle");
+    assert_eq!(row["id"], "rs_1");
+    assert_eq!(row["worktree"], "");
+    assert_eq!(row["ports"], json!([]));
+    assert_eq!(row["agent_session"], serde_json::Value::Null);
+    assert_eq!(row["sent_feedback"], json!([]));
+    assert_eq!(row["review_pr"], serde_json::Value::Null);
+    assert!(row.get("remote").is_none());
+    wait_until("the reply mirrored", || {
+        mirrors(&f, "rs_1").iter().any(|(_, m, _, d)| {
+            m == models::CHAT_MESSAGE
+                && d.as_ref().is_some_and(|d| {
+                    d["text"].as_str().is_some_and(|t| t.contains("All fixed"))
+                        && d["run"]
+                            .as_str()
+                            .is_some_and(|r| r.starts_with("space:rs_1:"))
+                })
+        })
+    })
+    .await;
+    // Nothing of the local id leaks.
+    let local_ref = format!("space:{local}");
+    for (_, _, id, data) in mirrors(&f, "rs_1") {
+        assert!(!id.contains(&local));
+        assert!(!data.unwrap_or_default().to_string().contains(&local_ref));
+    }
+    // A pass over everything with nothing new sends nothing again.
+    let before = mirrors(&f, "rs_1").len();
+    f.clock.advance(1000);
+    core.fleet_observe(crate::usecases::fleet_host::ObserverCmd::PassAll);
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert_eq!(mirrors(&f, "rs_1").len(), before);
+}
+
+#[tokio::test]
+async fn the_journal_keeps_only_the_latest_mirror_of_a_row_in_seq_order() {
+    let f = fixtures();
+    let (core, _recv, local) = mirrored_space(&f, "done").await;
+    for title in ["a", "b"] {
+        f.clock.advance(1000);
+        retitle(&core, &local, title).await;
+        wait_until("the space row", || {
+            last_mirror(&f, "rs_1", models::SPACE, "rs_1")
+                .flatten()
+                .is_some_and(|r| r["title"] == title)
+        })
+        .await;
+    }
+    assert!(space_mirrors(&f) >= 3);
+    let journal = f.store.fleet_journal_since("rs_1", 0, 2000).unwrap();
+    let seqs: Vec<u64> = journal.iter().map(|(s, _)| *s).collect();
+    assert!(seqs.windows(2).all(|w| w[0] < w[1]), "{seqs:?}");
+    let rows: Vec<RemoteSpaceEvent> = journal
+        .into_iter()
+        .map(|(_, v)| serde_json::from_value(v).unwrap())
+        .collect();
+    let mut keys: Vec<(String, String)> = rows
+        .iter()
+        .filter_map(|e| match e {
+            RemoteSpaceEvent::Mirror { model, id, .. } => Some((model.clone(), id.clone())),
+            _ => None,
+        })
+        .collect();
+    let n = keys.len();
+    keys.sort();
+    keys.dedup();
+    assert_eq!(keys.len(), n, "one mirror per row");
+    let kept = rows.iter().find_map(|e| match e {
+        RemoteSpaceEvent::Mirror { model, data, .. } if model == models::SPACE => data.clone(),
+        _ => None,
+    });
+    assert_eq!(
+        kept,
+        last_mirror(&f, "rs_1", models::SPACE, "rs_1").unwrap()
+    );
+    // Every other event is still there.
+    let others = |evs: &[RemoteSpaceEvent]| {
+        evs.iter()
+            .filter(|e| !matches!(e, RemoteSpaceEvent::Mirror { .. }))
+            .count()
+    };
+    let sent: Vec<RemoteSpaceEvent> = events(&f, "rs_1").into_iter().map(|(_, e)| e).collect();
+    assert_eq!(others(&rows), others(&sent));
+}
+
+#[tokio::test]
+async fn a_deleted_chat_row_is_mirrored_as_none() {
+    let f = fixtures();
+    let (core, _recv, local) = mirrored_space(&f, "done").await;
+    f.clock.advance(1000);
+    let goal = f
+        .store
+        .query(models::CHAT_MESSAGE, "pr", &format!("space:{local}"))
+        .unwrap()
+        .into_iter()
+        .find(|r| r.data["text"] == "Fix it")
+        .unwrap()
+        .id;
+    core.apply(vec![theodore_ports::NewAction {
+        model: models::CHAT_MESSAGE.into(),
+        model_id: goal.clone(),
+        action: theodore_ports::SyncActionCode::D,
+        data: None,
+    }])
+    .await
+    .unwrap();
+    f.clock.advance(1000);
+    wait_until("the delete", || {
+        last_mirror(&f, "rs_1", models::CHAT_MESSAGE, &goal) == Some(None)
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_row_over_the_limit_goes_cut_with_a_note() {
+    let f = fixtures();
+    let big = "word ".repeat(30_000);
+    let (_core, _recv, _local) = mirrored_space(&f, &big).await;
+    f.clock.advance(1000);
+    let note = "… (cut, full text on mac2)";
+    wait_until("the reply, cut", || {
+        mirrors(&f, "rs_1").iter().any(|(_, _, _, d)| {
+            d.as_ref()
+                .and_then(|d| d["text"].as_str())
+                .is_some_and(|t| t.starts_with("word word") && t.ends_with(note))
+        })
+    })
+    .await;
+    for (_, model, id, data) in mirrors(&f, "rs_1") {
+        let ev = RemoteSpaceEvent::Mirror { model, id, data };
+        assert!(
+            serde_json::to_vec(&ev).unwrap().len() <= theodore_fleet_protocol::MIRROR_ROW_MAX_BYTES
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_live_step_is_sent_as_turn_step_and_not_journaled() {
+    let f = fixtures();
+    let (core, _recv, local) = mirrored_space(&f, "done").await;
+    let run = format!("space:{local}:m1");
+    let step = theodore_contract::TurnStep::Text {
+        text: "looking around".into(),
+        parent: None,
+    };
+    for _ in 0..2 {
+        core.emit(Ephemeral::RunStep {
+            run: run.clone(),
+            step: step.clone(),
+        });
+    }
+    let steps = |f: &Fixtures| -> Vec<Mirrored> {
+        mirrors(f, "rs_1")
+            .into_iter()
+            .filter(|(_, m, _, _)| m == "turn_step")
+            .collect()
+    };
+    wait_until("two steps", || steps(&f).len() == 2).await;
+    let steps = steps(&f);
+    assert_eq!(steps[0].2, "space:rs_1:m1:0");
+    assert_eq!(steps[1].2, "space:rs_1:m1:1");
+    assert_eq!(steps[0].3, Some(serde_json::to_value(&step).unwrap()));
+    let journal = f.store.fleet_journal_since("rs_1", 0, 2000).unwrap();
+    assert!(journal.iter().all(|(_, v)| v["model"] != "turn_step"));
+    // Its seq is kept with the hosted row: a restart doesn't reuse it.
+    let stored: crate::usecases::fleet_host::HostedData = serde_json::from_value(
+        f.store
+            .fleet_hosted_all()
+            .unwrap()
+            .into_iter()
+            .find(|r| r.space == "rs_1")
+            .unwrap()
+            .data,
+    )
+    .unwrap();
+    assert!(stored.track.seq >= steps[1].0);
 }

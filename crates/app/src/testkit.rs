@@ -146,6 +146,25 @@ impl Store for FakeStore {
         Ok(())
     }
 
+    fn fleet_journal_put_mirror(
+        &self,
+        space: &str,
+        seq: u64,
+        event: &serde_json::Value,
+        (model, id): (&str, &str),
+        keep: usize,
+    ) -> StoreResult<()> {
+        {
+            let mut s = self.0.lock().unwrap();
+            if let Some(j) = s.fleet_journal.get_mut(space) {
+                j.retain(|(n, e)| {
+                    *n >= seq || e["kind"] != "mirror" || e["model"] != model || e["id"] != id
+                });
+            }
+        }
+        self.fleet_journal_append(space, seq, event, keep)
+    }
+
     fn fleet_seen_put(
         &self,
         req_id: &str,

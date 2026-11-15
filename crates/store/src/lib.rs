@@ -317,18 +317,43 @@ impl Store for SqliteStore {
         keep: usize,
     ) -> StoreResult<()> {
         let json = serde_json::to_string(event).map_err(se)?;
-        let conn = self.lock()?;
-        conn.execute(
+        let mut conn = self.lock()?;
+        let tx = conn.transaction().map_err(de)?;
+        tx.execute(
             "INSERT OR REPLACE INTO fleet_events (space, seq, event) VALUES (?1, ?2, ?3)",
             params![space, seq as i64, json],
         )
         .map_err(de)?;
-        conn.execute(
-            "DELETE FROM fleet_events WHERE space = ?1 AND seq <= ?2",
-            params![space, seq as i64 - keep as i64],
+        fleet_journal_trim(&tx, space, keep)?;
+        tx.commit().map_err(de)
+    }
+
+    fn fleet_journal_put_mirror(
+        &self,
+        space: &str,
+        seq: u64,
+        event: &serde_json::Value,
+        (model, id): (&str, &str),
+        keep: usize,
+    ) -> StoreResult<()> {
+        let json = serde_json::to_string(event).map_err(se)?;
+        let mut conn = self.lock()?;
+        let tx = conn.transaction().map_err(de)?;
+        tx.execute(
+            "INSERT OR REPLACE INTO fleet_events (space, seq, event) VALUES (?1, ?2, ?3)",
+            params![space, seq as i64, json],
         )
         .map_err(de)?;
-        Ok(())
+        tx.execute(
+            "DELETE FROM fleet_events WHERE space = ?1 AND seq < ?2
+               AND json_extract(event, '$.kind') = 'mirror'
+               AND json_extract(event, '$.model') = ?3
+               AND json_extract(event, '$.id') = ?4",
+            params![space, seq as i64, model, id],
+        )
+        .map_err(de)?;
+        fleet_journal_trim(&tx, space, keep)?;
+        tx.commit().map_err(de)
     }
 
     fn fleet_seen_put(
@@ -724,6 +749,19 @@ impl Store for SqliteStore {
         .map_err(de)?;
         Ok(())
     }
+}
+
+/// Keeps the last `keep` journaled events of `space`, counted (compacted
+/// mirrors leave holes in seq, so a seq range would keep fewer).
+fn fleet_journal_trim(conn: &Connection, space: &str, keep: usize) -> StoreResult<()> {
+    conn.execute(
+        "DELETE FROM fleet_events WHERE space = ?1 AND seq <= (
+           SELECT seq FROM fleet_events WHERE space = ?1
+           ORDER BY seq DESC LIMIT 1 OFFSET ?2)",
+        params![space, keep as i64],
+    )
+    .map_err(de)?;
+    Ok(())
 }
 
 fn row_to_model(
