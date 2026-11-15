@@ -1099,7 +1099,12 @@ export function createFleetClient(
     const before = session;
     session = s;
     if (!s) {
-      // Signed out: the link goes, and nothing of that fleet stays shown.
+      // Signed out: stop pushes to this phone first (the socket is still
+      // authenticated), then the link goes, and nothing of that fleet stays
+      // shown.
+      if (push?.token)
+        sendMsg({ type: 'register_push', provider: 'expo', token: '' });
+      push = null;
       epoch++;
       closeLink();
       forgetFleet();

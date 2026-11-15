@@ -79,11 +79,14 @@ requests still need the host's own trust in the phone's key.
 
 ## Cloud (cloud/)
 
-- Push registry per device; push sent by the hub through the Expo Push API
-  (`https://exp.host/--/api/v2/push/send`, no APNs/FCM keys in the Worker)
-  for: a question routed to a device that isn't connected, a space it follows
-  turning idle/failed. Body: "<host> · <space>: <question>", ≤ 180 chars;
-  options as category actions (≤ 4).
+- Push registry per `mobile` device; the hub sends through the Expo Push API
+  (no APNs/FCM keys in the Worker) to a space's followers (its origin and the
+  origin's delegates): a question for a follower that's offline or not at
+  the app, and a space turning idle / failed / stopped. Title
+  "<host> · <space>"; body the question with its options numbered
+  (≤ 180 chars); category `ask_opt2` / `ask_opt3` (numbered buttons + Reply) or
+  `ask_text` (Reply, Open); multi-question asks have no buttons. Contract:
+  `mobile/src/push/README.md`, mirrored in `cloud/src/fleet/push.ts`.
 - `POST /v1/fleet/request` routes like a socket `request`; rate-limited per user.
 - Delegations stored per origin; subscribe/ask routing = origin, host, and the
   origin's live delegates.

@@ -34,7 +34,10 @@ export function defaultPlatform(): FleetPlatform {
     appVersion: Constants.expoConfig?.version ?? '0.0.0',
     closeInBackground: false,
     openSocket: (url, token) =>
-      new WebSocket(url, [`bearer.${token}`]) as unknown as FleetSocket,
+      new WebSocket(url, [
+        `bearer`,
+        `bearer.${token}`,
+      ]) as unknown as FleetSocket,
     randomUUID: () => crypto.randomUUID(),
     storage: createSecureStorage(),
     onActive(listener) {
