@@ -1140,14 +1140,15 @@ impl Core {
             ServerMessage::Error { code, message } => {
                 tracing::warn!(error.code = %code, error = %message, "the fleet cloud reported an error");
                 // The cloud's text is unsigned: the user hears our words.
-                // `fleet.invalid` after the welcome is a refused removal (an
-                // online device); `fleet.busy` an event over the budget,
-                // replayed from the journal on the next welcome.
+                // `fleet.invalid` after the welcome: a refused removal (an
+                // online device) or delegation; `fleet.busy` an event over the
+                // budget, replayed from the journal on the next welcome.
                 if code == codes::INVALID {
                     self.emit(Ephemeral::Toast {
                         level: theodore_contract::ToastLevel::Warn,
-                        text: "The fleet refused that (fleet.invalid): a device can be removed \
-                               only while it's offline"
+                        text: "The fleet refused that (fleet.invalid). Removing a device works \
+                               only while it's offline; sending questions to a device needs \
+                               it trusted here"
                             .into(),
                     });
                 }
