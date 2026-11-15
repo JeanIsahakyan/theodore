@@ -63,11 +63,20 @@ export const PUSH_BODY_CHARS = 180;
 export const PUSH_ACTIONS = 4;
 /**
  * Stored event bytes (body length; a `started` body counts twice: its ring
- * copy and the one kept apart). Per space: the oldest go. Per user: the
- * oldest of finished spaces go, then new events are refused (`fleet.busy`).
+ * copy and the one kept apart). Per space, ring and mirrors together: the
+ * ring's oldest go (a long chat's mirrored rows must fit, ≤ 48 KiB each);
+ * mirrors alone over it are refused (`fleet.busy`). Per user: the oldest of
+ * finished spaces go, events then mirrors, then new events are refused.
  */
-export const MAX_SPACE_EVENT_BYTES = 4 * 1024 * 1024;
-export const MAX_USER_EVENT_BYTES = 64 * 1024 * 1024;
+export const MAX_SPACE_EVENT_BYTES = 16 * 1024 * 1024;
+export const MAX_USER_EVENT_BYTES = 128 * 1024 * 1024;
+
+/** `mirror` models the cloud keeps, the latest per `(model, id)`. */
+export const MIRROR_KEPT = ['space', 'chat_message'] as const;
+/** `mirror` models relayed live, never stored. */
+export const MIRROR_RELAYED = ['turn_step'] as const;
+/** A `mirror` event's `id`. */
+export const MAX_MIRROR_ID_CHARS = 256;
 
 export const codes = {
   BAD_SIGNATURE: 'fleet.bad_signature',

@@ -9,7 +9,8 @@
  *   ─▶ request ─▶ target: request{generation} ─▶ claim ─▶ claim_result
  *              ─▶ reply (target-signed) ─▶ origin
  *              └─ refused{code} ─▶ origin   (offline: 10 s grace, 2 min ttl)
- *   ─▶ space_event (host-signed) ─▶ ring 500 / 4 MB ─▶ subscribers
+ *   ─▶ space_event (host-signed) ─▶ ring 500 + latest mirror per row, 16 MiB
+ *      (turn_step mirrors: relayed only) ─▶ subscribers (mirrors: protocol 4)
  *   ─▶ ask (host-signed) ─▶ active if a follower/host │ followers; 20 s ─▶ followers
  *                          └─ push (Expo) to followers away from a screen
  *   ─▶ delegate (origin-signed) ─▶ delegations{list} ─▶ origin, delegate
@@ -59,6 +60,7 @@ import {
   MAX_PENDING_PER_USER,
   MAX_SPACES_PER_USER,
   MAX_USER_EVENT_BYTES,
+  MIRROR_KEPT,
   NONCE_BYTES,
   PENDING_TTL_MS,
   PROTOCOL_VERSION,
@@ -1024,40 +1026,75 @@ export class Hub {
     if (!r.conn.open) return;
     const forward = forwardOf(envelope);
     const text = JSON.stringify(forward);
+    const ev = body.event;
+    const mirror = ev.kind === 'mirror' ? ev : null;
+    // A protocol-4 host compacts its journal and never journals a
+    // `turn_step`: a jump in its seq is no loss. A protocol-3 host's is.
     const gap =
-      body.seq > sp.last_seq + 1
+      protocolOf(r.state) < V4 && body.seq > sp.last_seq + 1
         ? { from: sp.last_seq + 1, to: body.seq - 1 }
         : null;
-    const ev = body.event;
+    const seen = () =>
+      this.store.run(
+        `UPDATE spaces SET last_seq = ?, last_ms = ?,
+           lost_to = MAX(lost_to, ?) WHERE space = ?`,
+        body.seq,
+        this.env.now(),
+        gap ? gap.to : 0,
+        sp.space,
+      );
+    if (mirror && !isKept(mirror.model)) {
+      // Live only: a finished turn's steps are in its reply's `activity`.
+      seen();
+      return this.fanOut(sp.user_id, sp.space, gap, forward, true);
+    }
     const bytes = new TextEncoder().encode(envelope.body).byteLength;
     const started = ev.kind === 'started';
-    // The space's ring makes room by itself; the user's budget by the
-    // oldest events of finished spaces, else the event stays in the host's
-    // journal (it resumes from `last_seq`).
-    const ring = this.store.ringTrim(sp.space, bytes);
-    const need = bytes - ring.freed + (started ? bytes - sp.started_bytes : 0);
+    const old = mirror
+      ? this.store.mirror(sp.space, mirror.model, mirror.id)
+      : undefined;
+    const grow = bytes - (old?.bytes ?? 0);
+    // The space's ring makes room by itself (mirrors alone over the space's
+    // budget are refused); the user's budget by the oldest events of
+    // finished spaces, else the event stays in the host's journal (it
+    // resumes from `last_seq`).
+    const ring = this.store.ringTrim(sp.space, mirror ? 0 : 1, grow);
+    if (!ring.fits) {
+      return this.error(r.conn, codes.BUSY, 'space event storage full');
+    }
+    const need = grow - ring.freed + (started ? bytes - sp.started_bytes : 0);
     let over = this.store.userBytes(sp.user_id) + need - MAX_USER_EVENT_BYTES;
     if (over > 0) over -= this.store.dropFinished(sp.user_id, sp.space, over);
     if (over > 0) {
       return this.error(r.conn, codes.BUSY, 'event storage full');
     }
-    this.store.addEvent(sp.space, body.seq, text, bytes, ring.upTo);
+    if (mirror) {
+      this.store.putMirror(
+        sp.space,
+        mirror.model,
+        mirror.id,
+        body.seq,
+        text,
+        bytes,
+        ring.upTo,
+      );
+    } else {
+      this.store.addEvent(sp.space, body.seq, text, bytes, ring.upTo);
+    }
+    seen();
     this.store.run(
-      `UPDATE spaces SET last_seq = ?, last_ms = ?,
-         status = COALESCE(?, status),
+      `UPDATE spaces SET status = COALESCE(?, status),
          started = COALESCE(?, started),
          started_seq = COALESCE(?, started_seq),
          started_bytes = COALESCE(?, started_bytes)
        WHERE space = ?`,
-      body.seq,
-      this.env.now(),
       ev.kind === 'status' ? ev.status : null,
       started ? text : null,
       started ? body.seq : null,
       started ? bytes : null,
       sp.space,
     );
-    this.fanOut(sp.user_id, sp.space, gap, forward);
+    this.fanOut(sp.user_id, sp.space, gap, forward, !!mirror);
     // A turn that ended (not a status repeated): one push to its followers.
     if (
       ev.kind === 'status' &&
@@ -1068,11 +1105,13 @@ export class Hub {
     }
   }
 
+  /** `mirror`: protocol-3 subscribers don't get it (they can't read it). */
   private fanOut(
     user: string,
     space: string,
     gap: { from: number; to: number } | null,
     envelope: SignedEnvelope,
+    mirror: boolean,
   ) {
     const subs = new Set(
       this.store
@@ -1086,11 +1125,16 @@ export class Hub {
     for (const c of this.ready(user)) {
       if (!subs.has(c.state.device)) continue;
       if (gap) this.send(c.conn, { type: 'space_gap', space, ...gap });
+      if (mirror && protocolOf(c.state) < V4) continue;
       this.send(c.conn, { type: 'space_event', envelope });
     }
   }
 
-  /** History then live, for the space's host and its followers only. */
+  /**
+   * History then live, for the space's host and its followers only:
+   * stored events and kept mirrors after `since`, in seq order (no mirrors
+   * on protocol 3). A hole is a gap only as far as `lost_to` reaches.
+   */
   private subscribe(r: Ready, msg: Of<'subscribe'>) {
     const sp = this.store.space(msg.space);
     const d = r.state.device;
@@ -1107,35 +1151,47 @@ export class Hub {
       sp.space,
     );
     if (msg.since >= sp.last_seq) return;
-    const gap = (from: number, to: number) =>
-      this.send(r.conn, { type: 'space_gap', space: sp.space, from, to });
-    const ev = (text: string) =>
-      this.send(r.conn, {
-        type: 'space_event',
-        envelope: JSON.parse(text) as SignedEnvelope,
-      });
-    // `next`: the first seq not sent yet; a jump past it is a gap.
-    let next = msg.since + 1;
-    const first =
-      this.store.num('SELECT MIN(seq) FROM events WHERE space = ?', sp.space) ??
-      sp.last_seq + 1;
-    const s = sp.started_seq;
-    // Older than the ring: the started event (kept apart) still goes.
-    if (sp.started && s !== null && s >= next && s < first) {
-      if (s > next) gap(next, s - 1);
-      ev(sp.started);
-      next = s + 1;
-    }
-    for (const e of this.store.rows<{ seq: number; envelope: string }>(
-      'SELECT seq, envelope FROM events WHERE space = ? AND seq > ? ORDER BY seq',
+    const history = this.store.rows<{ seq: number; envelope: string }>(
+      `SELECT seq, envelope FROM events WHERE space = ? AND seq > ?
+       UNION ALL
+       SELECT seq, envelope FROM mirrors WHERE space = ? AND seq > ?
+       ORDER BY seq`,
       sp.space,
       msg.since,
-    )) {
-      if (e.seq > next) gap(next, e.seq - 1);
-      ev(e.envelope);
+      sp.space,
+      // Protocol 3 can't read a mirror.
+      protocolOf(r.state) >= V4 ? msg.since : Number.MAX_SAFE_INTEGER,
+    );
+    // Older than the ring: the started event (kept apart) still goes.
+    const s = sp.started_seq;
+    if (sp.started && s !== null && s > msg.since) {
+      const at = history.findIndex((e) => e.seq >= s);
+      if (at === -1) history.push({ seq: s, envelope: sp.started });
+      else if (history[at]!.seq !== s) {
+        history.splice(at, 0, { seq: s, envelope: sp.started });
+      }
+    }
+    // `next`: the first seq not sent yet; a hole up to `lost_to` is a gap.
+    let next = msg.since + 1;
+    const hole = (to: number) => {
+      const end = Math.min(to, sp.lost_to);
+      if (next > end) return;
+      this.send(r.conn, {
+        type: 'space_gap',
+        space: sp.space,
+        from: next,
+        to: end,
+      });
+    };
+    for (const e of history) {
+      hole(e.seq - 1);
+      this.send(r.conn, {
+        type: 'space_event',
+        envelope: JSON.parse(e.envelope) as SignedEnvelope,
+      });
       next = e.seq + 1;
     }
-    if (next <= sp.last_seq) gap(next, sp.last_seq);
+    hole(sp.last_seq);
   }
 
   // ── questions ──────────────────────────────────────────────────────────
@@ -1934,6 +1990,11 @@ export class Hub {
  */
 function badToken(e: unknown): boolean {
   return e instanceof CloudError && e.code === 'cloud.unauthorized';
+}
+
+/** A `mirror` model the cloud keeps (the latest per id), not just relays. */
+function isKept(model: string): boolean {
+  return (MIRROR_KEPT as readonly string[]).includes(model);
 }
 
 /** A connection's protocol: 3 for attachments saved before v4. */

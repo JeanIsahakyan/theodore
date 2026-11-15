@@ -248,6 +248,7 @@ hello's protocol is kept per connection:
 | its own kind | `desktop` / `daemon` (else `fleet.bad_message`) | also `mobile`, `web` |
 | `register_push`, `delegate` | unknown (`fleet.bad_message`) | accepted |
 | `delegations` | never sent | after welcome and on change |
+| `mirror` space events | never sent, live or history | sent |
 
 `DeviceInfo.os` is still `macos` / `linux` in both: a phone or browser
 sends one of those until the protocol gains its own values.
@@ -280,6 +281,27 @@ A failed event, ask or reply check is `error{fleet.bad_signature}`, nothing
 stored or forwarded (a refused reply leaves its request pending).
 A gap the cloud can't fill is its own unsigned `space_gap{space, from, to}`:
 informational, never content.
+
+Mirrored rows (`docs/fleet.md` "One space UI: mirrored rows"): a space
+event whose `event.kind` is `mirror`, `{model, id, data}`.
+
+```
+mirror ─▶ model space | chat_message | turn_step, id 1–256 chars?  no ─▶ error fleet.invalid
+  space, chat_message ─▶ mirrors (space, model, id): the newer seq replaces
+                         the older; data = null (a tombstone) is kept too
+  turn_step           ─▶ relayed live only, never stored (last_seq moves)
+  ─▶ subscribers on protocol 4; protocol 3 gets neither live nor history
+subscribe{since} ─▶ ring events + kept mirrors with seq > since, in seq order
+```
+
+- Mirrors live apart from the ring: they never push an event out of the
+  500, but count toward the byte budgets (below).
+- **Gaps are real loss only.** A space keeps `lost_to`: the ring's oldest
+  dropped (by count, bytes or a finished space's budget) and a protocol-3
+  host's seq jump raise it. A hole in history at or below it is a
+  `space_gap`; above it (a replaced mirror, a relayed `turn_step`, a
+  protocol-4 host's compacted journal) it isn't. A protocol-4 host's seq
+  jump is never a live gap.
 
 Same-user devices aren't trusted by each other just for being the same user
 (trust is pinned per device), so the cloud keeps a space to its host and
@@ -402,8 +424,9 @@ Storage (DO SQLite):
 | Table | Holds |
 | --- | --- |
 | `devices` | device_id, user, pinned public key, info, generation, last seen |
-| `spaces` | space, user, host, origin, parent, depth, last seq, status, last activity, its `started` envelope, stored event bytes, the start request (`req_id`) that made it |
-| `events` | the host's signed envelope and its body's bytes, the newest 500 / 4 MiB per space (gaps are what's missing) |
+| `spaces` | space, user, host, origin, parent, depth, last seq, status, last activity, its `started` envelope, stored event and mirror bytes, `lost_to` (holes at or below it are gaps), the start request (`req_id`) that made it |
+| `events` | the host's signed envelope and its body's bytes, the newest 500 per space, within its byte budget |
+| `mirrors` | (space, model, id) ─ the latest `space` / `chat_message` mirror (a tombstone too): seq, the host's signed envelope, its body's bytes |
 | `pending` | a routed request until its reply: target, generation, claimed, envelope, `ask_id` of an answer |
 | `replies` | a signed reply or a `refused` held for an origin that's offline (2 min), as the frame to send |
 | `asks` | an open question (the host's envelope): where it shows, via, escalated, which devices were pushed about it |
@@ -411,7 +434,7 @@ Storage (DO SQLite):
 | `conns` | per-connection deadline (hello, token expiry) |
 | `push_tokens` | device ─ its Expo token, this minute's push count |
 | `delegations` | (origin, delegate) ─ the latest signed delegation, issued/expiry, revoked (tombstone) |
-| `meta` | `schema` = 5; on any other value every table but `devices`, `conns`, `push_tokens` and `delegations` is dropped (older rows carry older signatures) |
+| `meta` | `schema` = 6; on any other value every table but `devices`, `conns`, `push_tokens` and `delegations` is dropped (older rows carry older signatures) |
 
 Limits:
 
@@ -427,8 +450,9 @@ Limits:
 | a space whose host is offline | 30 days | forgotten with its events and questions (checked on any hello and alarm) |
 | device info | 8 KiB | `fleet.too_large` |
 | one space event | 64 KiB | `fleet.too_large` |
-| stored event bytes per space (body length) | 4 MiB, and 500 events | its oldest events go |
-| stored event bytes per user (body length; a `started` body twice: ring and kept copy) | 64 MiB | the oldest events of finished (stopped/failed) spaces go, oldest space first; none left: `error{fleet.busy}`, the event not stored (the host keeps it in its journal and resumes from `last_seq`) |
+| stored event bytes per space (body length; ring and mirrors together) | 16 MiB, and 500 ring events (mirrors not counted) | the ring's oldest go; if the mirrors alone leave no room: `error{fleet.busy}`, not stored |
+| stored event bytes per user (body length; a `started` body twice: ring and kept copy) | 128 MiB | the oldest events of finished (stopped/failed) spaces go, oldest space first, then their mirrors; none left: `error{fleet.busy}`, the event not stored (the host keeps it in its journal and resumes from `last_seq`) |
+| a `mirror`'s `id` | 256 chars | `fleet.invalid` |
 | hello after connect | 10 s | `fleet.bad_message`, close 1008 |
 | pushes per device | 30 / min | dropped (a question isn't marked pushed, so its escalation may try again) |
 | push token | `ExponentPushToken[…]` / `ExpoPushToken[…]`, 200 chars | `fleet.bad_message` |

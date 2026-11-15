@@ -22,8 +22,11 @@ import {
   MAX_EVENT_BYTES,
   MAX_FRAME_BYTES,
   MAX_INFO_BYTES,
+  MAX_MIRROR_ID_CHARS,
   MAX_PUSH_TOKEN_CHARS,
   MIN_PROTOCOL_VERSION,
+  MIRROR_KEPT,
+  MIRROR_RELAYED,
   NONCE_BYTES,
   PROTOCOL_VERSION,
 } from './limits';
@@ -144,7 +147,10 @@ const EVENT_KINDS = [
   'turn_ended',
   'question',
   'question_cleared',
+  'mirror',
 ] as const;
+
+const MIRROR_MODELS: readonly string[] = [...MIRROR_KEPT, ...MIRROR_RELAYED];
 
 /** Only the kind is read; the event travels as the host signed it. */
 function spaceEvent(v: unknown): RemoteSpaceEvent {
@@ -153,6 +159,26 @@ function spaceEvent(v: unknown): RemoteSpaceEvent {
   // The cloud keeps a space's status (finished spaces go first at the cap).
   if (kind === 'status') {
     oneOf(o, 'status', ['running', 'idle', 'waiting', 'stopped', 'failed']);
+  }
+  // It decides what the cloud keeps (and under which key).
+  if (kind === 'mirror') {
+    const { model, id } = o;
+    if (typeof model !== 'string' || !MIRROR_MODELS.includes(model)) {
+      throw new BadMessage(
+        codes.INVALID,
+        `mirror model must be one of ${MIRROR_MODELS.join(', ')}`,
+      );
+    }
+    if (
+      typeof id !== 'string' ||
+      id === '' ||
+      id.length > MAX_MIRROR_ID_CHARS
+    ) {
+      throw new BadMessage(
+        codes.INVALID,
+        `mirror id must be a string of 1 to ${MAX_MIRROR_ID_CHARS} chars`,
+      );
+    }
   }
   return o as RemoteSpaceEvent;
 }

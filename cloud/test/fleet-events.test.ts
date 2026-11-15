@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { RemoteSpaceEvent, SpaceEventBody } from '../src/gen/fleet';
-import { CLOUD_RING } from '../src/fleet/limits';
+import { CLOUD_RING, PROTOCOL_VERSION } from '../src/fleet/limits';
 import { Harness, startSpace } from './fleet-harness';
 
 const status: RemoteSpaceEvent = { kind: 'status', status: 'running' };
@@ -17,11 +17,12 @@ const started: RemoteSpaceEvent = {
   depth: 0,
 };
 
-// mac1 started rs_1 on mac2 (the host).
-async function setup() {
+// mac1 started rs_1 on mac2 (the host, on `hostProtocol`).
+async function setup(hostProtocol = PROTOCOL_VERSION) {
   const h = new Harness();
   const mac1 = await h.device('user_1', 'mac1');
   const mac2 = await h.device('user_1', 'mac2');
+  mac2.protocol = hostProtocol;
   await mac1.connect();
   await mac2.connect();
   await startSpace(mac1, mac2, 'rs_1');
@@ -117,8 +118,8 @@ describe('fleet events', () => {
     ]);
   });
 
-  it('streams history then live, deduped, with a gap for a jump', async () => {
-    const { mac1, emit } = await setup();
+  it('streams history then live, deduped, with a gap for a protocol-3 host’s jump', async () => {
+    const { mac1, emit } = await setup(3);
     await emit(1);
     await emit(2);
     await mac1.send({ type: 'subscribe', space: 'rs_1', since: 0 });
@@ -135,8 +136,18 @@ describe('fleet events', () => {
     expect(mac1.stream()).toEqual([]);
   });
 
-  it('sends the gap as its own unsigned message', async () => {
+  it('takes a protocol-4 host’s jump as compaction, not a gap', async () => {
     const { mac1, emit } = await setup();
+    await emit(1);
+    await emit(4);
+    await mac1.send({ type: 'subscribe', space: 'rs_1', since: 0 });
+    expect(mac1.stream()).toEqual([1, 4]);
+    await emit(7);
+    expect(mac1.stream()).toEqual([7]);
+  });
+
+  it('sends the gap as its own unsigned message', async () => {
+    const { mac1, emit } = await setup(3);
     await mac1.send({ type: 'subscribe', space: 'rs_1', since: 0 });
     await emit(3);
     expect(mac1.take('space_gap')).toEqual([

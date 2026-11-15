@@ -5,10 +5,13 @@
  * ```text
  * devices  device_id ─ user, pinned public key, info, generation, last seen
  * spaces   space ─ user, host, origin, parent, depth, last seq, status,
- *          last activity, the started event's envelope, stored event bytes,
- *          the start request that made it
+ *          last activity, the started event's envelope, stored event and
+ *          mirror bytes, the last seq lost, the start request that made it
  * events   (space, seq) ─ the host's signed envelope and its body's bytes;
- *          the newest CLOUD_RING / MAX_SPACE_EVENT_BYTES per space
+ *          the newest CLOUD_RING per space, within MAX_SPACE_EVENT_BYTES
+ *          with its mirrors
+ * mirrors  (space, model, id) ─ the latest `mirror` event of a `space` or
+ *          `chat_message` row (a tombstone too): seq, envelope, bytes
  * pending  req_id ─ a routed request until its reply (or 2 min)
  * replies  req_id ─ a reply or refusal held for an origin that's offline
  *          (2 min), as the frame to send
@@ -33,10 +36,18 @@ export interface Sql {
   exec(query: string, ...binds: SqlValue[]): Record<string, unknown>[];
 }
 
-export const SCHEMA_VERSION = 5;
+export const SCHEMA_VERSION = 6;
 
 /** Relay state that a schema change throws away; devices stay pinned. */
-const RESET = ['spaces', 'events', 'pending', 'replies', 'asks', 'subs'];
+const RESET = [
+  'spaces',
+  'events',
+  'mirrors',
+  'pending',
+  'replies',
+  'asks',
+  'subs',
+];
 
 const SCHEMA = [
   `CREATE TABLE IF NOT EXISTS devices (
@@ -61,6 +72,8 @@ const SCHEMA = [
     started_seq INTEGER,
     bytes INTEGER NOT NULL DEFAULT 0,
     started_bytes INTEGER NOT NULL DEFAULT 0,
+    mirror_bytes INTEGER NOT NULL DEFAULT 0,
+    lost_to INTEGER NOT NULL DEFAULT 0,
     req_id TEXT)`,
   `CREATE INDEX IF NOT EXISTS spaces_host ON spaces (host_device)`,
   `CREATE INDEX IF NOT EXISTS spaces_user ON spaces (user_id, last_ms)`,
@@ -71,6 +84,15 @@ const SCHEMA = [
     envelope TEXT NOT NULL,
     bytes INTEGER NOT NULL,
     PRIMARY KEY (space, seq))`,
+  `CREATE TABLE IF NOT EXISTS mirrors (
+    space TEXT NOT NULL,
+    model TEXT NOT NULL,
+    id TEXT NOT NULL,
+    seq INTEGER NOT NULL,
+    envelope TEXT NOT NULL,
+    bytes INTEGER NOT NULL,
+    PRIMARY KEY (space, model, id))`,
+  `CREATE INDEX IF NOT EXISTS mirrors_seq ON mirrors (space, seq)`,
   `CREATE TABLE IF NOT EXISTS pending (
     req_id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL,
@@ -160,6 +182,14 @@ export interface SpaceRow {
   bytes: number;
   /** Body bytes of `started`. */
   started_bytes: number;
+  /** Body bytes of its kept mirrors. */
+  mirror_bytes: number;
+  /**
+   * Every hole in seq at or below this is real loss (the ring's oldest
+   * dropped, a protocol-3 host's jump): history reports it as a gap. Holes
+   * above it are compaction or relayed-only `turn_step`s.
+   */
+  lost_to: number;
   /** The start request that made the row (its claim). */
   req_id: string | null;
 }
@@ -275,32 +305,53 @@ export class Store {
     return this.one<AskRow>('SELECT * FROM asks WHERE ask_id = ?', id);
   }
 
-  /** Event bytes a user's spaces hold (rings and `started` copies). */
+  /** Event bytes a user's spaces hold (rings, mirrors, `started` copies). */
   userBytes(user: string): number {
     return (
       this.num(
-        `SELECT COALESCE(SUM(bytes + started_bytes), 0) FROM spaces
-         WHERE user_id = ?`,
+        `SELECT COALESCE(SUM(bytes + mirror_bytes + started_bytes), 0)
+         FROM spaces WHERE user_id = ?`,
         user,
       ) ?? 0
     );
   }
 
+  /** The kept mirror of `(model, id)` in `space`. */
+  mirror(
+    space: string,
+    model: string,
+    id: string,
+  ): { seq: number; bytes: number } | undefined {
+    return this.one(
+      'SELECT seq, bytes FROM mirrors WHERE space = ? AND model = ? AND id = ?',
+      space,
+      model,
+      id,
+    );
+  }
+
   /**
-   * What one more event of `bytes` would push out of `space`'s ring (count
-   * and bytes): the last seq to drop (null: none) and the bytes freed.
+   * What `space`'s ring must drop to take `count` more events (0 or 1)
+   * while its ring and mirrors grow by `bytes` (net): the last seq to drop
+   * (null: none), the bytes freed, and whether it fits even so.
    */
   ringTrim(
     space: string,
+    count: number,
     bytes: number,
-  ): { upTo: number | null; freed: number } {
+  ): { upTo: number | null; freed: number; fits: boolean } {
     const row = this.one<{ n: number; total: number }>(
       `SELECT COUNT(*) AS n, COALESCE(SUM(bytes), 0) AS total
        FROM events WHERE space = ?`,
       space,
     );
-    let n = (row?.n ?? 0) + 1;
-    let total = (row?.total ?? 0) + bytes;
+    const mirrors =
+      this.num(
+        'SELECT COALESCE(SUM(bytes), 0) FROM mirrors WHERE space = ?',
+        space,
+      ) ?? 0;
+    let n = (row?.n ?? 0) + count;
+    let total = (row?.total ?? 0) + mirrors + bytes;
     let upTo: number | null = null;
     let freed = 0;
     while (n > CLOUD_RING || total > MAX_SPACE_EVENT_BYTES) {
@@ -319,45 +370,47 @@ export class Store {
         upTo = e.seq;
       }
     }
-    return { upTo, freed };
+    return { upTo, freed, fits: total <= MAX_SPACE_EVENT_BYTES };
   }
 
   /**
    * Drops the oldest events of the user's finished (stopped, failed) spaces
-   * but `except`, oldest space first, until `want` bytes are freed or none
-   * are left. Returns the bytes freed.
+   * but `except`, oldest space first, then their mirrors the same way, until
+   * `want` bytes are freed or none are left. Returns the bytes freed.
    */
   dropFinished(user: string, except: string, want: number): number {
     let freed = 0;
-    const touched = new Set<string>();
-    while (freed < want) {
-      const batch = this.rows<{ space: string; seq: number; bytes: number }>(
-        `SELECT e.space, e.seq, e.bytes FROM events e
-         JOIN spaces s ON s.space = e.space
-         WHERE s.user_id = ? AND s.space != ? AND s.status IN ('stopped', 'failed')
-         ORDER BY s.last_ms, s.space, e.seq LIMIT 64`,
-        user,
-        except,
-      );
-      if (batch.length === 0) break;
-      for (const e of batch) {
-        if (freed >= want) break;
-        this.run(
-          'DELETE FROM events WHERE space = ? AND seq = ?',
-          e.space,
-          e.seq,
+    const touched = new Map<string, number>();
+    for (const table of ['events', 'mirrors'] as const) {
+      while (freed < want) {
+        const batch = this.rows<{ space: string; seq: number; bytes: number }>(
+          `SELECT e.space, e.seq, e.bytes FROM ${table} e
+           JOIN spaces s ON s.space = e.space
+           WHERE s.user_id = ? AND s.space != ? AND s.status IN ('stopped', 'failed')
+           ORDER BY s.last_ms, s.space, e.seq LIMIT 64`,
+          user,
+          except,
         );
-        freed += e.bytes;
-        touched.add(e.space);
+        if (batch.length === 0) break;
+        for (const e of batch) {
+          if (freed >= want) break;
+          this.run(
+            `DELETE FROM ${table} WHERE space = ? AND seq = ?`,
+            e.space,
+            e.seq,
+          );
+          freed += e.bytes;
+          touched.set(e.space, Math.max(touched.get(e.space) ?? 0, e.seq));
+        }
       }
     }
-    for (const sp of touched) this.resum(sp);
+    for (const [sp, seq] of touched) this.lost(sp, seq);
     return freed;
   }
 
   /**
-   * Stores an event's envelope JSON (`bytes`: its body's), after dropping
-   * the space's events up to `upTo` (from [`ringTrim`]).
+   * Stores an event's envelope JSON (`bytes`: its body's) in the ring, after
+   * dropping the space's events up to `upTo` (from [`ringTrim`]).
    */
   addEvent(
     space: string,
@@ -366,9 +419,6 @@ export class Store {
     bytes: number,
     upTo: number | null,
   ): void {
-    if (upTo !== null) {
-      this.run('DELETE FROM events WHERE space = ? AND seq <= ?', space, upTo);
-    }
     this.run(
       `INSERT OR IGNORE INTO events (space, seq, envelope, bytes)
        VALUES (?, ?, ?, ?)`,
@@ -377,24 +427,69 @@ export class Store {
       envelope,
       bytes,
     );
-    this.resum(space);
+    this.trim(space, upTo);
   }
 
-  /** `spaces.bytes` from the ring itself, so it never drifts. */
-  private resum(space: string): void {
+  /**
+   * Keeps `envelope` as the latest mirror of `(model, id)` in `space`,
+   * replacing the one before it, after dropping the ring up to `upTo`.
+   */
+  putMirror(
+    space: string,
+    model: string,
+    id: string,
+    seq: number,
+    envelope: string,
+    bytes: number,
+    upTo: number | null,
+  ): void {
     this.run(
-      `UPDATE spaces SET bytes =
-         (SELECT COALESCE(SUM(bytes), 0) FROM events WHERE space = ?)
+      `INSERT INTO mirrors (space, model, id, seq, envelope, bytes)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT (space, model, id) DO UPDATE SET
+         seq = excluded.seq, envelope = excluded.envelope, bytes = excluded.bytes
+       WHERE excluded.seq > mirrors.seq`,
+      space,
+      model,
+      id,
+      seq,
+      envelope,
+      bytes,
+    );
+    this.trim(space, upTo);
+  }
+
+  /** Drops the ring up to `upTo` (that's lost), then recounts. */
+  private trim(space: string, upTo: number | null) {
+    if (upTo === null) return this.lost(space, 0);
+    this.run('DELETE FROM events WHERE space = ? AND seq <= ?', space, upTo);
+    this.lost(space, upTo);
+  }
+
+  /**
+   * Raises the space's `lost_to` to `seq` and recounts its bytes from the
+   * rows themselves, so they never drift.
+   */
+  lost(space: string, seq: number): void {
+    this.run(
+      `UPDATE spaces SET
+         lost_to = MAX(lost_to, ?),
+         bytes = (SELECT COALESCE(SUM(bytes), 0) FROM events WHERE space = ?),
+         mirror_bytes =
+           (SELECT COALESCE(SUM(bytes), 0) FROM mirrors WHERE space = ?)
        WHERE space = ?`,
+      seq,
+      space,
       space,
       space,
     );
   }
 
-  /** Forgets spaces: their events, subscriptions and the spaces rows. */
+  /** Forgets spaces: their events, mirrors, subscriptions and rows. */
   dropSpaces(spaces: string[]): void {
     for (const sp of spaces) {
       this.run('DELETE FROM events WHERE space = ?', sp);
+      this.run('DELETE FROM mirrors WHERE space = ?', sp);
       this.run('DELETE FROM subs WHERE space = ?', sp);
       this.run('DELETE FROM spaces WHERE space = ?', sp);
     }
