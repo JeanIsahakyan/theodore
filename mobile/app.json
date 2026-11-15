@@ -2,13 +2,19 @@
   "expo": {
     "name": "Theodore",
     "slug": "theodore",
-    "version": "1.0.0",
+    "version": "0.1.0",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "app.theodore.mobile"
+      "bundleIdentifier": "app.theodore.mobile",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
       "adaptiveIcon": {

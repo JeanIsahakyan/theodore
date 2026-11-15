@@ -1,0 +1,133 @@
+name: Mobile web
+
+# Deploys the web build of the Expo app in mobile/ (docs/mobile.md "Build and
+# release") to Cloudflare Pages, one project per channel, alongside the
+# branch flow (docs/releasing.md):
+#
+#   push staging, mobile/** changed ──▶ checks ──▶ theodore-web-staging
+#   push main,    mobile/** changed ──▶ checks ──▶ theodore-web
+#
+# A push that touches nothing under mobile/ deploys nothing. The web app is
+# not part of the desktop build: no version bump, no tag, no release. The
+# iOS/Android builds are not here either: they are EAS builds the owner
+# starts by hand (docs/mobile.md).
+#
+# Secrets: CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID, the same as
+# cloud.yml; the token needs "Cloudflare Pages: Edit". Variables, baked
+# into the bundle at build time (EXPO_PUBLIC_*): the per-environment ones
+# staging.yml and release.yml already use, THEODORE_WORKOS_CLIENT_ID[_STAGING]
+# and THEODORE_CLOUD_URL[_STAGING]. Staging falls back to the app's own
+# staging defaults when they are unset; production refuses to build without
+# them. The two Pages projects are created once by the owner
+# (docs/mobile.md). Manual run: pick the environment; production deploys
+# only from main.
+
+on:
+  push:
+    branches: [main, staging]
+    paths: ['mobile/**', '.github/workflows/mobile-web.yml']
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Which Pages project to deploy
+        type: choice
+        options: [staging, production]
+        default: staging
+
+# One deploy per environment at a time, never cancelled mid-deploy: a push
+# that lands during one waits, then deploys the newest.
+concurrency:
+  group: mobile-web-${{ github.event_name == 'workflow_dispatch' && inputs.environment || (github.ref == 'refs/heads/main' && 'production' || 'staging') }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      TARGET: ${{ github.event_name == 'workflow_dispatch' && inputs.environment || (github.ref == 'refs/heads/main' && 'production' || 'staging') }}
+    steps:
+      - name: production deploys only from main
+        if: env.TARGET == 'production' && github.ref != 'refs/heads/main'
+        run: |
+          echo "::error::production deploys only from main (this run is on ${GITHUB_REF_NAME})"
+          exit 1
+
+      - name: resolve the Pages project and the build variables
+        # Each Pages project's production branch is set when the owner
+        # creates it, so a deploy always lands on that project's live URL.
+        env:
+          PROD_CLIENT_ID: ${{ vars.THEODORE_WORKOS_CLIENT_ID }}
+          PROD_CLOUD_URL: ${{ vars.THEODORE_CLOUD_URL }}
+          STAGING_CLIENT_ID: ${{ vars.THEODORE_WORKOS_CLIENT_ID_STAGING }}
+          STAGING_CLOUD_URL: ${{ vars.THEODORE_CLOUD_URL_STAGING }}
+        run: |
+          if [ "$TARGET" = production ]; then
+            if [ -z "$PROD_CLIENT_ID" ] || [ -z "$PROD_CLOUD_URL" ]; then
+              echo "::error::set the THEODORE_WORKOS_CLIENT_ID and THEODORE_CLOUD_URL repo variables: a production web build must not fall back to the staging defaults"
+              exit 1
+            fi
+            {
+              echo "PROJECT=theodore-web"
+              echo "PAGES_BRANCH=main"
+              echo "WORKOS_CLIENT_ID=$PROD_CLIENT_ID"
+              echo "CLOUD_URL=$PROD_CLOUD_URL"
+            } >> "$GITHUB_ENV"
+          else
+            {
+              echo "PROJECT=theodore-web-staging"
+              echo "PAGES_BRANCH=staging"
+              echo "WORKOS_CLIENT_ID=$STAGING_CLIENT_ID"
+              echo "CLOUD_URL=$STAGING_CLOUD_URL"
+            } >> "$GITHUB_ENV"
+          fi
+
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: mobile/pnpm-lock.yaml
+
+      - name: install
+        run: pnpm -C mobile install --frozen-lockfile
+
+      # The same checks as ci.yml's mobile job: a deploy never ships what
+      # CI would have refused.
+      - name: typecheck
+        run: pnpm -C mobile typecheck
+
+      - name: lint
+        run: pnpm -C mobile lint
+
+      - name: format
+        run: pnpm -C mobile format:check
+
+      - name: test
+        run: pnpm -C mobile test
+
+      - name: build the web bundle
+        # An unset variable is left out, not exported empty: the app's
+        # defaults use `??`, which an empty string would defeat.
+        run: |
+          if [ -n "$WORKOS_CLIENT_ID" ]; then export EXPO_PUBLIC_WORKOS_CLIENT_ID="$WORKOS_CLIENT_ID"; fi
+          if [ -n "$CLOUD_URL" ]; then export EXPO_PUBLIC_CLOUD_URL="$CLOUD_URL"; fi
+          pnpm -C mobile build:web
+
+      - name: single-page fallback
+        # `/callback` and every deep route must serve index.html: the router
+        # runs in the browser (`web.output: single`).
+        run: echo '/* /index.html 200' > mobile/dist/_redirects
+
+      - name: deploy ${{ env.TARGET }}
+        run: pnpm dlx wrangler@4 pages deploy mobile/dist --project-name "$PROJECT" --branch "$PAGES_BRANCH" --commit-dirty=true
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

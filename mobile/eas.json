@@ -1,0 +1,33 @@
+{
+  "cli": {
+    "version": ">= 16.0.0",
+    "appVersionSource": "remote"
+  },
+  "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal",
+      "ios": { "simulator": true },
+      "env": {
+        "EXPO_PUBLIC_WORKOS_CLIENT_ID": "client_01M5RM1W36AHHEGBE37QD3PS6K",
+        "EXPO_PUBLIC_CLOUD_URL": "https://theodore-cloud-staging.prd-instance.workers.dev"
+      }
+    },
+    "preview": {
+      "distribution": "internal",
+      "environment": "preview",
+      "env": {
+        "EXPO_PUBLIC_WORKOS_CLIENT_ID": "client_01M5RM1W36AHHEGBE37QD3PS6K",
+        "EXPO_PUBLIC_CLOUD_URL": "https://theodore-cloud-staging.prd-instance.workers.dev"
+      }
+    },
+    "production": {
+      "distribution": "store",
+      "environment": "production",
+      "autoIncrement": true
+    }
+  },
+  "submit": {
+    "production": {}
+  }
+}

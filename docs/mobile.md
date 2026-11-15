@@ -122,3 +122,119 @@ mobile/
 
 Web push, hosting spaces on the phone, file transfer, tablets' layouts beyond
 "it works".
+
+## Build and release
+
+The app is not part of the desktop release: no version bump, no tag. Web
+rides the branch flow like the Worker; iOS and Android are EAS builds the
+owner starts by hand.
+
+```
+push staging, mobile/** ─▶ mobile-web.yml: checks ─▶ build:web ─▶ Pages theodore-web-staging
+push main,    mobile/** ─▶ mobile-web.yml: checks ─▶ build:web ─▶ Pages theodore-web
+every PR / push          ─▶ ci.yml `mobile`: typecheck, lint, format, test, build:web
+
+eas build --profile preview    ─▶ internal build (staging cloud) ─▶ TestFlight / Play internal
+eas build --profile production ─▶ store build (production cloud) ─▶ eas submit ─▶ review
+```
+
+### Local development
+
+- `pnpm -C mobile start` (a, i, w for Android, iOS, web). Defaults point at the
+  staging cloud (`src/config.ts`).
+- Expo Go is enough for the screens, sign-in on web, and the fleet client. It is
+  **not** enough for what needs our own native config: remote push
+  (remote push isn't supported in Expo Go) and the `theodore://`
+  scheme. For those, build a dev client once:
+  `npx eas-cli@latest build --profile development` (iOS simulator build,
+  installable by dragging it onto the simulator), then `pnpm -C mobile start`
+  and open it in that client. A rebuild is needed only after adding a native
+  module or changing `app.json` plugins.
+- Before pushing: `pnpm -C mobile typecheck`, `lint`, `test` (lefthook runs
+  them; `format:check` and `build:web` are CI's).
+
+### Web
+
+`mobile-web.yml` deploys `mobile/dist` with wrangler (`pages deploy`) and writes
+`_redirects` (`/* /index.html 200`) so `/callback` and deep links serve the
+single-page app. Same checks as CI run first. Env per channel, baked into the
+bundle (`EXPO_PUBLIC_*`) from the repo variables the desktop builds already
+use:
+
+| | Pages project | `EXPO_PUBLIC_WORKOS_CLIENT_ID` | `EXPO_PUBLIC_CLOUD_URL` |
+| --- | --- | --- | --- |
+| staging | `theodore-web-staging` | `THEODORE_WORKOS_CLIENT_ID_STAGING` | `THEODORE_CLOUD_URL_STAGING` |
+| production | `theodore-web` | `THEODORE_WORKOS_CLIENT_ID` | `THEODORE_CLOUD_URL` |
+
+Staging falls back to the app's staging defaults when the variables are unset;
+production fails the run instead of building with them. Manual run (Actions →
+Mobile web → Run workflow) picks the environment; production only from `main`.
+The web origin must be in the cloud's CORS list (above).
+
+### iOS and Android builds (EAS)
+
+`mobile/eas.json` profiles:
+
+| Profile | For | Distribution | Env |
+| --- | --- | --- | --- |
+| `development` | dev client | internal (iOS simulator build) | staging, literal |
+| `preview` | testers | internal (ad hoc iOS, APK Android) | staging, literal |
+| `production` | stores | store (AAB, App Store) | EAS environment `production` |
+
+- Production's client id and cloud URL are **not** in the repo: set them once as
+  EAS environment variables (`eas env:create --environment production
+  --name EXPO_PUBLIC_WORKOS_CLIENT_ID --visibility plaintext`, same for
+  `EXPO_PUBLIC_CLOUD_URL`). Same values as the `THEODORE_*` repo variables.
+  Check a production build's values with `eas env:list --environment production`.
+- Versioning: `appVersionSource: remote`. The user-visible version is
+  `expo.version` in `app.json`; the build number (iOS) and version code
+  (Android) are counted by EAS and bumped by `autoIncrement` on `production`.
+  Remote, because nothing in git then has to be bumped and merged per upload
+  (Apple rejects a repeated build number, and a failed upload still burns
+  one). Bump `expo.version` by hand for a store release.
+- `runtimeVersion` policy `appVersion`: a build's runtime is its
+  `expo.version`. Inert until `expo-updates` is added; then an OTA update only
+  reaches builds with the same version, so JS that needs a new native module
+  ships with a version bump.
+- One identity (`app.theodore.mobile`, scheme `theodore`) for every profile: a
+  preview build and the store build replace each other on a device. Split per
+  channel (`app.config.ts` reading an `APP_VARIANT` env) only if testers need
+  both side by side.
+
+### Testing and store release
+
+```
+preview     ─▶ Android: APK to install; iOS: ad hoc, devices registered with `eas device:create`
+production  ─▶ eas submit --platform ios     ─▶ App Store Connect ─▶ TestFlight ─▶ review
+            ─▶ eas submit --platform android ─▶ Play Console, internal track ─▶ promote
+```
+
+- TestFlight: `eas build --profile production --platform ios --auto-submit`
+  uploads to App Store Connect; add internal testers there. No device
+  registration. Prefer this to ad hoc for anyone beyond the owner's own devices.
+- Play internal testing: first upload of an app must be manual in the Play
+  Console (Google rejects the API for a never-uploaded app); after that
+  `eas submit --platform android` lands in the internal track, set in
+  `eas.json` `submit.production.android.track` if it should differ.
+- Store submission: the listing, screenshots, privacy answers and review
+  notes are filled in App Store Connect / Play Console by hand. Review notes
+  must say how to sign in (a test WorkOS account) and that the app needs a
+  computer running Theodore to do anything.
+
+### One-time, by the owner
+
+| # | Step | How |
+| --- | --- | --- |
+| 1 | Expo account, EAS project | `npx eas-cli@latest login`, then `eas init` in `mobile/`: creates the project and writes `extra.eas.projectId` into `app.json`; commit it |
+| 2 | EAS env for production | the two `eas env:create` calls above |
+| 3 | Apple Developer Program, App Store Connect app | enrol; create the app with bundle id `app.theodore.mobile`; then `eas credentials` (iOS) lets EAS make the distribution cert and profile |
+| 4 | iOS push key | `eas credentials` → iOS → Push Notifications: set up a new key (an APNs `.p8`); EAS hands it to Expo's push service. Never commit it |
+| 5 | Google Play Console | pay, create the app `app.theodore.mobile`; make a service account key for `eas submit` (`eas credentials` → Android) |
+| 6 | FCM for Android push | create a Firebase project, add the Android app, download `google-services.json`, point `expo.android.googleServicesFile` at it (upload it as an EAS file env var, not in git), then `eas credentials` → Android → FCM V1 service account key |
+| 7 | WorkOS redirects | add `theodore://callback` and `https://theodore-web-staging.pages.dev/callback` to the staging environment, `theodore://callback` and `https://theodore-web.pages.dev/callback` to production (docs/releasing.md "WorkOS redirects to register") |
+| 8 | Pages projects | `wrangler pages project create theodore-web-staging --production-branch staging` and `wrangler pages project create theodore-web --production-branch main` |
+| 9 | Cloud CORS | the two `pages.dev` origins in the Worker's CORS config ("Cloud" above) |
+
+`mobile-web.yml` reuses `CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID`; the
+token must also carry "Cloudflare Pages: Edit". No other secret is added to
+GitHub: EAS holds the Apple, Google and push credentials.
