@@ -183,7 +183,6 @@ const ROUTE_NAMES = new Set([
   'review',
   'new',
   'space',
-  'fleet-space',
 ]);
 
 /** The sections of a project's settings, in menu order. */
@@ -226,6 +225,10 @@ export function migrateRoute(raw: unknown, ws: WorkspaceId): Route | null {
     ws === ALL ? 'all' : isLocalId(ws) ? 'local' : 'repo';
   if (r.name === 'mine') return fitRoute({ name: 'prs' }, ws, kind);
   if (r.name === 'project') return ws === ALL ? { name: 'prs' } : homeRoute(ws);
+  // A space on another device had a page of its own; it is an ordinary
+  // space now, under the same id (docs/fleet.md "One space UI").
+  if (r.name === 'fleet-space')
+    return typeof r.id === 'string' ? { name: 'space', id: r.id } : null;
   if (typeof r.name !== 'string' || !ROUTE_NAMES.has(r.name)) return null;
   if (
     r.name === 'settings' &&
@@ -247,10 +250,7 @@ export function migrateRoute(raw: unknown, ws: WorkspaceId): Route | null {
     };
   }
   if (r.name === 'review' && typeof r.pr !== 'string') return null;
-  if (
-    (r.name === 'new' || r.name === 'space' || r.name === 'fleet-space') &&
-    typeof r.id !== 'string'
-  )
+  if ((r.name === 'new' || r.name === 'space') && typeof r.id !== 'string')
     return null;
   return fitRoute(raw as Route, ws, kind);
 }

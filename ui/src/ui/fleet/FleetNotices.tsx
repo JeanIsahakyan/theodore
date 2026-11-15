@@ -79,9 +79,10 @@ export const FleetNotices = observer(function FleetNotices() {
   const fleet = store.fleet;
   if (!fleet.available) return null;
   const route = ui.route;
-  // The space's own page already shows its question.
+  // The space's own page already shows its question (a remote space's id
+  // is its fleet id).
   const asks = fleet.askList.filter(
-    (q) => !(route.name === 'fleet-space' && route.id === q.space),
+    (q) => !(route.name === 'space' && route.id === q.space),
   );
   const trusts = fleet.trustNeededList;
   if (asks.length === 0 && trusts.length === 0) return null;

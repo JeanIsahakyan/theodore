@@ -76,10 +76,7 @@ export type Route =
   | { name: 'new'; id: string }
   /** A space (docs/spaces.md): chat with the agent + the live diff. Only
    *  reachable with build mode on. */
-  | { name: 'space'; id: string }
-  /** A space on another device (docs/fleet.md): its lines, composer and
-   *  question. `id` is the fleet id (`rs_…`). */
-  | { name: 'fleet-space'; id: string };
+  | { name: 'space'; id: string };
 
 export type ModalName =
   | 'help'
@@ -97,10 +94,9 @@ export type ModalName =
   | 'report-problem'
   /** The list of usage events and what is never sent. */
   | 'whats-collected'
-  /** Build mode only. */
-  | 'new-space'
-  /** Start a space on another device (docs/fleet.md). */
-  | 'fleet-start';
+  /** Build mode only; targets `['elsewhere']` open it on "Run on" another
+   *  device (docs/fleet.md). */
+  | 'new-space';
 
 export const sameRoute = (a: Route, b: Route): boolean =>
   JSON.stringify(a) === JSON.stringify(b);

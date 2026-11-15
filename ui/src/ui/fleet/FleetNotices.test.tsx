@@ -96,10 +96,10 @@ describe('a routed question', () => {
 
   it("is not repeated over the space's own page", async () => {
     store.fleet.handle({ type: 'fleet_ask', question: question() });
-    store.ui.go({ name: 'fleet-space', id: 'rs_1' });
+    store.ui.go({ name: 'space', id: 'rs_1' });
     await render();
     expect(q('.fleet-question')).toBeNull();
-    store.ui.go({ name: 'fleet-space', id: 'rs_other' });
+    store.ui.go({ name: 'space', id: 'rs_other' });
     await settle();
     expect(q('.fleet-question')).not.toBeNull();
   });

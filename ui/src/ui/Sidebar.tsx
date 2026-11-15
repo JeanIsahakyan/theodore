@@ -31,13 +31,11 @@ import {
 } from '@heroui/react';
 import { observer } from 'mobx-react-lite';
 import { useEffect, useState, type ReactNode } from 'react';
-import type { FleetSpaceStatus, Space } from '../gen/contract';
-import type { RootStore } from '../stores/RootStore';
+import type { Space } from '../gen/contract';
 import { useRootStore, useUi } from '../stores/context';
 import { sameRoute, type Route, type UiStore } from '../stores/UiStore';
 import { api } from '../core/api';
 import { SpaceMark } from './AgentMark';
-import { spaceTitle as fleetSpaceTitle } from './fleet/fleet';
 import { Avatar, K } from './bits';
 import { contextMenuHandler, type ContextMenuItem } from './ContextMenu';
 import { ListSearchBar } from './ListSearchBar';
@@ -53,6 +51,7 @@ import { PrGlyph } from './space/SpacePr';
 import { archive } from './space/SpacePage';
 import {
   canMarkUnread,
+  remoteOf,
   spaceGlyph,
   spaceTitle,
   withPrNumber,
@@ -74,6 +73,8 @@ interface NavItem {
   contextMenu?: () => ContextMenuItem[];
   /** A pinned space (docs/spaces.md §3): sorts first, marked with a small pin. */
   pinned?: boolean;
+  /** A space that runs on another device (docs/fleet.md): "on <host>". */
+  device?: { label: string; title: string };
   /** A space row's hover button; disabled while its turn runs, as on the
    *  space page. */
   onArchive?: () => void;
@@ -92,20 +93,26 @@ function archiveFromSidebar(ui: UiStore, s: Space) {
  *  sidebar's right-click menu. */
 export function spaceContextMenu(s: Space, ui: UiStore): ContextMenuItem[] {
   const pinned = s.pinned ?? false;
+  // A remote space's row is its host's: pinning here wouldn't stay.
+  const remote = remoteOf(s) != null;
   return [
-    {
-      id: 'pin',
-      label: pinned ? 'Unpin' : 'Pin',
-      icon: pinned ? (
-        <PinSlash className="size-4" />
-      ) : (
-        <Pin className="size-4" />
-      ),
-      onAction: () =>
-        void api
-          .setSpacePinned({ space: s.id, pinned: !pinned })
-          .catch(() => {}),
-    },
+    ...(remote
+      ? []
+      : [
+          {
+            id: 'pin',
+            label: pinned ? 'Unpin' : 'Pin',
+            icon: pinned ? (
+              <PinSlash className="size-4" />
+            ) : (
+              <Pin className="size-4" />
+            ),
+            onAction: () =>
+              void api
+                .setSpacePinned({ space: s.id, pinned: !pinned })
+                .catch(() => {}),
+          },
+        ]),
     ...(canMarkUnread(s, spaceSeen.get(s.id))
       ? [
           {
@@ -135,46 +142,18 @@ interface NavGroup {
 
 const routeKey = (r: Route) => JSON.stringify(r);
 
-const FLEET_DOT: Record<FleetSpaceStatus, string> = {
-  starting: 'text-muted',
-  running: 'text-accent',
-  idle: 'text-success',
-  waiting: 'text-warning',
-  stopped: 'text-muted',
-  failed: 'text-danger',
-};
-
-/** Spaces on other devices (docs/fleet.md), under the Spaces group: only
- *  where a fleet exists and is on (or has spaces left to look at). */
-function fleetGroup(store: RootStore, ui: UiStore): NavGroup[] {
-  const f = store.fleet;
-  if (!f.available || (!f.enabled && f.spaces.size === 0)) return [];
-  return [
-    {
-      id: 'fleet',
-      title: 'Other devices',
-      items: [
-        ...f.spaceList.map((s): NavItem => {
-          const route: Route = { name: 'fleet-space', id: s.space };
-          const where = s.hosted_here
-            ? `for ${f.device(s.origin_device)?.name ?? 'another device'}`
-            : s.host_name;
-          return {
-            key: routeKey(route),
-            icon: <CircleFill className={`size-2.5 ${FLEET_DOT[s.status]}`} />,
-            label: `${fleetSpaceTitle(s)} · ${where}`,
-            route,
-          };
-        }),
-        {
-          key: 'fleet-start',
-          icon: <Plus />,
-          label: 'Run on another device',
-          onPress: () => ui.openModal('fleet-start'),
-        },
-      ],
-    },
-  ];
+/** "on <host>" beside a remote space's name; the project in its title,
+ *  since that project needn't be one of this device's. */
+export function deviceBadge(
+  s: Pick<Space, 'remote'>,
+): { label: string; title: string } | undefined {
+  const r = remoteOf(s);
+  return r
+    ? {
+        label: `on ${r.host_name}`,
+        title: `${r.project_name} · ${r.host_name}`,
+      }
+    : undefined;
 }
 
 /** A space's mark when no agent shows on it: unread, failed, idle
@@ -198,6 +177,17 @@ function SpaceGlyphIcon({ g }: { g: Exclude<SpaceGlyph, 'running'> }) {
 /** `running` has no glyph: `SpaceMark` draws it. */
 const glyphIcon = (g: SpaceGlyph) =>
   g === 'running' ? null : <SpaceGlyphIcon g={g} />;
+
+function DeviceBadge({ label, title }: { label: string; title: string }) {
+  return (
+    <span
+      className="space-device max-w-[45%] shrink-0 truncate text-xs text-muted"
+      title={title}
+    >
+      {label}
+    </span>
+  );
+}
 
 function IconBtn({
   label,
@@ -360,6 +350,7 @@ export const Sidebar = observer(function Sidebar() {
                   route: { name: 'space', id: s.id },
                   contextMenu: () => spaceContextMenu(s, ui),
                   pinned: s.pinned ?? false,
+                  device: deviceBadge(s),
                   onArchive: () => archiveFromSidebar(ui, s),
                   archiveDisabled: s.status === 'running',
                 };
@@ -374,8 +365,6 @@ export const Sidebar = observer(function Sidebar() {
           },
         ]
       : []),
-    // Spaces on your other devices (docs/fleet.md): only with a fleet.
-    ...fleetGroup(store, ui),
   ];
   const items = groups.flatMap((g) => g.items);
   // ── /workspaces ─────────────────────────────────────────────────────────
@@ -454,6 +443,7 @@ export const Sidebar = observer(function Sidebar() {
                       aria-label="Pinned"
                     />
                   )}
+                  {i.device && <DeviceBadge {...i.device} />}
                   {i.n !== undefined && i.n !== 0 && (
                     <span
                       className="shrink-0 text-xs tabular-nums text-muted"
@@ -486,7 +476,9 @@ export const Sidebar = observer(function Sidebar() {
                         <Tooltip.Content>
                           {i.archiveDisabled
                             ? 'Stop the agent before archiving'
-                            : 'Archive — removes the worktree; the transcript and checkpoints are kept'}
+                            : i.device
+                              ? 'Archive — forgets it here; it stays on its host'
+                              : 'Archive — removes the worktree; the transcript and checkpoints are kept'}
                         </Tooltip.Content>
                       </Tooltip>
                     </span>
@@ -548,6 +540,7 @@ export const Sidebar = observer(function Sidebar() {
                     aria-label="Pinned"
                   />
                 )}
+                {deviceBadge(s) && <DeviceBadge {...deviceBadge(s)!} />}
               </button>
             ))}
           </div>

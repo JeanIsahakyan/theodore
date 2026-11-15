@@ -370,6 +370,14 @@ describe('migrateRoute', () => {
     expect(migrateRoute({ name: 'space' }, web.id)).toBeNull();
   });
 
+  it("opens a remote space's old tab as an ordinary space, same id", () => {
+    expect(migrateRoute({ name: 'fleet-space', id: 'rs_1' }, web.id)).toEqual({
+      name: 'space',
+      id: 'rs_1',
+    });
+    expect(migrateRoute({ name: 'fleet-space' }, ALL)).toBeNull();
+  });
+
   it('turns a project page into the workspace home', () => {
     const page = { name: 'project', id: web.id };
     expect(migrateRoute(page, web.id)).toEqual({ name: 'prs' });

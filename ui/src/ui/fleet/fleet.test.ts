@@ -1,8 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { device, thisDevice } from '../../test/fleet';
 import {
-  canSend,
-  canStop,
   capMode,
   isAnswered,
   isClient,
@@ -84,17 +82,6 @@ describe('lastSeenLabel', () => {
     expect(lastSeenLabel(now - 72 * 3_600_000, false, now)).toBe(
       'seen 3 days ago',
     );
-  });
-});
-
-describe('statuses', () => {
-  it('takes a message only between turns, stops only a running one', () => {
-    expect(['idle', 'waiting'].every((s) => canSend(s as never))).toBe(true);
-    for (const s of ['starting', 'running', 'stopped', 'failed'] as const) {
-      expect(canSend(s)).toBe(false);
-    }
-    expect(canStop('running')).toBe(true);
-    expect(canStop('idle')).toBe(false);
   });
 });
 

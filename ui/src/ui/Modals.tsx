@@ -20,7 +20,6 @@ import { AddProjectModal } from './Projects';
 import { ManageProjectsModal } from './project/ManageProjects';
 import { isBuildMode } from './space/mode';
 import { NewSpaceModal } from './space/SpacePage';
-import { StartRemoteSpaceModal } from './fleet/StartRemoteSpaceModal';
 import { ReportProblemModal } from './ReportProblem';
 import { WhatsCollectedModal } from './WhatsCollected';
 
@@ -334,8 +333,6 @@ export const Modals = observer(function Modals() {
       return <ManageProjectsModal />;
     case 'new-space':
       return isBuildMode(store) ? <NewSpaceModal /> : null;
-    case 'fleet-start':
-      return store.fleet.available ? <StartRemoteSpaceModal /> : null;
     case 'sign-in':
       return <SignInModal />;
     case 'report-problem':

@@ -366,13 +366,14 @@ describe('the device list', () => {
     ).toEqual([]);
   });
 
-  it('Run on another device opens the start dialog, only if one can take it', async () => {
+  it('Run on another device opens New space on Run on, only if one can take it', async () => {
     await render(
       status({ devices: [thisDevice(), device({ trusted: true })] }),
     );
     expect(button('Run on another device…')!.disabled).toBe(false);
     await click(button('Run on another device…'));
-    expect(store.ui.modal).toBe('fleet-start');
+    expect(store.ui.modal).toBe('new-space');
+    expect(store.ui.modalTargets).toEqual(['elsewhere']);
   });
 
   it('Run on another device is off when none can take a space', async () => {

@@ -28,6 +28,8 @@ import {
   startableDevices,
 } from './fleet';
 import { Fingerprint, TrustConfirm } from './TrustConfirm';
+import { isBuildMode } from '../space/mode';
+import { RUN_ELSEWHERE } from '../space/spaces';
 
 const swallow = () => {
   // toasted by api.ts
@@ -405,11 +407,14 @@ const DeviceRow = observer(function DeviceRow({
 });
 
 export const DevicesPage = observer(function DevicesPage() {
-  const fleet = useRootStore().fleet;
+  const store = useRootStore();
+  const fleet = store.fleet;
   const ui = useUi();
   if (!fleet.available) return null;
   const now = Date.now();
-  const canStart = startableDevices(fleet.devices).length > 0;
+  // New space's "Run on": spaces have to be on.
+  const canStart =
+    isBuildMode(store) && startableDevices(fleet.devices).length > 0;
   return (
     <>
       <section className="flex flex-col gap-2">
@@ -427,7 +432,7 @@ export const DevicesPage = observer(function DevicesPage() {
             variant="tertiary"
             className="fleet-run-elsewhere"
             isDisabled={!canStart}
-            onPress={() => ui.openModal('fleet-start')}
+            onPress={() => ui.openModal('new-space', [RUN_ELSEWHERE])}
           >
             Run on another device…
           </Button>

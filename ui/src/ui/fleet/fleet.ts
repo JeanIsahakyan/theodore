@@ -1,11 +1,8 @@
 /** Fleet UI rules with no React: which devices can take a space, which
- *  modes they allow, how a status reads, how answers go on the wire
- *  (docs/fleet.md). */
+ *  modes they allow, how answers go on the wire (docs/fleet.md). */
 import type {
   FleetDevice,
   FleetQuestionItem,
-  FleetRemoteSpace,
-  FleetSpaceStatus,
   SpaceMode,
 } from '../../gen/contract';
 
@@ -83,37 +80,6 @@ export function lastSeenLabel(
   if (h < 48) return `seen ${h} h ago`;
   return `seen ${Math.round(h / 24)} days ago`;
 }
-
-export const STATUS_LABEL: Record<FleetSpaceStatus, string> = {
-  starting: 'Starting',
-  running: 'Running',
-  idle: 'Idle',
-  waiting: 'Waiting for you',
-  stopped: 'Stopped',
-  failed: 'Failed',
-};
-
-export type StatusColor =
-  'default' | 'accent' | 'success' | 'warning' | 'danger';
-
-export const STATUS_COLOR: Record<FleetSpaceStatus, StatusColor> = {
-  starting: 'default',
-  running: 'accent',
-  idle: 'success',
-  waiting: 'warning',
-  stopped: 'default',
-  failed: 'danger',
-};
-
-/** The composer works only between turns. */
-export const canSend = (s: FleetSpaceStatus): boolean =>
-  s === 'idle' || s === 'waiting';
-
-/** Stop is offered while a turn runs. */
-export const canStop = (s: FleetSpaceStatus): boolean => s === 'running';
-
-/** The goal of a list row: the space's name, on whichever device. */
-export const spaceTitle = (s: FleetRemoteSpace): string => s.name || s.branch;
 
 /** One question's answer while you pick it. */
 export interface Draft {

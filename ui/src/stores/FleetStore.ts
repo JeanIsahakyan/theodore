@@ -1,9 +1,10 @@
 /**
  * The fleet in memory (docs/fleet.md): this device's connection and the
  * list of devices, the spaces started on other devices (or hosted here for
- * them), each one's lines, the questions routed to this device and the
- * "wants to run spaces here" notices. Fed by the `fleet_*` ephemerals and
- * by the commands' own replies; never synced.
+ * them), the questions routed to this device and the "wants to run spaces
+ * here" notices. Fed by the `fleet_*` ephemerals and by the commands' own
+ * replies; never synced. A remote space itself is an ordinary `space` row
+ * (mirrored, `Space.remote` set): its chat and page are the usual ones.
  */
 import {
   action,
@@ -17,39 +18,17 @@ import type {
   FleetDevice,
   FleetQuestion,
   FleetRemoteSpace,
-  FleetSpaceLine,
   FleetStatus,
   FleetTrustNeeded,
 } from '../gen/contract';
 import { api } from '../core/api';
 
-/** As many lines of one space as the host journals. */
-export const LINE_LIMIT = 2000;
-
-/** `lines` plus `incoming`, by `seq`: a line already held is replaced,
- *  order is by `seq`, and only the newest `LINE_LIMIT` stay. */
-export function mergeLines(
-  lines: readonly FleetSpaceLine[],
-  incoming: readonly FleetSpaceLine[],
-): FleetSpaceLine[] {
-  if (incoming.length === 0) return lines.slice();
-  const bySeq = new Map<number, FleetSpaceLine>();
-  for (const l of lines) bySeq.set(l.seq, l);
-  for (const l of incoming) bySeq.set(l.seq, l);
-  const all = [...bySeq.values()].sort((a, b) => a.seq - b.seq);
-  return all.length > LINE_LIMIT ? all.slice(all.length - LINE_LIMIT) : all;
-}
-
 export class FleetStore {
   /** `null` until `fleet_status` was read (or when it can't be). */
   status: FleetStatus | null = null;
-  /** Every fleet space known, by its fleet id. */
+  /** Every fleet space known, by its fleet id: what a space just started
+   *  elsewhere says until its mirrored row comes. */
   readonly spaces = observable.map<string, FleetRemoteSpace>(
-    {},
-    { deep: false },
-  );
-  /** A space's lines, in `seq` order. */
-  readonly lines = observable.map<string, FleetSpaceLine[]>(
     {},
     { deep: false },
   );
@@ -68,14 +47,12 @@ export class FleetStore {
       enabled: computed,
       devices: computed,
       thisDevice: computed,
-      spaceList: computed,
       askList: computed,
       trustNeededList: computed,
       handle: action,
       setStatus: action,
       setSpaces: action,
       upsertSpace: action,
-      addLines: action,
       dismissTrustNeeded: action,
       dropAsk: action,
     });
@@ -98,35 +75,12 @@ export class FleetStore {
     return this.devices.find((d) => d.this_device);
   }
 
-  /** In the order they were learned, those waiting for you first, then
-   *  those running. */
-  get spaceList(): FleetRemoteSpace[] {
-    const rank = (s: FleetRemoteSpace) =>
-      s.question || s.status === 'waiting'
-        ? 0
-        : s.status === 'running' || s.status === 'starting'
-          ? 1
-          : 2;
-    return [...this.spaces.values()]
-      .map((s, i) => ({ s, i }))
-      .sort((a, b) => rank(a.s) - rank(b.s) || a.i - b.i)
-      .map((x) => x.s);
-  }
-
   get askList(): FleetQuestion[] {
     return [...this.asks.values()];
   }
 
   get trustNeededList(): FleetTrustNeeded[] {
     return [...this.trustNeeded.values()];
-  }
-
-  /** The question open on a space: the one on the space itself, else a
-   *  routed one about it. */
-  questionOf(space: string): FleetQuestion | null {
-    const own = this.spaces.get(space)?.question;
-    if (own) return own;
-    return this.askList.find((q) => q.space === space) ?? null;
   }
 
   device(id: string): FleetDevice | undefined {
@@ -143,7 +97,7 @@ export class FleetStore {
         this.upsertSpace(e.space);
         return true;
       case 'fleet_space_line':
-        this.addLines(e.space, [e.line]);
+        // The history is the mirrored space's own chat now.
         return true;
       case 'fleet_ask':
         this.asks.set(e.question.ask_id, e.question);
@@ -182,10 +136,6 @@ export class FleetStore {
     this.spaces.set(space.space, space);
   }
 
-  addLines(space: string, incoming: FleetSpaceLine[]): void {
-    this.lines.set(space, mergeLines(this.lines.get(space) ?? [], incoming));
-  }
-
   dismissTrustNeeded(deviceId: string): void {
     this.trustNeeded.delete(deviceId);
   }
@@ -207,18 +157,6 @@ export class FleetStore {
       this.setSpaces(await api.fleetSpaces());
     } catch {
       // Quiet: the list stays as it was.
-    }
-  }
-
-  /** A space's history, loaded when it is opened: what the core has after
-   *  the last line held, merged with the ones that arrived meanwhile. */
-  async loadLines(space: string): Promise<void> {
-    const held = this.lines.get(space) ?? [];
-    const since = held.length ? held[held.length - 1]!.seq : 0;
-    try {
-      this.addLines(space, await api.fleetSpaceLines(space, since));
-    } catch {
-      // Quiet: the live lines still come.
     }
   }
 
