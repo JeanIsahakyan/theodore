@@ -12,11 +12,11 @@ import {
   View,
 } from 'react-native';
 import { router, type Href } from 'expo-router';
-import { useServices } from '../../src/services';
-import { useFleetState } from '../../src/state/fleet';
-import type { SpaceView } from '../../src/fleet/types';
-import { ConnectionBanner } from '../../src/ui/ConnectionBanner';
-import { Badge, Button, Card, Empty } from '../../src/ui/kit';
+import { useServices } from '../../../src/services';
+import { useFleetState } from '../../../src/state/fleet';
+import type { SpaceView } from '../../../src/fleet/types';
+import { ConnectionBanner } from '../../../src/ui/ConnectionBanner';
+import { Badge, Button, Card, Empty } from '../../../src/ui/kit';
 import {
   MODE_LABEL,
   STATUS_LABEL,
@@ -24,8 +24,8 @@ import {
   plainExcerpt,
   sortSpaces,
   spaceTitle,
-} from '../../src/ui/logic';
-import { usePalette } from '../../src/ui/theme';
+} from '../../../src/ui/logic';
+import { usePalette } from '../../../src/ui/theme';
 
 const openSpace = (id: string) => router.push(`/space/${id}` as Href);
 const openStart = () => router.push('/start' as Href);

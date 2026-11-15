@@ -85,7 +85,12 @@ export type DeviceKind =
 /**  The web app: a client only, never a target. */
 "web";
 
-export type DeviceOs = "macos" | "linux";
+export type DeviceOs = "macos" | "linux" | "windows" | "ios" | "android" |
+/**
+ *  An OS this build doesn't know (a newer client's): shown as such,
+ *  never a reason to drop the device list (see `Deserialize`).
+ */
+"other";
 
 /**  A device as the cloud lists it to the user's other devices. */
 export type DeviceSummary = {

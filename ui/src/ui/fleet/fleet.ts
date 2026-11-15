@@ -38,11 +38,17 @@ export function capMode(mode: SpaceMode, max: SpaceMode): SpaceMode {
 export const isClient = (d: Pick<FleetDevice, 'kind'>): boolean =>
   d.kind === 'mobile' || d.kind === 'web';
 
+const OS_LABEL: Partial<Record<FleetDevice['os'], string>> = {
+  macos: 'macOS',
+  linux: 'Linux',
+  windows: 'Windows',
+};
+
 /** What a device is, for people: "Phone", "Web app", else its OS. */
 export function kindLabel(d: Pick<FleetDevice, 'kind' | 'os'>): string {
   if (d.kind === 'mobile') return 'Phone';
   if (d.kind === 'web') return 'Web app';
-  const os = d.os === 'macos' ? 'macOS' : 'Linux';
+  const os = OS_LABEL[d.os] ?? 'Computer';
   return d.kind === 'daemon' ? `${os} server` : os;
 }
 

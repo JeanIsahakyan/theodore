@@ -2,10 +2,19 @@
  * Start a space: a device (online, trusted, a computer that takes remote
  * spaces), one of its projects, the goal, and a mode up to what that device
  * allows. Then straight into the new space.
+ *
+ * The keyboard never hides Start: the form scrolls above it, a drag or a
+ * tap outside the goal closes it (the goal is multiline: return is a
+ * newline).
  */
 import { useMemo, useState } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Stack, router, type Href } from 'expo-router';
+import {
+  DismissKeyboard,
+  KeyboardScreen,
+  keyboardDismissMode,
+} from '../../src/ui/KeyboardSafe';
 import type { FleetMode } from '../../src/gen/fleet';
 import { useServices } from '../../src/services';
 import { useFleetState } from '../../src/state/fleet';
@@ -64,93 +73,99 @@ export default function StartScreen() {
   };
 
   return (
-    <ScrollView
-      contentInsetAdjustmentBehavior="automatic"
-      contentContainerStyle={styles.content}
-      keyboardShouldPersistTaps="handled"
-    >
+    <KeyboardScreen>
       <Stack.Screen options={{ title: 'Start a space' }} />
-      {devices.length === 0 || !device ? (
-        <Empty
-          title="No computer can take a space right now"
-          hint="It has to be one you trust, online, and set to let trusted devices run spaces. Trust it under Devices."
-        />
-      ) : (
-        <>
-          <SectionTitle>Device</SectionTitle>
-          <View style={styles.choices}>
-            {devices.map((d) => (
-              <Chip
-                key={d.deviceId}
-                label={d.name}
-                selected={d.deviceId === device.deviceId}
-                onPress={() => {
-                  setDeviceId(d.deviceId);
-                  setProjectId(null);
-                  setMode((m) => capMode(m, d.maxMode));
-                }}
+      <ScrollView
+        contentInsetAdjustmentBehavior="automatic"
+        contentContainerStyle={styles.scroll}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode={keyboardDismissMode}
+      >
+        <DismissKeyboard style={styles.content}>
+          {devices.length === 0 || !device ? (
+            <Empty
+              title="No computer can take a space right now"
+              hint="It has to be one you trust, online, and set to let trusted devices run spaces. Trust it under Devices."
+            />
+          ) : (
+            <>
+              <SectionTitle>Device</SectionTitle>
+              <View style={styles.choices}>
+                {devices.map((d) => (
+                  <Chip
+                    key={d.deviceId}
+                    label={d.name}
+                    selected={d.deviceId === device.deviceId}
+                    onPress={() => {
+                      setDeviceId(d.deviceId);
+                      setProjectId(null);
+                      setMode((m) => capMode(m, d.maxMode));
+                    }}
+                  />
+                ))}
+              </View>
+
+              <SectionTitle>Project</SectionTitle>
+              <View style={styles.choices}>
+                {device.projects.map((x) => (
+                  <Chip
+                    key={x.id}
+                    label={x.name}
+                    selected={x.id === project?.id}
+                    onPress={() => setProjectId(x.id)}
+                  />
+                ))}
+              </View>
+
+              <SectionTitle>Goal</SectionTitle>
+              <Field
+                label="Goal"
+                multiline
+                numberOfLines={4}
+                placeholder="What should the agent work on?"
+                value={goal}
+                onChangeText={setGoal}
+                style={styles.goal}
               />
-            ))}
-          </View>
 
-          <SectionTitle>Project</SectionTitle>
-          <View style={styles.choices}>
-            {device.projects.map((x) => (
-              <Chip
-                key={x.id}
-                label={x.name}
-                selected={x.id === project?.id}
-                onPress={() => setProjectId(x.id)}
+              <SectionTitle>Mode</SectionTitle>
+              <View style={styles.choices}>
+                {modesUpTo(device.maxMode).map((m) => (
+                  <Chip
+                    key={m}
+                    label={MODE_LABEL[m]}
+                    selected={m === shownMode}
+                    onPress={() => setMode(m)}
+                  />
+                ))}
+              </View>
+              <Text style={[styles.hint, { color: p.muted }]}>
+                {MODE_HINT[shownMode]}. {device.name} allows up to{' '}
+                {MODE_LABEL[device.maxMode]}.
+              </Text>
+              {shownMode === 'run' ? (
+                <Notice tone="warning">{RUN_WARNING}</Notice>
+              ) : null}
+
+              {error ? <Notice tone="danger">{error}</Notice> : null}
+              <Button
+                label="Start"
+                kind="primary"
+                disabled={!ready}
+                busy={busy}
+                onPress={start}
               />
-            ))}
-          </View>
-
-          <SectionTitle>Goal</SectionTitle>
-          <Field
-            label="Goal"
-            multiline
-            numberOfLines={4}
-            placeholder="What should the agent work on?"
-            value={goal}
-            onChangeText={setGoal}
-            style={styles.goal}
-          />
-
-          <SectionTitle>Mode</SectionTitle>
-          <View style={styles.choices}>
-            {modesUpTo(device.maxMode).map((m) => (
-              <Chip
-                key={m}
-                label={MODE_LABEL[m]}
-                selected={m === shownMode}
-                onPress={() => setMode(m)}
-              />
-            ))}
-          </View>
-          <Text style={[styles.hint, { color: p.muted }]}>
-            {MODE_HINT[shownMode]}. {device.name} allows up to{' '}
-            {MODE_LABEL[device.maxMode]}.
-          </Text>
-          {shownMode === 'run' ? (
-            <Notice tone="warning">{RUN_WARNING}</Notice>
-          ) : null}
-
-          {error ? <Notice tone="danger">{error}</Notice> : null}
-          <Button
-            label="Start"
-            kind="primary"
-            disabled={!ready}
-            busy={busy}
-            onPress={start}
-          />
-        </>
-      )}
-    </ScrollView>
+            </>
+          )}
+        </DismissKeyboard>
+      </ScrollView>
+    </KeyboardScreen>
   );
 }
 
 const styles = StyleSheet.create({
-  content: { padding: 16, gap: 12 },
+  scroll: { flexGrow: 1 },
+  content: { flexGrow: 1, padding: 16, gap: 12 },
   choices: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   goal: { minHeight: 110, textAlignVertical: 'top' },
   hint: { fontSize: 13 },

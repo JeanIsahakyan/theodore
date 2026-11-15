@@ -6,6 +6,7 @@
 import { useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { useServices } from '../services';
+import { useFleetState } from '../state/fleet';
 import type { QuestionView } from '../fleet/types';
 import { Button, Card, Chip, Field, Notice } from './kit';
 import {
@@ -13,15 +14,25 @@ import {
   errorText,
   isAnswered,
   pickOption,
+  questionFrom,
   toWireAnswers,
   typeOther,
   type Draft,
 } from './logic';
 import { usePalette } from './theme';
 
-export function QuestionCard({ question }: { question: QuestionView }) {
+export function QuestionCard({
+  question,
+  onFocusAnswer,
+}: {
+  question: QuestionView;
+  /** The "Other…" field took focus: the host keeps the card in view. */
+  onFocusAnswer?: () => void;
+}) {
   const { fleet } = useServices();
   const p = usePalette();
+  const spaces = useFleetState((s) => s.spaces);
+  const from = questionFrom(question, spaces);
   const [drafts, setDrafts] = useState<Draft[]>(() =>
     question.questions.map(emptyDraft),
   );
@@ -44,7 +55,7 @@ export function QuestionCard({ question }: { question: QuestionView }) {
   return (
     <Card style={{ borderColor: p.warning }}>
       <Text selectable style={[styles.from, { color: p.warning }]}>
-        {question.from} is waiting for your answer
+        {from} is waiting for your answer
       </Text>
       {question.questions.map((q, i) => {
         const d = drafts[i] ?? emptyDraft();
@@ -70,6 +81,7 @@ export function QuestionCard({ question }: { question: QuestionView }) {
               value={d.other}
               editable={!busy}
               onChangeText={(t) => set(i, typeOther(q, d, t))}
+              onFocus={onFocusAnswer}
               onSubmitEditing={send}
               returnKeyType="send"
             />

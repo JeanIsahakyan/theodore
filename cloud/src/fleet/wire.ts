@@ -108,7 +108,7 @@ function deviceInfo(v: unknown, protocol: number): DeviceInfo {
   const o = obj(v, 'info');
   const info: DeviceInfo = {
     name: str(o, 'name', 100),
-    os: oneOf(o, 'os', ['macos', 'linux']),
+    os: oneOf(o, 'os', ['macos', 'linux', 'windows', 'ios', 'android']),
     kind: oneOf(o, 'kind', kindsFor(protocol)),
     app_version: str(o, 'app_version', 64),
     projects: arr(o, 'projects', 200).map((p) => {

@@ -67,6 +67,38 @@ The cloud can't forge a delegation (signed by the origin, checked against the
 origin's registered key), and a delegate gains no power on hosts: answers and
 requests still need the host's own trust in the phone's key.
 
+## Kept across restarts
+
+iOS kills a backgrounded app at will; the Spaces list must not come back
+empty. Like the desktop's `fleet.follow:<rs_>` (docs/fleet.md "One space UI:
+mirrored rows"), the app keeps the spaces it started or follows, per account
+and organization (`src/fleet/saved.ts`).
+
+```
+a change (event, mirror row, start ok, follow) ─▶ saved within 1 s
+app to the background ─▶ saved now
+launch ─▶ session ─▶ saved set of <user>.<org> ─▶ listed at once, last known status
+       ─▶ socket ─▶ welcome
+            started here ─▶ subscribe{since: last seq}
+            followed     ─▶ delegations: its origin still delegates here ─▶ subscribe{since}
+                                         else ─▶ dropped
+sign-out, org switch ─▶ the set is removed
+```
+
+| Kept per space | Not kept |
+| --- | --- |
+| the list's view (host, name, project, branch, mode, status, last reply, question), last seq | live turn steps |
+| newest 100 lines, the mirrored space row, newest 100 chat messages (≤ 512 KB) | older messages: not replayed, the resubscribe starts after the last seq |
+
+- At most 50 spaces, the most recently active; the others' records are removed.
+- Where: files in the app's documents directory (`expo-file-system`) on
+  native, IndexedDB on web, memory in tests. Not secure-store: Android caps
+  a value near 2 KB.
+- A set names the fleet device id it was written for; one restored from a
+  backup onto another phone (no such id there) or kept by a device that
+  joined again is dropped, never resubscribed.
+- What is read back is shape-checked again (it is still another device's text).
+
 ## Protocol additions (crates/fleet-protocol, v4)
 
 | Addition | Shape |
@@ -98,11 +130,13 @@ requests still need the host's own trust in the phone's key.
 ```
 mobile/
   app/                 expo-router routes: (auth)/sign-in, choose-organization, callback;
-                       (app)/ tabs index (Spaces), devices, settings + space/[id], start
+                       (app)/ stack: (tabs)/ index (Spaces), devices, settings;
+                       space/[id], start pushed over the tabs
   src/auth/            AuthKit PKCE, session + refresh, org select/switch via cloud, RS256 check
   src/shell/           wiring: AppProviders (auth + fleet clients, auth state, fleet lifecycle)
                        (not src/app: expo-router would take src/app as the routes root)
-  src/fleet/           pure TS client: socket, hello, seal/verify (domain tags), pins, journal of lines
+  src/fleet/           pure TS client: socket, hello, seal/verify (domain tags), pins, journal of lines,
+                       spaces kept across restarts (saved.ts; data.* storage per platform)
   src/keys/            DeviceKey: secure-store (iOS/Android) | WebCrypto + IndexedDB (web)
   src/push/            expo-notifications: register, categories, background answer
   src/state/           stores (zustand) the screens read

@@ -5,10 +5,10 @@
  */
 import { useMemo, useState } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
-import { useServices } from '../../src/services';
-import { useFleetState } from '../../src/state/fleet';
-import type { FleetDeviceView } from '../../src/fleet/types';
-import { ConnectionBanner } from '../../src/ui/ConnectionBanner';
+import { useServices } from '../../../src/services';
+import { useFleetState } from '../../../src/state/fleet';
+import type { FleetDeviceView } from '../../../src/fleet/types';
+import { ConnectionBanner } from '../../../src/ui/ConnectionBanner';
 import {
   Badge,
   Button,
@@ -18,16 +18,17 @@ import {
   Fingerprint,
   Notice,
   SectionTitle,
-} from '../../src/ui/kit';
+} from '../../../src/ui/kit';
 import {
   MODE_LABEL,
   errorText,
   kindGlyph,
   kindLabel,
+  osLabel,
   sortDevices,
-} from '../../src/ui/logic';
-import { TrustConfirm } from '../../src/ui/TrustConfirm';
-import { usePalette } from '../../src/ui/theme';
+} from '../../../src/ui/logic';
+import { TrustConfirm } from '../../../src/ui/TrustConfirm';
+import { usePalette } from '../../../src/ui/theme';
 
 function DeviceRow({ device }: { device: FleetDeviceView }) {
   const { fleet } = useServices();
@@ -62,7 +63,7 @@ function DeviceRow({ device }: { device: FleetDeviceView }) {
             />
           </View>
           <Text style={[styles.meta, { color: p.muted }]}>
-            {kindLabel(device.kind)} · {device.os} ·{' '}
+            {kindLabel(device.kind)} · {osLabel(device.os)} ·{' '}
             {device.online ? 'online' : 'offline'}
             {device.acceptsRemote
               ? ` · runs spaces up to ${MODE_LABEL[device.maxMode]}`

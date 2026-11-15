@@ -56,11 +56,30 @@ pub type DeviceId = String;
 /// its local space id.
 pub type RemoteSpaceId = String;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Type)]
 #[serde(rename_all = "snake_case")]
 pub enum DeviceOs {
     Macos,
     Linux,
+    Windows,
+    Ios,
+    Android,
+    /// An OS this build doesn't know (a newer client's): shown as such,
+    /// never a reason to drop the device list (see `Deserialize`).
+    Other,
+}
+
+impl<'de> Deserialize<'de> for DeviceOs {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        Ok(match String::deserialize(d)?.as_str() {
+            "macos" => DeviceOs::Macos,
+            "linux" => DeviceOs::Linux,
+            "windows" => DeviceOs::Windows,
+            "ios" => DeviceOs::Ios,
+            "android" => DeviceOs::Android,
+            _ => DeviceOs::Other,
+        })
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]

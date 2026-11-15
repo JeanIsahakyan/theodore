@@ -473,6 +473,8 @@ impl Core {
             name: self.fleet_name(s).await,
             os: if cfg!(target_os = "macos") {
                 DeviceOs::Macos
+            } else if cfg!(target_os = "windows") {
+                DeviceOs::Windows
             } else {
                 DeviceOs::Linux
             },
@@ -811,6 +813,10 @@ impl Core {
                 os: match d.info.os {
                     DeviceOs::Macos => FleetOs::Macos,
                     DeviceOs::Linux => FleetOs::Linux,
+                    DeviceOs::Windows => FleetOs::Windows,
+                    DeviceOs::Ios => FleetOs::Ios,
+                    DeviceOs::Android => FleetOs::Android,
+                    DeviceOs::Other => FleetOs::Other,
                 },
                 kind: match d.info.kind {
                     DeviceKind::Desktop => "desktop".into(),

@@ -224,3 +224,15 @@ fn a_reply_is_signed_by_its_target() {
         Err(EnvelopeError::BadSignature)
     );
 }
+
+#[test]
+fn an_os_this_build_doesnt_know_reads_as_other() {
+    let os: DeviceOs = serde_json::from_str("\"plan9\"").unwrap();
+    assert_eq!(os, DeviceOs::Other);
+    let os: DeviceOs = serde_json::from_str("\"ios\"").unwrap();
+    assert_eq!(os, DeviceOs::Ios);
+    assert_eq!(
+        serde_json::to_string(&DeviceOs::Android).unwrap(),
+        "\"android\""
+    );
+}

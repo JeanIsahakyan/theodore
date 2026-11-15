@@ -19,6 +19,7 @@ export function defaultPlatform(): FleetPlatform {
       ]) as unknown as FleetSocket,
     randomUUID: () => crypto.randomUUID(),
     storage: memoryStorage(),
+    data: memoryStorage(),
     onActive: () => () => {},
   };
 }

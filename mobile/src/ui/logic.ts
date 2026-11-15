@@ -140,6 +140,17 @@ export function mergeLines(
   return [...bySeq.values()].sort((a, b) => a.seq - b.seq);
 }
 
+/** Who's asking, as the space is named now: a question is often asked
+ *  before its space gets its title, so the ask's own `from` (fixed when it
+ *  was asked) only stands in for a space this device doesn't follow. */
+export function questionFrom(
+  q: Pick<QuestionView, 'from' | 'space'>,
+  spaces: readonly SpaceView[],
+): string {
+  const s = spaces.find((x) => x.space === q.space);
+  return s ? `${s.hostName} · ${spaceTitle(s)}` : q.from;
+}
+
 /** The open question of a space: its own, else a routed one. */
 export function questionFor(
   space: SpaceView,
@@ -243,6 +254,17 @@ export const KIND_LABEL: Record<string, string> = {
 };
 
 export const kindLabel = (kind: string): string => KIND_LABEL[kind] ?? kind;
+
+export const OS_LABEL: Record<string, string> = {
+  macos: 'macOS',
+  linux: 'Linux',
+  windows: 'Windows',
+  ios: 'iOS',
+  android: 'Android',
+};
+
+/** "ios" → "iOS"; an OS this build doesn't know, as "other". */
+export const osLabel = (os: string): string => OS_LABEL[os] ?? 'other OS';
 
 /** A glyph per device kind (no icon font, so it also renders on web). */
 export const KIND_GLYPH: Record<string, string> = {

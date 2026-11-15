@@ -1944,8 +1944,15 @@ export class Hub {
         last_seen_ms: d.last_seen_ms,
         public_key: d.public_key,
       }));
-    // Protocol 3 can't read a `mobile` / `web` kind: it never sees them.
-    const hostsOnly = devices.filter((d) => hosts(d.info.kind));
+    // Protocol 3 can't read a `mobile` / `web` kind (it never sees them)
+    // nor an OS past `macos` / `linux` (a Windows computer reads as Linux).
+    const hostsOnly = devices
+      .filter((d) => hosts(d.info.kind))
+      .map((d) =>
+        d.info.os === 'macos' || d.info.os === 'linux'
+          ? d
+          : { ...d, info: { ...d.info, os: 'linux' as const } },
+      );
     for (const c of conns) {
       this.send(c.conn, {
         type: 'devices',

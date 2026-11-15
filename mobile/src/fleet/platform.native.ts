@@ -4,6 +4,7 @@ import { randomUUID } from 'expo-crypto';
 import * as Device from 'expo-device';
 import { AppState, Platform } from 'react-native';
 import { createSecureStorage } from '../keys/storage';
+import { createDataStorage } from './data';
 import type { FleetPlatform, FleetSocket } from './platform-types';
 
 /** RN's WebSocket takes headers as a third argument (not in the DOM type). */
@@ -17,7 +18,7 @@ export function defaultPlatform(): FleetPlatform {
   const ios = Platform.OS === 'ios';
   return {
     kind: 'mobile',
-    os: ios ? 'macos' : 'linux',
+    os: ios ? 'ios' : 'android',
     name: Device.deviceName ?? Device.modelName ?? (ios ? 'iPhone' : 'Android'),
     appVersion: Constants.expoConfig?.version ?? '0.0.0',
     closeInBackground: ios,
@@ -27,6 +28,7 @@ export function defaultPlatform(): FleetPlatform {
       }),
     randomUUID: () => randomUUID(),
     storage: createSecureStorage(),
+    data: createDataStorage(),
     onActive(listener) {
       const sub = AppState.addEventListener('change', (s) =>
         listener(s === 'active'),

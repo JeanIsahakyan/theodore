@@ -4,8 +4,8 @@
  */
 import { useEffect, useState } from 'react';
 import { ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
-import type { Organization, Session } from '../../src/auth/types';
-import { useServices } from '../../src/services';
+import type { Organization, Session } from '../../../src/auth/types';
+import { useServices } from '../../../src/services';
 import {
   Button,
   Card,
@@ -13,14 +13,14 @@ import {
   Confirm,
   Notice,
   SectionTitle,
-} from '../../src/ui/kit';
-import { errorText, roleLabel, switchErrorText } from '../../src/ui/logic';
+} from '../../../src/ui/kit';
+import { errorText, roleLabel, switchErrorText } from '../../../src/ui/logic';
 import {
   getNotificationsEnabled,
   pushAvailable,
   setNotificationsEnabled,
-} from '../../src/ui/pushAdapter';
-import { usePalette } from '../../src/ui/theme';
+} from '../../../src/ui/pushAdapter';
+import { usePalette } from '../../../src/ui/theme';
 
 function Row({ label, value }: { label: string; value: string }) {
   const p = usePalette();

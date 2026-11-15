@@ -1227,7 +1227,7 @@ impl Core {
                     ask_id: q.id.clone(),
                     space: remote.to_string(),
                     host_device: me.clone(),
-                    from: format!("{device_name} · {}", space.name),
+                    from: format!("{device_name} · {}", space_label(&space)),
                     questions,
                 }));
             }
@@ -1267,7 +1267,7 @@ impl Core {
             view.question = space.question.as_ref().map(|q| FleetQuestion {
                 ask_id: q.id.clone(),
                 space: remote.to_string(),
-                from: format!("{device_name} · {}", space.name),
+                from: format!("{device_name} · {}", space_label(&space)),
                 questions: ui_questions(&remote_questions(&q.questions)),
                 via: None,
             });
@@ -1390,7 +1390,7 @@ impl Core {
                     ask_id: q.id.clone(),
                     space: remote.clone(),
                     host_device: me.clone(),
-                    from: format!("{device_name} · {}", space.name),
+                    from: format!("{device_name} · {}", space_label(&space)),
                     questions: remote_questions(&q.questions),
                 })
                 .await;
@@ -1427,4 +1427,13 @@ pub(crate) fn hosted_view(
         local_space: Some(row.local_space.clone()),
         error: None,
     }
+}
+
+/// A space as people know it: its title once it has one, else its name.
+pub(crate) fn space_label(space: &theodore_contract::Space) -> &str {
+    space
+        .title
+        .as_deref()
+        .filter(|t| !t.trim().is_empty())
+        .unwrap_or(&space.name)
 }

@@ -12,6 +12,7 @@ import {
   pickOption,
   plainExcerpt,
   questionFor,
+  questionFrom,
   sortDevices,
   sortSpaces,
   spaceTitle,
@@ -241,5 +242,18 @@ describe('errorText for fleet refusals', () => {
     ).toMatch(/older Theodore/);
     expect(errorText(new Error('plain failure'))).toBe('plain failure');
     expect(errorText(42)).toBe('Something went wrong. Try again.');
+  });
+});
+
+describe('who a question is from', () => {
+  it('names the space as it is titled now, else keeps the ask’s words', () => {
+    const q = { space: 'rs_1', from: 'mac-A · ask-me-red-or-blue' };
+    const titled = space({
+      space: 'rs_1',
+      hostName: 'mac-A',
+      name: 'Red or blue color file',
+    });
+    expect(questionFrom(q, [titled])).toBe('mac-A · Red or blue color file');
+    expect(questionFrom(q, [])).toBe('mac-A · ask-me-red-or-blue');
   });
 });

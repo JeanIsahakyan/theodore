@@ -5,6 +5,7 @@
  */
 import type { DeviceOs } from '../gen/fleet';
 import type { SecretStorage } from '../keys/storage-types';
+import type { DataStorage } from './data';
 
 /** The part of a WebSocket the client uses (browser, RN and test fakes). */
 export interface FleetSocket {
@@ -20,11 +21,7 @@ export interface FleetSocket {
 
 export interface FleetPlatform {
   kind: 'mobile' | 'web';
-  /**
-   * The protocol knows `macos` and `linux` only: iOS (and a browser on a
-   * Mac) say `macos`, Android and other browsers `linux`. `kind` is what
-   * tells a phone apart.
-   */
+  /** The OS it runs on (a browser: the OS the browser runs on). */
   os: DeviceOs;
   /** How other devices list this one (sanitized by them when pinned). */
   name: string;
@@ -38,6 +35,8 @@ export interface FleetPlatform {
   openSocket(url: string, token: string): FleetSocket;
   randomUUID(): string;
   storage: SecretStorage;
+  /** Larger, non-secret values: the spaces kept across restarts. */
+  data: DataStorage;
   /** `true` when the app comes to the foreground, `false` when it leaves. */
   onActive(listener: (active: boolean) => void): () => void;
 }
