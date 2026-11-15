@@ -44,8 +44,9 @@ const LINES_KEPT: usize = 500;
 /// Most characters of a space name or branch taken from a signed reply.
 const NAME_MAX: usize = 200;
 
-/// A refusal as the UI and an agent may read it: a verified target's code
-/// and words, or the cloud's code alone. `None` for a success.
+/// A refusal as the UI may show it (plain text): a verified target's code
+/// and words (≤ `ERROR_TEXT_MAX`), or the cloud's code alone. `None` for a
+/// success.
 pub(crate) fn answer_error(answer: &Answer) -> Option<String> {
     match answer {
         Answer::Ok(_) => None,
@@ -56,6 +57,49 @@ pub(crate) fn answer_error(answer: &Answer) -> Option<String> {
             Some(format!("the other device refused: {code}: {message}"))
         }
         Answer::Refused { code } => Some(format!("refused by the cloud: {code}")),
+    }
+}
+
+/// A refusal as an agent may read it: the code alone, never words. Even a
+/// verified target's words are another machine's free text, and an agent
+/// would read them as instructions.
+pub(crate) fn agent_error(answer: &Answer) -> Option<String> {
+    match answer {
+        Answer::Ok(_) => None,
+        Answer::Err { code, .. } => Some(format!("the other device refused: {code}")),
+        Answer::Refused { code } => Some(format!("refused by the cloud: {code}")),
+    }
+}
+
+/// Why a request sent from here didn't succeed: the other side's refusal
+/// (shown to the UI and to an agent differently), or a failure here.
+#[derive(Debug)]
+pub(crate) enum FleetFail {
+    Refused(Answer),
+    Other(AppError),
+}
+
+impl From<AppError> for FleetFail {
+    fn from(e: AppError) -> Self {
+        FleetFail::Other(e)
+    }
+}
+
+impl FleetFail {
+    /// For the UI: a refusal with the target's words (`answer_error`).
+    pub(crate) fn for_ui(self) -> AppError {
+        match self {
+            FleetFail::Refused(a) => AppError::Refused(answer_error(&a).unwrap_or_default()),
+            FleetFail::Other(e) => e,
+        }
+    }
+
+    /// For an agent: a refusal by its code only (`agent_error`).
+    pub(crate) fn for_agent(self) -> AppError {
+        match self {
+            FleetFail::Refused(a) => AppError::Refused(agent_error(&a).unwrap_or_default()),
+            FleetFail::Other(e) => e,
+        }
     }
 }
 /// How long a send, stop or answer waits for the other device's word.
@@ -232,20 +276,19 @@ impl Core {
     }
 
     /// The other device's word on a request, within `wait`. A refusal is
-    /// `AppError::Refused` with what may reach an agent: the verified
-    /// target's code and words (cut to `ERROR_TEXT_MAX`), or only the
-    /// cloud's code.
+    /// `FleetFail::Refused` with the answer: the caller picks what it may
+    /// show (`for_ui` / `for_agent`).
     pub(crate) async fn fleet_await(
         rx: oneshot::Receiver<Answer>,
         wait: Duration,
-    ) -> AppResult<serde_json::Value> {
+    ) -> Result<serde_json::Value, FleetFail> {
         match tokio::time::timeout(wait, rx).await {
             Ok(Ok(Answer::Ok(value))) => Ok(value),
-            Ok(Ok(answer)) => Err(AppError::Refused(answer_error(&answer).unwrap_or_default())),
-            Ok(Err(_)) => Err(AppError::Invalid("the request got no reply".into())),
-            Err(_) => Err(AppError::Invalid(
-                "the other device didn't answer in time".into(),
-            )),
+            Ok(Ok(answer)) => Err(FleetFail::Refused(answer)),
+            Ok(Err(_)) => Err(AppError::Invalid("the request got no reply".into()).into()),
+            Err(_) => {
+                Err(AppError::Invalid("the other device didn't answer in time".into()).into())
+            }
         }
     }
 
@@ -292,12 +335,20 @@ impl Core {
             .ok_or_else(|| AppError::NotFound(format!("device {device} isn't in the fleet")))?;
         // Only a device trusted here, with the key it had when trusted:
         // its events and questions are checked against that key.
+        // Named by its pin (or its id), never the cloud's listing: this
+        // error can reach an agent.
         let pinned = match self.fleet_pinned(device).await {
             Some(p) if p.public_key == target.public_key => p,
-            _ => {
+            Some(p) => {
                 return Err(AppError::Invalid(format!(
-                    "{} isn't trusted on this device: trust it in Settings → Devices first",
-                    target.info.name
+                    "{}'s key changed since it was trusted: trust it again in Settings → Devices",
+                    p.name
+                )));
+            }
+            None => {
+                return Err(AppError::Invalid(format!(
+                    "device {} isn't trusted on this device: trust it in Settings → Devices first",
+                    target.device_id
                 )));
             }
         };
@@ -335,6 +386,7 @@ impl Core {
                 lines: VecDeque::new(),
                 last_seq: 0,
                 started_by,
+                agent_error: None,
             },
         );
         let rx = match self
@@ -397,9 +449,13 @@ impl Core {
     /// A message for a space on another device; refused there or here
     /// with the reason.
     pub async fn fleet_send(&self, req: FleetSendRequest) -> AppResult<()> {
+        self.fleet_send_req(req).await.map_err(FleetFail::for_ui)
+    }
+
+    pub(crate) async fn fleet_send_req(&self, req: FleetSendRequest) -> Result<(), FleetFail> {
         let host = self.fleet_host_of(&req.space)?;
         if req.text.trim().is_empty() {
-            return Err(AppError::Invalid("empty message".into()));
+            return Err(AppError::Invalid("empty message".into()).into());
         }
         // Running from now: a wait right after must not see the last
         // turn's idle.
@@ -426,6 +482,10 @@ impl Core {
     }
 
     pub async fn fleet_stop(&self, space: &str) -> AppResult<()> {
+        self.fleet_stop_req(space).await.map_err(FleetFail::for_ui)
+    }
+
+    pub(crate) async fn fleet_stop_req(&self, space: &str) -> Result<(), FleetFail> {
         let host = self.fleet_host_of(space)?;
         let rx = self
             .fleet_request(
@@ -453,7 +513,9 @@ impl Core {
                 false,
             )
             .await?;
-        Self::fleet_await(rx, REPLY_WAIT).await?;
+        Self::fleet_await(rx, REPLY_WAIT)
+            .await
+            .map_err(FleetFail::for_ui)?;
         if self.fleet().asks.remove(&req.ask_id).is_some() {
             self.emit(Ephemeral::FleetAskDismissed { ask_id: req.ask_id });
         }
@@ -537,6 +599,7 @@ impl Core {
                     Answer::Err { .. } | Answer::Refused { .. } => {
                         o.view.status = FleetSpaceStatus::Failed;
                         o.view.error = answer_error(&answer);
+                        o.agent_error = agent_error(&answer);
                     }
                 }
                 o.view.clone()

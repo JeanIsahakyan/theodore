@@ -730,7 +730,19 @@ impl Core {
         }
         self.account_persist(Some(next)).await?;
         theodore_telemetry::set_account(Some(&next.user.id));
-        *self.0.account.session.lock().expect("account lock") = Some(next.clone());
+        let previous = self
+            .0
+            .account
+            .session
+            .lock()
+            .expect("account lock")
+            .replace(next.clone());
+        // A new access token: a fleet link that failed for good (a token
+        // the cloud refused, or a cloud that judged a JWKS outage fatal)
+        // gets one more try with it (docs/fleet.md "App side").
+        if previous.is_none_or(|p| p.access_token != next.access_token) {
+            self.fleet().fatal_at = None;
+        }
         // A fresh token (reauth) or another organization (a new link).
         self.fleet_account_changed();
         Ok(true)
