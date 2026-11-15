@@ -1149,8 +1149,15 @@ impl Core {
             )
             .await
             .map_err(AppError::from);
+        // The session must be the one chosen: the cloud hands it over, so
+        // a session in any other organization is refused, never stored.
         let signed_in = match selected {
-            Ok(session) => self.account_signed_in(session).await,
+            Ok(session) if session.organization_id.as_deref() == Some(organization_id) => {
+                self.account_signed_in(session).await
+            }
+            Ok(_) => Err(AppError::Invalid(
+                "the sign-in came back in another organization than the one chosen".into(),
+            )),
             Err(e) => Err(e),
         };
         Ok(match signed_in {

@@ -19,6 +19,10 @@
 //!          GET  /v1/orgs           (Bearer access token) ─▶ organizations[]
 //! validate GET  /sso/jwks/<client_id> ─▶ RS256, iss, exp, sub
 //!            claims carried into the session: sid, org_id, role, permissions
+//!            JWKS unreachable: a token straight from WorkOS keeps its claim
+//!            checks; one the cloud handed over fails (`Network`)
+//! select   the session's organization_id and the token's org_id must both
+//!            be the organization chosen
 //! ```
 //!
 //! Cloud errors: transport, 5xx, 429 or a 4xx without the cloud's JSON error
@@ -51,6 +55,19 @@ const ORG_SELECTION_REQUIRED: &str = "organization_selection_required";
 /// user isn't in): the grant's answer, like a provider rejection.
 const CLOUD_REJECTED: &str = "cloud.rejected";
 const NO_CLOUD: &str = "no Theodore cloud configured";
+
+/// Where a session's tokens came from: decides what an unreachable JWKS
+/// may skip, and what else must hold.
+#[derive(Debug, Clone, Copy)]
+enum Source<'a> {
+    /// Straight from WorkOS over TLS: an unreachable JWKS skips only the
+    /// signature (the claims are still checked).
+    Provider,
+    /// Handed over by the Theodore cloud for the organization chosen: the
+    /// signature is always checked (an unreachable JWKS is a `Network`
+    /// error), and the session must be in exactly that organization.
+    CloudSelected { organization_id: &'a str },
+}
 
 pub struct WorkosAccount {
     http: reqwest::Client,
@@ -251,7 +268,7 @@ impl WorkosAccount {
         form: &[(&str, &str)],
     ) -> AccountResult<AccountSession> {
         match self.post_form("user_management/authenticate", form).await? {
-            Reply::Ok(body) => self.session_from(cfg, &body).await,
+            Reply::Ok(body) => self.session_from(cfg, &body, Source::Provider).await,
             Reply::Err {
                 code,
                 message,
@@ -265,12 +282,27 @@ impl WorkosAccount {
         }
     }
 
-    async fn session_from(&self, cfg: &AccountConfig, body: &str) -> AccountResult<AccountSession> {
+    async fn session_from(
+        &self,
+        cfg: &AccountConfig,
+        body: &str,
+        source: Source<'_>,
+    ) -> AccountResult<AccountSession> {
         let resp: AuthResponse = serde_json::from_str(body)
             .map_err(|e| AccountError::Protocol(format!("decode authenticate response: {e}")))?;
         let claims = self
-            .validate(cfg, &resp.access_token, &resp.user.id)
+            .check_token(cfg, &resp.access_token, &resp.user.id, source)
             .await?;
+        if let Source::CloudSelected { organization_id } = source {
+            let session_org = resp.organization_id.as_deref().or(claims.org_id.as_deref());
+            if session_org != Some(organization_id)
+                || claims.org_id.as_deref() != Some(organization_id)
+            {
+                return Err(AccountError::InvalidToken(
+                    "the session isn't in the organization chosen".into(),
+                ));
+            }
+        }
         Ok(AccountSession {
             user: AccountProfile {
                 id: resp.user.id,
@@ -289,21 +321,41 @@ impl WorkosAccount {
         })
     }
 
-    /// Verifies `token` against the JWKS and checks its claims. If the JWKS
-    /// can't be reached at all, the claims are still checked: the token was
-    /// just received from the provider itself over TLS, so the signature is
-    /// defense in depth there, not the only guard.
+    /// Verifies `token`, received straight from WorkOS, against the JWKS
+    /// and checks its claims. If the JWKS can't be reached at all, the
+    /// claims are still checked: the token was just received from the
+    /// provider itself over TLS, so the signature is defense in depth there,
+    /// not the only guard. Never for a token from anywhere else.
     pub async fn validate(
         &self,
         cfg: &AccountConfig,
         token: &str,
         user_id: &str,
     ) -> AccountResult<jwt::Claims> {
+        self.check_token(cfg, token, user_id, Source::Provider)
+            .await
+    }
+
+    async fn check_token(
+        &self,
+        cfg: &AccountConfig,
+        token: &str,
+        user_id: &str,
+        source: Source<'_>,
+    ) -> AccountResult<jwt::Claims> {
         let parsed = jwt::parse(token)?;
         match self.key_for(&cfg.client_id, parsed.kid.as_deref()).await {
             Ok(key) => jwt::verify_signature(&parsed, &key)?,
-            Err(AccountError::Network(e)) => {
+            Err(AccountError::Network(e)) if matches!(source, Source::Provider) => {
                 tracing::warn!("JWKS unreachable, access token signature not checked: {e}");
+            }
+            // A token the cloud handed over is only as good as its
+            // signature: no keys, no session (a connection problem, so it
+            // can be tried again).
+            Err(AccountError::Network(e)) => {
+                return Err(AccountError::Network(format!(
+                    "can't check the session's signature: {e}"
+                )));
             }
             Err(e) => return Err(e),
         }
@@ -571,7 +623,7 @@ impl AccountPort for WorkosAccount {
             .await?
         {
             Reply::Ok(body) => Ok(DeviceSignInPoll::Done(Box::new(
-                self.session_from(cfg, &body).await?,
+                self.session_from(cfg, &body, Source::Provider).await?,
             ))),
             Reply::Err {
                 code,
@@ -630,7 +682,8 @@ impl AccountPort for WorkosAccount {
                 })),
             )
             .await?;
-        self.session_from(cfg, &body).await
+        self.session_from(cfg, &body, Source::CloudSelected { organization_id })
+            .await
     }
 
     async fn ensure_personal_organization(

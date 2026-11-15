@@ -79,7 +79,7 @@ works as before, no organizations.
 | sign-in (code, device), refresh, switch org (`refresh` + `organization_id`) | WorkOS directly |
 | ensure the personal org (after sign-in, at start, while the session has no org) | cloud `POST /v1/orgs/personal` |
 | list orgs (`account_organizations`) | cloud `GET /v1/orgs` |
-| finish a sign-in that needs an org picked | cloud `POST /v1/auth/select-organization`, then the app validates the session itself |
+| finish a sign-in that needs an org picked | cloud `POST /v1/auth/select-organization`, then the app validates the session itself: signature always checked (JWKS unreachable ─▶ `account.network`, never skipped), and the session's `organization_id` and the token's `org_id` must both be the org picked (else `account.invalid_token`, nothing stored) |
 
 | Cloud answer | App error |
 | --- | --- |
