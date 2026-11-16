@@ -12,7 +12,7 @@
  */
 import type { ReactNode } from 'react';
 import { Text } from 'react-native';
-import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
+import Animated from 'react-native-reanimated';
 import { withUniwind } from 'uniwind';
 import { ChatMarkdown } from '../markdown';
 
@@ -33,8 +33,6 @@ export function Message({
   if (from === 'user') {
     return (
       <AnimatedView
-        entering={FadeIn.duration(200)}
-        exiting={FadeOut.duration(150)}
         accessibilityLabel={accessibilityLabel}
         className="max-w-[80%] self-end rounded-[20px] bg-user-bubble px-3.5 py-2.5"
         style={{ borderCurve: 'continuous', opacity: dim ? 0.5 : 1 }}
@@ -51,8 +49,6 @@ export function Message({
   }
   return (
     <AnimatedView
-      entering={FadeIn.duration(200)}
-      exiting={FadeOut.duration(150)}
       accessibilityLabel={accessibilityLabel}
       className="min-w-0 gap-2"
       style={dim ? { opacity: 0.5 } : null}

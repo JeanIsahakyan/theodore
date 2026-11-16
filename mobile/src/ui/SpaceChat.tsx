@@ -270,17 +270,33 @@ function LiveTimer({ since }: { since: number | null }) {
 }
 
 /** The reply still being written: its steps as they come (the newest text
- *  with a cursor), "Working · 12s" shimmering under them. Stop is the
- *  composer's. */
-export function LiveReply({ live }: { live: LiveTurn }) {
+ *  with a cursor), "Working · 12s" shimmering under them — or, while the
+ *  agent waits on a question, nothing ticking: the card below is the ask.
+ *  Stop is the composer's. */
+export function LiveReply({
+  live,
+  waiting = false,
+}: {
+  live: LiveTurn;
+  waiting?: boolean;
+}) {
   return (
-    <Message from="assistant" accessibilityLabel="The agent is working">
+    <Message
+      from="assistant"
+      accessibilityLabel={
+        waiting
+          ? 'The agent is waiting for your answer'
+          : 'The agent is working'
+      }
+    >
       {live.steps.length ? (
-        <TimelineRows steps={live.steps} running keptAs={live.run} />
+        <TimelineRows steps={live.steps} running={!waiting} keptAs={live.run} />
       ) : null}
-      <View style={styles.status}>
-        <LiveTimer since={live.since} />
-      </View>
+      {waiting ? null : (
+        <View style={styles.status}>
+          <LiveTimer since={live.since} />
+        </View>
+      )}
     </Message>
   );
 }

@@ -22,11 +22,14 @@ export function ComposerDock({
 }: ComposerDockProps) {
   const insets = useSafeAreaInsets();
   const { height } = useReanimatedKeyboardAnimation();
-  const style = useAnimatedStyle(() => {
-    // `height` is negative while the keyboard is up.
-    const bottom = Math.max(insets.bottom, -height.value) + GAP;
-    return floating ? { bottom } : { paddingBottom: bottom };
-  }, [floating, insets.bottom]);
+  const style = useAnimatedStyle(
+    () => {
+      // `height` is negative while the keyboard is up.
+      const bottom = Math.max(insets.bottom, -height.value) + GAP;
+      return floating ? { bottom } : { paddingBottom: bottom };
+    },
+    process.env.EXPO_OS === 'web' ? [floating, insets.bottom] : undefined,
+  );
   return (
     <Animated.View
       onLayout={(e) => onHeight?.(e.nativeEvent.layout.height)}

@@ -22,7 +22,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
+import Animated from 'react-native-reanimated';
 import { usePalette } from '../../ui/theme';
 import { SymbolImage } from '../symbol-image';
 import type { PromptInputProps } from './types';
@@ -58,7 +58,7 @@ function Surface({ children }: { children: ReactNode }) {
 
 function PromptInputError({ message }: { message: string }) {
   return (
-    <Animated.View entering={FadeIn.duration(200)} className="px-1 pb-2">
+    <Animated.View className="px-1 pb-2">
       <View
         className="flex-row items-center gap-2 rounded-xl bg-card px-3 py-2.5"
         style={{ borderCurve: 'continuous' }}
@@ -105,7 +105,7 @@ function SubmitButton({
       style={{ width: size, height: size }}
     >
       {mode === 'busy' ? (
-        <Animated.View entering={FadeIn} exiting={FadeOut}>
+        <Animated.View>
           <ActivityIndicator
             size="small"
             color={android ? p.onAccent : p.background}

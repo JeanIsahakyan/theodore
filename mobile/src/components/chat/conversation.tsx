@@ -19,6 +19,7 @@
  * insets on iOS, padding on Android): the list's end stays above the
  * keyboard frame by frame, and lifts with it only when you were at the end.
  */
+import { BlurViewRawBackdrop } from '../blur-raw';
 import type { LegendListRef } from '@legendapp/list/react-native';
 import { KeyboardAwareLegendList } from '@legendapp/list/keyboard';
 import {
@@ -35,7 +36,6 @@ import { View } from 'react-native';
 import { useReanimatedKeyboardAnimation } from 'react-native-keyboard-controller';
 import Animated, {
   FadeIn,
-  FadeOut,
   useAnimatedStyle,
   useSharedValue,
 } from 'react-native-reanimated';
@@ -133,7 +133,24 @@ export function Conversation<T>({
           ListEmptyComponent={empty}
           onScroll={onScroll}
           scrollEventThrottle={32}
+          recycleItems={false}
         />
+        {topInset > 0 && process.env.EXPO_OS === 'ios' ? (
+          // The header floats over the list: the chat scrolls under a blur,
+          // never through the title.
+          <View
+            pointerEvents="none"
+            style={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              right: 0,
+              height: topInset,
+            }}
+          >
+            <BlurViewRawBackdrop />
+          </View>
+        ) : null}
         {children}
       </View>
     </ConversationCtx>
@@ -151,13 +168,11 @@ export function ConversationScrollButton() {
       bottom:
         composerHeight + Math.max(insets.bottom, -height.value) + DOCK_GAP + 12,
     }),
-    [composerHeight, insets.bottom],
+    process.env.EXPO_OS === 'web' ? [composerHeight, insets.bottom] : undefined,
   );
   if (atEnd) return null;
   return (
     <Animated.View
-      entering={FadeIn.duration(200)}
-      exiting={FadeOut.duration(200)}
       pointerEvents="box-none"
       style={[{ position: 'absolute', right: 16 }, position]}
     >

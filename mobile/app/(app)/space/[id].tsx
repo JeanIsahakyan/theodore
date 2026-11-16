@@ -375,7 +375,7 @@ export default function SpaceScreen() {
   ) : null;
   const footer = (
     <View style={styles.tail}>
-      {chat?.live ? <LiveReply live={chat.live} /> : null}
+      {chat?.live ? <LiveReply live={chat.live} waiting={!!question} /> : null}
       {chat?.queued.map((m) => (
         <QueuedRow key={m.id} m={m} />
       ))}
