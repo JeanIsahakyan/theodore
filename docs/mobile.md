@@ -98,7 +98,8 @@ requests still need the host's own trust in the phone's key.
 ```
 mobile/
   app/                 expo-router routes: (auth)/sign-in, choose-organization, callback;
-                       (app)/ tabs index (Spaces), devices, settings + space/[id], start
+                       (app)/ stack: (tabs)/ index (Spaces), devices, settings;
+                       space/[id], start pushed over the tabs
   src/auth/            AuthKit PKCE, session + refresh, org select/switch via cloud, RS256 check
   src/shell/           wiring: AppProviders (auth + fleet clients, auth state, fleet lifecycle)
                        (not src/app: expo-router would take src/app as the routes root)
