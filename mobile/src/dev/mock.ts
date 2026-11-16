@@ -10,6 +10,7 @@ import type {
   SignInResult,
 } from '../auth/types';
 import type {
+  FleetAgentView,
   FleetClient,
   FleetDeviceView,
   FleetSnapshot,
@@ -24,6 +25,52 @@ import { initialFleet, useFleetState } from '../state/fleet';
 
 const FINGERPRINT_ME = '4f2a 9c1e b07d 63a8 e5d4 1b92 7c3f a0e6';
 
+const CLAUDE_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'];
+
+/** What the MacBook runs for remote spaces: Claude (default) and Codex. */
+export const mockAgents: FleetAgentView[] = [
+  {
+    id: 'claude',
+    label: 'Claude',
+    defaultModel: 'claude-opus-4-1',
+    defaultEffort: 'high',
+    models: [
+      {
+        id: 'claude-opus-4-1',
+        label: 'Opus 4.1',
+        efforts: CLAUDE_LEVELS,
+        defaultEffort: 'high',
+      },
+      {
+        id: 'claude-sonnet-4-5',
+        label: 'Sonnet 4.5',
+        efforts: CLAUDE_LEVELS,
+        defaultEffort: 'medium',
+      },
+      {
+        id: 'claude-haiku-4-5',
+        label: 'Haiku 4.5',
+        efforts: [],
+        defaultEffort: null,
+      },
+    ],
+  },
+  {
+    id: 'codex',
+    label: 'Codex',
+    defaultModel: 'gpt-5-codex',
+    defaultEffort: 'medium',
+    models: [
+      {
+        id: 'gpt-5-codex',
+        label: 'GPT-5 Codex',
+        efforts: ['low', 'medium', 'high'],
+        defaultEffort: 'medium',
+      },
+    ],
+  },
+];
+
 export const mockDevices: FleetDeviceView[] = [
   {
     deviceId: 'dev-me',
@@ -34,6 +81,7 @@ export const mockDevices: FleetDeviceView[] = [
     acceptsRemote: false,
     maxMode: 'ask',
     projects: [],
+    agents: [],
     publicKey: 'pk-me',
     fingerprint: FINGERPRINT_ME,
     trusted: false,
@@ -51,6 +99,7 @@ export const mockDevices: FleetDeviceView[] = [
       { id: 'p-theodore', name: 'theodore' },
       { id: 'p-tama', name: 'tamagochi' },
     ],
+    agents: mockAgents,
     publicKey: 'pk-mac',
     fingerprint: 'a1b2 c3d4 e5f6 0718 293a 4b5c 6d7e 8f90',
     trusted: true,
@@ -65,6 +114,8 @@ export const mockDevices: FleetDeviceView[] = [
     acceptsRemote: true,
     maxMode: 'run',
     projects: [{ id: 'p-api', name: 'api' }],
+    // An older host: lists no agents.
+    agents: [],
     publicKey: 'pk-box',
     fingerprint: '0f1e 2d3c 4b5a 6978 8796 a5b4 c3d2 e1f0',
     trusted: true,
@@ -79,6 +130,7 @@ export const mockDevices: FleetDeviceView[] = [
     acceptsRemote: true,
     maxMode: 'plan',
     projects: [{ id: 'p-web', name: 'web' }],
+    agents: [],
     publicKey: 'pk-work',
     fingerprint: '9988 7766 5544 3322 1100 ffee ddcc bbaa',
     trusted: false,
@@ -93,6 +145,7 @@ export const mockDevices: FleetDeviceView[] = [
     acceptsRemote: true,
     maxMode: 'edit',
     projects: [{ id: 'p-studio', name: 'studio' }],
+    agents: [],
     publicKey: 'pk-new',
     fingerprint: 'dead beef cafe f00d 1234 5678 9abc def0',
     trusted: false,
@@ -461,8 +514,8 @@ export function createMock(options: MockOptions = {}): Mock {
       useFleetState.setState((s) => ({ spaces: [space, ...s.spaces] }));
       return space;
     },
-    async send(space, text, mode = null) {
-      await call('send', space, text, mode);
+    async send(space, text, mode = null, picks) {
+      await call('send', space, text, mode, ...(picks ? [picks] : []));
       appendLine(space, 'turn', text);
       patchSpace(space, { status: 'running' });
     },

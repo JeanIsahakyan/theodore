@@ -572,6 +572,107 @@ describe('start a space', () => {
     ]);
   });
 
+  it('names no agent, model or effort unless picked', async () => {
+    const { client, sock } = await connectedWithHost();
+    void client
+      .startSpace({ deviceId: HOST, projectId: 'p1', goal: 'x', mode: 'ask' })
+      .catch(() => {});
+    await waitFor(() => sock.of('request').length === 1, 'request');
+    expect(lastRequest(sock).op).toMatchObject({
+      op: 'start_space',
+      agent: null,
+      model: null,
+      effort: null,
+    });
+
+    void client
+      .startSpace({
+        deviceId: HOST,
+        projectId: 'p1',
+        goal: 'y',
+        mode: 'ask',
+        agent: 'claude',
+        model: 'claude-opus-4-1',
+        effort: 'xhigh',
+      })
+      .catch(() => {});
+    await waitFor(() => sock.of('request').length === 2, 'request');
+    expect(lastRequest(sock).op).toMatchObject({
+      op: 'start_space',
+      goal: 'y',
+      agent: 'claude',
+      model: 'claude-opus-4-1',
+      effort: 'xhigh',
+    });
+  });
+
+  it("lists a host's agents, shape-checked, only when it takes spaces", async () => {
+    const t = setup();
+    await t.client.start();
+    const agents = [
+      {
+        id: 'claude',
+        label: 'Claude',
+        default_model: 'opus',
+        default_effort: 'high',
+        models: [
+          {
+            id: 'opus',
+            label: 'Opus',
+            efforts: ['low', 'high', 'x'.repeat(17), 'high'],
+            default_effort: 'nope',
+          },
+          { id: 'y'.repeat(65), label: 'Too long' },
+          { id: 'sonnet', label: 'Sonnet <b>' + 'z'.repeat(80) },
+        ],
+      },
+      { id: 'claude', label: 'Again' },
+      { id: 42, label: 'Bad' },
+      { id: 'codex', label: '' },
+    ];
+    await handshake(t.hub, [
+      device(HOST, hostKey, { agents } as never),
+      device(OTHER, strangerKey, {
+        accepts_remote: false,
+        agents,
+      } as never),
+    ]);
+    await waitFor(() => state().devices.length === 2, 'devices');
+    const host = state().devices.find((d) => d.deviceId === HOST)!;
+    expect(host.agents).toEqual([
+      {
+        id: 'claude',
+        label: 'Claude',
+        defaultModel: 'opus',
+        defaultEffort: 'high',
+        models: [
+          {
+            id: 'opus',
+            label: 'Opus',
+            efforts: ['low', 'high'],
+            defaultEffort: null,
+          },
+          {
+            id: 'sonnet',
+            label: ('Sonnet <b>' + 'z'.repeat(80)).slice(0, 64),
+            efforts: [],
+            defaultEffort: null,
+          },
+        ],
+      },
+      {
+        id: 'codex',
+        label: 'codex',
+        defaultModel: null,
+        defaultEffort: null,
+        models: [],
+      },
+    ]);
+    expect(state().devices.find((d) => d.deviceId === OTHER)!.agents).toEqual(
+      [],
+    );
+  });
+
   it('ignores replies another key signed, or not the target, or unsigned', async () => {
     const { client, sock } = await connectedWithHost();
     const started = client.startSpace({
@@ -1107,6 +1208,30 @@ describe('steering', () => {
     });
     await expect(sent).rejects.toThrow('the other device refused: fleet.busy');
     expect(state().spaces[0]!.status).toBe('idle');
+  });
+
+  it('puts an agent, model or effort picked on the send, and only those', async () => {
+    const { client, sock, space } = await runningSpace();
+    const sent = client.send(space, 'go on', null, {
+      agent: 'codex',
+      effort: 'high',
+    });
+    await waitFor(() => sock.of('request').length === 2, 'send');
+    const req = lastRequest(sock);
+    expect(req.op).toEqual({
+      op: 'send',
+      space,
+      text: 'go on',
+      mode: null,
+      agent: 'codex',
+      model: null,
+      effort: 'high',
+    });
+    sock.deliver({
+      type: 'reply',
+      envelope: await reply(req, { outcome: 'ok', value: null }),
+    });
+    await sent;
   });
 
   it("times out when the host doesn't answer", async () => {

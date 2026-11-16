@@ -17,7 +17,9 @@
  * Controls are the native kit (docs/mobile.md "Native UI"):
  *
  * ```text
- * [ Ask | Plan | Edit ]                      Segmented
+ * (Opus 4.1 · High ⌄) [ Ask | Plan | Edit ] AgentMenu (Menu: the host's
+ *                                            agents; hidden if it lists
+ *                                            none) · Segmented
  * ( Ask the agent to change something… )    ChatField (focus() on Revise)
  * [Send]                                     Button
  * [Stop] ─▶ confirm() ─▶ stopSpace           while a turn runs
@@ -52,6 +54,13 @@ import type { ChatMessage } from '../../../src/fleet/contract';
 import { mirrored } from '../../../src/fleet/mirror';
 import type { SpaceLine, SpaceView } from '../../../src/fleet/types';
 import type { FleetMode } from '../../../src/gen/fleet';
+import { AgentMenu } from '../../../src/ui/AgentMenu';
+import {
+  NO_PICK,
+  sendPicks,
+  spaceOwn,
+  type Pick,
+} from '../../../src/ui/agents';
 import { ChatField } from '../../../src/ui/ChatField';
 import type { ChatFieldHandle } from '../../../src/ui/chatFieldTypes';
 import { Badge, Empty, Notice } from '../../../src/ui/kit';
@@ -274,6 +283,9 @@ export default function SpaceScreen() {
   const ownMode = space?.mode ?? 'edit';
   const [mode, setMode] = useState<FleetMode>(ownMode);
   const [modeOf, setModeOf] = useState<FleetMode>(ownMode);
+  // An agent, model or effort from the host's list: from the next message
+  // on, kept until changed; nothing picked keeps the space's own.
+  const [agentPick, setAgentPick] = useState<Pick>(NO_PICK);
   const input = useRef<ChatFieldHandle>(null);
   const chatList = useRef<FlatList<ChatTurn>>(null);
   const lineList = useRef<FlatList<SpaceLine>>(null);
@@ -330,6 +342,10 @@ export default function SpaceScreen() {
   const modes = composerModes(host?.maxMode ?? null);
   const picked = modes.includes(mode) ? mode : (modes.at(-1) ?? 'ask');
   const build = mirror?.space ? buildMode(mirror.space) : 'edit';
+  // None from a host too old to list them: no chip, nothing sent.
+  const hostAgents = host?.agents ?? [];
+  const ownAgent = spaceOwn(mirror?.space);
+  const picks = sendPicks(hostAgents, agentPick, ownAgent);
 
   const send = () => {
     const t = text.trim();
@@ -338,7 +354,7 @@ export default function SpaceScreen() {
     setError(null);
     atEnd.current = true;
     fleet
-      .send(id, t, sendMode(picked, space.mode))
+      .send(id, t, sendMode(picked, space.mode), picks)
       .then(() => {
         setText('');
         setRevising(false);
@@ -372,7 +388,7 @@ export default function SpaceScreen() {
       setError(null);
       atEnd.current = true;
       fleet
-        .send(id, APPROVED_TEXT, build)
+        .send(id, APPROVED_TEXT, build, picks)
         .catch((e: unknown) => setError(errorText(e)))
         .finally(() => setApproving(false));
     },
@@ -544,18 +560,28 @@ export default function SpaceScreen() {
           ) : (
             notes
           )}
-          <Segmented
-            label="Mode"
-            choices={modes.map((m) => ({
-              value: m,
-              label: MODE_LABEL[m],
-              accessibilityLabel: `Mode ${MODE_LABEL[m]}: ${MODE_HINT[m]}`,
-            }))}
-            value={picked}
-            onChange={setMode}
-            disabled={sending}
-            glass
-          />
+          <View style={styles.controls}>
+            <AgentMenu
+              agents={hostAgents}
+              pick={agentPick}
+              current={ownAgent}
+              onPick={setAgentPick}
+              disabled={sending}
+            />
+            <Segmented
+              label="Mode"
+              choices={modes.map((m) => ({
+                value: m,
+                label: MODE_LABEL[m],
+                accessibilityLabel: `Mode ${MODE_LABEL[m]}: ${MODE_HINT[m]}`,
+              }))}
+              value={picked}
+              onChange={setMode}
+              disabled={sending}
+              glass
+              style={styles.flex}
+            />
+          </View>
           <View style={styles.composerRow}>
             <ChatField
               ref={input}
@@ -639,4 +665,5 @@ const styles = StyleSheet.create({
   floating: { position: 'absolute', left: 0, right: 0, bottom: 0 },
   notes: { gap: 8, padding: 12 },
   composerRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 8 },
+  controls: { flexDirection: 'row', alignItems: 'center', gap: 8 },
 });

@@ -240,6 +240,7 @@ export function cleanSpace(v: unknown, space: string): Space | null {
       : 'idle',
     agent: str(v.agent, 40),
     model: optStr(v.model, NAME_MAX),
+    effort: optStr(v.effort, 16),
     mode: mode(v.mode) ?? 'edit',
     turns: num(v.turns),
     run: optStr(v.run, NAME_MAX),

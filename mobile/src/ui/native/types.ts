@@ -85,6 +85,31 @@ export interface SelectProps<T extends string>
   disabled?: boolean;
 }
 
+/** One single choice of a `Menu` ("Model": Opus, Sonnet, …). */
+export interface MenuGroup<T extends string = string> {
+  /** What it chooses: a submenu (iOS), a heading (Android, web). */
+  label: string;
+  choices: readonly Choice<T>[];
+  /** The chosen one (a checkmark); `null`: none. */
+  value: T | null;
+  onChange: (value: T) => void;
+}
+
+/**
+ * A compact button that opens a menu of single choices (a composer's
+ * agent · model · effort). iOS: SwiftUI `Menu` (glass on iOS 26+ with
+ * `glass`, bordered capsule below), each group a `.menu` `Picker`
+ * submenu; Android: Material 3 `AssistChip` + `DropdownMenu`; web: a pill
+ * and a sheet of the groups.
+ */
+export interface MenuProps extends Common, Placed, Floating {
+  /** What the button shows ("Opus 4.1 · High"); also its accessible name
+   *  unless `accessibilityLabel` is set. */
+  label: string;
+  groups: readonly MenuGroup[];
+  disabled?: boolean;
+}
+
 export interface SwitchProps extends Common, Placed {
   label: string;
   /** A second, smaller line under the label. */

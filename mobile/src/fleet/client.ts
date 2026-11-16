@@ -92,6 +92,7 @@ import {
   remoteStatus,
   safeCode,
   truncate,
+  uiAgents,
   uiQuestions,
   validDeviceId,
 } from './rules';
@@ -342,6 +343,8 @@ export function createFleetClient(
         projects: Array.isArray(d.info?.projects)
           ? d.info.projects.map((p) => ({ id: p.id, name: p.name }))
           : [],
+        // Only from a host that takes remote spaces (docs/fleet.md).
+        agents: d.info?.accepts_remote === true ? uiAgents(d.info.agents) : [],
         publicKey: d.public_key,
         fingerprint: fingerprint(d.public_key),
         trusted,
@@ -1277,6 +1280,10 @@ export function createFleetClient(
             project_id: req.projectId,
             goal,
             mode: req.mode,
+            // Only what was picked: the host's defaults run for the rest.
+            agent: req.agent ?? null,
+            model: req.model ?? null,
+            effort: req.effort ?? null,
             depth: 0,
           },
           true,
@@ -1293,7 +1300,7 @@ export function createFleetClient(
       return { ...(tracked.get(space)?.view ?? x.view) };
     },
 
-    async send(space, text, mode = null) {
+    async send(space, text, mode = null, picks = {}) {
       if (!text.trim()) throw new FleetError('empty message');
       const x = tracked.get(space);
       const before = x?.view.status;
@@ -1308,6 +1315,10 @@ export function createFleetClient(
           space,
           text,
           mode: isMode(mode) ? mode : null,
+          // From this turn on; none keeps the space's.
+          agent: picks.agent ?? null,
+          model: picks.model ?? null,
+          effort: picks.effort ?? null,
         });
       } catch (e) {
         if (x && before && x.view.status === 'running') {

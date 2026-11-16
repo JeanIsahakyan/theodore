@@ -11,6 +11,7 @@ export { Button } from './Button';
 export { Form, FormSlot, Row, Section } from './Form';
 export { Glass } from './Glass';
 export { liquidGlass } from './liquidGlass';
+export { Menu } from './Menu';
 export { Progress } from './Progress';
 export { Segmented } from './Segmented';
 export { Select } from './Select';

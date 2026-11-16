@@ -3,7 +3,13 @@
  * (`crates/app/src/usecases/fleet.rs`, `fleet_origin.rs`).
  */
 import type { FleetMode, RemoteQuestion, RemoteSpaceEvent } from '../gen/fleet';
-import type { LineKind, SpaceLine, SpaceStatus } from './types';
+import type {
+  FleetAgentView,
+  FleetModelView,
+  LineKind,
+  SpaceLine,
+  SpaceStatus,
+} from './types';
 
 /** `^dev_[0-9a-f-]{36}$`: a device id as the cloud issues it. */
 export function validDeviceId(id: unknown): id is string {
@@ -56,6 +62,81 @@ export function remoteStatus(s: unknown): SpaceStatus | null {
   return (STATUSES as readonly unknown[]).includes(s)
     ? (s as SpaceStatus)
     : null;
+}
+
+/** `DeviceInfo::fit_agents`' caps (docs/fleet.md "Agent, model and effort"). */
+const AGENTS_MAX = 4;
+const MODELS_MAX = 12;
+const LEVELS_MAX = 8;
+const AGENT_ID_MAX = 32;
+const MODEL_ID_MAX = 64;
+const LEVEL_MAX = 16;
+const LABEL_MAX = 64;
+
+/** An id as a request may name it: a non-empty string within `max`, else
+ *  `null` (it can't be cut: a cut id names another, or nothing). */
+function pickId(v: unknown, max: number): string | null {
+  return typeof v === 'string' && v !== '' && [...v].length <= max ? v : null;
+}
+
+function modelView(m: unknown): FleetModelView | null {
+  if (typeof m !== 'object' || m === null) return null;
+  const x = m as Record<string, unknown>;
+  const id = pickId(x.id, MODEL_ID_MAX);
+  if (!id) return null;
+  const efforts = Array.isArray(x.efforts)
+    ? [
+        ...new Set(
+          x.efforts
+            .map((e) => pickId(e, LEVEL_MAX))
+            .filter((e): e is string => e !== null),
+        ),
+      ].slice(0, LEVELS_MAX)
+    : [];
+  const own = pickId(x.default_effort, LEVEL_MAX);
+  return {
+    id,
+    label: truncate(
+      typeof x.label === 'string' && x.label ? x.label : id,
+      LABEL_MAX,
+    ),
+    efforts,
+    defaultEffort: own && efforts.includes(own) ? own : null,
+  };
+}
+
+/**
+ * A device's `agents` as the UI offers them, shape-checked and within the
+ * protocol's caps (the cloud's listing is unsigned; the host checks every
+ * pick again). Duplicates are dropped; an older host's absent list is `[]`.
+ */
+export function uiAgents(v: unknown): FleetAgentView[] {
+  if (!Array.isArray(v)) return [];
+  const out: FleetAgentView[] = [];
+  for (const a of v) {
+    if (out.length >= AGENTS_MAX) break;
+    if (typeof a !== 'object' || a === null) continue;
+    const x = a as Record<string, unknown>;
+    const id = pickId(x.id, AGENT_ID_MAX);
+    if (!id || out.some((o) => o.id === id)) continue;
+    const models: FleetModelView[] = [];
+    for (const m of Array.isArray(x.models) ? x.models : []) {
+      if (models.length >= MODELS_MAX) break;
+      const mv = modelView(m);
+      if (mv && !models.some((o) => o.id === mv.id)) models.push(mv);
+    }
+    out.push({
+      id,
+      label: truncate(
+        typeof x.label === 'string' && x.label ? x.label : id,
+        LABEL_MAX,
+      ),
+      defaultModel: pickId(x.default_model, MODEL_ID_MAX),
+      defaultEffort: pickId(x.default_effort, LEVEL_MAX),
+      models,
+    });
+  }
+  return out;
 }
 
 /** Only desktops and daemons host spaces; phones and browsers never do. */

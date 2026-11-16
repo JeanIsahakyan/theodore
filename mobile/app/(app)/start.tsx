@@ -11,7 +11,10 @@
  * (no title)  Device   mac-A ⌄      Project   theodore ⌄
  * Goal        multiline field
  * Mode        Ask | Plan | Edit (up to the device's max)   footer: hint
- *             run warning, error
+ *             run warning
+ * Agent       Agent ⌄  Model ⌄  Effort ⌄     only when the device lists
+ *             "Default (Opus 4.1)": its own    agents; efforts: the model's
+ *             error
  *             Start                                      (web only)
  * ```
  *
@@ -24,6 +27,7 @@ import { StyleSheet, View } from 'react-native';
 import { Stack, router, type Href } from 'expo-router';
 import { KeyboardScreen } from '../../src/ui/KeyboardSafe';
 import type { FleetMode } from '../../src/gen/fleet';
+import type { FleetAgentView } from '../../src/fleet/types';
 import { useServices } from '../../src/services';
 import { useFleetState } from '../../src/state/fleet';
 import { Empty, Notice } from '../../src/ui/kit';
@@ -46,10 +50,22 @@ import {
 } from '../../src/ui/native';
 import { glassHeader, useGlassHeaderInset } from '../../src/shell/glassHeader';
 import { usePalette } from '../../src/ui/theme';
+import {
+  NO_PICK,
+  effortLabel,
+  pickAgent,
+  pickEffort,
+  pickModel,
+  running,
+  startPicks,
+  type Pick,
+} from '../../src/ui/agents';
 import { ActionHeader } from '../../src/ui/start/ActionHeader';
 import { KeyboardForm } from '../../src/ui/start/KeyboardForm';
 
 const TITLE = 'Start a space';
+/** A Select's "the device's own" choice (no listed id is empty). */
+const DEFAULT = '';
 const web = process.env.EXPO_OS === 'web';
 
 export default function StartScreen() {
@@ -61,6 +77,8 @@ export default function StartScreen() {
   const [deviceId, setDeviceId] = useState<string | null>(null);
   const [projectId, setProjectId] = useState<string | null>(null);
   const [mode, setMode] = useState<FleetMode>('edit');
+  // Only what's picked goes; the device's own defaults run for the rest.
+  const [pick, setPick] = useState<Pick>(NO_PICK);
   const [goal, setGoal] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -82,6 +100,7 @@ export default function StartScreen() {
         projectId: project.id,
         goal: goal.trim(),
         mode: shownMode,
+        ...startPicks(device.agents, pick),
       })
       .then((space) => router.replace(`/space/${space.space}` as Href))
       .catch((e: unknown) => setError(errorText(e)))
@@ -156,6 +175,8 @@ export default function StartScreen() {
             const d = devices.find((x) => x.deviceId === id);
             setDeviceId(id);
             setProjectId(null);
+            // Another device lists its own agents and models.
+            setPick(NO_PICK);
             if (d) setMode((m) => capMode(m, d.maxMode));
           }}
         />
@@ -200,6 +221,13 @@ export default function StartScreen() {
         </Section>
       ) : null}
 
+      <AgentSection
+        agents={device.agents}
+        deviceName={device.name}
+        pick={pick}
+        onPick={setPick}
+      />
+
       {error ? (
         <Section>
           <FormSlot>
@@ -222,6 +250,79 @@ export default function StartScreen() {
         form
       )}
     </>
+  );
+}
+
+/**
+ * Agent, model and effort on the chosen device, each "Default (…)" = what
+ * it runs when nothing is picked. None when it lists no agents (older).
+ */
+function AgentSection({
+  agents,
+  deviceName,
+  pick,
+  onPick,
+}: {
+  agents: readonly FleetAgentView[];
+  deviceName: string;
+  pick: Pick;
+  onPick: (next: Pick) => void;
+}) {
+  const now = running(agents, pick);
+  const byDefault = running(agents, NO_PICK);
+  if (!now || !byDefault) return null;
+  // The defaults of the agent shown; for the effort, of the model shown.
+  const ownModel = running(agents, { ...NO_PICK, agent: pick.agent });
+  const ownEffort = running(agents, { ...pick, effort: null });
+  const defaultOf = (what: string | null | undefined) =>
+    what ? `Default (${what})` : 'Default';
+  return (
+    <Section
+      title="Agent"
+      footer={`What runs on ${deviceName}. Default: its own setting.`}
+    >
+      <Select
+        label="Agent"
+        choices={[
+          { value: DEFAULT, label: defaultOf(byDefault.agent.label) },
+          ...agents.map((a) => ({ value: a.id, label: a.label })),
+        ]}
+        value={pick.agent ?? DEFAULT}
+        onChange={(v) => onPick(v === DEFAULT ? NO_PICK : pickAgent(v))}
+      />
+      {now.agent.models.length > 0 ? (
+        <Select
+          label="Model"
+          choices={[
+            {
+              value: DEFAULT,
+              label: defaultOf(ownModel?.model?.label ?? ownModel?.modelId),
+            },
+            ...now.agent.models.map((m) => ({ value: m.id, label: m.label })),
+          ]}
+          value={pick.model ?? DEFAULT}
+          onChange={(v) =>
+            onPick(pickModel(agents, pick, NO_PICK, v === DEFAULT ? null : v))
+          }
+        />
+      ) : null}
+      {now.levels.length > 0 ? (
+        <Select
+          label="Effort"
+          choices={[
+            {
+              value: DEFAULT,
+              label: defaultOf(
+                ownEffort?.effort ? effortLabel(ownEffort.effort) : null,
+              ),
+            },
+            ...now.levels.map((e) => ({ value: e, label: effortLabel(e) })),
+          ]}
+          value={pick.effort ?? DEFAULT}
+          onChange={(v) => onPick(pickEffort(pick, v === DEFAULT ? null : v))}
+        />
+      ) : null}
+    </Section>
   );
 }
 
