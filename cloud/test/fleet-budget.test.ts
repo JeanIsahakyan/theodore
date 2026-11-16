@@ -64,114 +64,129 @@ const userBytes = (h: Harness, user: string) =>
     user,
   ).b;
 
+/** These fill a whole byte budget (up to 128 MiB of rows): slower than
+ * vitest's 5 s default on a CI runner. */
+const BIG_BUDGET_MS = 60_000;
+
 describe('fleet event budget', () => {
-  it(`keeps at most ${MAX_SPACE_EVENT_BYTES} bytes per space, oldest out`, async () => {
-    const { h, mac1, mac2 } = await pair();
-    await startSpace(mac1, mac2, 'rs_1');
-    expect(
-      await emit(h, mac2, 'rs_1', 1, {
-        kind: 'started',
-        host_device: mac2.id!,
-        origin_device: mac1.id!,
-        project_id: 'p1',
-        project_name: 'theodore',
-        name: 'S',
-        branch: 'b',
-        mode: 'edit',
-        depth: 0,
-      }),
-    ).toBeUndefined();
-    for (let seq = 2; seq <= PAST_SPACE; seq++) {
-      expect(await emit(h, mac2, 'rs_1', seq)).toBeUndefined();
-    }
-    const s = stored(h, 'rs_1');
-    expect(s.n).toBeLessThan(CLOUD_RING);
-    expect(s.bytes).toBeLessThanOrEqual(MAX_SPACE_EVENT_BYTES);
-    expect(s.bytes + BIG).toBeGreaterThan(MAX_SPACE_EVENT_BYTES);
-    expect(s.max).toBe(PAST_SPACE);
-    // The space's counter matches its rows.
-    expect(
-      q<{ bytes: number }>(
-        h,
-        'SELECT bytes FROM spaces WHERE space = ?',
-        'rs_1',
-      ).bytes,
-    ).toBe(s.bytes);
-    // A late subscriber: the started event (kept apart), the gap, the rest.
-    mac1.clear();
-    await mac1.send({ type: 'subscribe', space: 'rs_1', since: 0 });
-    expect(mac1.stream()).toEqual([
-      1,
-      `gap2-${s.min! - 1}`,
-      ...Array.from({ length: PAST_SPACE - s.min! + 1 }, (_, i) => s.min! + i),
-    ]);
-  });
-
-  it(`keeps at most ${MAX_USER_EVENT_BYTES} bytes per user: finished spaces' oldest first, then fleet.busy`, async () => {
-    const { h, mac1, mac2 } = await pair();
-    // rs_0 finished with 5 events; rs_1.. running, filled to PER_SPACE each
-    // until the budget is spent: rs_0's events go first, then refused.
-    for (let i = 0; i <= SPACES; i++) {
-      h.now += 100;
-      await startSpace(mac1, mac2, `rs_${i}`);
-    }
-    for (let seq = 1; seq <= 5; seq++) {
-      expect(await emit(h, mac2, 'rs_0', seq)).toBeUndefined();
-    }
-    expect(
-      await emit(h, mac2, 'rs_0', 6, { kind: 'status', status: 'stopped' }),
-    ).toBeUndefined();
-    const full: Record<string, number> = {};
-    let last = '';
-    let refused = 0;
-    let code: string | undefined;
-    fill: for (let i = 1; i <= SPACES; i++) {
-      last = `rs_${i}`;
-      for (let seq = 1; seq <= PER_SPACE; seq++) {
-        code = await emit(h, mac2, last, seq);
-        if (code) {
-          refused = seq;
-          break fill;
-        }
+  it(
+    `keeps at most ${MAX_SPACE_EVENT_BYTES} bytes per space, oldest out`,
+    async () => {
+      const { h, mac1, mac2 } = await pair();
+      await startSpace(mac1, mac2, 'rs_1');
+      expect(
+        await emit(h, mac2, 'rs_1', 1, {
+          kind: 'started',
+          host_device: mac2.id!,
+          origin_device: mac1.id!,
+          project_id: 'p1',
+          project_name: 'theodore',
+          name: 'S',
+          branch: 'b',
+          mode: 'edit',
+          depth: 0,
+        }),
+      ).toBeUndefined();
+      for (let seq = 2; seq <= PAST_SPACE; seq++) {
+        expect(await emit(h, mac2, 'rs_1', seq)).toBeUndefined();
       }
-      full[last] = stored(h, last).n;
-    }
-    expect(code).toBe('fleet.busy');
-    expect(stored(h, last).max).toBe(refused - 1);
-    // The finished space gave up its events; the running ones kept theirs.
-    expect(stored(h, 'rs_0').n).toBe(0);
-    expect(Object.keys(full).length).toBeGreaterThanOrEqual(SPACES - 3);
-    for (const [sp, n] of Object.entries(full)) {
-      expect(stored(h, sp).n).toBe(n);
-    }
-    expect(userBytes(h, 'user_1')).toBeLessThanOrEqual(MAX_USER_EVENT_BYTES);
-    // The space itself stays: its history is a gap now.
-    mac1.clear();
-    await mac1.send({ type: 'subscribe', space: 'rs_0', since: 0 });
-    expect(mac1.stream()).toEqual(['gap1-6']);
-    // Not stored, not counted: the host resumes from the last one kept.
-    await mac2.disconnect();
-    expect((await mac2.connect()).resume[last]).toBe(refused - 1);
+      const s = stored(h, 'rs_1');
+      expect(s.n).toBeLessThan(CLOUD_RING);
+      expect(s.bytes).toBeLessThanOrEqual(MAX_SPACE_EVENT_BYTES);
+      expect(s.bytes + BIG).toBeGreaterThan(MAX_SPACE_EVENT_BYTES);
+      expect(s.max).toBe(PAST_SPACE);
+      // The space's counter matches its rows.
+      expect(
+        q<{ bytes: number }>(
+          h,
+          'SELECT bytes FROM spaces WHERE space = ?',
+          'rs_1',
+        ).bytes,
+      ).toBe(s.bytes);
+      // A late subscriber: the started event (kept apart), the gap, the rest.
+      mac1.clear();
+      await mac1.send({ type: 'subscribe', space: 'rs_1', since: 0 });
+      expect(mac1.stream()).toEqual([
+        1,
+        `gap2-${s.min! - 1}`,
+        ...Array.from(
+          { length: PAST_SPACE - s.min! + 1 },
+          (_, i) => s.min! + i,
+        ),
+      ]);
+    },
+    BIG_BUDGET_MS,
+  );
 
-    // Another user has a budget of their own.
-    const a = await h.device('user_2', 'a');
-    const b = await h.device('user_2', 'b');
-    await a.connect();
-    await b.connect();
-    await startSpace(a, b, 'rs_theirs');
-    expect(await emit(h, b, 'rs_theirs', 1)).toBeUndefined();
+  it(
+    `keeps at most ${MAX_USER_EVENT_BYTES} bytes per user: finished spaces' oldest first, then fleet.busy`,
+    async () => {
+      const { h, mac1, mac2 } = await pair();
+      // rs_0 finished with 5 events; rs_1.. running, filled to PER_SPACE each
+      // until the budget is spent: rs_0's events go first, then refused.
+      for (let i = 0; i <= SPACES; i++) {
+        h.now += 100;
+        await startSpace(mac1, mac2, `rs_${i}`);
+      }
+      for (let seq = 1; seq <= 5; seq++) {
+        expect(await emit(h, mac2, 'rs_0', seq)).toBeUndefined();
+      }
+      expect(
+        await emit(h, mac2, 'rs_0', 6, { kind: 'status', status: 'stopped' }),
+      ).toBeUndefined();
+      const full: Record<string, number> = {};
+      let last = '';
+      let refused = 0;
+      let code: string | undefined;
+      fill: for (let i = 1; i <= SPACES; i++) {
+        last = `rs_${i}`;
+        for (let seq = 1; seq <= PER_SPACE; seq++) {
+          code = await emit(h, mac2, last, seq);
+          if (code) {
+            refused = seq;
+            break fill;
+          }
+        }
+        full[last] = stored(h, last).n;
+      }
+      expect(code).toBe('fleet.busy');
+      expect(stored(h, last).max).toBe(refused - 1);
+      // The finished space gave up its events; the running ones kept theirs.
+      expect(stored(h, 'rs_0').n).toBe(0);
+      expect(Object.keys(full).length).toBeGreaterThanOrEqual(SPACES - 3);
+      for (const [sp, n] of Object.entries(full)) {
+        expect(stored(h, sp).n).toBe(n);
+      }
+      expect(userBytes(h, 'user_1')).toBeLessThanOrEqual(MAX_USER_EVENT_BYTES);
+      // The space itself stays: its history is a gap now.
+      mac1.clear();
+      await mac1.send({ type: 'subscribe', space: 'rs_0', since: 0 });
+      expect(mac1.stream()).toEqual(['gap1-6']);
+      // Not stored, not counted: the host resumes from the last one kept.
+      await mac2.disconnect();
+      expect((await mac2.connect()).resume[last]).toBe(refused - 1);
 
-    // rs_1 finishes: the journaled event now fits, from rs_1's oldest.
-    const before = stored(h, 'rs_1').n;
-    expect(
-      await emit(h, mac2, 'rs_1', PER_SPACE + 1, {
-        kind: 'status',
-        status: 'stopped',
-      }),
-    ).toBeUndefined();
-    expect(await emit(h, mac2, last, refused)).toBeUndefined();
-    expect(stored(h, last).max).toBe(refused);
-    expect(stored(h, 'rs_1').n).toBeLessThan(before + 1);
-    expect(userBytes(h, 'user_1')).toBeLessThanOrEqual(MAX_USER_EVENT_BYTES);
-  });
+      // Another user has a budget of their own.
+      const a = await h.device('user_2', 'a');
+      const b = await h.device('user_2', 'b');
+      await a.connect();
+      await b.connect();
+      await startSpace(a, b, 'rs_theirs');
+      expect(await emit(h, b, 'rs_theirs', 1)).toBeUndefined();
+
+      // rs_1 finishes: the journaled event now fits, from rs_1's oldest.
+      const before = stored(h, 'rs_1').n;
+      expect(
+        await emit(h, mac2, 'rs_1', PER_SPACE + 1, {
+          kind: 'status',
+          status: 'stopped',
+        }),
+      ).toBeUndefined();
+      expect(await emit(h, mac2, last, refused)).toBeUndefined();
+      expect(stored(h, last).max).toBe(refused);
+      expect(stored(h, 'rs_1').n).toBeLessThan(before + 1);
+      expect(userBytes(h, 'user_1')).toBeLessThanOrEqual(MAX_USER_EVENT_BYTES);
+    },
+    BIG_BUDGET_MS,
+  );
 });
