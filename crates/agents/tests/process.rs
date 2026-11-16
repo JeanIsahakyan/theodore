@@ -59,6 +59,7 @@ fn spec_with_runtime_cap(mode: &str, stall_after_ms: u64, max_runtime_ms: u64) -
         guards: vec![],
         agent: "fake".into(),
         version: None,
+        on_signed_out: None,
     }
 }
 

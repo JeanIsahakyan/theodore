@@ -1050,6 +1050,27 @@ impl Core {
                 }
             }
         });
+        // An agent signed in or out in a terminal reaches the other
+        // devices: what this one offers is checked again while it's linked.
+        let core = self.clone();
+        tokio::spawn(async move {
+            let every = std::time::Duration::from_millis(
+                crate::usecases::fleet_agents::CATALOG_TTL_MS as u64,
+            );
+            let clock = core.0.deps.clock.clone();
+            loop {
+                tokio::select! {
+                    _ = core.0.shutdown.cancelled() => return,
+                    _ = clock.sleep(every) => {}
+                }
+                if core.fleet().link.as_ref().map(|l| l.id) != Some(id) {
+                    return;
+                }
+                if core.fleet_settings().await.accept_remote {
+                    core.fleet_recheck_agents().await;
+                }
+            }
+        });
         Ok(())
     }
 

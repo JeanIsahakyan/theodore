@@ -40,7 +40,11 @@ let transport: FakeTransport;
 let store: RootStore;
 let m: Mounted | null = null;
 
-async function open(installed: AgentId[], before?: (s: RootStore) => void) {
+async function open(
+  installed: AgentId[],
+  before?: (s: RootStore) => void,
+  signedOut: AgentId[] = [],
+) {
   transport = new FakeTransport();
   transport.onCall('detect_agents', () =>
     installed.map((id) => ({
@@ -48,6 +52,10 @@ async function open(installed: AgentId[], before?: (s: RootStore) => void) {
       installed: true,
       version: '1',
       path: `/bin/${id}`,
+      signed_in: signedOut.includes(id) ? false : null,
+      sign_in_hint: signedOut.includes(id)
+        ? `Run \`${id} login\` in a terminal.`
+        : null,
     })),
   );
   transport.onCall('agent_models', (a) => CATALOG[String(a?.agent)] ?? []);
@@ -113,6 +121,25 @@ describe('the AI panel agent chip', () => {
     await click(chip());
     await settle();
     expect(item('GPT-6-Sol')).toBeUndefined();
+  });
+
+  it('a signed-out default is shown disabled; the panel asks a signed-in one', async () => {
+    await open(
+      ['claude', 'codex'],
+      (s) => setSetting(s, 'user', 'agents.chat', 'codex'),
+      ['codex'],
+    );
+    expect(chip()?.textContent).toBe('Opus 5.5 Medium');
+    await click(chip());
+    await settle();
+    const codex = item('Codex')!;
+    expect(codex.textContent).toContain('not signed in');
+    expect(codex.textContent).toContain('codex login');
+    expect(item('GPT-6-Sol')).toBeUndefined();
+    await click(codex);
+    await settle();
+    await send('first?');
+    expect(asked()).toMatchObject([{ agent: 'claude', question: 'first?' }]);
   });
 
   it('asks go to the agent the chip shows', async () => {

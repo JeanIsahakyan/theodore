@@ -267,6 +267,34 @@ describe('AgentMenu', () => {
     expect(picked).toBe('codex');
   });
 
+  it('shows a signed-out agent disabled, with how to sign it in', async () => {
+    const store = new RootStore();
+    m = await mount(
+      <RootStoreProvider store={store}>
+        <AgentMenu
+          agents={['claude']}
+          signedOut={[
+            { id: 'codex', hint: 'Run `codex login` in a terminal.' },
+          ]}
+          selected="claude"
+          onSelect={(next) => (picked = next)}
+        />
+      </RootStoreProvider>,
+    );
+    await settle();
+    await settle();
+    await click(m.host.querySelector('button[aria-label="Model"]')!);
+    await settle();
+    const codex = item('Codex')!;
+    expect(codex.textContent).toContain('not signed in');
+    expect(codex.querySelector('code')?.textContent).toBe('codex login');
+    expect(codex.getAttribute('aria-disabled')).toBe('true');
+    await click(codex);
+    await settle();
+    expect(picked).toBeNull();
+    expect(item('GPT-6-Sol')).toBeUndefined();
+  });
+
   it("Models lists every CLI's models, earlier versions one level down", async () => {
     const store = new RootStore();
     const chip = await render(store, 'claude');

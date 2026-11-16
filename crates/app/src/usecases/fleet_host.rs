@@ -487,12 +487,12 @@ impl Core {
                 }
                 // A model or effort without an agent is the default's
                 // (the first listed), which then runs by name.
-                let agents = self.fleet_agents().await;
+                let offer = self.fleet_offer().await;
                 if agent.is_none() && (model.is_some() || effort.is_some()) {
-                    *agent = agents.first().map(|a| a.id.clone());
+                    *agent = offer.agents.first().map(|a| a.id.clone());
                 }
                 check_pick(
-                    &agents,
+                    &offer,
                     agent.as_deref(),
                     model.as_deref(),
                     effort.as_deref(),
@@ -578,7 +578,7 @@ impl Core {
                 }
                 // Picks apply to the space's agent unless one is named.
                 check_pick(
-                    &self.fleet_agents().await,
+                    &self.fleet_offer().await,
                     agent.as_deref(),
                     model.as_deref(),
                     effort.as_deref(),

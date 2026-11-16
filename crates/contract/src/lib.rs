@@ -264,6 +264,14 @@ pub struct AgentStatus {
     pub installed: bool,
     pub version: Option<String>,
     pub path: Option<String>,
+    /// Whether the CLI has credentials (docs/fleet.md "Sign-in"): `false`
+    /// shows the agent disabled with `sign_in_hint`; `null` when not
+    /// installed or the check couldn't tell (usable, unconfirmed).
+    #[serde(default)]
+    pub signed_in: Option<bool>,
+    /// How to sign it in on this computer, when it isn't (or might not be).
+    #[serde(default)]
+    pub sign_in_hint: Option<String>,
 }
 
 /// One model an agent CLI can run, for the model picker (`agent_models`).

@@ -106,6 +106,33 @@ export function running(
 
 const pickKey = (agent: AgentId, id: string) => `${agent}|${id}`;
 
+/** An agent installed and on but not signed in on this computer: shown,
+ *  never picked, with how to sign it in (`AgentStatus.sign_in_hint`). */
+export type SignedOutAgent = { id: AgentId; hint: string | null };
+
+/** A sign-in hint, its `command`s set in mono. */
+export function SignInHint({
+  hint,
+  className,
+}: {
+  hint: string;
+  className?: string;
+}) {
+  return (
+    <span className={className}>
+      {hint.split('`').map((part, i) =>
+        i % 2 ? (
+          <code key={i} className="font-mono">
+            {part}
+          </code>
+        ) : (
+          part
+        ),
+      )}
+    </span>
+  );
+}
+
 function ModelItems({
   agent,
   models,
@@ -135,6 +162,7 @@ function ModelItems({
 
 export const AgentMenu = observer(function AgentMenu({
   agents,
+  signedOut = [],
   selected,
   onSelect,
   isDisabled,
@@ -145,8 +173,11 @@ export const AgentMenu = observer(function AgentMenu({
   onPickEffort,
   host,
 }: {
-  /** Offered: installed and enabled. */
+  /** Offered: installed, enabled and not signed out. */
   agents: AgentId[];
+  /** Installed and enabled, but not signed in: listed disabled with the
+   *  hint, so it's clear why they can't be picked. */
+  signedOut?: SignedOutAgent[];
   /** Another device's agents (a remote space's box, New space on another
    *  device): their models, levels and defaults stand in for this device's
    *  catalog and settings, and no setting is written or offered. */
@@ -351,6 +382,28 @@ export const AgentMenu = observer(function AgentMenu({
                   </Dropdown.Item>
                 );
               })}
+            {signedOut.map((a) => (
+              <Dropdown.Item
+                key={`out:${a.id}`}
+                id={`out:${a.id}`}
+                textValue={`${AGENT_NAME[a.id]}: not signed in`}
+                isDisabled
+                className="gap-2"
+              >
+                <span className="flex min-w-0 flex-1 flex-col">
+                  <span className="truncate">
+                    {AGENT_NAME[a.id]}
+                    <span className="text-xs text-muted"> · not signed in</span>
+                  </span>
+                  {a.hint && (
+                    <SignInHint
+                      hint={a.hint}
+                      className="text-xs whitespace-normal text-muted"
+                    />
+                  )}
+                </span>
+              </Dropdown.Item>
+            ))}
             <Separator className="my-1" />
             <Dropdown.SubmenuTrigger>
               <Dropdown.Item id="models" textValue="Models" className="gap-2">

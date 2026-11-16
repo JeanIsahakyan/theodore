@@ -61,7 +61,9 @@ pub trait CoreApi: Send + Sync {
     ) -> Result<Option<theodore_contract::ToolPayload>, CommandError>;
     async fn cancel_run(&self, run: String) -> Result<(), CommandError>;
     async fn submit_review(&self, req: SubmitReviewRequest) -> Result<(), CommandError>;
-    async fn detect_agents(&self) -> Result<Vec<AgentStatus>, CommandError>;
+    /// Each agent CLI and its sign-in; `recheck`: sign-ins checked again,
+    /// not read from the cache.
+    async fn detect_agents(&self, recheck: bool) -> Result<Vec<AgentStatus>, CommandError>;
     /// The models `agent` can run, for the model picker; `[]` when it
     /// can't list them, never an error.
     async fn agent_models(&self, agent: AgentId) -> Result<Vec<AgentModel>, CommandError>;
@@ -784,7 +786,7 @@ impl CoreApi for NotReadyCoreApi {
     async fn submit_review(&self, _req: SubmitReviewRequest) -> Result<(), CommandError> {
         Err(not_ready())
     }
-    async fn detect_agents(&self) -> Result<Vec<AgentStatus>, CommandError> {
+    async fn detect_agents(&self, _recheck: bool) -> Result<Vec<AgentStatus>, CommandError> {
         Err(not_ready())
     }
     async fn agent_models(&self, _agent: AgentId) -> Result<Vec<AgentModel>, CommandError> {

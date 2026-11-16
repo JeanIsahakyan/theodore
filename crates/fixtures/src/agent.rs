@@ -196,6 +196,7 @@ impl AgentPort for ReplayAgents {
                 path: None,
                 version: Some("fixture".to_string()),
                 installed: true,
+                signed_in: None,
             })
             .collect()
     }
