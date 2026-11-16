@@ -75,6 +75,15 @@ async fn worktree_tree(git: &SpaceGit<'_>, git_dir: &Path) -> GitResult<String> 
     let real = git_dir.join("index");
     if real.exists() {
         std::fs::copy(&real, &index.0)?;
+        // Keep the index's own mtime on the copy. Git distrusts ("racily
+        // clean") entries no older than its index; a copy stamped now made
+        // every entry look settled, so a same-size file changed in the same
+        // second as the last commit stayed out of the checkpoint.
+        let mtime = std::fs::metadata(&real)?.modified()?;
+        std::fs::File::options()
+            .write(true)
+            .open(&index.0)?
+            .set_times(std::fs::FileTimes::new().set_modified(mtime))?;
     } else {
         git.run_env(&["read-tree", "HEAD"], &index.env()).await?;
     }
