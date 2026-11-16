@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <radialGradient id="blob" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#0C5BC0" stop-opacity="0.95"/>
+      <stop offset="1" stop-color="#0C5BC0" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="glass" x1="0" y1="0" x2="0.3" y2="1">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.72"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0.14"/>
+    </linearGradient>
+    <linearGradient id="rim" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="1"/>
+      <stop offset="0.5" stop-color="#FFFFFF" stop-opacity="0.25"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0.7"/>
+    </linearGradient>
+    <clipPath id="tile">
+      <rect x="100" y="100" width="824" height="824"/>
+    </clipPath>
+    <clipPath id="lenses">
+      <circle cx="352" cy="500" r="150"/>
+      <circle cx="672" cy="500" r="150"/>
+    </clipPath>
+  </defs>
+  <g transform="scale(1.24272) translate(-100 -100)">
+  <rect x="100" y="100" width="824" height="824" fill="#3F86D6"/>
+  <g clip-path="url(#tile)">
+    <circle cx="300" cy="330" r="300" fill="url(#blob)"/>
+    <circle cx="740" cy="380" r="320" fill="url(#blob)"/>
+    <circle cx="520" cy="800" r="330" fill="url(#blob)"/>
+  </g>
+  </g>
+</svg>

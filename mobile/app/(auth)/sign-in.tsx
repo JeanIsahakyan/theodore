@@ -49,7 +49,7 @@ export default function SignIn() {
     <SafeAreaView style={[styles.root, { backgroundColor: p.background }]}>
       <View style={styles.body}>
         <Image
-          source={require('../../assets/icon.png')}
+          source={require('../../assets/logo.png')}
           style={styles.logo}
           accessibilityIgnoresInvertColors
           accessible={false}

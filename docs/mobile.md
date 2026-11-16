@@ -174,14 +174,24 @@ eas build --profile production ─▶ store build (production cloud) ─▶ eas 
 
 - `pnpm -C mobile start` (a, i, w for Android, iOS, web). Defaults point at the
   staging cloud (`src/config.ts`).
-- Expo Go is enough for the screens, sign-in on web, and the fleet client. It is
-  **not** enough for what needs our own native config: remote push
-  (remote push isn't supported in Expo Go) and the `theodore-mobile://`
-  scheme. For those, build a dev client once:
-  `npx eas-cli@latest build --profile development` (iOS simulator build,
-  installable by dragging it onto the simulator), then `pnpm -C mobile start`
-  and open it in that client. A rebuild is needed only after adding a native
-  module or changing `app.json` plugins.
+- Expo Go shows the screens, but sign-in can't come back to it (it opens
+  `exp://`, not `theodore-mobile://`) and it gets no remote push. Use a
+  local dev build instead, on a simulator or emulator:
+
+  | Platform | Needs | Run |
+  | --- | --- | --- |
+  | iOS | Xcode, CocoaPods | `pnpm -C mobile ios` (`expo run:ios`) |
+  | Android | Android SDK and an emulator, `ANDROID_HOME` set | `pnpm -C mobile android` (`expo run:android`) |
+
+  `ios/` and `android/` are generated (`expo prebuild`) and not committed.
+  After changing `app.json` (icons, splash, plugins) or adding a native
+  module, regenerate them: `npx expo prebuild --clean`. Without a Mac:
+  `npx eas-cli@latest build --profile development`.
+- Icons are Theodore's logo, from `mobile/assets/src/*.svg` (the glasses of
+  `apps/desktop/icons/src/icon.svg`). Change a source, then run
+  `mobile/scripts/icons.sh` and commit the PNGs: the iOS icon, the Android
+  adaptive icon (background, foreground, monochrome), the notification icon,
+  the splash, the sign-in logo and the favicon.
 - Before pushing: `pnpm -C mobile typecheck`, `lint`, `test` (lefthook runs
   them; `format:check` and `build:web` are CI's).
 
