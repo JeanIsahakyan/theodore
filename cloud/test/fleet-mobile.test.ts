@@ -112,7 +112,7 @@ describe('protocol versions', () => {
     expect(names(phone)).toEqual(['iPhone', 'mac', 'old']);
   });
 
-  it("gives protocol 3 only the OSes it reads", async () => {
+  it('gives protocol 3 only the OSes it reads', async () => {
     const h = new Harness();
     const old = await h.device('user_1', 'old');
     old.protocol = 3;
