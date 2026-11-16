@@ -346,9 +346,7 @@ fn tail(s: &str, max: usize) -> String {
 /// Kills `pid`'s process group (the CLI and what it started).
 fn kill_group(pid: Option<u32>) {
     if let Some(pid) = pid {
-        let _ = std::process::Command::new("kill")
-            .args(["-TERM", &format!("-{pid}")])
-            .status();
+        let _ = theodore_agents::signals::signal_group(pid, theodore_agents::signals::Signal::Term);
     }
 }
 

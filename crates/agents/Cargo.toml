@@ -6,6 +6,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+nix = { version = "0.31", default-features = false, features = ["signal", "process"] }
 theodore-domain.workspace = true
 theodore-ports.workspace = true
 async-trait.workspace = true

@@ -259,12 +259,7 @@ async fn coalesce(mut rx: mpsc::Receiver<Vec<u8>>, tx: mpsc::Sender<TerminalEven
 /// Waits for the shell to exit, killing its group on cancel; always ends in
 /// exactly one `Exit` event.
 async fn hang_up(pid: u32) {
-    let _ = tokio::process::Command::new("kill")
-        .args(["-HUP", &pid.to_string()])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .await;
+    let _ = crate::signals::signal_process(pid, crate::signals::Signal::Hup);
 }
 
 async fn supervise(

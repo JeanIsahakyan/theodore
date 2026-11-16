@@ -67,14 +67,13 @@ jobs:
   # Ubuntu, and their apt packages.
   rust-test-linux:
     runs-on: ubuntu-22.04
-    # Fails with its logs instead of losing the runner: three times it ran
-    # ~50 min and died with no log, even `if: always()` steps skipped (the
-    # runner out of memory linking many test binaries at once).
+    # A hang fails with its log. (Runs once died with no log at all: a group
+    # kill through procps' `kill` hit the runner's own process group; signals
+    # now go by syscall, `theodore_agents::signals`.)
     timeout-minutes: 75
-    # Two jobs at a time, no incremental state and no debug info keep
-    # rustc and the linker inside the hosted runner's memory and disk.
+    # No incremental state and no debug info keep the build inside the
+    # hosted runner's disk.
     env:
-      CARGO_BUILD_JOBS: 2
       CARGO_INCREMENTAL: 0
       CARGO_PROFILE_DEV_DEBUG: 0
       CARGO_PROFILE_TEST_DEBUG: 0
@@ -107,121 +106,9 @@ jobs:
         with:
           save-if: ${{ github.ref == 'refs/heads/staging' }}
 
-      - name: build the tests
+      - name: test
         # The desktop crate (WebKitGTK) is built on Linux by `ui-e2e`.
-        run: cargo test --workspace --exclude theodore-desktop --no-run
-
-      # One step per crate: a step's log is kept as soon as it ends, so if a
-      # test takes the runner down (it did, with no log, four times) the
-      # last step shown names the crate.
-      - name: test secrets
-        if: always()
-        run: timeout 20m cargo test -p theodore-secrets --no-fail-fast
-
-      - name: test agents
-        # One at a time, in its own session: names the test that SIGKILLs
-        # its own process group on Linux.
-        run: timeout 20m setsid -w cargo test -p theodore-agents --no-fail-fast -- --test-threads=1
-
-      - name: test code-intel-toolchain
-        if: always()
-        run: timeout 20m cargo test -p theodore-code-intel-toolchain --no-fail-fast
-
-      - name: test git
-        if: always()
-        run: timeout 20m cargo test -p theodore-git --no-fail-fast
-
-      - name: test store
-        if: always()
-        run: timeout 20m cargo test -p theodore-store --no-fail-fast
-
-      - name: test ports
-        if: always()
-        run: timeout 20m cargo test -p theodore-ports --no-fail-fast
-
-      - name: test domain
-        if: always()
-        run: timeout 20m cargo test -p theodore-domain --no-fail-fast
-
-      - name: test contract
-        if: always()
-        run: timeout 20m cargo test -p theodore-contract --no-fail-fast
-
-      - name: test fleet-protocol
-        if: always()
-        run: timeout 20m cargo test -p theodore-fleet-protocol --no-fail-fast
-
-      - name: test fleet
-        if: always()
-        run: timeout 20m cargo test -p theodore-fleet --no-fail-fast
-
-      - name: test telemetry
-        if: always()
-        run: timeout 20m cargo test -p theodore-telemetry --no-fail-fast
-
-      - name: test account-workos
-        if: always()
-        run: timeout 20m cargo test -p theodore-account-workos --no-fail-fast
-
-      - name: test code-intel
-        if: always()
-        run: timeout 20m cargo test -p theodore-code-intel --no-fail-fast
-
-      - name: test code-intel-lsp
-        if: always()
-        run: timeout 20m cargo test -p theodore-code-intel-lsp --no-fail-fast
-
-      - name: test code-intel-syntax
-        if: always()
-        run: timeout 20m cargo test -p theodore-code-intel-syntax --no-fail-fast
-
-      - name: test grouping
-        if: always()
-        run: timeout 20m cargo test -p theodore-grouping --no-fail-fast
-
-      - name: test host-bitbucket
-        if: always()
-        run: timeout 20m cargo test -p theodore-host-bitbucket --no-fail-fast
-
-      - name: test host-github
-        if: always()
-        run: timeout 20m cargo test -p theodore-host-github --no-fail-fast
-
-      - name: test host-gitlab
-        if: always()
-        run: timeout 20m cargo test -p theodore-host-gitlab --no-fail-fast
-
-      - name: test host-http
-        if: always()
-        run: timeout 20m cargo test -p theodore-host-http --no-fail-fast
-
-      - name: test linear
-        if: always()
-        run: timeout 20m cargo test -p theodore-linear --no-fail-fast
-
-      - name: test mcp
-        if: always()
-        run: timeout 20m cargo test -p theodore-mcp --no-fail-fast
-
-      - name: test sandbox
-        if: always()
-        run: timeout 20m cargo test -p theodore-sandbox --no-fail-fast
-
-      - name: test fixtures
-        if: always()
-        run: timeout 20m cargo test -p theodore-fixtures --no-fail-fast
-
-      - name: test runtime
-        if: always()
-        run: timeout 20m cargo test -p theodore-runtime --no-fail-fast
-
-      - name: test cli
-        if: always()
-        run: timeout 20m cargo test -p theodore-cli --no-fail-fast
-
-      - name: test app
-        if: always()
-        run: timeout 20m cargo test -p theodore-app --no-fail-fast
+        run: cargo test --workspace --exclude theodore-desktop --no-fail-fast
 
       - name: disk left
         if: always()

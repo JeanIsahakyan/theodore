@@ -249,10 +249,7 @@ pub async fn reap_orphans(dir: &std::path::Path) -> usize {
             .iter()
             .any(|a| comm.contains(a))
         {
-            let _ = tokio::process::Command::new("kill")
-                .args(["-TERM", &format!("-{pid}")])
-                .status()
-                .await;
+            let _ = crate::signals::signal_group(pid, crate::signals::Signal::Term);
             killed += 1;
         }
         let _ = std::fs::remove_file(&path);
@@ -858,21 +855,13 @@ fn tail_of(s: &str, max: usize) -> &str {
 /// dies with it instead of lingering as an orphan.
 async fn terminate(child: &mut Child) -> bool {
     if let Some(pid) = child.id() {
-        let _ = Command::new("kill")
-            .arg("-TERM")
-            .arg(format!("-{pid}"))
-            .status()
-            .await;
+        let _ = crate::signals::signal_group(pid, crate::signals::Signal::Term);
     }
     match tokio::time::timeout(GRACE_PERIOD, child.wait()).await {
         Ok(status) => status.map(|s| s.success()).unwrap_or(false),
         Err(_) => {
             if let Some(pid) = child.id() {
-                let _ = Command::new("kill")
-                    .arg("-KILL")
-                    .arg(format!("-{pid}"))
-                    .status()
-                    .await;
+                let _ = crate::signals::signal_group(pid, crate::signals::Signal::Kill);
             }
             let _ = child.start_kill();
             child.wait().await.map(|s| s.success()).unwrap_or(false)
