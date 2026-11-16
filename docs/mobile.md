@@ -26,7 +26,7 @@ iPhone / Android / browser                     Theodore cloud            your co
 | Space | Its history (lines), send a message when it's idle or waiting, Stop while it runs, answer its question |
 | Start | Pick a trusted computer that accepts remote spaces, one of its projects, the goal, a mode up to its cap |
 | Devices | Your devices, fingerprints, trust / untrust with the fingerprint confirm, this device's fingerprint to show on the computer |
-| Settings | Account, organization switch, notifications on/off, sign out |
+| Settings | Account, organization switch, this device (name, status, fingerprint), notifications on/off, sign out, about (version, server) |
 
 Questions and "space finished" arrive as push notifications; a question's
 options are notification buttons (one tap answers it, signed on the phone,
@@ -140,6 +140,7 @@ mobile/
   src/keys/            DeviceKey: secure-store (iOS/Android) | WebCrypto + IndexedDB (web)
   src/push/            expo-notifications: register, categories, background answer
   src/state/           stores (zustand) the screens read
+  src/ui/native/       the native kit: SwiftUI (iOS) / Compose (Android) / RN (web) controls
   src/gen/fleet.ts     copied from cloud/src/gen (generated from Rust; never edited)
 ```
 
@@ -176,6 +177,73 @@ refresher: 60 s before exp; offline ─▶ retry 30 s doubling to 10 min; reject
   WebCrypto `subtle`, so `jose` can't run there.
 - The web origin must also be an allowed web origin (CORS) in the WorkOS
   dashboard, or the browser can't read `/user_management/authenticate`.
+
+### Native UI
+
+Screens are built from `src/ui/native` (on `@expo/ui`): one import, the
+same props everywhere, a real native control per platform. Metro picks
+`X.ios.tsx`, `X.android.tsx` or `X.tsx` (web).
+
+```tsx
+import { Button, Form, Row, Section, Switch, confirm } from '../../src/ui/native';
+```
+
+| Kit | iOS (SwiftUI) | Android (Compose, Material 3) | Web (React Native) |
+| --- | --- | --- | --- |
+| `Button` primary / secondary / plain / destructive, `loading`, `disabled`, `fullWidth` | `Button` `.borderedProminent` / `.bordered` / `.borderless` / role destructive | `Button` / `FilledTonalButton` / `TextButton` / filled in danger | `Pressable` |
+| `Segmented` (Ask/Plan/Edit, short sets) | `Picker` `.segmented` | `SingleChoiceSegmentedButtonRow` | joined segments |
+| `Select` (device, project: longer lists) | `Picker` `.menu` | `ExposedDropdownMenuBox` | row that unfolds the choices |
+| `Switch` (label, `detail`) | `Toggle` | `ListItem` + `Switch`, row `toggleable` | row + RN `Switch` |
+| `TextField` (single / `multiline`, `placeholder`, `onSubmit`, `submitLabel`) | `TextField` (vertical axis, `lineLimit`) | `OutlinedTextField` (ime action) | `TextInput` |
+| `Progress` circular / linear, `value` 0…1 or none | `ProgressView` | `Circular`/`LinearProgressIndicator` | `ActivityIndicator` / bar |
+| `Form` › `Section` (`title`, `footer`) › `Row` (`label`, `value`, `detail`, `chevron`, `selected`, `destructive`, `loading`, `onPress`) | `Form` (inset grouped, scrolls) › `Section` › row `Button` | scrolling `Column` › titled `Card` › `ListItem` (no chevron) | `ScrollView` › card › rows |
+| `FormSlot` (any RN view inside a `Form`) | `RNHostView` | `RNHostView` | `View` |
+| `confirm()` / `notify()` (promise) | `UIAlertController` (RN `Alert`) | `AlertDialog` (RN `Alert`) | `window.confirm` / `alert` |
+
+```
+standalone control ─▶ its own Host (sized to it, or to the given width: fields, fullWidth)
+inside a Form      ─▶ the bare native element: a Settings row / list item
+```
+
+Rules for screens:
+
+- Actions use the kit: no raw `Pressable`/`TouchableOpacity` buttons, no
+  `src/ui/kit` `Button`/`Chip`/`Field`/`Confirm` in converted screens. Choices
+  are `Segmented` (≤ 4) or `Select`; lists of settings-like rows are a `Form`.
+- A `Form` is the screen's scroll view (it scrolls itself): don't put it in a
+  `ScrollView`. Inside it only kit controls and `FormSlot`; strings must be
+  props (SwiftUI and Compose can't render a bare RN `<Text>`).
+- Labels stay what tests and Maestro tap: the visible `label` is the text and
+  the accessibility name; pass `accessibilityLabel` when the visible text is
+  not enough ("Switch to Acme" on a row reading "Acme"), `testID` for ids.
+- Colors come from `usePalette()` (accent `#2F74C8` light / `#6AA7EC` dark);
+  each `Host` follows the system scheme and is tinted with the accent.
+- Every component needs its web `X.tsx`; `pnpm -C mobile build:web` and
+  `npx expo export --platform ios --platform android` both must bundle.
+- Settings (`app/(app)/(tabs)/settings.tsx`) is the reference screen.
+- `@expo/ui` and `expo-symbols` are native modules: a dev build made before
+  them must be rebuilt (`npx expo prebuild --clean`, then `pnpm ios` /
+  `pnpm android`); Expo Go can't show the kit.
+
+Tabs are native (`expo-router/native-tabs`: `UITabBarController` with SF
+Symbols, Material 3 navigation bar with Material Symbols); they draw no
+header, so the stack around them shows the focused tab's title. The web
+keeps the JS tabs.
+
+### Connection banner
+
+```
+connected ─▶ connecting ─(< 1.5 s)─▶ connected       nothing shown (foreground, network switch)
+connected ─▶ connecting ─(≥ 1.5 s)─▶ "Connecting to your devices…" capsule ─▶ gone when connected
+error ─▶ "Not connected: <why>" at once
+close 4000 (a newer connection of this device took over):
+   another client in this JS context ─▶ this one goes quiet, never redials
+   another tab / window              ─▶ "connected from another tab", redials when shown again
+```
+
+The auth and fleet clients live on `globalThis`, one set per JS runtime:
+Fast Refresh can't start a second fleet client on the same device key.
+Editing `src/fleet` or `src/auth` in dev needs a full reload.
 
 ## Desktop changes
 
