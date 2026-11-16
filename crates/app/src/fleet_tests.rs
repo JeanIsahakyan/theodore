@@ -729,6 +729,29 @@ async fn a_started_space_is_mapped_and_its_events_journaled_in_order() {
     })
     .await;
     assert_eq!(replayed(), expected());
+
+    // A cloud that forgot the space (reset, pruned): nothing replayed,
+    // it would only be refused event by event.
+    f.fleet.push(FleetInbound::Disconnected {
+        reason: "gone".into(),
+        retry_in_ms: 500,
+    });
+    wait_until("disconnected again", || !core.fleet_tools_available()).await;
+    let before = f.fleet.sent().len();
+    f.fleet.push(FleetInbound::Connected {
+        device_id: ME.into(),
+        generation: GENERATION + 2,
+        resume: BTreeMap::new(),
+    });
+    wait_until("connected again", || core.fleet_tools_available()).await;
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    assert!(
+        f.fleet.sent()[before..]
+            .iter()
+            .filter_map(|m| sent_event(&f, m))
+            .all(|b| b.space != "rs_1"),
+        "a space the cloud doesn't know isn't replayed"
+    );
 }
 
 #[tokio::test]

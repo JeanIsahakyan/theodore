@@ -289,6 +289,7 @@ space row / agent reply / run step of a hosted space
   ─▶ diff with what was last reported ─▶ RemoteSpaceEvent, seq + 1
   ─▶ fleet_events (last 2000 per space) ─▶ space_event, signed (Event)
 welcome{resume} ─▶ journal after the cloud's seq ─▶ open questions asked again
+  (a space not in `resume`, which the cloud forgot, isn't replayed)
 ```
 
 | Space | Event |

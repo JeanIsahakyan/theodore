@@ -1359,7 +1359,13 @@ impl Core {
         let me = self.fleet().device_id.clone().unwrap_or_default();
         let device_name = self.fleet_name(&self.fleet_settings().await).await;
         for (remote, local, seq) in hosted {
-            let since = resume.get(&remote).copied().unwrap_or(0);
+            // The welcome lists every space the cloud has this device host;
+            // one it doesn't know (forgotten, pruned, or a reset relay)
+            // would only be refused, event by event, on every connect.
+            let Some(&since) = resume.get(&remote) else {
+                tracing::debug!(%remote, "not replayed: the cloud doesn't know this hosted space");
+                continue;
+            };
             if since < seq {
                 let store = self.0.deps.store.clone();
                 let space = remote.clone();
