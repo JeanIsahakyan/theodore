@@ -33,7 +33,12 @@ function appContract(): {
   askPresentation: typeof askPresentation;
 } {
   const source = readFileSync(
-    new URL('../../mobile/src/push/contract.ts', import.meta.url),
+    // The Worker's types (tsconfig `types`) don't describe `import.meta.url`;
+    // vitest runs this file as a Node ES module, where it is set.
+    new URL(
+      '../../mobile/src/push/contract.ts',
+      (import.meta as unknown as { url: string }).url,
+    ),
     'utf8',
   );
   const js = ts.transpileModule(source, {
