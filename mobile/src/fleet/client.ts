@@ -420,15 +420,19 @@ export function createFleetClient(
     scheduleSave();
   };
 
-  /** Sign-out or org switch: the saved set of the account left goes. */
-  const leaveScope = () => {
+  /**
+   * Leaves the listed account / org. Sign-out (`forget`) removes its saved
+   * set; an org switch keeps it (sets are per org), so switching back lists
+   * that org's spaces again.
+   */
+  const leaveScope = (forget: boolean) => {
     const old = scope;
     scope = null;
     savedFor = null;
     dirty = new Set();
     if (saveTimer) clearTimeout(saveTimer);
     saveTimer = null;
-    if (old) void queue(() => saved.clear(old));
+    if (old && forget) void queue(() => saved.clear(old));
   };
 
   /** Spaces gone from the list: their lines and mirror leave the store too. */
@@ -455,8 +459,9 @@ export function createFleetClient(
   const restore = async (next: string, device: string | null) => {
     if (scope === next) return;
     if (scope !== null) {
-      // Another account or org than the one listed: nothing of it stays.
-      leaveScope();
+      // Another account or org than the one listed: none of it stays shown
+      // (its saved set stays for when it's back).
+      leaveScope(false);
       forgetFleet();
     }
     const list = await saved.load(next, device);
@@ -1428,7 +1433,7 @@ export function createFleetClient(
       push = null;
       epoch++;
       closeLink();
-      leaveScope();
+      leaveScope(true);
       forgetFleet();
       return;
     }
@@ -1436,7 +1441,7 @@ export function createFleetClient(
     if (before && before.organizationId !== s.organizationId) {
       epoch++;
       closeLink();
-      leaveScope();
+      leaveScope(false);
       forgetFleet();
       fatal = null;
       heldOff = false;

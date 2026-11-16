@@ -1446,14 +1446,16 @@ describe('kept across restarts', () => {
     expect(state().spaces).toEqual([]);
   });
 
-  it('clears what it kept on an organization switch', async () => {
+  it('keeps an org’s spaces across a switch away and back', async () => {
     const t = await runningSpace();
     t.hub.setActive(false);
     await until(async () => (await savedIds(t.hub))?.length === 1, 'saved');
     t.hub.setActive(true);
     t.account.emit(session('tok-1', 'org_other'));
-    await until(async () => (await savedIds(t.hub)) === null, 'cleared');
-    expect(state().spaces).toEqual([]);
+    await waitFor(() => state().spaces.length === 0, 'the other org shown');
+    expect(await savedIds(t.hub)).toHaveLength(1);
+    t.account.emit(session('tok-1', 'org_test'));
+    await waitFor(() => state().spaces.length === 1, 'listed again');
   });
 
   it('drops a set written for another device id', async () => {

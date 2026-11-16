@@ -82,7 +82,7 @@ launch ─▶ session ─▶ saved set of <user>.<org> ─▶ listed at once, la
             started here ─▶ subscribe{since: last seq}
             followed     ─▶ delegations: its origin still delegates here ─▶ subscribe{since}
                                          else ─▶ dropped
-sign-out, org switch ─▶ the set is removed
+sign-out ─▶ the set is removed     org switch ─▶ kept (sets are per org)
 ```
 
 | Kept per space | Not kept |
