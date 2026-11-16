@@ -26,6 +26,7 @@ export const device = (over: Partial<FleetDevice> = {}): FleetDevice => ({
   this_device: false,
   delegated: false,
   delegation_live: false,
+  agents: [],
   ...over,
 });
 

@@ -21,7 +21,7 @@ import {
   Tooltip,
 } from '@heroui/react';
 import { observer } from 'mobx-react-lite';
-import type { AgentId, SkillInfo } from '../../gen/contract';
+import type { AgentId, FleetAgent, SkillInfo } from '../../gen/contract';
 import { api } from '../../core/api';
 import { useRootStore } from '../../stores/context';
 import type { RootStore } from '../../stores/RootStore';
@@ -419,18 +419,7 @@ export function boxAgent(
   return agents[0] ?? null;
 }
 
-/** The agent chip for a new space, with the agent's model and effort.
- *  `null` = the `agents.chat` default. */
-export const AgentChip = observer(function AgentChip({
-  value,
-  onChange,
-  isDisabled,
-  modelOf,
-  onPickModel,
-  effortOf,
-  onPickEffort,
-  repo,
-}: {
+type AgentChipProps = {
   value: AgentId | null;
   onChange: (a: AgentId) => void;
   isDisabled?: boolean;
@@ -444,7 +433,32 @@ export const AgentChip = observer(function AgentChip({
   onPickEffort?: (agent: AgentId, effort: string) => void;
   /** `<owner>/<name>`: this project's `agents.chat`, for the default. */
   repo?: string;
-}) {
+  /** A space on another device: the agents it lists (`FleetDevice.agents`)
+   *  instead of this device's; none (an older host) hides the chip. */
+  host?: FleetAgent[];
+};
+
+/** The agent chip for a new space, with the agent's model and effort.
+ *  `null` = the `agents.chat` default (the host's first, on another
+ *  device). */
+export function AgentChip(props: AgentChipProps) {
+  return props.host ? (
+    <HostAgentChip {...props} host={props.host} />
+  ) : (
+    <LocalAgentChip {...props} />
+  );
+}
+
+const LocalAgentChip = observer(function LocalAgentChip({
+  value,
+  onChange,
+  isDisabled,
+  modelOf,
+  onPickModel,
+  effortOf,
+  onPickEffort,
+  repo,
+}: AgentChipProps) {
   const store = useRootStore();
   const agents = useEnabledAgents();
   if (!agents.length) return null;
@@ -452,6 +466,36 @@ export const AgentChip = observer(function AgentChip({
   return (
     <AgentMenu
       agents={agents}
+      selected={current}
+      onSelect={onChange}
+      isDisabled={isDisabled}
+      ultracode
+      modelOf={modelOf}
+      onPickModel={onPickModel}
+      effortOf={effortOf}
+      onPickEffort={onPickEffort}
+    />
+  );
+});
+
+/** Another device's agents: what it lists, its default first. */
+const HostAgentChip = observer(function HostAgentChip({
+  value,
+  onChange,
+  isDisabled,
+  modelOf,
+  onPickModel,
+  effortOf,
+  onPickEffort,
+  host,
+}: AgentChipProps & { host: FleetAgent[] }) {
+  const agents = host.map((a) => a.id);
+  if (!agents.length) return null;
+  const current = value && agents.includes(value) ? value : agents[0]!;
+  return (
+    <AgentMenu
+      agents={agents}
+      host={host}
       selected={current}
       onSelect={onChange}
       isDisabled={isDisabled}

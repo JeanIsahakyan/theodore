@@ -4,7 +4,12 @@
  *  worktree has, and never a command that would only fail here. */
 import { act } from 'react';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
-import type { ChatMessage, Space, SpaceRemote } from '../../gen/contract';
+import type {
+  ChatMessage,
+  FleetAgent,
+  Space,
+  SpaceRemote,
+} from '../../gen/contract';
 import { setTransport } from '../../core/transport';
 import { RootStore } from '../../stores/RootStore';
 import { RootStoreProvider } from '../../stores/context';
@@ -101,7 +106,11 @@ afterEach(() => {
   document.body.innerHTML = '';
 });
 
-async function render(s: Space | null, maxMode: Space['mode'] = 'edit') {
+async function render(
+  s: Space | null,
+  maxMode: Space['mode'] = 'edit',
+  agents: FleetAgent[] = [],
+) {
   localStorage.clear();
   transport = new FakeTransport();
   transport.onCall('detect_agents', () => []);
@@ -113,7 +122,10 @@ async function render(s: Space | null, maxMode: Space['mode'] = 'edit') {
   store.sync.openPr = async () => {};
   store.fleet.setStatus(
     status({
-      devices: [thisDevice(), device({ trusted: true, max_mode: maxMode })],
+      devices: [
+        thisDevice(),
+        device({ trusted: true, max_mode: maxMode, agents }),
+      ],
     }),
   );
   store.sync.pool.put('project', 'local:app', {
@@ -178,8 +190,8 @@ describe('a remote space on the space page', () => {
 
   it('sends text and mode only, through the same command', async () => {
     await render(space());
-    // No agent chip: the host runs its own.
-    expect(button('Agent')).toBeNull();
+    // No agent chip: a host that lists none runs its own.
+    expect(button('Model')).toBeNull();
     const box = q('.chat-input textarea')!;
     await typeInto(box, 'and the signup');
     await act(async () => button('Send')!.click());
@@ -190,6 +202,72 @@ describe('a remote space on the space page', () => {
           space: 'rs_1',
           text: 'and the signup',
           agent: null,
+          model: null,
+          effort: null,
+          mode: null,
+          attachments: null,
+        },
+      },
+    ]);
+    expect(localCalls()).toEqual([]);
+  });
+
+  it("picks from the host's own agents and sends them along", async () => {
+    const agents: FleetAgent[] = [
+      {
+        id: 'claude',
+        label: 'Claude',
+        default_model: 'host-opus',
+        default_effort: 'high',
+        models: [
+          {
+            id: 'host-opus',
+            label: 'Host Opus',
+            description: null,
+            efforts: ['low', 'high'],
+            default_effort: 'low',
+            older: false,
+          },
+        ],
+      },
+      {
+        id: 'codex',
+        label: 'Codex',
+        default_model: 'gpt-host',
+        default_effort: null,
+        models: [
+          {
+            id: 'gpt-host',
+            label: 'GPT Host',
+            description: null,
+            efforts: [],
+            default_effort: null,
+            older: false,
+          },
+        ],
+      },
+    ];
+    await render(space(), 'edit', agents);
+    // What the host runs, never this device's lists (none here).
+    expect(button('Model')!.textContent).toBe('Host Opus High');
+    expect(calls('detect_agents')).toEqual([]);
+    await click(button('Model'));
+    await settle();
+    const row = [
+      ...document.querySelectorAll<HTMLElement>('[role^="menuitem"]'),
+    ].find((e) => e.textContent?.startsWith('GPT Host'));
+    await click(row);
+    await settle();
+    expect(button('Model')!.textContent).toBe('GPT Host');
+    await typeInto(q('.chat-input textarea')!, 'and the signup');
+    await act(async () => button('Send')!.click());
+    await settle();
+    expect(calls('space_send')).toEqual([
+      {
+        req: {
+          space: 'rs_1',
+          text: 'and the signup',
+          agent: 'codex',
           model: null,
           effort: null,
           mode: null,

@@ -144,7 +144,16 @@ describe('Run on', () => {
     await settle();
 
     expect(started()).toEqual([
-      { device_id: 'd2', project_id: 'p2', goal: 'Fix the login', mode: 'run' },
+      {
+        device_id: 'd2',
+        project_id: 'p2',
+        goal: 'Fix the login',
+        mode: 'run',
+        // It lists no agents: its own defaults run.
+        agent: null,
+        model: null,
+        effort: null,
+      },
     ]);
     expect(transport.calls.some((c) => c.cmd === 'create_space')).toBe(false);
     expect(store.ui.modal).toBeNull();
@@ -172,6 +181,58 @@ describe('Run on', () => {
     await settle();
     expect(started()).toEqual([]);
     expect(transport.calls.some((c) => c.cmd === 'create_space')).toBe(true);
+  });
+
+  it("offers the device's own agents, and sends only what was picked", async () => {
+    const model = (id: string, label: string, efforts: string[]) => ({
+      id,
+      label,
+      description: null,
+      efforts,
+      default_effort: null,
+      older: false,
+    });
+    const agents: FleetDevice['agents'] = [
+      {
+        id: 'claude',
+        label: 'Claude',
+        default_model: 'host-opus',
+        default_effort: 'high',
+        models: [model('host-opus', 'Host Opus', ['low', 'high'])],
+      },
+      {
+        id: 'codex',
+        label: 'Codex',
+        default_model: 'gpt-host',
+        default_effort: null,
+        models: [model('gpt-host', 'GPT Host', [])],
+      },
+    ];
+    // A device that lists none (older): no chip there.
+    await open([thisDevice(), device()], [RUN_ELSEWHERE]);
+    expect(chip('Model')).toBeNull();
+
+    await open([thisDevice(), device({ agents })], [RUN_ELSEWHERE]);
+    expect(chip('Model')!.textContent).toBe('Host Opus High');
+    await typeInto(box(), 'Fix the login');
+    await click(createButton());
+    await settle();
+    // Nothing picked: its defaults run.
+    expect(started()).toMatchObject([
+      { agent: null, model: null, effort: null },
+    ]);
+
+    await open([thisDevice(), device({ agents })], [RUN_ELSEWHERE]);
+    await pickIn('Model', /^GPT Host/);
+    expect(chip('Model')!.textContent).toBe('GPT Host');
+    await typeInto(box(), 'Fix the login');
+    await click(createButton());
+    await settle();
+    expect(started()[1]).toMatchObject({
+      agent: 'codex',
+      model: null,
+      effort: null,
+    });
   });
 
   it('stays open when the device refuses', async () => {

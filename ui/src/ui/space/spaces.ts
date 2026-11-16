@@ -5,6 +5,7 @@
  */
 import type {
   AgentId,
+  FleetAgent,
   MergeInfo,
   MergeMethod,
   PrId,
@@ -244,6 +245,27 @@ export function sendEffort(
   picked: EffortPick | null,
 ): string | null {
   return picked?.agent === agent ? picked.effort : null;
+}
+
+/** What a start on another device names, from what it lists (`host`): once
+ *  anything is picked, the agent shown (the pick, else its first) with the
+ *  model and effort picked for it; else nothing, and its defaults run. A
+ *  host that lists no agents gets nothing. */
+export function remoteStartPicks(
+  host: FleetAgent[],
+  agent: AgentId | null,
+  modelOf: (a: AgentId) => string | null,
+  effortOf: (a: AgentId) => string | null,
+): { agent: AgentId | null; model: string | null; effort: string | null } {
+  const none = { agent: null, model: null, effort: null };
+  const ids = host.map((a) => a.id);
+  const current = agent && ids.includes(agent) ? agent : (ids[0] ?? null);
+  if (!current) return none;
+  const model = modelOf(current);
+  const effort = effortOf(current);
+  return agent === current || model !== null || effort !== null
+    ? { agent: current, model, effort }
+    : none;
 }
 
 /** Days after a space is done before it archives itself; 0 = never. */
