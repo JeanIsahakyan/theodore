@@ -10,7 +10,8 @@
  */
 import { router, type Href } from 'expo-router';
 import { useEffect } from 'react';
-import { ActivityIndicator, Platform, Text, View } from 'react-native';
+import { Platform, Text, View } from 'react-native';
+import { Progress } from '../../src/ui/native';
 import { usePalette } from '../../src/ui/theme';
 
 export default function Callback() {
@@ -36,8 +37,8 @@ export default function Callback() {
         backgroundColor: p.background,
       }}
     >
-      <ActivityIndicator color={p.muted} />
-      <Text style={{ color: p.muted }}>Finishing sign-in…</Text>
+      <Progress accessibilityLabel="Finishing sign-in" />
+      <Text style={{ color: p.muted, fontSize: 15 }}>Finishing sign-in…</Text>
     </View>
   );
 }
