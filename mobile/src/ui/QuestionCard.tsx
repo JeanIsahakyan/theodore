@@ -6,6 +6,7 @@
 import { useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { useServices } from '../services';
+import { useFleetState } from '../state/fleet';
 import type { QuestionView } from '../fleet/types';
 import { Button, Card, Chip, Field, Notice } from './kit';
 import {
@@ -13,6 +14,7 @@ import {
   errorText,
   isAnswered,
   pickOption,
+  questionFrom,
   toWireAnswers,
   typeOther,
   type Draft,
@@ -29,6 +31,8 @@ export function QuestionCard({
 }) {
   const { fleet } = useServices();
   const p = usePalette();
+  const spaces = useFleetState((s) => s.spaces);
+  const from = questionFrom(question, spaces);
   const [drafts, setDrafts] = useState<Draft[]>(() =>
     question.questions.map(emptyDraft),
   );
@@ -51,7 +55,7 @@ export function QuestionCard({
   return (
     <Card style={{ borderColor: p.warning }}>
       <Text selectable style={[styles.from, { color: p.warning }]}>
-        {question.from} is waiting for your answer
+        {from} is waiting for your answer
       </Text>
       {question.questions.map((q, i) => {
         const d = drafts[i] ?? emptyDraft();

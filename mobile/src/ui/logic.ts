@@ -140,6 +140,17 @@ export function mergeLines(
   return [...bySeq.values()].sort((a, b) => a.seq - b.seq);
 }
 
+/** Who's asking, as the space is named now: a question is often asked
+ *  before its space gets its title, so the ask's own `from` (fixed when it
+ *  was asked) only stands in for a space this device doesn't follow. */
+export function questionFrom(
+  q: Pick<QuestionView, 'from' | 'space'>,
+  spaces: readonly SpaceView[],
+): string {
+  const s = spaces.find((x) => x.space === q.space);
+  return s ? `${s.hostName} · ${spaceTitle(s)}` : q.from;
+}
+
 /** The open question of a space: its own, else a routed one. */
 export function questionFor(
   space: SpaceView,
