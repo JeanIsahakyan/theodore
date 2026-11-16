@@ -277,7 +277,9 @@ export const SpacePage = observer(function SpacePage({ id }: { id: string }) {
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
   }, [toggle, isRemote]);
-  useSpaceLogsSeed(id, !isRemote);
+  // Only once the row says where it runs: a remote space's logs are on its
+  // host, and a space not loaded yet (or gone) has none to read.
+  useSpaceLogsSeed(id, space != null && !isRemote);
   const run = space && !remote ? runControl(config, space) : null;
 
   // Page keys (docs/spaces.md §3) — never while typing in the composer.

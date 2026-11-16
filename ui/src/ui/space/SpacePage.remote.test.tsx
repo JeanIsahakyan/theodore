@@ -244,5 +244,7 @@ describe('a remote space on the space page', () => {
     );
     await settle();
     expect(q('[role="alert"]')?.textContent).toBe('no such project');
+    // Nothing local asked for before the row said where it runs.
+    expect(localCalls()).toEqual([]);
   });
 });
