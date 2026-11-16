@@ -46,7 +46,10 @@ import {
   type ConversationHandle,
 } from '../../../src/components/chat';
 import { ChatMarkdown } from '../../../src/components/markdown';
-import { PickerMenu } from '../../../src/components/picker-menu';
+import {
+  ModeMenu,
+  ModelChip,
+} from '../../../src/components/pickers/composer-chips';
 import { SpaceHeader } from '../../../src/components/space-header';
 import type { ChatMessage } from '../../../src/fleet/contract';
 import { mirrored } from '../../../src/fleet/mirror';
@@ -55,13 +58,8 @@ import type { FleetMode } from '../../../src/gen/fleet';
 import { useServices } from '../../../src/services';
 import { useGlassHeaderInset } from '../../../src/shell/glassHeader';
 import { useFleetState } from '../../../src/state/fleet';
-import { AgentMenu } from '../../../src/ui/AgentMenu';
-import {
-  NO_PICK,
-  sendPicks,
-  spaceOwn,
-  type Pick,
-} from '../../../src/ui/agents';
+import { useCompose } from '../../../src/state/compose';
+import { NO_PICK, sendPicks, spaceOwn } from '../../../src/ui/agents';
 import {
   APPROVED_TEXT,
   buildMode,
@@ -248,9 +246,10 @@ export default function SpaceScreen() {
   const ownMode = space?.mode ?? 'edit';
   const [mode, setMode] = useState<FleetMode>(ownMode);
   const [modeOf, setModeOf] = useState<FleetMode>(ownMode);
-  // An agent, model or effort from the host's list: from the next message
-  // on, kept until changed; nothing picked keeps the space's own.
-  const [agentPick, setAgentPick] = useState<Pick>(NO_PICK);
+  // An agent, model or effort from the host's list (the model sheet,
+  // src/state/compose.ts): from the next message on, kept for this space
+  // until changed; nothing picked keeps the space's own.
+  const agentPick = useCompose((s) => s.spacePicks[id]) ?? NO_PICK;
   const [dock, setDock] = useState(DOCK_GUESS);
   const input = useRef<TextInputInstance>(null);
   const list = useRef<ConversationHandle>(null);
@@ -416,28 +415,14 @@ export default function SpaceScreen() {
 
   const chips = (
     <>
-      <PickerMenu
-        label={MODE_LABEL[picked]}
-        accessibilityLabel={`Mode: ${MODE_LABEL[picked]}`}
-        groups={[
-          {
-            label: 'Mode',
-            choices: modes.map((m) => ({ value: m, label: MODE_LABEL[m] })),
-            value: picked,
-            onChange: (m) => setMode(m as FleetMode),
-          },
-        ]}
+      <ModeMenu
+        modes={modes}
+        value={picked}
+        onChange={setMode}
         disabled={sending}
         testID="space-mode"
       />
-      <AgentMenu
-        agents={hostAgents}
-        pick={agentPick}
-        current={ownAgent}
-        onPick={setAgentPick}
-        disabled={sending}
-        glass={false}
-      />
+      <ModelChip space={id} disabled={sending} />
     </>
   );
 

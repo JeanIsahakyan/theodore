@@ -7,6 +7,7 @@
 import {
   ActivityIndicator,
   Pressable,
+  ScrollView,
   Text,
   TextInput,
   View,
@@ -93,9 +94,16 @@ export function PromptInput({
           }
         />
         <View className="flex-row items-center gap-2 px-3 pb-3">
-          <View className="flex-1 flex-row flex-wrap items-center gap-2">
+          {/* Chips scroll sideways when they don't fit. */}
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+            className="flex-1"
+            contentContainerClassName="items-center gap-2"
+          >
             {leading}
-          </View>
+          </ScrollView>
           {trailing}
           <Pressable
             onPress={press}

@@ -10,6 +10,7 @@
  * Home ── push ─▶ space/[id] | devices | settings ── back ─▶ Home
  *      └─ Send ─▶ push space/[id]
  * notification / deep link ─▶ space/[id] over Home (the anchor)
+ * composer chip (iOS) ─▶ model-picker | where-picker as a formSheet
  * ```
  *
  * Headers: Home's is `MainHeader` (menu, questions, new space; iOS bar
@@ -28,6 +29,7 @@ import { setActiveSpace } from '../../src/shell/AppProviders';
 import { glassHeader } from '../../src/shell/glassHeader';
 import { spaceIdFromPath } from '../../src/shell/paths';
 import { PushedHeader } from '../../src/shell/PushedHeader';
+import { liquidGlass } from '../../src/ui/native';
 import { usePalette } from '../../src/ui/theme';
 
 export const unstable_settings = { anchor: 'index' };
@@ -84,6 +86,19 @@ export default function AppLayout() {
         gestureEnabled: false,
       };
 
+  // The picker sheets (iOS: the chips present them; Android and web open
+  // theirs in place). iOS 26+: no background, the system's glass sheet.
+  const sheet = (title: string) => ({
+    title,
+    presentation: 'formSheet' as const,
+    sheetAllowedDetents: [0.5, 1],
+    sheetGrabberVisible: true,
+    headerShown: false,
+    contentStyle: {
+      backgroundColor: liquidGlass ? 'transparent' : p.surface,
+    },
+  });
+
   return (
     <DrawerProvider>
       <AppShell>
@@ -95,6 +110,8 @@ export default function AppLayout() {
           <Stack.Screen name="devices" options={pushed('Devices')} />
           <Stack.Screen name="settings" options={pushed('Settings')} />
           <Stack.Screen name="start" options={{ headerShown: false }} />
+          <Stack.Screen name="model-picker" options={sheet('Model')} />
+          <Stack.Screen name="where-picker" options={sheet('Runs on')} />
         </Stack>
       </AppShell>
     </DrawerProvider>

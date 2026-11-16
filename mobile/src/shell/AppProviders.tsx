@@ -7,6 +7,8 @@
  * session with an org ─▶ fleet.start() ─▶ registerForPush(fleet)
  * org switched        ─▶ the fleet client redials the new org's hub itself
  * sign-out            ─▶ the fleet client drops the push token on its socket ─▶ fleet.stop()
+ * account / org       ─▶ Home's last picks read back (src/state/compose.ts);
+ *                        sign-out removes them
  * ```
  */
 import {
@@ -23,6 +25,8 @@ import { registerForPush, setupNotifications } from '../push';
 import { ServicesProvider, type Services } from '../services';
 import { createAuthClient } from '../auth/platform';
 import { createFleetClient } from '../fleet/client';
+import { savedScope } from '../fleet/saved';
+import { persistPicks, picksStore, restorePicks } from '../state/compose';
 
 export type AuthStatus = 'loading' | 'signed_out' | 'signed_in';
 
@@ -132,6 +136,24 @@ export function AppProviders({ children }: { children: ReactNode }) {
       .catch((e: unknown) => console.warn('[shell] fleet start failed', e))
       .then(() => registerForPush(fleet));
   }, [fleet, fleetOn]);
+
+  // Home's last picks, per account and organization.
+  const scope = session?.organizationId
+    ? savedScope(session.userId, session.organizationId)
+    : null;
+  useEffect(() => persistPicks(picksStore()), []);
+  const lastScope = useRef<string | null>(null);
+  useEffect(() => {
+    const prev = lastScope.current;
+    lastScope.current = scope;
+    if (prev && !scope && status === 'signed_out')
+      void picksStore()
+        .clear(prev)
+        .catch(() => {});
+    void restorePicks(picksStore(), scope).catch((e: unknown) =>
+      console.warn('[shell] last picks not read', e),
+    );
+  }, [scope, status]);
 
   const state = useMemo<AuthState>(
     () => ({ status, session, choices, setChoices }),

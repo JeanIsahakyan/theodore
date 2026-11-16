@@ -18,6 +18,7 @@ import type { ReactNode } from 'react';
 import {
   ActivityIndicator,
   Pressable,
+  ScrollView,
   Text,
   TextInput,
   View,
@@ -180,9 +181,16 @@ export function PromptInput({
           style={{ fontSize: android ? 16 : 17 }}
         />
         <View className="min-h-12 flex-row items-center gap-2 pr-2 pb-2 pl-2">
-          <View className="flex-1 flex-row flex-wrap items-center gap-2">
+          {/* Chips scroll sideways when they don't fit. */}
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+            className="flex-1"
+            contentContainerClassName="items-center gap-2"
+          >
             {leading}
-          </View>
+          </ScrollView>
           {trailing}
           <SubmitButton
             mode={mode}

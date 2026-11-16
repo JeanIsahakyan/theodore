@@ -23,7 +23,7 @@ iPhone / Android / browser                     Theodore cloud            your co
 | --- | --- |
 | Sign in | AuthKit hosted page (PKCE, no secret), org picker when you're in several (through the cloud, like the desktop) |
 | Drawer | Fleet spaces you started from here or follow, newest activity first by day (Today, Yesterday, Previous 7 days, Older), a status dot, search; Devices, Settings, the account and organization |
-| Home (new space) | The goal in the composer; chips for the computer · project (trusted, online, accepting remote spaces), the mode up to its cap, agent · model · effort |
+| Home (new space) | The goal in the composer; chips for the computer · project (a sheet), agent · model · effort (the model sheet), the mode up to its cap; last picks remembered; recent projects one tap away (below, "New space") |
 | Space | Its history (lines), send a message when it's idle or waiting, Stop while it runs, answer its question |
 | Devices | This device's fingerprint to show on the computer; your devices, computers first (kind, online, mode cap, the agents a computer offers, fingerprint), trust / untrust with the fingerprint confirm |
 | Settings | Theme (Light / Dark / System), account, organization switch, this device (name, status, fingerprint), notifications on/off, about (version, server), sign out |
@@ -134,7 +134,8 @@ sign-out ─▶ the set is removed     org switch ─▶ kept (sets are per org)
 mobile/
   app/                 expo-router routes: (auth)/sign-in, choose-organization, callback;
                        (app)/ drawer around a stack: index (Home, new space),
-                       space/[id], devices, settings pushed over it; start ─▶ /
+                       space/[id], devices, settings pushed over it; start ─▶ /;
+                       model-picker, where-picker: the composer's sheets (iOS)
   src/components/      the shell and composer, adapted from the chat template (below)
   src/auth/            AuthKit PKCE, session + refresh, org select/switch via cloud, RS256 check
   src/shell/           wiring: AppProviders (auth + fleet clients, auth state, fleet lifecycle)
@@ -209,7 +210,7 @@ import { Button, Form, Row, Section, Switch, confirm } from '../../src/ui/native
 | `Form` › `Section` (`title`, `footer`, `plain`) › `Row` (`label`, `value`, `detail`, `icon`, `chevron`, `selected`, `destructive`, `loading`, `onPress`) | `Form` (inset grouped, scrolls) › `Section` › row `Button` | scrolling `Column` › titled `Card` › `ListItem` (no chevron) | `ScrollView` › card › rows |
 | `icon` on `Row`, `Switch`, `Select` (`src/ui/native/icons.ts`) | SF Symbol in a `Label` (accent) | Material Symbol, the `ListItem`'s leading content (`assets/icons/*.xml`) | Lucide |
 | `FormSlot` (any RN view inside a `Form`) | `RNHostView` | `RNHostView` | `View` |
-| `Menu` (`label`, `groups` of choices with a check on the current one; agent · model · effort in the composer) | `Menu` with a `Picker` submenu per group (glass button on iOS 26) | `AssistChip` + `DropdownMenu`, a heading per group | pill + sheet |
+| `Menu` (`label`, `groups` of choices with a check on the current one; the composer's Mode) | `Menu` with a `Picker` submenu per group, a lone group inline (glass button on iOS 26) | `AssistChip` + `DropdownMenu`, a heading per group | pill + sheet |
 | `confirm()` / `notify()` (promise) | `UIAlertController` (RN `Alert`) | `AlertDialog` (RN `Alert`) | `window.confirm` / `alert` |
 
 ```
@@ -237,7 +238,8 @@ Android: isDynamicColorAvailable (Android 12+)
 | Space's header (name, "on host · status") | native glass bar, two-line title view | RN bar, "‹ Back", two lines | Material 3 top app bar, title + subtitle |
 | Drawer | behind the content, which slides off it (rounded corners) | same | Material 3 modal navigation drawer over a scrim, pill items |
 | Composer | Liquid Glass, interactive | system chrome blur | `surfaceContainerHigh`, 28 dp corners, filled send |
-| Composer pickers | SwiftUI `Menu` | same | assist chip ─▶ modal bottom sheet, radio lists |
+| Composer: Mode | SwiftUI `Menu`, choices inline | same | assist chip ─▶ `DropdownMenu` |
+| Composer: where, model | bordered capsule ─▶ formSheet route, glass sheet, grabber | bordered capsule ─▶ formSheet route, grabber | assist chip ─▶ Compose `ModalBottomSheet` |
 | Space composer | `PromptInput` floating over the chat, notes on a `Glass` panel above it | same, chrome blur, notes on a card | same, `surfaceContainerHigh`, notes on a card |
 | Scroll to the newest message | glass circle | blur circle | raised `card` circle, ripple |
 | Plan's Approve / Revise, Send answer | capsule `.borderedProminent` / `.bordered` (kit `Button` `pill`) | same | `Button` / `FilledTonalButton` |
@@ -333,7 +335,7 @@ new space (✎)      ─▶ dismissTo Home         bell ─▶ the first waiting
 | Markdown: mdast (micromark, GFM tables and strikethrough) ─▶ React Native views; code blocks highlighted (highlight.js, a fixed set of languages, never guessed) | `src/components/markdown/` |
 | A space's header (name, "on host · status") | `src/components/space-header{.ios,.android,}.tsx`, `space-title.tsx` |
 | A space's steps: compact grey rows that open in place (folding: `src/ui/turnRows.ts`) | `src/ui/Timeline.tsx`, `src/ui/SpaceChat.tsx` |
-| Pickers (Mode, Device · Project, agent · model · effort) | `src/components/picker-menu{.android,}.tsx`, `src/ui/AgentMenu.tsx` |
+| Composer chips and picker sheets (Mode, where, agent · model · effort) | `src/components/pickers/`, routes `app/(app)/model-picker.tsx`, `where-picker.tsx`; logic `src/ui/modelPicker.ts`, `src/ui/homeDraft.ts`; picks `src/state/compose.ts` |
 | Icons: SF Symbols (iOS), Material Symbols (Android), Lucide (web) | `src/components/symbol-image.tsx` |
 
 - The space's last activity (`SpaceView.activeAt`): its mirrored row's
@@ -347,6 +349,43 @@ new space (✎)      ─▶ dismissTo Home         bell ─▶ the first waiting
 - Fleet text is untrusted in the markdown too: a link is its words and its
   address in muted text (nothing opens), an image is `[image: alt]`
   (nothing loads), raw HTML is text, nesting deeper than 16 is plain text.
+
+### New space: chips and sheets
+
+```text
+Home composer   [mac-A · repo ▾] [Opus 4.1 · High ▾] [Edit ▾]  (↑)   chips scroll sideways
+                 where sheet      model sheet         quick menu
+space composer  [Edit ▾] [Opus 4.1 · High ▾]                  the space's pick, kept per space
+
+chip ─▶ iOS      router.push(/model-picker[?space=id] | /where-picker)
+                 formSheet, detents 0.5 / 1, grabber; iOS 26+: no background, the glass sheet
+        Android  Compose ModalBottomSheet in place (drag handle, scrim, Back), Compose rows
+        web      a modal card over the window
+```
+
+| Sheet | Content | A tap |
+| --- | --- | --- |
+| Model | the host's agents (a heading each, 2+ listed), a row per model: label, "Default" or the agent's name, ✓ on what runs; Effort: "Default (High)" + the chosen model's levels as a segmented control; Reset to defaults | a model: applied at once (haptic), the sheet closes only when the model takes no effort; an effort or Reset: applied, stays open |
+| Where | computers you trust, online dot, those that can take a space first ("2 projects · up to Edit", else "Offline" / "Doesn't take spaces…" / "No projects", dimmed) ─▶ a device's projects | a device with one project, or a project: picked, closed; another device drops the agent pick and caps the mode |
+
+```text
+picks (src/state/compose.ts, zustand: the iOS sheets are routes)
+  home        {deviceId, projectId, mode, pick}  only what was picked
+  spacePicks  {space id: pick}
+  recent      projects spaces were started in (≤ 5; ≤ 3 quick chips on Home)
+
+kept: <data storage> theodore.fleet.picks.<user>.<org>, written 300 ms after a change
+account / org ─▶ cleared ─▶ read back, shape-checked   sign-out ─▶ removed
+shown: resolveHome(startable devices now): a device gone ─▶ the first, its pick
+       dropped; a project gone ─▶ the first; agent / model / effort no longer
+       listed ─▶ dropped; the mode capped
+sent:  only what was picked (startPicks / sendPicks), the host's defaults otherwise
+```
+
+- "New space" (✎, the drawer): Home's goal cleared, the field focused. Not
+  at a cold start: the keyboard would cover Home (and its recent projects)
+  at launch; web focuses it on load.
+- Run in the mode menu: the warning shows above the composer.
 
 ### Styling: Uniwind (Tailwind v4)
 

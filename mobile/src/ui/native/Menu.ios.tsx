@@ -2,7 +2,8 @@
  * iOS: a SwiftUI `Menu` styled as a button: `.glass` with `glass` on iOS
  * 26+, a `.bordered` capsule otherwise (SwiftUI's own fallback below 26 is
  * a bare label). Each group is a `.menu` `Picker`: a submenu titled with
- * the group, showing its choice, with a checkmark on it.
+ * the group, showing its choice, with a checkmark on it. A lone group is
+ * `.inline`: its choices right in the menu (Mode: one tap).
  *
  * ```text
  * ( Opus 4.1 · High ⌃⌄ ) ─▶ Agent  ›  Claude
@@ -66,7 +67,7 @@ export function Menu({
               const c = g.choices.find((x) => x.value === v);
               if (c) g.onChange(c.value);
             }}
-            modifiers={[pickerStyle('menu')]}
+            modifiers={[pickerStyle(groups.length === 1 ? 'inline' : 'menu')]}
           >
             {g.value == null ? <Text modifiers={[tag(NONE)]}>—</Text> : null}
             {g.choices.map((c) => (

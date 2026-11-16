@@ -12,13 +12,15 @@ const screens = (dir: string) =>
     .sort();
 
 describe('signed-in routes', () => {
-  it('has Home, a space, Devices, Settings and the /start redirect', () => {
+  it('has Home, a space, Devices, Settings, the picker sheets and the /start redirect', () => {
     expect(screens(app)).toEqual([
       'devices.tsx',
       'index.tsx',
+      'model-picker.tsx',
       'settings.tsx',
       'space/',
       'start.tsx',
+      'where-picker.tsx',
     ]);
     expect(readdirSync(join(app, 'space'))).toEqual(['[id].tsx']);
   });
@@ -27,8 +29,23 @@ describe('signed-in routes', () => {
     const stack = readFileSync(join(app, '_layout.tsx'), 'utf8');
     expect(stack).toContain("anchor: 'index'");
     expect(stack).toContain('<AppShell>');
-    for (const name of ['index', 'space/[id]', 'devices', 'settings', 'start'])
+    for (const name of [
+      'index',
+      'space/[id]',
+      'devices',
+      'settings',
+      'start',
+      'model-picker',
+      'where-picker',
+    ])
       expect(stack).toContain(`name="${name}"`);
+  });
+
+  it('presents the picker sheets as form sheets with detents', () => {
+    const stack = readFileSync(join(app, '_layout.tsx'), 'utf8');
+    expect(stack).toContain("presentation: 'formSheet'");
+    expect(stack).toContain('sheetAllowedDetents: [0.5, 1]');
+    expect(stack).toContain('sheetGrabberVisible: true');
   });
 
   it('sends /start to Home', () => {

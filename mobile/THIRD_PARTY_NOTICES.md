@@ -21,7 +21,7 @@ line `Adapted from EvanBacon/chat-template (MIT)`.
 | `src/components/drawer-context.tsx`, `drawer-content.tsx` | `components/drawer-content.tsx` |
 | `src/components/app-shell.tsx`, `.web.tsx` | `app/_layout.tsx`, `app/_layout.web.tsx`, `components/sidebar.web.tsx` |
 | `src/components/main-header.tsx`, `.ios.tsx`, `.android.tsx` | `components/main-header*.tsx` |
-| `src/components/picker-menu.tsx`, `.android.tsx` | `app/model-picker.tsx`, `components/main-header.swiftui.tsx`, `components/model-context.tsx` |
+| `app/(app)/model-picker.tsx`, `src/components/pickers/model-picker-list.tsx`, `sheet-rows.tsx` | `app/model-picker.tsx`, `app/_layout.tsx` (the formSheet), `components/model-context.tsx` |
 | `src/components/chat/prompt-input.tsx`, `.web.tsx` | `components/chat/prompt-input.tsx`, `.web.tsx` |
 | `src/components/chat/composer-dock.tsx`, `.web.tsx` | `components/chat/conversation.tsx` (keyboard handling) |
 | `src/components/chat/index.ts` | `components/chat/index.ts` |
