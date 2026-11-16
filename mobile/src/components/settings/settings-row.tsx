@@ -88,7 +88,12 @@ export function SettingsRow({
   const content: ReactNode = (
     <>
       <SymbolImage name={icon} size={ROW_ICON_SIZE} color={tint} />
-      <View className="flex-1 gap-0.5">
+      <View
+        // iOS/web: the label keeps its width; the detail on the right is
+        // what gets cut ("Organization  Personal (jean…").
+        className={android ? 'flex-1 gap-0.5' : 'grow gap-0.5'}
+        style={android ? undefined : { flexShrink: 0 }}
+      >
         <Text
           numberOfLines={1}
           className={destructive ? DANGER_LABEL_CLASS : LABEL_CLASS}

@@ -19,8 +19,10 @@ import {
   controlSize,
   disabled as disabledMod,
   frame,
+  tint,
   type ModifierConfig,
 } from '@expo/ui/swift-ui/modifiers';
+import { usePalette } from '../theme';
 import { useInForm } from './context';
 import { liquidGlass } from './liquidGlass';
 import { ControlHost } from './host.ios';
@@ -48,12 +50,15 @@ export function Button({
   style,
 }: ButtonProps) {
   const inForm = useInForm();
+  const p = usePalette();
   const mods: ModifierConfig[] = [];
   if (!inForm) {
     mods.push(buttonStyle(styles[variant]));
     if (pill) mods.push(buttonBorderShape('capsule'));
     if (variant !== 'plain') mods.push(controlSize(pill ? 'regular' : 'large'));
   }
+  // The Host's accent tint would win over `role: .destructive`.
+  if (variant === 'destructive') mods.push(tint(p.danger));
   if (disabled || loading) mods.push(disabledMod(true));
   mods.push(a11yLabel(accessibilityLabel ?? label));
   const wide = fullWidth
