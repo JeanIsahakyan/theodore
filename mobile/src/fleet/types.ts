@@ -90,6 +90,12 @@ export interface SpaceView {
   /** Started from this device (vs followed through a delegation). */
   startedHere: boolean;
   error: string | null;
+  /**
+   * Unix ms of its last activity, for the drawer's "Today / Yesterday"
+   * groups: the host's mirrored row's `updated_at`, else when something of
+   * it last arrived here. Set when published, never saved.
+   */
+  activeAt?: number;
 }
 
 export type LineKind =

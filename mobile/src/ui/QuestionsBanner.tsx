@@ -1,6 +1,6 @@
 /**
  * Questions routed to this device that nobody answered yet, answerable
- * inline. The shell mounts it at the top of the tabs; it renders nothing
+ * inline. Home mounts it under its header; it renders nothing
  * when there is none. Shows the oldest first and a toggle for the rest.
  *
  * ```text

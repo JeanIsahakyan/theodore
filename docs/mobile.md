@@ -22,9 +22,9 @@ iPhone / Android / browser                     Theodore cloud            your co
 | Screen | Does |
 | --- | --- |
 | Sign in | AuthKit hosted page (PKCE, no secret), org picker when you're in several (through the cloud, like the desktop) |
-| Spaces | Fleet spaces you started from here or follow: status, last reply, waiting questions first |
+| Drawer | Fleet spaces you started from here or follow, newest activity first by day (Today, Yesterday, Previous 7 days, Older), a status dot, search; Devices, Settings, the account and organization |
+| Home (new space) | The goal in the composer; chips for the computer · project (trusted, online, accepting remote spaces), the mode up to its cap, agent · model · effort |
 | Space | Its history (lines), send a message when it's idle or waiting, Stop while it runs, answer its question |
-| Start | Pick a trusted computer that accepts remote spaces, one of its projects, the goal, a mode up to its cap |
 | Devices | Your devices, fingerprints, trust / untrust with the fingerprint confirm, this device's fingerprint to show on the computer |
 | Settings | Account, organization switch, this device (name, status, fingerprint), notifications on/off, sign out, about (version, server) |
 
@@ -130,8 +130,9 @@ sign-out ─▶ the set is removed     org switch ─▶ kept (sets are per org)
 ```
 mobile/
   app/                 expo-router routes: (auth)/sign-in, choose-organization, callback;
-                       (app)/ stack: (tabs)/ index (Spaces), devices, settings;
-                       space/[id], start pushed over the tabs
+                       (app)/ drawer around a stack: index (Home, new space),
+                       space/[id], devices, settings pushed over it; start ─▶ /
+  src/components/      the shell and composer, adapted from the chat template (below)
   src/auth/            AuthKit PKCE, session + refresh, org select/switch via cloud, RS256 check
   src/shell/           wiring: AppProviders (auth + fleet clients, auth state, fleet lifecycle)
                        (not src/app: expo-router would take src/app as the routes root)
@@ -225,14 +226,15 @@ Android: isDynamicColorAvailable (Android 12+)
 
 | Where | iOS 26+ | iOS < 26 | Android |
 | --- | --- | --- | --- |
-| Tabs' header | native glass bar, transparent, content under it | opaque native header | native header |
-| Pushed screens' header | native glass bar, "‹" back (minimal), Start = prominent glass bar item | `TopBar` ("‹ Back") | `TopBar`: Material 3 top app bar |
-| Tab bar | system glass (nothing opaque behind it) | system | Material 3 navigation bar |
+| Home's header | native glass bar, ☰ / 🔔 / ✎ bar items | opaque native header, same items | Material 3 top app bar (menu, badged bell, edit) |
+| Pushed screens' header | native glass bar, "‹" back (minimal) | `TopBar` ("‹ Back") | `TopBar`: Material 3 top app bar |
+| Drawer | behind the content, which slides off it (rounded corners) | same | Material 3 modal navigation drawer over a scrim, pill items |
+| Composer | Liquid Glass, interactive | system chrome blur | `surfaceContainerHigh`, 28 dp corners, filled send |
+| Composer pickers | SwiftUI `Menu` | same | assist chip ─▶ modal bottom sheet, radio lists |
 | Space composer | floats over the chat: notes on a `Glass` panel, glass `Segmented`, glass field, `glassProminent` Send | bar under the chat | bar under the chat, no divider |
 | Option chips | `.glassProminent` / `.glass` capsules | `.borderedProminent` / `.bordered` | `FilterChip` |
-| Questions banner (over the tabs) | `Glass` cards tinted with the warning color | cards | cards in Material You surface |
+| Questions banner (on Home) | `Glass` cards tinted with the warning color | cards | cards in Material You surface |
 | Connection banner | `Glass` capsule | muted pill | muted pill |
-| Start a space | "+" glass bar item | "+" bar item | extended FAB, `primaryContainer` |
 
 Rules:
 
@@ -243,8 +245,7 @@ Rules:
   own fallback is `.automatic` (a bare label) and `glassEffect` draws
   nothing, so the kit picks the bordered look instead.
 - Never paint a background behind a glass bar: no `headerStyle`
-  background on iOS 26 (expo-router then uses the system glass bar), no
-  opaque view under the tab bar. A screen under a glass header starts at
+  background on iOS 26 (expo-router then uses the system glass bar). A screen under a glass header starts at
   the window's top: scroll views use `contentInsetAdjustmentBehavior=
   "automatic"`, a SwiftUI `Form` follows the safe area itself, any other
   view at the top takes `useGlassHeaderInset()` (`src/shell/glassHeader.ts`),
@@ -275,7 +276,7 @@ Rules for screens:
   scheme and is tinted with the accent (Android 12+: the wallpaper's).
 - Every component needs its web `X.tsx`; `pnpm -C mobile build:web` and
   `npx expo export --platform ios --platform android` both must bundle.
-- Settings (`app/(app)/(tabs)/settings.tsx`) is the reference screen.
+- Settings (`app/(app)/settings.tsx`) is the reference screen.
 - Found on devices, keep them:
   - **Compose keeps what it was mounted with:** a `Button` or chip that turns
     on or off is remounted (`key` on the enabled state), or an enabled "Send
@@ -292,10 +293,56 @@ Rules for screens:
   modules: a dev build made before them must be rebuilt (`npx expo prebuild --clean`, then `pnpm ios` /
   `pnpm android`); Expo Go can't show the kit.
 
-Tabs are native (`expo-router/native-tabs`: `UITabBarController` with SF
-Symbols, Material 3 navigation bar with Material Symbols); they draw no
-header, so the stack around them shows the focused tab's title (on iOS 26+
-a glass bar the tabs' content scrolls under). The web keeps the JS tabs.
+### Shell: drawer, header, composer
+
+The look follows Evan Bacon's chat template (MIT,
+`mobile/THIRD_PARTY_NOTICES.md` lists the files adapted from it). Theodore's
+"chats" are its spaces.
+
+```text
+iOS / Android  DrawerLayout (src/components/drawer-layout.tsx) ── Stack
+                 pan from the left edge opens it on Home only (elsewhere the
+                 edge is the system's back swipe); Android Back closes it
+web            sidebar beside the stack (md+), over it with a scrim (narrow)
+
+drawer pick on Home ─▶ push [Home, pick]     elsewhere ─▶ replace [Home, pick]
+new space (✎)      ─▶ dismissTo Home         bell ─▶ the first waiting space
+```
+
+| Piece | File |
+| --- | --- |
+| Drawer content (spaces by day, search, Devices, account, Settings) | `src/components/drawer-content.tsx`, groups in `src/ui/drawer.ts` |
+| Home's header | `src/components/main-header{.ios,.android,}.tsx` |
+| Composer: `PromptInput` (field, Send / Stop, `leading` / `trailing` chips) and `ComposerDock` (rides on the keyboard) | `src/components/chat/` |
+| Pickers (Mode, Device · Project, agent · model · effort) | `src/components/picker-menu{.android,}.tsx`, `src/ui/AgentMenu.tsx` |
+| Icons: SF Symbols (iOS), Material Symbols (Android), Lucide (web) | `src/components/symbol-image.tsx` |
+
+- The space's last activity (`SpaceView.activeAt`): its mirrored row's
+  `updated_at`, else when something of it last arrived here.
+- Keyboard: `react-native-keyboard-controller` (`KeyboardProvider` at the
+  root); the dock's bottom is max(safe area, keyboard), on Android edge to
+  edge the IME padding.
+
+### Styling: Uniwind (Tailwind v4)
+
+New shell code is styled with `className` (Uniwind, `metro.config.js`);
+the kit and the older screens keep `usePalette()`.
+
+```text
+src/global.css   tokens: the template's neutrals + primary #2F74C8 / #6AA7EC,
+                 success / warning / danger; light and dark variants
+Android 12+      applyThemeVars() overwrites them with Material You's roles at start
+                 (src/components/theme-vars.android.ts), as usePalette() does
+uniwind-types.d.ts  written by Metro (uniwind); committed so typecheck needs no Metro run
+```
+
+- Pressed states are `active:` classes, never a `style` function on
+  `Pressable` (Uniwind doesn't apply those); no `var(--…)` in inline styles.
+- Native modules added with the shell (dev builds must be rebuilt):
+  `react-native-reanimated` + `react-native-worklets`,
+  `react-native-gesture-handler`, `react-native-keyboard-controller`,
+  `react-native-svg`, `expo-blur`, `expo-haptics`, `expo-image`,
+  `expo-system-ui`.
 
 ### Connection banner
 

@@ -4,19 +4,34 @@
  * ```text
  * loading     ─▶ splash
  * signed out  ─▶ (auth): sign-in, choose-organization, callback
- * signed in   ─▶ (app): Spaces · Devices · Settings tabs, space/[id], start
+ * signed in   ─▶ (app): the drawer around Home (new space), space/[id],
+ *                devices, settings
  * ```
+ *
+ * Around everything: gestures (the drawer), the keyboard controller (the
+ * composer rides on the keyboard), Uniwind's tokens (src/global.css; on
+ * Android 12+ Material You's, `applyThemeVars`) and its safe-area insets.
  *
  * A guard flipping (sign-in, sign-out, a session that ended) moves the
  * user to the other group; deep links into a guarded group land on its
  * anchor.
  */
+import '../src/global.css';
 import { Stack, type Href } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
+import * as SystemUI from 'expo-system-ui';
 import * as WebBrowser from 'expo-web-browser';
+import { useEffect } from 'react';
 import { ActivityIndicator, View } from 'react-native';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { KeyboardProvider } from 'react-native-keyboard-controller';
+import { SafeAreaListener } from 'react-native-safe-area-context';
+import { Uniwind } from 'uniwind';
+import { applyThemeVars } from '../src/components/theme-vars';
 import { AppProviders, useAuthState } from '../src/shell/AppProviders';
 import { usePalette } from '../src/ui/theme';
+
+applyThemeVars();
 
 // Web: this page may be the sign-in popup coming back on `/callback`; hand
 // the URL to the window that opened it (a no-op anywhere else).
@@ -25,6 +40,10 @@ WebBrowser.maybeCompleteAuthSession();
 function Gate() {
   const { status } = useAuthState();
   const p = usePalette();
+  // The window behind the screens (keyboard and drawer edges, rotation).
+  useEffect(() => {
+    void SystemUI.setBackgroundColorAsync(p.background).catch(() => {});
+  }, [p.background]);
   if (status === 'loading') {
     return (
       <View
@@ -61,9 +80,15 @@ function Gate() {
 
 export default function RootLayout() {
   return (
-    <AppProviders>
-      <StatusBar style="auto" />
-      <Gate />
-    </AppProviders>
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <SafeAreaListener onChange={({ insets }) => Uniwind.updateInsets(insets)}>
+        <KeyboardProvider>
+          <AppProviders>
+            <StatusBar style="auto" />
+            <Gate />
+          </AppProviders>
+        </KeyboardProvider>
+      </SafeAreaListener>
+    </GestureHandlerRootView>
   );
 }

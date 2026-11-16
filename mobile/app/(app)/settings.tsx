@@ -17,12 +17,12 @@
 import Constants from 'expo-constants';
 import { useEffect, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
-import type { Organization, Session } from '../../../src/auth/types';
-import { config } from '../../../src/config';
-import { useServices } from '../../../src/services';
-import { useFleetState } from '../../../src/state/fleet';
-import { Fingerprint } from '../../../src/ui/kit';
-import { errorText, roleLabel, switchErrorText } from '../../../src/ui/logic';
+import type { Organization, Session } from '../../src/auth/types';
+import { config } from '../../src/config';
+import { useServices } from '../../src/services';
+import { useFleetState } from '../../src/state/fleet';
+import { Fingerprint } from '../../src/ui/kit';
+import { errorText, roleLabel, switchErrorText } from '../../src/ui/logic';
 import {
   Button,
   Form,
@@ -31,13 +31,13 @@ import {
   Section,
   Switch,
   confirm,
-} from '../../../src/ui/native';
+} from '../../src/ui/native';
 import {
   getNotificationsEnabled,
   pushAvailable,
   setNotificationsEnabled,
-} from '../../../src/ui/pushAdapter';
-import { usePalette } from '../../../src/ui/theme';
+} from '../../src/ui/pushAdapter';
+import { usePalette } from '../../src/ui/theme';
 
 const STATUS = {
   off: 'Off',

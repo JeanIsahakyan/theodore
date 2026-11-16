@@ -13,16 +13,16 @@
  */
 import { useMemo } from 'react';
 import { View } from 'react-native';
-import type { FleetDeviceView } from '../../../src/fleet/types';
-import { useGlassHeaderInset } from '../../../src/shell/glassHeader';
-import { useFleetState } from '../../../src/state/fleet';
-import { ConnectionBanner } from '../../../src/ui/ConnectionBanner';
-import { DeviceItem, FingerprintItem } from '../../../src/ui/DeviceItem';
-import { deviceDetail } from '../../../src/ui/deviceView';
-import { sortDevices } from '../../../src/ui/logic';
-import { Button, Form, Row, Section } from '../../../src/ui/native';
-import { usePalette } from '../../../src/ui/theme';
-import { useTrust } from '../../../src/ui/TrustConfirm';
+import type { FleetDeviceView } from '../../src/fleet/types';
+import { useGlassHeaderInset } from '../../src/shell/glassHeader';
+import { useFleetState } from '../../src/state/fleet';
+import { ConnectionBanner } from '../../src/ui/ConnectionBanner';
+import { DeviceItem, FingerprintItem } from '../../src/ui/DeviceItem';
+import { deviceDetail } from '../../src/ui/deviceView';
+import { sortDevices } from '../../src/ui/logic';
+import { Button, Form, Row, Section } from '../../src/ui/native';
+import { usePalette } from '../../src/ui/theme';
+import { useTrust } from '../../src/ui/TrustConfirm';
 
 function DeviceSection({
   device,

@@ -4,11 +4,11 @@
  * on Android and on web the headers stay opaque and above the content.
  *
  * ```text
- *                 tabs' header                 pushed screens
+ *                 Home's header                pushed screens
  * iOS 26+         native, glass, transparent   native, glass, back "‹" (minimal)
  * iOS < 26        native, opaque               PushedHeader (TopBar)
- * Android         native, opaque               PushedHeader (Material top app bar)
- * web             JS tabs' header              PushedHeader (TopBar)
+ * Android         Material 3 top app bar       PushedHeader (Material top app bar)
+ * web             JS header                    PushedHeader (TopBar)
  * ```
  *
  * Under a glass header a screen starts at the top of the window:
@@ -25,8 +25,7 @@ export const glassHeader = liquidGlass;
 
 /**
  * Whether the header overlays this part of the screen: false below
- * something that already made room for it (the questions banner over the
- * tabs).
+ * something that already made room for it.
  */
 export const UnderGlassHeader = createContext(true);
 

@@ -1,5 +1,5 @@
 /**
- * The header of a screen pushed over the tabs (a space, Start a space):
+ * The header of a screen pushed over Home (a space, Devices, Settings):
  * the kit's `TopBar` with Back. iOS before 26 and web: "‹ Back" and the
  * title on one line (the back button never shrinks, a long title ends in
  * "…"; the native bar cut "Back" to "Bac"). Android: a Material 3 top app

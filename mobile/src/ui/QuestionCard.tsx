@@ -4,7 +4,7 @@
  * `fleet.answer(space, askId, answers)`. Same card as the desktop's, with
  * native controls: option chips (`OptionChip`), the "Other…" field
  * (`ChatField`) and Send answer (the kit's `Button`). `glass` (the banner
- * over the tabs): a Liquid Glass card on iOS 26+, tinted with the warning
+ * on Home): a Liquid Glass card on iOS 26+, tinted with the warning
  * color; the plain card elsewhere.
  */
 import { useState } from 'react';

@@ -54,7 +54,8 @@
             "backgroundColor": "#000000"
           }
         }
-      ]
+      ],
+      "expo-image"
     ],
     "scheme": "theodore-mobile",
     "experiments": {

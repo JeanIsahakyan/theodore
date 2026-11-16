@@ -316,7 +316,12 @@ export function createFleetClient(
 
   // ── publishing ──────────────────────────────────────────────────────────
   const publishSpaces = () =>
-    set({ spaces: [...tracked.values()].map((x) => ({ ...x.view })) });
+    set({
+      spaces: [...tracked.values()].map((x) => ({
+        ...x.view,
+        activeAt: x.mirror.space?.updated_at || x.seenAt,
+      })),
+    });
   const publishLines = (space: string) => {
     const x = tracked.get(space);
     if (x) set((s) => ({ lines: { ...s.lines, [space]: [...x.lines] } }));
