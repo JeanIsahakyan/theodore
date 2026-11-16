@@ -1,35 +1,79 @@
 import { describe, expect, it } from 'vitest';
 import { mockDevices } from '../src/dev/mock';
 import {
-  agentsLine,
-  deviceDetail,
+  deviceLine,
+  deviceSummary,
   fingerprintLabel,
+  fingerprintLines,
   groupDevices,
+  groupOnline,
   trustPrompt,
 } from '../src/ui/deviceView';
 
 const fp = '1a2b 3c4d 5e6f 7a8b 9c0d 1e2f 3a4b 5c6d';
 
 describe('Devices wording', () => {
-  it('describes a device: kind · OS · online · max mode', () => {
+  it('describes a device: OS · max mode · agents', () => {
+    const agents = [{ label: 'Claude' }, { label: 'Codex' }];
     expect(
-      deviceDetail({
-        kind: 'desktop',
-        os: 'macos',
-        online: true,
-        acceptsRemote: true,
-        maxMode: 'edit',
-      }),
-    ).toBe('Computer · macOS · online · runs spaces up to Edit');
+      deviceLine({ os: 'macos', acceptsRemote: true, maxMode: 'edit', agents }),
+    ).toBe('macOS · up to Edit · Claude, Codex');
+    // Takes no spaces: no mode; an older host: no agents.
     expect(
-      deviceDetail({
-        kind: 'desktop',
+      deviceLine({
         os: 'linux',
-        online: false,
         acceptsRemote: false,
         maxMode: 'run',
+        agents: [],
       }),
-    ).toBe('Computer · Linux · offline');
+    ).toBe('Linux');
+    expect(
+      deviceLine({
+        os: 'beos',
+        acceptsRemote: true,
+        maxMode: 'ask',
+        agents: [],
+      }),
+    ).toBe('other OS · up to Ask');
+  });
+
+  it('says a card for a screen reader: name, kind, online, trust', () => {
+    expect(
+      deviceSummary({
+        name: 'Studio',
+        kind: 'desktop',
+        online: true,
+        trusted: false,
+      }),
+    ).toBe('Studio, Computer, online, not trusted');
+    expect(
+      deviceSummary({
+        name: 'Box',
+        kind: 'daemon',
+        online: false,
+        trusted: true,
+      }),
+    ).toBe('Box, Server, offline, trusted');
+  });
+
+  it('shows a fingerprint large as two lines of four groups', () => {
+    expect(fingerprintLines(fp)).toEqual([
+      '1a2b 3c4d 5e6f 7a8b',
+      '9c0d 1e2f 3a4b 5c6d',
+    ]);
+    expect(fingerprintLines('1a2b 3c4d')).toEqual(['1a2b 3c4d']);
+    expect(fingerprintLines('')).toEqual([]);
+  });
+
+  it('counts who is online in a group', () => {
+    const on = { online: true };
+    const off = { online: false };
+    expect(groupOnline([on, off, on])).toBe('2 of 3 online');
+    expect(groupOnline([on, on])).toBe('all online');
+    expect(groupOnline([on])).toBe('online');
+    expect(groupOnline([off, off])).toBe('all offline');
+    expect(groupOnline([off])).toBe('offline');
+    expect(groupOnline([])).toBe('');
   });
 
   it('reads a fingerprint group by group', () => {
@@ -45,13 +89,6 @@ describe('Devices wording', () => {
     );
     expect(prompt.confirmLabel).toBe('Trust Studio');
     expect(prompt.destructive).toBeUndefined();
-  });
-
-  it('lists the agents a computer offers', () => {
-    expect(agentsLine([{ label: 'Claude' }, { label: 'Codex' }])).toBe(
-      'Claude · Codex',
-    );
-    expect(agentsLine([])).toBe('');
   });
 
   it('groups devices: computers first, online first, then by name', () => {

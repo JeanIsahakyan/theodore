@@ -1,7 +1,8 @@
 /**
  * Android: Material 3 buttons. primary, glassProminent ─▶ `Button`
  * (filled), secondary, glass ─▶ `FilledTonalButton`, plain ─▶ `TextButton`,
- * destructive ─▶ filled in the danger color. In a `Form` section's card:
+ * destructive ─▶ `OutlinedButton` in the danger color (quieter than the
+ * filled action next to it: Untrust). In a `Form` section's card:
  * a clickable `ListItem` (accent, or danger); in a `plain` section, the
  * button itself (Sign out: filled, error color, across the screen).
  */
@@ -10,6 +11,7 @@ import {
   CircularProgressIndicator,
   FilledTonalButton,
   ListItem,
+  OutlinedButton,
   Row,
   Text,
   TextButton,
@@ -81,11 +83,11 @@ export function Button({
       ? FilledTonalButton
       : variant === 'plain'
         ? TextButton
-        : FilledButton;
+        : variant === 'destructive'
+          ? OutlinedButton
+          : FilledButton;
   const colors =
-    variant === 'destructive'
-      ? { containerColor: p.danger, contentColor: p.onAccent }
-      : undefined;
+    variant === 'destructive' ? { contentColor: p.danger } : undefined;
   return (
     <ControlHost style={style} width={fullWidth ? 'fill' : 'content'}>
       <Component

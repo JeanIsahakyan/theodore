@@ -55,20 +55,21 @@ export function Button({
     );
   }
 
+  // Destructive is the quieter action (Untrust): outlined, red text.
   const bg =
     look === 'primary'
       ? p.accent
+      : look === 'secondary'
+        ? p.surfaceMuted
+        : 'transparent';
+  const fg =
+    look === 'primary'
+      ? p.onAccent
       : danger
         ? p.danger
-        : look === 'secondary'
-          ? p.surfaceMuted
-          : 'transparent';
-  const fg =
-    look === 'primary' || danger
-      ? p.onAccent
-      : look === 'plain'
-        ? p.accent
-        : p.text;
+        : look === 'plain'
+          ? p.accent
+          : p.text;
   return (
     <Pressable
       accessibilityRole="button"
@@ -82,6 +83,7 @@ export function Button({
         pill ? styles.pill : null,
         fullWidth ? styles.full : null,
         { backgroundColor: bg, opacity: off ? 0.45 : pressed ? 0.75 : 1 },
+        danger ? { borderWidth: 1, borderColor: p.border } : null,
         style,
       ]}
     >

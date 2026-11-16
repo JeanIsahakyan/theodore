@@ -17,12 +17,19 @@ describe('signed-in routes', () => {
       'devices.tsx',
       'index.tsx',
       'model-picker.tsx',
-      'settings.tsx',
+      'settings/',
       'space/',
       'start.tsx',
       'where-picker.tsx',
     ]);
     expect(readdirSync(join(app, 'space'))).toEqual(['[id].tsx']);
+    // Settings at /settings, its drill-down pages under it.
+    expect(readdirSync(join(app, 'settings')).sort()).toEqual([
+      'about.tsx',
+      'device.tsx',
+      'index.tsx',
+      'organization.tsx',
+    ]);
   });
 
   it('anchors the stack on Home and wraps it in the drawer', () => {
@@ -33,7 +40,10 @@ describe('signed-in routes', () => {
       'index',
       'space/[id]',
       'devices',
-      'settings',
+      'settings/index',
+      'settings/organization',
+      'settings/device',
+      'settings/about',
       'start',
       'model-picker',
       'where-picker',

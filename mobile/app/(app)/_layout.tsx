@@ -1,13 +1,15 @@
 /**
  * The signed-in shell: the drawer (web: the sidebar) around a stack with
  * Home (`/`, a new space) at its root. Groups don't change URLs: `/`,
- * `/space/<id>`, `/devices`, `/settings`; `/start` redirects to `/`.
+ * `/space/<id>`, `/devices`, `/settings` (its pages `/settings/organization`,
+ * `/settings/device`, `/settings/about`); `/start` redirects to `/`.
  *
  * ```text
  * drawer ─ spaces by day, search, Devices, account / Settings
  *    │ pick
  *    ▼
  * Home ── push ─▶ space/[id] | devices | settings ── back ─▶ Home
+ *                                          └─ push ─▶ settings/organization | device | about
  *      └─ Send ─▶ push space/[id]
  * notification / deep link ─▶ space/[id] over Home (the anchor)
  * composer chip (iOS) ─▶ model-picker | where-picker as a formSheet
@@ -108,7 +110,16 @@ export default function AppLayout() {
           <Stack.Screen name="index" options={home} />
           <Stack.Screen name="space/[id]" options={pushed('Space')} />
           <Stack.Screen name="devices" options={pushed('Devices')} />
-          <Stack.Screen name="settings" options={pushed('Settings')} />
+          <Stack.Screen name="settings/index" options={pushed('Settings')} />
+          <Stack.Screen
+            name="settings/organization"
+            options={pushed('Organization')}
+          />
+          <Stack.Screen
+            name="settings/device"
+            options={pushed('This device')}
+          />
+          <Stack.Screen name="settings/about" options={pushed('About')} />
           <Stack.Screen name="start" options={{ headerShown: false }} />
           <Stack.Screen name="model-picker" options={sheet('Model')} />
           <Stack.Screen name="where-picker" options={sheet('Runs on')} />
