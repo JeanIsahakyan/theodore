@@ -1,57 +1,50 @@
 /**
- * Trusting a device (docs/fleet.md "Trust"): its fingerprint in full, to
- * compare with what that device shows for itself, then the button that pins
- * it. The key sent is the one this fingerprint is of.
+ * Trusting a device (docs/fleet.md "Trust"): the system confirm shows its
+ * fingerprint in full, to compare with what that device shows for itself,
+ * and "Trust <name>" pins it. The key sent is the one this fingerprint is of.
+ *
+ * ```text
+ * Trust ─▶ confirm (UIAlertController / Material AlertDialog / window.confirm)
+ *            ├─ Cancel          ─▶ nothing
+ *            └─ Trust <name>    ─▶ fleet.trust ─▶ Trusted   (error ─▶ `error`)
+ * Untrust ─▶ fleet.untrust (no confirm: trusting again is one step)
+ * ```
  */
 import { useState } from 'react';
-import { Text } from 'react-native';
 import { useServices } from '../services';
 import type { FleetDeviceView } from '../fleet/types';
-import { Confirm, Fingerprint, Notice } from './kit';
+import { trustPrompt } from './deviceView';
 import { errorText } from './logic';
-import { usePalette } from './theme';
+import { confirm } from './native';
 
-export function TrustConfirm({
-  device,
-  onCancel,
-  onTrusted,
-}: {
+export function useTrust(
   device: Pick<
     FleetDeviceView,
     'deviceId' | 'name' | 'fingerprint' | 'publicKey'
-  >;
-  onCancel: () => void;
-  onTrusted?: () => void;
-}) {
+  >,
+) {
   const { fleet } = useServices();
-  const p = usePalette();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const trust = () => {
+  const run = (action: () => Promise<unknown>) => {
     setBusy(true);
     setError(null);
-    fleet
-      .trust(device.deviceId, device.publicKey)
-      .then(() => onTrusted?.())
+    action()
       .catch((e: unknown) => setError(errorText(e)))
       .finally(() => setBusy(false));
   };
 
-  return (
-    <Confirm
-      title={`Make sure ${device.name} shows the same fingerprint:`}
-      confirmLabel={`Trust ${device.name}`}
-      busy={busy}
-      onConfirm={trust}
-      onCancel={onCancel}
-    >
-      <Fingerprint value={device.fingerprint} />
-      <Text style={{ color: p.muted, fontSize: 13 }}>
-        A trusted device can start and steer spaces, within the highest mode it
-        is allowed.
-      </Text>
-      {error ? <Notice tone="danger">{error}</Notice> : null}
-    </Confirm>
-  );
+  const trust = async () => {
+    if (busy) return;
+    if (!(await confirm(trustPrompt(device)))) return;
+    run(() => fleet.trust(device.deviceId, device.publicKey));
+  };
+
+  const untrust = () => {
+    if (busy) return;
+    run(() => fleet.untrust(device.deviceId));
+  };
+
+  return { trust, untrust, busy, error };
 }
