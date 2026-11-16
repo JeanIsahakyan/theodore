@@ -373,6 +373,59 @@ describe('connect', () => {
     await waitFor(() => hub.sockets.length === 2, 'redial on foreground');
   });
 
+  it('replaced by another tab (4000): holds off, says so, takes it back in front', async () => {
+    const { hub, client, account } = setup();
+    await client.start();
+    const s = await handshake(hub);
+    await waitFor(() => state().connection === 'connected', 'connected');
+    s.drop(4000, 'replaced by a newer connection');
+    expect(state().connection).toBe('error');
+    expect(state().error).toContain('another tab or window');
+    // No redial loop: not after the backoff, not on a token refresh.
+    await sleep(60);
+    account.emit(session('tok-2'));
+    await sleep(20);
+    expect(hub.sockets).toHaveLength(1);
+
+    hub.setActive(false);
+    hub.setActive(true);
+    await handshake(hub, [], 2);
+    await waitFor(() => state().connection === 'connected', 'back');
+    expect(hub.sockets).toHaveLength(2);
+  });
+
+  it('replaced (4000), start() dials again', async () => {
+    const { hub, client } = setup();
+    await client.start();
+    const s = await handshake(hub);
+    s.drop(4000);
+    await sleep(30);
+    expect(hub.sockets).toHaveLength(1);
+    await client.start();
+    expect(hub.sockets).toHaveLength(2);
+  });
+
+  it('two clients in one JS context: the replaced one goes quiet for good', async () => {
+    const a = setup();
+    await a.client.start();
+    const sa = await handshake(a.hub);
+    // A second client (a dev reload) on the same device and org.
+    const b = setup();
+    await b.client.start();
+    await handshake(b.hub);
+    await waitFor(() => state().connection === 'connected', 'b connected');
+    sa.drop(4000, 'replaced by a newer connection');
+    await sleep(60);
+    expect(a.hub.sockets).toHaveLength(1);
+    // The store is the live one's: nothing written over it.
+    expect(state().connection).toBe('connected');
+    expect(state().error).toBeNull();
+    a.hub.setActive(true);
+    await a.client.start();
+    await sleep(20);
+    expect(a.hub.sockets).toHaveLength(1);
+  });
+
   it('pings on native sockets', async () => {
     let pings = 0;
     const hub = fakePlatform();
