@@ -67,12 +67,15 @@ jobs:
   # Ubuntu, and their apt packages.
   rust-test-linux:
     runs-on: ubuntu-22.04
-    # Fails with its logs instead of losing the runner (twice it ran ~50 min
-    # and died with no log, a full disk).
+    # Fails with its logs instead of losing the runner: three times it ran
+    # ~50 min and died with no log, even `if: always()` steps skipped (the
+    # runner out of memory linking many test binaries at once).
     timeout-minutes: 75
-    # Debug info off: the workspace's test binaries with full debug info
-    # outgrow a hosted runner's disk.
+    # Two jobs at a time, no incremental state and no debug info keep
+    # rustc and the linker inside the hosted runner's memory and disk.
     env:
+      CARGO_BUILD_JOBS: 2
+      CARGO_INCREMENTAL: 0
       CARGO_PROFILE_DEV_DEBUG: 0
       CARGO_PROFILE_TEST_DEBUG: 0
     steps:
@@ -105,7 +108,8 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/staging' }}
 
       - name: test
-        run: cargo test --workspace
+        # The desktop crate (WebKitGTK) is built on Linux by `ui-e2e`.
+        run: cargo test --workspace --exclude theodore-desktop
 
       - name: disk left
         if: always()
