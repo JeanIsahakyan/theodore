@@ -512,6 +512,8 @@ fn kind(msg: &ClientMessage) -> &'static str {
         ClientMessage::Subscribe { .. } => "subscribe",
         ClientMessage::Unsubscribe { .. } => "unsubscribe",
         ClientMessage::RemoveDevice { .. } => "remove_device",
+        ClientMessage::RegisterPush { .. } => "register_push",
+        ClientMessage::Delegate { .. } => "delegate",
     }
 }
 
@@ -529,5 +531,6 @@ fn server_kind(msg: &ServerMessage) -> &'static str {
         ServerMessage::Ask { .. } => "ask",
         ServerMessage::Dismiss { .. } => "dismiss",
         ServerMessage::Error { .. } => "error",
+        ServerMessage::Delegations { .. } => "delegations",
     }
 }

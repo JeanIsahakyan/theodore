@@ -5,7 +5,8 @@
  *
  * ```text
  * Worker (verified JWT) ─▶ fetch + x-theodore-fleet-caller ─▶ acceptWebSocket(tag u:<user>)
- * webSocketMessage / webSocketClose / alarm ─▶ Hub
+ *                        └─ POST /v1/fleet/request ─▶ Hub.requestOverHttp ─▶ 202 │ 200 refused
+ * webSocketMessage / webSocketClose / alarm ─▶ Hub ─▶ pushes (Expo) via ctx.waitUntil
  * ```
  *
  * Not reachable from the internet: only the Worker holds the binding, and it
@@ -18,12 +19,21 @@
  */
 import { verifierFor } from '../auth';
 import { Hub, type Conn, type ConnState, type FleetCaller } from './hub';
+import { expoSender } from './push';
+import {
+  answerRequest,
+  BEARER_PROTOCOL,
+  CALLER_HEADER,
+  REQUEST_PATH,
+} from './route';
 
-export const CALLER_HEADER = 'x-theodore-fleet-caller';
+export { CALLER_HEADER };
 
 export interface OrgHubEnv {
   WORKOS_CLIENT_ID: string;
   WORKOS_API_BASE?: string;
+  /** Expo's access token, if the project has "enhanced push security" on. */
+  EXPO_ACCESS_TOKEN?: string;
 }
 
 const userTag = (userId: string) => `u:${userId}`;
@@ -87,12 +97,23 @@ export class OrgHub implements DurableObject {
           .map(wrap),
       verify,
       schedule: (at) => this.schedule(at),
+      push: expoSender(
+        (input, init) => fetch(input, init),
+        env.EXPO_ACCESS_TOKEN,
+      ),
+      defer: (work) => ctx.waitUntil(work),
     });
   }
 
   async fetch(request: Request): Promise<Response> {
     const caller = readCaller(request.headers.get(CALLER_HEADER));
     if (!caller) return new Response('no caller', { status: 400 });
+    if (
+      request.method === 'POST' &&
+      new URL(request.url).pathname === REQUEST_PATH
+    ) {
+      return answerRequest(this.hub, caller, request);
+    }
     if (request.headers.get('upgrade')?.toLowerCase() !== 'websocket') {
       return new Response('expected a WebSocket upgrade', { status: 426 });
     }
@@ -101,7 +122,17 @@ export class OrgHub implements DurableObject {
     const server = pair[1];
     this.ctx.acceptWebSocket(server, [userTag(caller.userId)]);
     await this.hub.open(wrap(server), caller);
-    return new Response(null, { status: 101, webSocket: client });
+    // A browser's token came as a subprotocol: the 101 must pick one it
+    // offered (the Worker left just that one in the header).
+    const echo = request.headers.get('sec-websocket-protocol');
+    const picks =
+      echo !== null &&
+      (echo === BEARER_PROTOCOL || echo.startsWith(`${BEARER_PROTOCOL}.`));
+    return new Response(null, {
+      status: 101,
+      webSocket: client,
+      headers: picks ? { 'sec-websocket-protocol': echo } : undefined,
+    });
   }
 
   async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer) {

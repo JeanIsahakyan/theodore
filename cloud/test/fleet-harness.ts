@@ -21,6 +21,7 @@ import {
 } from '../src/fleet/hub';
 import { CloudError } from '../src/errors';
 import { PROTOCOL_VERSION } from '../src/fleet/limits';
+import type { PushMessage, PushResult } from '../src/fleet/push';
 import { b64, signedBytes, unb64, type Domain } from '../src/fleet/wire';
 
 export const T0 = 1_800_000_000_000;
@@ -67,6 +68,7 @@ export const info = (name = 'mac', over: Partial<DeviceInfo> = {}) =>
     projects: [{ id: 'p1', name: 'theodore' }],
     accepts_remote: true,
     max_mode: 'edit',
+    agents: [],
     ...over,
   }) satisfies DeviceInfo;
 
@@ -150,6 +152,11 @@ export class Device {
     return { conn, nonce: challenge.nonce };
   }
 
+  /** What it says about itself in hello (on top of `info(name)`). */
+  infoOver: Partial<DeviceInfo> = {};
+  /** The protocol its hello speaks. */
+  protocol = PROTOCOL_VERSION;
+
   /** Full connect: challenge, signed hello, welcome. */
   async connect(
     o: {
@@ -161,11 +168,11 @@ export class Device {
     const { nonce } = await this.open({ expMs: o.expMs });
     await this.send({
       type: 'hello',
-      protocol: PROTOCOL_VERSION,
+      protocol: this.protocol,
       device_id: o.deviceId === undefined ? (this.id ?? null) : o.deviceId,
       public_key: this.publicKey,
       signature: await this.signHello(nonce),
-      info: info(this.name),
+      info: info(this.name, this.infoOver),
       spaces: o.spaces ?? [],
     });
     const welcome = this.take('welcome')[0];
@@ -281,12 +288,25 @@ export class Harness {
   jwksDown = false;
   hub: Hub;
   scheduled: (number | null)[] = [];
+  /** Pushes handed to Expo, in order. */
+  pushes: PushMessage[] = [];
+  /** What Expo says for each push. */
+  pushResult: (m: PushMessage) => PushResult = () => 'ok';
+  /** Work the hub handed to `waitUntil`. */
+  deferred: Promise<unknown>[] = [];
 
   readonly db: DatabaseSync;
 
   constructor(db = new DatabaseSync(':memory:')) {
     this.db = db;
     this.hub = new Hub({
+      push: async (msgs) => {
+        this.pushes.push(...msgs);
+        return msgs.map((m) => this.pushResult(m));
+      },
+      defer: (work) => {
+        this.deferred.push(work);
+      },
       sql: { exec: (q, ...b) => db.prepare(q).all(...b) },
       now: () => this.now,
       conns: (user) =>
@@ -313,6 +333,30 @@ export class Harness {
 
   async device(user = 'user_1', name = 'mac') {
     return new Device(this, user, name).init();
+  }
+
+  /** The phone app: protocol 4, kind `mobile`, runs nothing. */
+  async phone(user = 'user_1', name = 'iPhone') {
+    const d = await this.device(user, name);
+    d.infoOver = {
+      kind: 'mobile',
+      projects: [],
+      accepts_remote: false,
+      max_mode: 'ask',
+    };
+    return d;
+  }
+
+  /** Waits for background work (pushes and what follows them). */
+  async settle() {
+    while (this.deferred.length) await this.deferred.shift();
+  }
+
+  /** Takes the pushes sent so far. */
+  takePushes(): PushMessage[] {
+    const out = this.pushes;
+    this.pushes = [];
+    return out;
   }
 
   /** A device's pinned key, or a placeholder for one the cloud doesn't know. */

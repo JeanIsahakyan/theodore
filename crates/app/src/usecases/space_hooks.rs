@@ -415,7 +415,7 @@ impl Core {
             self.patch_space(&space.id, serde_json::json!({ "commands_denied": false }))
                 .await?;
             // Every space of the project waiting on this answer goes on.
-            for s in self.list_spaces(Some(project.id.clone())).await? {
+            for s in self.local_spaces(Some(project.id.clone())).await? {
                 let answered = s.id == space.id
                     || (!s.commands_denied
                         && self

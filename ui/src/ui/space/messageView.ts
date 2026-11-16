@@ -6,6 +6,7 @@ import {
   actionablePlan,
   plansByReply,
   undoState,
+  remoteOf,
   undoneMessages,
 } from './spaces';
 
@@ -30,14 +31,17 @@ export function messageView(
   const agent = m.author.kind === 'agent';
   const undone = undoneMessages(space).has(m.id);
   const undo = undoState(space);
-  const undoHere = undo.turn?.reply === m.id && space.status !== 'archived';
+  // A remote space's checkpoints are the host's: no Undo or Back to here.
+  const local = remoteOf(space) == null;
+  const undoHere =
+    local && undo.turn?.reply === m.id && space.status !== 'archived';
   return {
     undone,
     undoHere,
     undoReason: undoHere && !undo.ok ? undo.reason : null,
     plan: agent && !undone && plansByReply(space.turn_log).has(m.id),
     planHere: agent && actionablePlan(space) === m.id,
-    back: agent && !undone && !undoHere,
+    back: local && agent && !undone && !undoHere,
     check: agent ? (checksByReply(space.turn_log).get(m.id) ?? null) : null,
   };
 }

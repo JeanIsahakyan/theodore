@@ -4,7 +4,7 @@
 //! `theodore-fleet-protocol`; these are the UI's.
 //!
 //! Commands: `fleet_status`, `fleet_set_settings`, `fleet_trust_device`,
-//! `fleet_remove_device`, `fleet_start_space`, `fleet_send`, `fleet_stop`, `fleet_answer`,
+//! `fleet_remove_device`, `fleet_delegate`, `fleet_start_space`, `fleet_send`, `fleet_stop`, `fleet_answer`,
 //! `fleet_spaces`, `fleet_space_lines`, `fleet_presence`.
 //! Ephemerals: `fleet_status`, `fleet_space`, `fleet_space_line`,
 //! `fleet_ask`, `fleet_ask_dismissed`, `fleet_trust_needed`.
@@ -12,7 +12,9 @@
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
-use crate::SpaceMode;
+use theodore_domain::AgentId;
+
+use crate::{AgentModel, SpaceMode};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
 pub struct FleetProject {
@@ -25,6 +27,10 @@ pub struct FleetProject {
 pub enum FleetOs {
     Macos,
     Linux,
+    Windows,
+    Ios,
+    Android,
+    Other,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
@@ -32,7 +38,8 @@ pub struct FleetDevice {
     pub device_id: String,
     pub name: String,
     pub os: FleetOs,
-    /// `desktop` or `daemon`.
+    /// `desktop` or `daemon` (computers: they run spaces), `mobile` or `web`
+    /// (the phone and web app: clients only, never a space's target).
     pub kind: String,
     pub online: bool,
     /// Unix ms; 0 if never.
@@ -51,6 +58,29 @@ pub struct FleetDevice {
     /// This device trusts it (its key is pinned here).
     pub trusted: bool,
     pub this_device: bool,
+    /// This device sends its spaces' questions there (docs/mobile.md
+    /// "Following a computer's spaces"): asked for here, and still trusted.
+    pub delegated: bool,
+    /// The cloud holds that delegation, as this device signed it.
+    pub delegation_live: bool,
+    /// Agents a space started or steered there may pick, as it lists them
+    /// (installed and enabled there, its default first). Empty: a host too
+    /// old to list them, or not taking remote spaces; then nothing is
+    /// picked and its own defaults run.
+    #[serde(default)]
+    pub agents: Vec<FleetAgent>,
+}
+
+/// An agent another device runs, with its models (`description` none,
+/// `older` false: the host lists current models first).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+pub struct FleetAgent {
+    pub id: AgentId,
+    pub label: String,
+    /// What runs there when none is picked.
+    pub default_model: Option<String>,
+    pub default_effort: Option<String>,
+    pub models: Vec<AgentModel>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
@@ -107,6 +137,13 @@ pub struct FleetStartRequest {
     pub project_id: String,
     pub goal: String,
     pub mode: SpaceMode,
+    /// One the host lists (`FleetDevice::agents`); `None`: its default.
+    #[serde(default)]
+    pub agent: Option<AgentId>,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub effort: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
@@ -115,6 +152,13 @@ pub struct FleetSendRequest {
     pub text: String,
     #[serde(default)]
     pub mode: Option<SpaceMode>,
+    /// From this turn on, as a local send; `None` keeps the space's.
+    #[serde(default)]
+    pub agent: Option<AgentId>,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub effort: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]

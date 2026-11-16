@@ -28,7 +28,10 @@ pub use keys::{DeviceKey, KeyError, fingerprint, verify};
 
 /// Protocol version sent in `hello`; the cloud refuses others with
 /// `fleet.version`.
-pub const PROTOCOL_VERSION: u32 = 3;
+pub const PROTOCOL_VERSION: u32 = 4;
+/// The oldest protocol the cloud still accepts (it hides `mobile` / `web`
+/// devices from those connections, whose `DeviceKind` can't read them).
+pub const MIN_PROTOCOL_VERSION: u32 = 3;
 /// A signed request older or newer than this is refused (`fleet.stale_request`).
 pub const REQUEST_WINDOW_MS: u64 = 5 * 60 * 1000;
 /// How long a target remembers `req_id`s to refuse replays.
@@ -53,11 +56,30 @@ pub type DeviceId = String;
 /// its local space id.
 pub type RemoteSpaceId = String;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Type)]
 #[serde(rename_all = "snake_case")]
 pub enum DeviceOs {
     Macos,
     Linux,
+    Windows,
+    Ios,
+    Android,
+    /// An OS this build doesn't know (a newer client's): shown as such,
+    /// never a reason to drop the device list (see `Deserialize`).
+    Other,
+}
+
+impl<'de> Deserialize<'de> for DeviceOs {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        Ok(match String::deserialize(d)?.as_str() {
+            "macos" => DeviceOs::Macos,
+            "linux" => DeviceOs::Linux,
+            "windows" => DeviceOs::Windows,
+            "ios" => DeviceOs::Ios,
+            "android" => DeviceOs::Android,
+            _ => DeviceOs::Other,
+        })
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
@@ -67,6 +89,17 @@ pub enum DeviceKind {
     Desktop,
     /// `theodore daemon`: runs spaces, nobody sits there.
     Daemon,
+    /// The phone app (docs/mobile.md): a client only, never a target.
+    Mobile,
+    /// The web app: a client only, never a target.
+    Web,
+}
+
+impl DeviceKind {
+    /// Whether requests may be addressed to it.
+    pub fn hosts(self) -> bool {
+        matches!(self, DeviceKind::Desktop | DeviceKind::Daemon)
+    }
 }
 
 /// A space mode as the fleet speaks it; ordered from least to most power,
@@ -103,6 +136,121 @@ pub struct DeviceInfo {
     pub projects: Vec<ProjectRef>,
     pub accepts_remote: bool,
     pub max_mode: FleetMode,
+    /// Agents a remote start or send may pick: installed and enabled here,
+    /// the default (`agents.chat`) first. Empty unless `accepts_remote`,
+    /// and from a host older than this field (then a request naming an
+    /// agent, model or effort is ignored there, so the origin offers none).
+    /// Kept within [`MAX_INFO_BYTES`] by [`DeviceInfo::fit_agents`].
+    #[serde(default)]
+    pub agents: Vec<FleetAgentInfo>,
+}
+
+/// One agent a host runs for remote spaces (docs/fleet.md "Agent, model
+/// and effort").
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct FleetAgentInfo {
+    /// `claude`, `codex`, `gemini`.
+    pub id: String,
+    pub label: String,
+    /// What runs when a request names no model (`agents.<id>.model`, else
+    /// the first current model); `None`: the CLI's own.
+    #[serde(default)]
+    pub default_model: Option<String>,
+    /// What runs when a request names no effort (`agents.<id>.effort` when
+    /// the default model takes it, else that model's own).
+    #[serde(default)]
+    pub default_effort: Option<String>,
+    /// Current models first, earlier versions after (dropped first when
+    /// the info runs over its size).
+    #[serde(default)]
+    pub models: Vec<FleetModelInfo>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct FleetModelInfo {
+    /// What the CLI's model flag takes; what a request's `model` names.
+    pub id: String,
+    pub label: String,
+    /// Levels a request's `effort` may name with this model; empty: none.
+    #[serde(default)]
+    pub efforts: Vec<String>,
+    #[serde(default)]
+    pub default_effort: Option<String>,
+}
+
+/// The largest `DeviceInfo` (its JSON) the cloud takes.
+pub const MAX_INFO_BYTES: usize = 8 * 1024;
+/// Agents a device lists at most.
+pub const MAX_AGENTS: usize = 4;
+/// Models listed per agent at most.
+pub const MAX_AGENT_MODELS: usize = 12;
+/// Effort levels listed per model at most.
+pub const MAX_MODEL_EFFORTS: usize = 8;
+/// An agent id, at most.
+pub const MAX_AGENT_ID_CHARS: usize = 32;
+/// A model id, at most (a longer one isn't listed: it can't be cut).
+pub const MAX_MODEL_ID_CHARS: usize = 64;
+/// An agent's or model's label, at most (cut).
+pub const MAX_AGENT_LABEL_CHARS: usize = 64;
+/// An effort level, at most (a longer one isn't listed).
+pub const MAX_EFFORT_CHARS: usize = 16;
+
+fn cut(s: &str, max: usize) -> String {
+    s.chars().take(max).collect()
+}
+
+fn fits(s: &str, max: usize) -> bool {
+    !s.is_empty() && s.chars().count() <= max
+}
+
+impl DeviceInfo {
+    /// Keeps `agents` within the caps above and the whole info within
+    /// [`MAX_INFO_BYTES`]: overlong ids and levels are dropped, labels cut,
+    /// then the last model of the agent listing the most goes (earlier
+    /// versions sit last), then the last agent, until it fits.
+    pub fn fit_agents(&mut self) {
+        let effort_ok = |e: &Option<String>| e.as_deref().is_none_or(|e| fits(e, MAX_EFFORT_CHARS));
+        self.agents.retain(|a| fits(&a.id, MAX_AGENT_ID_CHARS));
+        self.agents.truncate(MAX_AGENTS);
+        for a in &mut self.agents {
+            a.label = cut(&a.label, MAX_AGENT_LABEL_CHARS);
+            if a.default_model
+                .as_deref()
+                .is_some_and(|m| !fits(m, MAX_MODEL_ID_CHARS))
+            {
+                a.default_model = None;
+            }
+            if !effort_ok(&a.default_effort) {
+                a.default_effort = None;
+            }
+            a.models.retain(|m| fits(&m.id, MAX_MODEL_ID_CHARS));
+            a.models.truncate(MAX_AGENT_MODELS);
+            for m in &mut a.models {
+                m.label = cut(&m.label, MAX_AGENT_LABEL_CHARS);
+                m.efforts.retain(|e| fits(e, MAX_EFFORT_CHARS));
+                m.efforts.truncate(MAX_MODEL_EFFORTS);
+                if !effort_ok(&m.default_effort) {
+                    m.default_effort = None;
+                }
+            }
+        }
+        let size = |i: &DeviceInfo| serde_json::to_string(i).map_or(usize::MAX, |t| t.len());
+        while !self.agents.is_empty() && size(self) > MAX_INFO_BYTES {
+            let most = self
+                .agents
+                .iter_mut()
+                .filter(|a| !a.models.is_empty())
+                .max_by_key(|a| a.models.len());
+            match most {
+                Some(a) => {
+                    a.models.pop();
+                }
+                None => {
+                    self.agents.pop();
+                }
+            }
+        }
+    }
 }
 
 /// A device as the cloud lists it to the user's other devices.
@@ -167,6 +315,10 @@ pub enum RemoteOp {
         agent: Option<String>,
         #[serde(default)]
         model: Option<String>,
+        /// One of the model's efforts (the host's default model's when no
+        /// model is named); `None`: the host's default.
+        #[serde(default)]
+        effort: Option<String>,
         /// The remote space whose agent asked for this one, if any.
         #[serde(default)]
         parent: Option<RemoteSpaceId>,
@@ -178,6 +330,15 @@ pub enum RemoteOp {
         text: String,
         #[serde(default)]
         mode: Option<FleetMode>,
+        /// From this turn on, as a local send's: the space's agent, model
+        /// and effort, each checked against what the host lists
+        /// (`DeviceInfo::agents`). `None` keeps the space's.
+        #[serde(default)]
+        agent: Option<String>,
+        #[serde(default)]
+        model: Option<String>,
+        #[serde(default)]
+        effort: Option<String>,
     },
     Stop {
         space: RemoteSpaceId,
@@ -228,6 +389,8 @@ pub enum Domain {
     Ask,
     /// A [`ReplyBody`] from a request's target.
     Reply,
+    /// A [`Delegation`] from the origin device.
+    Delegate,
 }
 
 impl Domain {
@@ -238,6 +401,7 @@ impl Domain {
             Domain::Event => b"theodore-fleet-event-v3\0",
             Domain::Ask => b"theodore-fleet-ask-v3\0",
             Domain::Reply => b"theodore-fleet-reply-v3\0",
+            Domain::Delegate => b"theodore-fleet-delegate-v3\0",
         }
     }
 
@@ -278,6 +442,12 @@ impl Signer for RemoteRequest {
 impl Signer for SpaceEventBody {
     fn signer(&self) -> &str {
         &self.host_device
+    }
+}
+
+impl Signer for Delegation {
+    fn signer(&self) -> &str {
+        &self.origin_device
     }
 }
 
@@ -368,6 +538,30 @@ pub enum ReplyOutcome {
     },
 }
 
+/// An origin lets another of its user's devices follow the spaces it
+/// started: subscribe to them and get their questions (docs/mobile.md
+/// "Following a computer's spaces"). Signed by the origin
+/// ([`Domain::Delegate`]); it grants no power on hosts, whose own trust still
+/// decides what the delegate's requests may do.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct Delegation {
+    pub origin_device: DeviceId,
+    pub delegate_device: DeviceId,
+    pub issued_at_ms: u64,
+    /// Unix ms; the cloud drops it after. 0: no expiry.
+    pub expires_at_ms: u64,
+    /// `true` withdraws an earlier delegation to the same device.
+    pub revoke: bool,
+}
+
+/// Push providers the cloud can send through.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum PushProvider {
+    /// Expo Push (APNs / FCM behind it).
+    Expo,
+}
+
 /// A target's answer to a request, signed by the target
 /// ([`Domain::Reply`]). Only a verified one may change what the origin shows
 /// or tells an agent.
@@ -401,6 +595,9 @@ pub mod codes {
     /// The request doesn't fit what it acts on (answers that don't answer
     /// the question set, an empty message).
     pub const INVALID: &str = "fleet.invalid";
+    /// The agent, model or effort asked for isn't one the target lists
+    /// (`DeviceInfo::agents`): not installed, turned off, or unknown.
+    pub const AGENT_UNAVAILABLE: &str = "fleet.agent_unavailable";
     pub const OFFLINE: &str = "fleet.offline";
     pub const BUSY: &str = "fleet.busy";
     pub const INTERNAL: &str = "fleet.internal";
@@ -508,7 +705,26 @@ pub enum RemoteSpaceEvent {
     QuestionCleared {
         ask_id: String,
     },
+    /// One row of the space as the host's own UI sees it (docs/spaces.md
+    /// models): `model` is `space` (the space row, local-only fields
+    /// blanked), `chat_message` (its chat), or `turn_step` (a step of a run;
+    /// `id` = `<run>:<n>`). `data` is the contract JSON; `None` deletes it.
+    /// The origin mirrors these so a remote space renders exactly like a
+    /// local one. Each event's JSON stays under [`MIRROR_ROW_MAX_BYTES`].
+    Mirror {
+        model: String,
+        id: String,
+        #[serde(default)]
+        #[specta(type = Option<specta_typescript::Unknown>)]
+        data: Option<serde_json::Value>,
+    },
 }
+
+/// The largest mirrored row a host sends (its JSON); longer texts are cut
+/// with a note, the host's copy stays whole.
+pub const MIRROR_ROW_MAX_BYTES: usize = 48 * 1024;
+/// Models a host mirrors to the origin and its delegates.
+pub const MIRROR_MODELS: &[&str] = &["space", "chat_message", "turn_step"];
 
 /// One event of a hosted space, as its host signs it ([`Domain::Event`]).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
@@ -620,6 +836,15 @@ pub enum ClientMessage {
     RemoveDevice {
         device_id: DeviceId,
     },
+    /// This device's push token (phone app); an empty token removes it.
+    RegisterPush {
+        provider: PushProvider,
+        token: String,
+    },
+    /// A [`Delegation`] signed by this device as its origin.
+    Delegate {
+        envelope: SignedEnvelope,
+    },
 }
 
 /// Device ⇄ cloud, cloud side.
@@ -690,6 +915,11 @@ pub enum ServerMessage {
         code: String,
         message: String,
     },
+    /// The live delegations naming this device (as origin or delegate), each
+    /// as the origin signed it; sent after welcome and on change.
+    Delegations {
+        list: Vec<SignedEnvelope>,
+    },
 }
 
 /// Every type the Worker needs, for the TS export.
@@ -700,6 +930,7 @@ pub fn types() -> specta::Types {
         .register::<RemoteRequest>()
         .register::<SpaceEventBody>()
         .register::<ReplyBody>()
+        .register::<Delegation>()
         .register::<RemoteAsk>()
         .register::<StartedSpace>();
     // JS numbers: seqs, generations and unix-ms timestamps stay far below

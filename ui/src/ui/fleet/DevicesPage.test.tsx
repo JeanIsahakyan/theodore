@@ -42,6 +42,17 @@ beforeEach(() => {
       ),
     })),
   );
+  transport.onCall('fleet_delegate', (args) => {
+    current = {
+      ...current,
+      devices: current.devices.map((d) =>
+        d.device_id === args?.deviceId
+          ? { ...d, delegated: args?.on as boolean }
+          : d,
+      ),
+    };
+    return current;
+  });
   transport.onCall('fleet_remove_device', (args) => {
     current = {
       ...current,
@@ -355,13 +366,14 @@ describe('the device list', () => {
     ).toEqual([]);
   });
 
-  it('Run on another device opens the start dialog, only if one can take it', async () => {
+  it('Run on another device opens New space on Run on, only if one can take it', async () => {
     await render(
       status({ devices: [thisDevice(), device({ trusted: true })] }),
     );
     expect(button('Run on another device…')!.disabled).toBe(false);
     await click(button('Run on another device…'));
-    expect(store.ui.modal).toBe('fleet-start');
+    expect(store.ui.modal).toBe('new-space');
+    expect(store.ui.modalTargets).toEqual(['elsewhere']);
   });
 
   it('Run on another device is off when none can take a space', async () => {
@@ -374,6 +386,94 @@ describe('the device list', () => {
       }),
     );
     expect(button('Run on another device…')!.disabled).toBe(true);
+  });
+
+  it('a phone and the web app show their kind, and that they run no spaces', async () => {
+    await render(
+      status({
+        devices: [
+          thisDevice(),
+          device({ device_id: 'ph', name: 'iPhone', kind: 'mobile' }),
+          device({ device_id: 'wb', name: 'Browser', kind: 'web' }),
+        ],
+      }),
+    );
+    const row = (id: string) => q(`.fleet-device[data-device="${id}"]`)!;
+    expect(row('ph').querySelector('[data-kind="mobile"]')).not.toBeNull();
+    expect(
+      row('ph').querySelector('.fleet-device-meta')!.textContent,
+    ).toContain('Phone');
+    expect(row('ph').textContent).toContain(
+      'starts and answers spaces, runs none',
+    );
+    expect(row('ph').textContent).not.toContain('macOS');
+    expect(row('wb').querySelector('[data-kind="web"]')).not.toBeNull();
+    expect(row('wb').textContent).toContain('Web app');
+    expect(row('d1').querySelector('[data-kind="desktop"]')).not.toBeNull();
+    // Trust works as for a computer.
+    expect(row('ph').querySelector('.fleet-trust')).not.toBeNull();
+  });
+
+  it('Run on another device is off when the only trusted one is a phone', async () => {
+    await render(
+      status({
+        devices: [thisDevice(), device({ kind: 'mobile', trusted: true })],
+      }),
+    );
+    expect(button('Run on another device…')!.disabled).toBe(true);
+  });
+
+  it('the delegation switch shows only on a trusted phone or web app', async () => {
+    await render(
+      status({
+        devices: [
+          thisDevice(),
+          device({ device_id: 'mac', trusted: true }),
+          device({ device_id: 'ph', kind: 'mobile', trusted: false }),
+          device({ device_id: 'wb', kind: 'web', trusted: true }),
+        ],
+      }),
+    );
+    const sw = (id: string) =>
+      q(`.fleet-device[data-device="${id}"] .fleet-delegate`);
+    expect(sw('d1')).toBeNull();
+    expect(sw('mac')).toBeNull();
+    expect(sw('ph')).toBeNull();
+    expect(sw('wb')).not.toBeNull();
+    expect(sw('wb')!.textContent).toContain('Its answers still run only');
+  });
+
+  it('the delegation switch sends fleet_delegate, then shows the new state', async () => {
+    await render(
+      status({
+        devices: [
+          thisDevice(),
+          device({ device_id: 'ph', kind: 'mobile', trusted: true }),
+        ],
+      }),
+    );
+    const input = () =>
+      q<HTMLInputElement>(
+        `.fleet-device[data-device="ph"] input[aria-label="Send my spaces' questions here"]`,
+      )!;
+    expect(input().checked).toBe(false);
+    await click(input());
+    await settle();
+    expect(transport.calls.filter((c) => c.cmd === 'fleet_delegate')).toEqual([
+      { cmd: 'fleet_delegate', args: { deviceId: 'ph', on: true } },
+    ]);
+    expect(store.fleet.device('ph')?.delegated).toBe(true);
+    expect(input().checked).toBe(true);
+    // On here, not confirmed by the cloud yet: says so.
+    expect(q('.fleet-delegate-pending')).not.toBeNull();
+    store.fleet.setStatus({
+      ...current,
+      devices: current.devices.map((d) =>
+        d.device_id === 'ph' ? { ...d, delegation_live: true } : d,
+      ),
+    });
+    await settle();
+    expect(q('.fleet-delegate-pending')).toBeNull();
   });
 
   it('Run on another device is off when the only one is not trusted', async () => {

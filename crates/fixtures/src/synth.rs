@@ -891,6 +891,7 @@ impl AgentPort for SynthAgents {
                 path: None,
                 version: Some("synthetic".to_string()),
                 installed: true,
+                signed_in: None,
             })
             .collect()
     }

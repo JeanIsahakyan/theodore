@@ -1,0 +1,18 @@
+# The web build of the app (docs/mobile.md), served as static assets by a
+# Worker per channel. `expo export --platform web` writes ./dist first.
+#   wrangler deploy --env staging      → theodore-web-staging
+#   wrangler deploy --env production   → theodore-web
+name = "theodore-web"
+compatibility_date = "2026-11-01"
+workers_dev = true
+
+[assets]
+directory = "./dist"
+# Deep links (/callback, /space/…) serve index.html; the router takes over.
+not_found_handling = "single-page-application"
+
+[env.staging]
+name = "theodore-web-staging"
+
+[env.production]
+name = "theodore-web"

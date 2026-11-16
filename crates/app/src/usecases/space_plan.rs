@@ -58,8 +58,11 @@ fn approved_prompt(plan: &str) -> String {
 impl Core {
     /// Approve on the plan card: the next turn implements the space's
     /// latest plan in its build mode. Refused while a turn runs and when
-    /// the latest turn has no plan.
+    /// the latest turn has no plan. A mirrored space's goes to its host.
     pub async fn approve_space_plan(&self, space: &str) -> AppResult<String> {
+        if let Some(r) = self.space_remote_of(space).await {
+            return self.remote_approve_plan(&r).await;
+        }
         let _queue = self.space_queue_lock(space).await;
         let row = self.space_row(space).await?;
         if row.status == SpaceStatus::Running {

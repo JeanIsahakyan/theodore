@@ -5,6 +5,7 @@
  */
 import type {
   AgentId,
+  FleetAgent,
   MergeInfo,
   MergeMethod,
   PrId,
@@ -15,6 +16,7 @@ import type {
   Space,
   SpaceFeedback,
   SpaceMode,
+  SpaceRemote,
   SpaceTurn,
 } from '../../gen/contract';
 import { ALL, type WorkspaceId } from '../../core/workspaces';
@@ -58,6 +60,22 @@ export const SPACE_REF_PREFIX = 'refs/theodore/spaces/';
 export function isSpaceReview(p: Pick<PrSummary, 'pr'>): boolean {
   return p.pr.host_id?.startsWith(SPACE_REF_PREFIX) ?? false;
 }
+
+/** Where a space runs when it isn't here (docs/fleet.md "One space UI:
+ *  mirrored rows"): `null` for a space of this device. Its row, chat and
+ *  live steps are the host's; send, stop, answer and approve go there
+ *  through the same commands, local-only parts (diff, terminal, files,
+ *  ship, undo, setup) don't apply. */
+export const remoteOf = (s: Pick<Space, 'remote'>): SpaceRemote | null =>
+  s.remote ?? null;
+
+/** `openModal('new-space', [RUN_ELSEWHERE])`: the dialog opens on "Run on"
+ *  the first other device that can take it, not this one. */
+export const RUN_ELSEWHERE = 'elsewhere';
+
+/** The quiet note on a remote space's page. */
+export const runsOnLabel = (r: Pick<SpaceRemote, 'host_name'>): string =>
+  `Runs on ${r.host_name}`;
 
 /** Spaces the workspace lists: its project's (All: every one), archived
  *  ones left out, pinned ones first, then most recently active first. */
@@ -227,6 +245,27 @@ export function sendEffort(
   picked: EffortPick | null,
 ): string | null {
   return picked?.agent === agent ? picked.effort : null;
+}
+
+/** What a start on another device names, from what it lists (`host`): once
+ *  anything is picked, the agent shown (the pick, else its first) with the
+ *  model and effort picked for it; else nothing, and its defaults run. A
+ *  host that lists no agents gets nothing. */
+export function remoteStartPicks(
+  host: FleetAgent[],
+  agent: AgentId | null,
+  modelOf: (a: AgentId) => string | null,
+  effortOf: (a: AgentId) => string | null,
+): { agent: AgentId | null; model: string | null; effort: string | null } {
+  const none = { agent: null, model: null, effort: null };
+  const ids = host.map((a) => a.id);
+  const current = agent && ids.includes(agent) ? agent : (ids[0] ?? null);
+  if (!current) return none;
+  const model = modelOf(current);
+  const effort = effortOf(current);
+  return agent === current || model !== null || effort !== null
+    ? { agent: current, model, effort }
+    : none;
 }
 
 /** Days after a space is done before it archives itself; 0 = never. */

@@ -17,6 +17,7 @@ import { api } from '../../core/api';
 import { Spinner } from '../bits';
 import { formatDuration } from '../turnRows';
 import { endedLabel, headline, shownTasks } from './backgroundTaskRows';
+import { remoteOf } from './spaces';
 
 /** A running clock, while something on screen is timed or is about to go. */
 function useNow(active: boolean): number {
@@ -60,7 +61,14 @@ export function BackgroundTasks({ space }: { space: Space }) {
       {open && (
         <ul className="flex flex-col gap-0.5">
           {tasks.map((t) => (
-            <TaskRow key={t.id} space={space.id} task={t} now={now} />
+            <TaskRow
+              key={t.id}
+              space={space.id}
+              task={t}
+              now={now}
+              // A remote space's tasks run on its host: shown, not stopped.
+              canStop={!remoteOf(space)}
+            />
           ))}
         </ul>
       )}
@@ -72,10 +80,12 @@ function TaskRow({
   space,
   task,
   now,
+  canStop,
 }: {
   space: string;
   task: BackgroundTask;
   now: number;
+  canStop: boolean;
 }) {
   const [stopping, setStopping] = useState(false);
   const running = task.status === 'running';
@@ -108,7 +118,7 @@ function TaskRow({
       <span className="shrink-0 font-mono text-[11px] tabular-nums text-muted">
         {formatDuration(Math.max(0, elapsed))}
       </span>
-      {running && (
+      {running && canStop && (
         <Button
           size="sm"
           variant="ghost"

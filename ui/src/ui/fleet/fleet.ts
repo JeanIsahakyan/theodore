@@ -1,11 +1,8 @@
 /** Fleet UI rules with no React: which devices can take a space, which
- *  modes they allow, how a status reads, how answers go on the wire
- *  (docs/fleet.md). */
+ *  modes they allow, how answers go on the wire (docs/fleet.md). */
 import type {
   FleetDevice,
   FleetQuestionItem,
-  FleetRemoteSpace,
-  FleetSpaceStatus,
   SpaceMode,
 } from '../../gen/contract';
 
@@ -36,15 +33,36 @@ export function capMode(mode: SpaceMode, max: SpaceMode): SpaceMode {
   return modesUpTo(max).includes(mode) ? mode : max;
 }
 
-/** Devices a space can be started on from here: another device you trust
- *  (its key is pinned here, so what it sends back is checked), online,
- *  taking remote spaces and with a project to offer. */
+/** A phone or the web app (docs/mobile.md): a client only. It starts,
+ *  follows and answers spaces on your computers, and never runs one. */
+export const isClient = (d: Pick<FleetDevice, 'kind'>): boolean =>
+  d.kind === 'mobile' || d.kind === 'web';
+
+const OS_LABEL: Partial<Record<FleetDevice['os'], string>> = {
+  macos: 'macOS',
+  linux: 'Linux',
+  windows: 'Windows',
+};
+
+/** What a device is, for people: "Phone", "Web app", else its OS. */
+export function kindLabel(d: Pick<FleetDevice, 'kind' | 'os'>): string {
+  if (d.kind === 'mobile') return 'Phone';
+  if (d.kind === 'web') return 'Web app';
+  const os = OS_LABEL[d.os] ?? 'Computer';
+  return d.kind === 'daemon' ? `${os} server` : os;
+}
+
+/** Devices a space can be started on from here: another computer you
+ *  trust (its key is pinned here, so what it sends back is checked),
+ *  online, taking remote spaces and with a project to offer. Never a
+ *  phone or the web app, whatever it lists. */
 export function startableDevices(
   devices: readonly FleetDevice[],
 ): FleetDevice[] {
   return devices.filter(
     (d) =>
       !d.this_device &&
+      !isClient(d) &&
       d.trusted &&
       d.online &&
       d.accepts_remote &&
@@ -68,37 +86,6 @@ export function lastSeenLabel(
   if (h < 48) return `seen ${h} h ago`;
   return `seen ${Math.round(h / 24)} days ago`;
 }
-
-export const STATUS_LABEL: Record<FleetSpaceStatus, string> = {
-  starting: 'Starting',
-  running: 'Running',
-  idle: 'Idle',
-  waiting: 'Waiting for you',
-  stopped: 'Stopped',
-  failed: 'Failed',
-};
-
-export type StatusColor =
-  'default' | 'accent' | 'success' | 'warning' | 'danger';
-
-export const STATUS_COLOR: Record<FleetSpaceStatus, StatusColor> = {
-  starting: 'default',
-  running: 'accent',
-  idle: 'success',
-  waiting: 'warning',
-  stopped: 'default',
-  failed: 'danger',
-};
-
-/** The composer works only between turns. */
-export const canSend = (s: FleetSpaceStatus): boolean =>
-  s === 'idle' || s === 'waiting';
-
-/** Stop is offered while a turn runs. */
-export const canStop = (s: FleetSpaceStatus): boolean => s === 'running';
-
-/** The goal of a list row: the space's name, on whichever device. */
-export const spaceTitle = (s: FleetRemoteSpace): string => s.name || s.branch;
 
 /** One question's answer while you pick it. */
 export interface Draft {

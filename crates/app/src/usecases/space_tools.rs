@@ -263,7 +263,7 @@ impl Core {
 
     /// The space whose PR `pr` is (its branch review or its shipped PR).
     pub(crate) async fn space_of_pr(&self, pr: &PrId) -> Option<String> {
-        self.list_spaces(None)
+        self.local_spaces(None)
             .await
             .ok()?
             .into_iter()

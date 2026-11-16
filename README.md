@@ -31,6 +31,8 @@ what you agree with into comments. The agents help; you decide what goes out.
 
 From then on it updates itself.
 
+Phone and web: an Expo app (`mobile/`) follows and answers your computers' spaces; see [docs/mobile.md](docs/mobile.md).
+
 Building from source is for developing Theodore, not for using it. A local build has no sign-in and
 no diagnostics: the release's client id and keys are added only by the release pipeline, so the app
 behaves differently from the release. Don't use one as your daily app.

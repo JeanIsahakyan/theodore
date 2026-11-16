@@ -47,6 +47,7 @@ import {
   trustState,
   type LogFilter,
 } from './commands';
+import { remoteOf } from './spaces';
 
 const EMPTY: SpaceLogLine[] = [];
 
@@ -89,10 +90,12 @@ export function useSpaceConfig(
   return { config, refresh };
 }
 
-/** Seeds the log buffer from the core's tail when the page opens. */
-export function useSpaceLogsSeed(space: string): void {
+/** Seeds the log buffer from the core's tail when the page opens. Off for a
+ *  remote space: its logs are on its host. */
+export function useSpaceLogsSeed(space: string, enabled = true): void {
   const store = useRootStore();
   useEffect(() => {
+    if (!enabled) return;
     let on = true;
     api
       .spaceLogs(space)
@@ -101,7 +104,7 @@ export function useSpaceLogsSeed(space: string): void {
     return () => {
       on = false;
     };
-  }, [store, space]);
+  }, [store, space, enabled]);
 }
 
 /** How long the trust card's answers wait after it appears (or shows other
@@ -354,7 +357,9 @@ export const SetupStage = observer(function SetupStage({
           {setup.error}
         </span>
       )}
+      {/* A remote space's setup is the host's to retry or skip. */}
       {!archived &&
+        !remoteOf(space) &&
         (setup.status === 'failed' || setup.status === 'waiting') && (
           <div className="flex justify-end gap-2">
             <Button

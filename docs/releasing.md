@@ -49,6 +49,23 @@ It needs the `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` secrets;
 the WorkOS API key is a Worker secret, never in CI. Setup and details:
 `docs/cloud.md`.
 
+### Mobile and web
+
+The Expo app in `mobile/` (`docs/mobile.md`) is not part of the app build
+either. `mobile-web.yml` deploys its web build to Cloudflare Pages when the
+push touches `mobile/**`; iOS and Android are EAS builds started by hand
+(`eas build --profile preview|production`), with remote version numbers.
+
+```
+push staging ─ mobile/** ─▶ theodore-web-staging  (static assets Worker)
+push main    ─ mobile/** ─▶ theodore-web
+```
+
+Same `CLOUDFLARE_*` secrets as the Worker, the same `THEODORE_WORKOS_CLIENT_ID[_STAGING]`
+and `THEODORE_CLOUD_URL[_STAGING]` variables as the desktop builds. The web
+origins and `theodore-mobile://callback` also need registering in WorkOS (table
+below); one-time steps: `docs/mobile.md` "Build and release".
+
 ## One-time: updater signing key (required before any release works)
 
 Done on 2026-10-25: the public key is in `tauri.conf.json`, both secrets are
@@ -363,7 +380,9 @@ with an invalid redirect error:
 | Staging (`THEODORE_WORKOS_CLIENT_ID_STAGING`) | `theodore-staging://callback`, `theodore-nightly://callback`, `http://127.0.0.1:47823/callback` |
 
 A nightly bakes in whichever client id the shell exported; register
-`theodore-nightly://callback` on the environment it uses.
+`theodore-nightly://callback` on the environment it uses. The mobile app adds
+`theodore-mobile://callback` and its web origin's `/callback`
+(`https://theodore-web[-staging].prd-instance.workers.dev`) to each environment.
 
 ## Build colours
 

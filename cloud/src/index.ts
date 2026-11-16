@@ -12,10 +12,15 @@
  * | POST /v1/orgs/personal | the caller's personal organization, created once (src/orgs.ts) |
  * | POST /v1/auth/select-organization | finishes a sign-in that needs an org picked (needs the secret) |
  * | GET  /v1/fleet/ws | WebSocket to the org's fleet hub (src/fleet/, docs/fleet.md) |
+ * | POST /v1/fleet/request | a one-shot signed fleet request, no socket (a push action) |
  *
  * Rate limits (Cloudflare's rate-limiting bindings; 429 `cloud.rate_limited`):
  * the unauthenticated routes (org selection, the fleet upgrade) per client
  * IP, the authenticated ones per user.
+ *
+ * CORS: only for the web app's origins (`WEB_ORIGINS`), only on the routes
+ * it calls (`/v1/orgs*`, `/v1/auth/select-organization`,
+ * `/v1/fleet/request`); no credentials, `Authorization` and `Content-Type`.
  *
  * ```text
  * app sign-in ─▶ 403 organization_selection_required {pending_authentication_token, organizations}
@@ -27,7 +32,12 @@
 import { bearer, verifierFor, type Caller } from './auth';
 import { field, readJson } from './body';
 import { CloudError, errorResponse, json } from './errors';
-import { fleetConnect, type HubFor } from './fleet/route';
+import {
+  fleetConnect,
+  fleetRequest,
+  requestCaller,
+  type HubFor,
+} from './fleet/route';
 import { ensurePersonalOrganization, listOrganizations } from './orgs';
 import { upstream, WorkosClient, WorkosError, type Workos } from './workos';
 
@@ -38,8 +48,12 @@ export interface Env {
   ORG_HUB?: DurableObjectNamespace;
   /** Per client IP: routes without a session, and fleet upgrades. */
   RL_PUBLIC?: RateLimit;
-  /** Per signed-in user: the org routes. */
+  /** Per signed-in user: the org routes and one-shot fleet requests. */
   RL_USER?: RateLimit;
+  /** The web app's origins, comma-separated: CORS and browser sockets. */
+  WEB_ORIGINS?: string;
+  /** Expo access token (secret), if the Expo project requires one. */
+  EXPO_ACCESS_TOKEN?: string;
 }
 
 export { OrgHub } from './fleet/org-hub';
@@ -52,7 +66,43 @@ export interface Deps {
   hub?: HubFor;
   /** `false`: over the limit for `key` in `bucket`. Absent: no limits. */
   limit?: (bucket: 'public' | 'user', key: string) => Promise<boolean>;
+  /** Origins of the web app (set by `handle` from its argument). */
+  webOrigins?: readonly string[];
 }
+
+/** `WEB_ORIGINS` as a list: trimmed, empty entries and trailing `/` gone. */
+export function parseOrigins(raw: string | undefined): string[] {
+  return (raw ?? '')
+    .split(',')
+    .map((o) => o.trim().replace(/\/+$/, ''))
+    .filter((o) => o !== '');
+}
+
+/** Routes the web app calls from the browser. */
+const corsPath = (path: string) =>
+  path === '/v1/orgs' ||
+  path.startsWith('/v1/orgs/') ||
+  path === '/v1/auth/select-organization' ||
+  path === '/v1/fleet/request';
+
+/** CORS headers for an allowed origin; none for any other. */
+function corsHeaders(
+  request: Request,
+  path: string,
+  webOrigins: readonly string[],
+): Record<string, string> | null {
+  const origin = request.headers.get('origin');
+  if (!corsPath(path) || origin === null || !webOrigins.includes(origin)) {
+    return null;
+  }
+  return { 'access-control-allow-origin': origin, vary: 'Origin' };
+}
+
+const PREFLIGHT = {
+  'access-control-allow-methods': 'GET, POST, OPTIONS',
+  'access-control-allow-headers': 'Authorization, Content-Type',
+  'access-control-max-age': '600',
+};
 
 async function within(
   deps: Deps,
@@ -113,7 +163,15 @@ const routes: Record<string, Partial<Record<string, Route>>> = {
   '/v1/fleet/ws': {
     GET: async (request, deps) => {
       await within(deps, 'public', clientIp(request));
-      return fleetConnect(request, deps.verify, deps.hub);
+      return fleetConnect(request, deps.verify, deps.hub, deps.webOrigins);
+    },
+  },
+  '/v1/fleet/request': {
+    POST: async (request, deps) => {
+      const caller = await requestCaller(request, deps.verify);
+      await within(deps, 'user', caller.userId);
+      const body = await readJson(request, MAX_BODY_BYTES);
+      return fleetRequest(request.url, caller, body, deps.hub);
     },
   },
   // No bearer: the user has no session yet. The pending token is the
@@ -141,16 +199,45 @@ const routes: Record<string, Partial<Record<string, Route>>> = {
   },
 };
 
+/** The web app's origins may read `response` (when `cors` says so). */
+function withCors(
+  response: Response,
+  cors: Record<string, string> | null,
+): Response {
+  if (!cors) return response;
+  const out = new Response(response.body, response);
+  for (const [k, v] of Object.entries(cors)) out.headers.set(k, v);
+  return out;
+}
+
 export async function handle(
   request: Request,
   deps: () => Deps,
+  webOrigins: readonly string[] = [],
+): Promise<Response> {
+  const path = new URL(request.url).pathname;
+  const cors = corsHeaders(request, path, webOrigins);
+  if (request.method === 'OPTIONS' && corsPath(path)) {
+    // A preflight from anywhere else gets no CORS headers: the browser stops.
+    return new Response(null, {
+      status: 204,
+      headers: cors ? { ...cors, ...PREFLIGHT } : {},
+    });
+  }
+  return withCors(await dispatch(request, path, deps, webOrigins), cors);
+}
+
+async function dispatch(
+  request: Request,
+  path: string,
+  deps: () => Deps,
+  webOrigins: readonly string[],
 ): Promise<Response> {
   try {
-    const path = new URL(request.url).pathname;
     const methods = routes[path];
     if (!methods) throw new CloudError(404, 'cloud.not_found', 'no such route');
-    const route = methods[request.method];
-    if (!route) {
+    const handler = methods[request.method];
+    if (!handler) {
       throw new CloudError(
         405,
         'cloud.method',
@@ -161,7 +248,7 @@ export async function handle(
     if (length > MAX_BODY_BYTES) {
       throw new CloudError(413, 'cloud.too_large', 'request body too large');
     }
-    return await route(request, deps());
+    return await handler(request, { ...deps(), webOrigins });
   } catch (e) {
     if (e instanceof CloudError) return errorResponse(e);
     if (e instanceof WorkosError) return errorResponse(upstream(e));
@@ -174,5 +261,6 @@ export async function handle(
 }
 
 export default {
-  fetch: (request, env) => handle(request, () => depsFor(env)),
+  fetch: (request, env) =>
+    handle(request, () => depsFor(env), parseOrigins(env.WEB_ORIGINS)),
 } satisfies ExportedHandler<Env>;

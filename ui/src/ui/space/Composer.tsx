@@ -21,11 +21,16 @@ import {
   Tooltip,
 } from '@heroui/react';
 import { observer } from 'mobx-react-lite';
-import type { AgentId, SkillInfo } from '../../gen/contract';
+import type {
+  AgentId,
+  AgentStatus,
+  FleetAgent,
+  SkillInfo,
+} from '../../gen/contract';
 import { api } from '../../core/api';
 import { useRootStore } from '../../stores/context';
 import type { RootStore } from '../../stores/RootStore';
-import { AgentMenu } from '../AgentMenu';
+import { AgentMenu, type SignedOutAgent } from '../AgentMenu';
 import { isAgentEnabled } from '../Settings';
 import { K } from '../bits';
 import { SkillMenu, matchSkills, skillMenuKey } from '../SkillMenu';
@@ -377,29 +382,40 @@ export function ChipMenu<T extends string>({
   );
 }
 
-/** The agents offered for a new space: installed and enabled. */
-export const useEnabledAgents = (): AgentId[] => {
+/** What this computer offers: `agents`, installed, enabled and not signed
+ *  out (a sign-in that couldn't be checked counts); `signedOut`, installed
+ *  and enabled but not signed in, shown disabled with how to sign in. */
+export type OfferedAgents = {
+  agents: AgentId[];
+  signedOut: SignedOutAgent[];
+};
+
+export const useOfferedAgents = (): OfferedAgents => {
   const store = useRootStore();
-  const [agents, setAgents] = useState<AgentId[]>([]);
+  const [all, setAll] = useState<AgentStatus[]>([]);
   useEffect(() => {
     let live = true;
     void api
       .detectAgents()
-      .then((all) => {
-        if (!live) return;
-        setAgents(
-          all
-            .filter((a) => a.installed && isAgentEnabled(store, a.id))
-            .map((a) => a.id),
-        );
+      .then((list) => {
+        if (live) setAll(list);
       })
       .catch(() => {});
     return () => {
       live = false;
     };
   }, [store]);
-  return agents;
+  const on = all.filter((a) => a.installed && isAgentEnabled(store, a.id));
+  return {
+    agents: on.filter((a) => a.signed_in !== false).map((a) => a.id),
+    signedOut: on
+      .filter((a) => a.signed_in === false)
+      .map((a) => ({ id: a.id, hint: a.sign_in_hint ?? null })),
+  };
 };
+
+/** The agents offered for a new space: installed, enabled, not signed out. */
+export const useEnabledAgents = (): AgentId[] => useOfferedAgents().agents;
 
 /** The agent a box with no pick of its own talks to, among those offered:
  *  `value`, else `agents.chat` for this project, else yours, else the first. */
@@ -419,18 +435,7 @@ export function boxAgent(
   return agents[0] ?? null;
 }
 
-/** The agent chip for a new space, with the agent's model and effort.
- *  `null` = the `agents.chat` default. */
-export const AgentChip = observer(function AgentChip({
-  value,
-  onChange,
-  isDisabled,
-  modelOf,
-  onPickModel,
-  effortOf,
-  onPickEffort,
-  repo,
-}: {
+type AgentChipProps = {
   value: AgentId | null;
   onChange: (a: AgentId) => void;
   isDisabled?: boolean;
@@ -444,14 +449,70 @@ export const AgentChip = observer(function AgentChip({
   onPickEffort?: (agent: AgentId, effort: string) => void;
   /** `<owner>/<name>`: this project's `agents.chat`, for the default. */
   repo?: string;
-}) {
+  /** A space on another device: the agents it lists (`FleetDevice.agents`)
+   *  instead of this device's; none (an older host) hides the chip. */
+  host?: FleetAgent[];
+};
+
+/** The agent chip for a new space, with the agent's model and effort.
+ *  `null` = the `agents.chat` default (the host's first, on another
+ *  device). */
+export function AgentChip(props: AgentChipProps) {
+  return props.host ? (
+    <HostAgentChip {...props} host={props.host} />
+  ) : (
+    <LocalAgentChip {...props} />
+  );
+}
+
+const LocalAgentChip = observer(function LocalAgentChip({
+  value,
+  onChange,
+  isDisabled,
+  modelOf,
+  onPickModel,
+  effortOf,
+  onPickEffort,
+  repo,
+}: AgentChipProps) {
   const store = useRootStore();
-  const agents = useEnabledAgents();
-  if (!agents.length) return null;
-  const current = boxAgent(store, value, agents, repo) ?? agents[0]!;
+  const { agents, signedOut } = useOfferedAgents();
+  if (!agents.length && !signedOut.length) return null;
+  const current = boxAgent(store, value, agents, repo);
   return (
     <AgentMenu
       agents={agents}
+      signedOut={signedOut}
+      selected={current}
+      onSelect={onChange}
+      isDisabled={isDisabled}
+      ultracode
+      modelOf={modelOf}
+      onPickModel={onPickModel}
+      effortOf={effortOf}
+      onPickEffort={onPickEffort}
+    />
+  );
+});
+
+/** Another device's agents: what it lists, its default first. */
+const HostAgentChip = observer(function HostAgentChip({
+  value,
+  onChange,
+  isDisabled,
+  modelOf,
+  onPickModel,
+  effortOf,
+  onPickEffort,
+  host,
+}: AgentChipProps & { host: FleetAgent[] }) {
+  const agents = host.map((a) => a.id);
+  if (!agents.length) return null;
+  const current = value && agents.includes(value) ? value : agents[0]!;
+  return (
+    <AgentMenu
+      agents={agents}
+      host={host}
       selected={current}
       onSelect={onChange}
       isDisabled={isDisabled}

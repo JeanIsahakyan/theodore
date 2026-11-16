@@ -14,6 +14,7 @@ fn req(origin: &str) -> RemoteRequest {
             mode: FleetMode::Edit,
             agent: None,
             model: None,
+            effort: None,
             parent: None,
             depth: 0,
         },
@@ -223,4 +224,155 @@ fn a_reply_is_signed_by_its_target() {
         env.open_as::<ReplyBody>(&key.public_key(), Domain::Event),
         Err(EnvelopeError::BadSignature)
     );
+}
+
+#[test]
+fn an_os_this_build_doesnt_know_reads_as_other() {
+    let os: DeviceOs = serde_json::from_str("\"plan9\"").unwrap();
+    assert_eq!(os, DeviceOs::Other);
+    let os: DeviceOs = serde_json::from_str("\"ios\"").unwrap();
+    assert_eq!(os, DeviceOs::Ios);
+    assert_eq!(
+        serde_json::to_string(&DeviceOs::Android).unwrap(),
+        "\"android\""
+    );
+}
+
+fn info_with(agents: Vec<FleetAgentInfo>) -> DeviceInfo {
+    DeviceInfo {
+        name: "mac".into(),
+        os: DeviceOs::Macos,
+        kind: DeviceKind::Desktop,
+        app_version: "0.1.19".into(),
+        projects: vec![],
+        accepts_remote: true,
+        max_mode: FleetMode::Edit,
+        agents,
+    }
+}
+
+fn model(id: &str) -> FleetModelInfo {
+    FleetModelInfo {
+        id: id.into(),
+        label: id.to_uppercase(),
+        efforts: vec!["low".into(), "medium".into(), "high".into()],
+        default_effort: Some("medium".into()),
+    }
+}
+
+#[test]
+fn device_info_agents_round_trip_and_default_to_none() {
+    let info = info_with(vec![FleetAgentInfo {
+        id: "claude".into(),
+        label: "Claude".into(),
+        default_model: Some("opus".into()),
+        default_effort: Some("high".into()),
+        models: vec![model("opus"), model("sonnet")],
+    }]);
+    let text = serde_json::to_string(&info).unwrap();
+    assert_eq!(serde_json::from_str::<DeviceInfo>(&text).unwrap(), info);
+    // An older device's info has no `agents`.
+    let mut old = serde_json::to_value(&info).unwrap();
+    old.as_object_mut().unwrap().remove("agents");
+    let back: DeviceInfo = serde_json::from_value(old).unwrap();
+    assert!(back.agents.is_empty());
+}
+
+#[test]
+fn ops_carry_agent_model_and_effort_and_older_bodies_still_read() {
+    let send = RemoteOp::Send {
+        space: "rs_1".into(),
+        text: "go".into(),
+        mode: None,
+        agent: Some("codex".into()),
+        model: Some("gpt-5.5".into()),
+        effort: Some("high".into()),
+    };
+    let v = serde_json::to_value(&send).unwrap();
+    assert_eq!(v["agent"], "codex");
+    assert_eq!(v["effort"], "high");
+    let old: RemoteOp =
+        serde_json::from_str(r#"{"op":"send","space":"rs_1","text":"go","mode":null}"#).unwrap();
+    assert!(matches!(
+        old,
+        RemoteOp::Send {
+            agent: None,
+            model: None,
+            effort: None,
+            ..
+        }
+    ));
+    let old: RemoteOp = serde_json::from_str(
+        r#"{"op":"start_space","space":"rs_1","project_id":"p","goal":"g","mode":"edit","depth":0}"#,
+    )
+    .unwrap();
+    assert!(matches!(old, RemoteOp::StartSpace { effort: None, .. }));
+    // Signed like any request: the effort is under the signature.
+    let key = DeviceKey::generate().unwrap();
+    let mut r = req("dev_a");
+    r.op = send;
+    let env = SignedEnvelope::seal(&r, &key);
+    let mut tampered = env.clone();
+    tampered.body = tampered.body.replace("\"high\"", "\"max\"");
+    assert_eq!(
+        tampered.open(&key.public_key()),
+        Err(EnvelopeError::BadSignature)
+    );
+    assert_eq!(env.open(&key.public_key()).unwrap(), r);
+}
+
+#[test]
+fn fit_agents_caps_counts_lengths_and_the_info_size() {
+    let long = "x".repeat(MAX_MODEL_ID_CHARS + 1);
+    let mut first = model("opus");
+    first.label = "L".repeat(200);
+    first.efforts.push("e".repeat(MAX_EFFORT_CHARS + 1));
+    let mut models: Vec<FleetModelInfo> = (0..20).map(|i| model(&format!("m{i}"))).collect();
+    models.insert(0, first);
+    models.insert(1, model(&long));
+    let agent = |id: &str| FleetAgentInfo {
+        id: id.into(),
+        label: id.into(),
+        default_model: Some(long.clone()),
+        default_effort: Some("medium".into()),
+        models: models.clone(),
+    };
+    let mut info = info_with((0..6).map(|i| agent(&format!("a{i}"))).collect());
+    info.fit_agents();
+    assert_eq!(info.agents.len(), MAX_AGENTS);
+    for a in &info.agents {
+        assert!(a.models.len() <= MAX_AGENT_MODELS);
+        assert_eq!(a.default_model, None, "an overlong id isn't cut");
+        assert!(a.models.iter().all(|m| m.id != long));
+        assert_eq!(a.models[0].label.chars().count(), MAX_AGENT_LABEL_CHARS);
+        assert_eq!(a.models[0].efforts, ["low", "medium", "high"]);
+    }
+    assert!(serde_json::to_string(&info).unwrap().len() <= MAX_INFO_BYTES);
+
+    // Over the size: the agent listing the most loses its last models
+    // first; a short list is left as it was.
+    let mut big = info_with(vec![
+        FleetAgentInfo {
+            models: (0..12)
+                .map(|i| model(&format!("{}{i:02}", "m".repeat(60))))
+                .collect(),
+            ..agent("claude")
+        },
+        FleetAgentInfo {
+            models: vec![model("gpt")],
+            ..agent("codex")
+        },
+    ]);
+    big.projects = (0..40)
+        .map(|i| ProjectRef {
+            id: format!("p{i}"),
+            name: "n".repeat(150),
+        })
+        .collect();
+    big.fit_agents();
+    assert!(serde_json::to_string(&big).unwrap().len() <= MAX_INFO_BYTES);
+    assert_eq!(big.agents.len(), 2);
+    assert!(big.agents[0].models.len() < 12);
+    assert!(big.agents[0].models[0].id.ends_with("00"), "the first stay");
+    assert_eq!(big.agents[1].models.len(), 1);
 }

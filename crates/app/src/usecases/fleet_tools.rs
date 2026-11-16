@@ -30,7 +30,7 @@ use theodore_ports::{
 use crate::core::Core;
 use crate::error::AppError;
 use crate::usecases::fleet::{FleetMem, FleetSettings, TrustedDevice, mode_str};
-use crate::usecases::fleet_origin::{FleetFail, agent_error, settled};
+use crate::usecases::fleet_origin::{FleetFail, RemotePick, agent_error, settled};
 
 /// How long `fleet_start_space` waits for the other device to say yes.
 const START_WAIT: Duration = Duration::from_secs(20);
@@ -204,7 +204,7 @@ impl Core {
         Ok(mem
             .devices
             .iter()
-            .filter(|d| d.online && d.info.accepts_remote)
+            .filter(|d| d.online && d.info.accepts_remote && d.info.kind.hosts())
             .filter(|d| me.as_deref() != Some(d.device_id.as_str()))
             .filter_map(|d| {
                 let pin = pin_of(d, &s)?;
@@ -253,6 +253,8 @@ impl Core {
                 .devices
                 .iter()
                 .filter(|d| me.as_deref() != Some(d.device_id.as_str()))
+                // A phone or the web app runs no spaces.
+                .filter(|d| d.info.kind.hosts())
                 .filter_map(|d| pin_of(d, &s).map(|p| (d, p)))
                 .collect();
             // By id; else by a pinned name no other trusted device has.
@@ -312,6 +314,7 @@ impl Core {
                 &project_id,
                 goal,
                 mode,
+                RemotePick::default(),
                 Some(parent),
                 1,
                 Some(caller.to_string()),
@@ -374,6 +377,9 @@ impl Core {
             space: space.to_string(),
             text: text.to_string(),
             mode: Some(mode),
+            agent: None,
+            model: None,
+            effort: None,
         })
         .await
         .map_err(|e| unavailable(e.for_agent()))?;

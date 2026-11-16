@@ -1,5 +1,5 @@
-// The byte budget for stored events, at its real sizes: 4 MB per space,
-// 64 MB per user.
+// The byte budget for stored events and mirrors, at its real sizes: 16 MiB
+// per space, 128 MiB per user.
 import { describe, expect, it } from 'vitest';
 import {
   CLOUD_RING,
@@ -9,6 +9,14 @@ import {
 import { Harness, startSpace, type Device } from './fleet-harness';
 
 /** A reply event whose signed body is a bit under 63 KB. */
+const BIG = 63_000;
+/** Events of `big` it takes to go past a space's budget. */
+const PAST_SPACE = Math.ceil(MAX_SPACE_EVENT_BYTES / 62_800) + 10;
+/** Events of `big` one space gets while the user's budget fills. */
+const PER_SPACE = Math.floor(MAX_SPACE_EVENT_BYTES / BIG) - 20;
+/** Spaces of `PER_SPACE` events that fill the user's budget, and a spare. */
+const SPACES = Math.ceil(MAX_USER_EVENT_BYTES / (PER_SPACE * 62_800)) + 1;
+
 const big = (turn: number) => ({
   kind: 'reply' as const,
   turn,
@@ -73,14 +81,14 @@ describe('fleet event budget', () => {
         depth: 0,
       }),
     ).toBeUndefined();
-    for (let seq = 2; seq <= 90; seq++) {
+    for (let seq = 2; seq <= PAST_SPACE; seq++) {
       expect(await emit(h, mac2, 'rs_1', seq)).toBeUndefined();
     }
     const s = stored(h, 'rs_1');
     expect(s.n).toBeLessThan(CLOUD_RING);
     expect(s.bytes).toBeLessThanOrEqual(MAX_SPACE_EVENT_BYTES);
-    expect(s.bytes + 63_000).toBeGreaterThan(MAX_SPACE_EVENT_BYTES);
-    expect(s.max).toBe(90);
+    expect(s.bytes + BIG).toBeGreaterThan(MAX_SPACE_EVENT_BYTES);
+    expect(s.max).toBe(PAST_SPACE);
     // The space's counter matches its rows.
     expect(
       q<{ bytes: number }>(
@@ -95,15 +103,15 @@ describe('fleet event budget', () => {
     expect(mac1.stream()).toEqual([
       1,
       `gap2-${s.min! - 1}`,
-      ...Array.from({ length: 90 - s.min! + 1 }, (_, i) => s.min! + i),
+      ...Array.from({ length: PAST_SPACE - s.min! + 1 }, (_, i) => s.min! + i),
     ]);
   });
 
   it(`keeps at most ${MAX_USER_EVENT_BYTES} bytes per user: finished spaces' oldest first, then fleet.busy`, async () => {
     const { h, mac1, mac2 } = await pair();
-    // rs_0 finished with 5 events; rs_1.. running, filled to 4 MB each
+    // rs_0 finished with 5 events; rs_1.. running, filled to PER_SPACE each
     // until the budget is spent: rs_0's events go first, then refused.
-    for (let i = 0; i <= 17; i++) {
+    for (let i = 0; i <= SPACES; i++) {
       h.now += 100;
       await startSpace(mac1, mac2, `rs_${i}`);
     }
@@ -117,9 +125,9 @@ describe('fleet event budget', () => {
     let last = '';
     let refused = 0;
     let code: string | undefined;
-    fill: for (let i = 1; i <= 17; i++) {
+    fill: for (let i = 1; i <= SPACES; i++) {
       last = `rs_${i}`;
-      for (let seq = 1; seq <= 70; seq++) {
+      for (let seq = 1; seq <= PER_SPACE; seq++) {
         code = await emit(h, mac2, last, seq);
         if (code) {
           refused = seq;
@@ -132,7 +140,7 @@ describe('fleet event budget', () => {
     expect(stored(h, last).max).toBe(refused - 1);
     // The finished space gave up its events; the running ones kept theirs.
     expect(stored(h, 'rs_0').n).toBe(0);
-    expect(Object.keys(full).length).toBeGreaterThanOrEqual(15);
+    expect(Object.keys(full).length).toBeGreaterThanOrEqual(SPACES - 3);
     for (const [sp, n] of Object.entries(full)) {
       expect(stored(h, sp).n).toBe(n);
     }
@@ -156,7 +164,10 @@ describe('fleet event budget', () => {
     // rs_1 finishes: the journaled event now fits, from rs_1's oldest.
     const before = stored(h, 'rs_1').n;
     expect(
-      await emit(h, mac2, 'rs_1', 71, { kind: 'status', status: 'stopped' }),
+      await emit(h, mac2, 'rs_1', PER_SPACE + 1, {
+        kind: 'status',
+        status: 'stopped',
+      }),
     ).toBeUndefined();
     expect(await emit(h, mac2, last, refused)).toBeUndefined();
     expect(stored(h, last).max).toBe(refused);

@@ -6,7 +6,7 @@ import { RootStore } from '../stores/RootStore';
 import { RootStoreProvider } from '../stores/context';
 import { FakeTransport } from '../test/fakeTransport';
 import { setSetting } from '../actions';
-import type { AgentId } from '../gen/contract';
+import type { AgentId, FleetAgent } from '../gen/contract';
 import { AgentMenu } from './AgentMenu';
 import {
   agentEffort,
@@ -267,6 +267,34 @@ describe('AgentMenu', () => {
     expect(picked).toBe('codex');
   });
 
+  it('shows a signed-out agent disabled, with how to sign it in', async () => {
+    const store = new RootStore();
+    m = await mount(
+      <RootStoreProvider store={store}>
+        <AgentMenu
+          agents={['claude']}
+          signedOut={[
+            { id: 'codex', hint: 'Run `codex login` in a terminal.' },
+          ]}
+          selected="claude"
+          onSelect={(next) => (picked = next)}
+        />
+      </RootStoreProvider>,
+    );
+    await settle();
+    await settle();
+    await click(m.host.querySelector('button[aria-label="Model"]')!);
+    await settle();
+    const codex = item('Codex')!;
+    expect(codex.textContent).toContain('not signed in');
+    expect(codex.querySelector('code')?.textContent).toBe('codex login');
+    expect(codex.getAttribute('aria-disabled')).toBe('true');
+    await click(codex);
+    await settle();
+    expect(picked).toBeNull();
+    expect(item('GPT-6-Sol')).toBeUndefined();
+  });
+
   it("Models lists every CLI's models, earlier versions one level down", async () => {
     const store = new RootStore();
     const chip = await render(store, 'claude');
@@ -498,5 +526,74 @@ describe('AgentMenu', () => {
     press();
     await settle();
     expect(agentEffort(store, 'claude')).toBe('xhigh');
+  });
+
+  it("another device's agents: its models and defaults, never a setting here", async () => {
+    const store = new RootStore();
+    // This device's own settings must not leak into the host's chip.
+    setAgentModel(store, 'claude', 'claude-fable-5-1');
+    setAgentEffort(store, 'claude', 'max');
+    const transport = new FakeTransport();
+    setTransport(transport);
+    const host: FleetAgent[] = [
+      {
+        id: 'codex',
+        label: 'Codex',
+        default_model: 'gpt-host',
+        default_effort: 'high',
+        models: [
+          {
+            id: 'gpt-host',
+            label: 'GPT Host',
+            description: null,
+            efforts: ['low', 'high'],
+            default_effort: 'low',
+            older: false,
+          },
+          {
+            id: 'gpt-mini',
+            label: 'GPT Mini',
+            description: null,
+            efforts: ['low'],
+            default_effort: 'low',
+            older: false,
+          },
+        ],
+      },
+    ];
+    const models: string[] = [];
+    const efforts: string[] = [];
+    m = await mount(
+      <RootStoreProvider store={store}>
+        <AgentMenu
+          agents={['codex']}
+          host={host}
+          selected="codex"
+          onSelect={() => {}}
+          modelOf={() => null}
+          onPickModel={(_, id) => models.push(id)}
+          effortOf={() => null}
+          onPickEffort={(_, e) => efforts.push(e)}
+        />
+      </RootStoreProvider>,
+    );
+    await settle();
+    await settle();
+    const chip = m.host.querySelector('button[aria-label="Model"]')!;
+    expect(chip.textContent).toBe('GPT Host High');
+    await click(chip);
+    await settle();
+    // Its settings aren't this device's to edit.
+    expect(item('Edit')).toBeUndefined();
+    await click(item('Models')!);
+    await settle();
+    await click(item('GPT Mini')!);
+    await settle();
+    expect(models).toEqual(['gpt-mini']);
+    expect(
+      transport.calls.filter((c) =>
+        ['agent_models', 'detect_agents', 'transact'].includes(c.cmd),
+      ),
+    ).toEqual([]);
   });
 });

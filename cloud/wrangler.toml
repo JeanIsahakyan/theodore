@@ -3,6 +3,9 @@
 #   wrangler secret put WORKOS_API_KEY --env staging
 #   wrangler secret put WORKOS_API_KEY --env production
 # Local `wrangler dev` reads WORKOS_API_KEY from .dev.vars (gitignored).
+# Optional: EXPO_ACCESS_TOKEN (secret), only if the Expo project turns on
+# "enhanced push security". WEB_ORIGINS: the web app's origins (CORS and
+# browser sockets), comma-separated, per environment below.
 name = "theodore-cloud"
 main = "src/index.ts"
 compatibility_date = "2026-11-01"
@@ -33,7 +36,7 @@ new_sqlite_classes = ["OrgHub"]
 
 [env.staging]
 name = "theodore-cloud-staging"
-vars = { WORKOS_CLIENT_ID = "client_01M5RM1W36AHHEGBE37QD3PS6K", WORKOS_API_BASE = "https://api.workos.com" }
+vars = { WORKOS_CLIENT_ID = "client_01M5RM1W36AHHEGBE37QD3PS6K", WORKOS_API_BASE = "https://api.workos.com", WEB_ORIGINS = "https://theodore-web-staging.prd-instance.workers.dev" }
 durable_objects.bindings = [{ name = "ORG_HUB", class_name = "OrgHub" }]
 ratelimits = [
   { name = "RL_PUBLIC", namespace_id = "1101", simple = { limit = 30, period = 60 } },
@@ -42,7 +45,7 @@ ratelimits = [
 
 [env.production]
 name = "theodore-cloud"
-vars = { WORKOS_CLIENT_ID = "client_01M5RMBK860S2JJZNWJDDSH0BM", WORKOS_API_BASE = "https://api.workos.com" }
+vars = { WORKOS_CLIENT_ID = "client_01M5RMBK860S2JJZNWJDDSH0BM", WORKOS_API_BASE = "https://api.workos.com", WEB_ORIGINS = "https://theodore-web.prd-instance.workers.dev" }
 durable_objects.bindings = [{ name = "ORG_HUB", class_name = "OrgHub" }]
 ratelimits = [
   { name = "RL_PUBLIC", namespace_id = "1201", simple = { limit = 30, period = 60 } },

@@ -101,7 +101,7 @@ impl Core {
             // Named after the goal; a second "fix login" in the project
             // becomes `fix-login-2`, and so does its branch.
             None => {
-                let siblings = self.list_spaces(Some(project.id.clone())).await?;
+                let siblings = self.local_spaces(Some(project.id.clone())).await?;
                 let taken: Vec<&str> = siblings.iter().map(|s| s.name.as_str()).collect();
                 unique_name(&slug(name_seed(&req.goal, start.title.as_deref())), &taken)
             }
@@ -250,6 +250,7 @@ impl Core {
             question: None,
             mirror: None,
             worktree_head: None,
+            remote: None,
         };
         self.apply(vec![NewAction {
             model: models::SPACE.into(),
@@ -318,7 +319,18 @@ impl Core {
         self.space_row(&id).await
     }
 
-    /// Every space, or one project's; newest activity first.
+    /// The spaces of this device's own (not mirrors of spaces running on
+    /// another device), or one project's; newest activity first. What
+    /// everything but the UI's list goes through: sweeps, recovery, ports,
+    /// names and branches.
+    pub(crate) async fn local_spaces(&self, project: Option<String>) -> AppResult<Vec<Space>> {
+        let mut spaces = self.list_spaces(project).await?;
+        spaces.retain(|s| s.remote.is_none());
+        Ok(spaces)
+    }
+
+    /// Every space, mirrored ones included, or one project's; newest
+    /// activity first.
     pub async fn list_spaces(&self, project: Option<String>) -> AppResult<Vec<Space>> {
         let store = self.0.deps.store.clone();
         let rows = tokio::task::spawn_blocking(move || store.all(models::SPACE))
@@ -338,6 +350,9 @@ impl Core {
     /// (docs/spaces.md §8). Returns the message id; the reply arrives as a
     /// `chat_message` row.
     pub async fn space_send(&self, req: SpaceSendRequest) -> AppResult<String> {
+        if let Some(r) = self.space_remote_of(&req.space).await {
+            return self.remote_space_send(&r, req).await;
+        }
         let queue = self.space_queue_lock(&req.space).await;
         // Yours, so a blank space's first one: that's what starts it.
         let start = self.begin_blank(&req).await?;
@@ -590,6 +605,12 @@ impl Core {
             }
             None => CodeTools::Off,
         };
+        let hosted = self.fleet_hosts_local(&space.id).await;
+        let device_name = if hosted {
+            self.fleet_name(&self.fleet_settings().await).await
+        } else {
+            String::new()
+        };
         let turn = Turn {
             live: attach,
             follow_up: false,
@@ -613,8 +634,8 @@ impl Core {
                             &space,
                             self.0.deps.tools.is_some(),
                             code,
-                            !self.fleet_hosts_local(&space.id).await
-                                && self.user_mcp_allowed().await,
+                            !hosted && self.user_mcp_allowed().await,
+                            hosted.then_some(device_name.as_str()),
                         ),
                         self.0.deps.tools.is_some() && self.fleet_tools_available(),
                     ),
@@ -718,6 +739,9 @@ impl Core {
 
     /// Cancels the turn in flight; its edits are still checkpointed.
     pub async fn space_stop(&self, space: &str) -> AppResult<()> {
+        if let Some(r) = self.space_remote_of(space).await {
+            return self.remote_space_stop(&r).await;
+        }
         if self.cancel_space_run(space).await? {
             crate::usecases::telemetry::space_action("stop");
             return Ok(());
@@ -765,7 +789,13 @@ impl Core {
 
     /// Checkpoints uncommitted edits, removes the worktree and the review;
     /// the checkpoint ref and the transcript stay.
+    ///
+    /// A mirrored space (docs/fleet.md): its turn stopped on the host if
+    /// one runs, then the copy here forgotten and unfollowed.
     pub async fn archive_space(&self, space: &str) -> AppResult<()> {
+        if let Some(r) = self.space_remote_of(space).await {
+            return self.remote_space_archive(&r).await;
+        }
         // Not while a turn hands over to the next queued message.
         let _queue = self.space_queue_lock(space).await;
         let space = self.space_row(space).await?;
@@ -975,8 +1005,9 @@ impl Core {
         self.space_row(&req.space).await
     }
 
+    /// Pinning is this device's own: a mirrored space keeps it here.
     pub async fn set_space_pinned(&self, space: &str, pinned: bool) -> AppResult<Space> {
-        let row = self.space_row(space).await?;
+        let row = self.space_row_any(space).await?;
         if row.pinned == pinned {
             return Ok(row);
         }
@@ -987,14 +1018,15 @@ impl Core {
             data: Some(serde_json::json!({ "pinned": pinned })),
         }])
         .await?;
-        self.space_row(space).await
+        self.space_row_any(space).await
     }
 
     /// Turns left `running` by a previous process can never finish
     /// (docs/spaces.md §7 "Crash recovery"). Their worktree keeps whatever
-    /// the agent wrote; the next turn or archive checkpoints it.
+    /// the agent wrote; the next turn or archive checkpoints it. A mirrored
+    /// space's turn runs on its host: nothing of it is here to fail.
     pub(crate) async fn fail_interrupted_spaces(&self) {
-        let Ok(spaces) = self.list_spaces(None).await else {
+        let Ok(spaces) = self.local_spaces(None).await else {
             return;
         };
         let now = self.0.deps.clock.now();
@@ -1023,7 +1055,7 @@ impl Core {
     /// point and display names.
     pub(crate) async fn reopen_space_review(&self, pr: &PrId) -> AppResult<()> {
         let space = self
-            .list_spaces(None)
+            .local_spaces(None)
             .await?
             .into_iter()
             .find(|s| s.review_pr.as_ref() == Some(pr))
@@ -1084,12 +1116,16 @@ impl Core {
         Ok(opened)
     }
 
+    /// A space of this device's own. One that runs on another device (a
+    /// mirror, docs/fleet.md) is refused, saying where it runs: its
+    /// worktree, checkpoints, terminal and commands are the host's.
+    /// `space_row_any` reads either.
     pub(crate) async fn space_row(&self, id: &str) -> AppResult<Space> {
-        let data = self
-            .get_row(models::SPACE, id)
-            .await?
-            .ok_or_else(|| AppError::NotFound(format!("space {id}")))?;
-        serde_json::from_value(data).map_err(|e| AppError::Invalid(e.to_string()))
+        let space = self.space_row_any(id).await?;
+        match &space.remote {
+            Some(r) => Err(crate::usecases::fleet_follow::runs_elsewhere(r)),
+            None => Ok(space),
+        }
     }
 
     pub(crate) async fn space_project(&self, space: &Space) -> AppResult<Project> {
@@ -1696,6 +1732,7 @@ async fn drive_turn(core: &Core, turn: Turn) {
             duration_ms = ms,
             "space turn couldn't sign in to the agent"
         );
+        core.fleet_agent_signed_out(agent).await;
     } else if let (Some(e), false) = (&error, cancelled) {
         tracing::warn!(
             error.code = "space.turn_failed",
@@ -2173,8 +2210,17 @@ fn with_fleet_tools(mut prompt: String, fleet: bool) -> String {
     prompt
 }
 
-fn system_prompt(space: &Space, tools: bool, code: CodeTools, user_mcp: bool) -> String {
-    let mut prompt = base_system_prompt(space);
+/// `hosted_on`: this computer's name when the space runs here for another
+/// device (docs/fleet.md): the user follows it from there, where there is
+/// no Ship.
+fn system_prompt(
+    space: &Space,
+    tools: bool,
+    code: CodeTools,
+    user_mcp: bool,
+    hosted_on: Option<&str>,
+) -> String {
+    let mut prompt = base_system_prompt(space, hosted_on);
     if tools {
         prompt.push('\n');
         prompt.push_str(SPACE_TOOLS_PROMPT);
@@ -2190,15 +2236,27 @@ fn system_prompt(space: &Space, tools: bool, code: CodeTools, user_mcp: bool) ->
     prompt
 }
 
-fn base_system_prompt(space: &Space) -> String {
+/// Where the user ships from, for the agent without the ship tool.
+fn ship_hint(hosted_on: Option<&str>) -> String {
+    match hosted_on {
+        None => "point the user to Ship in the space's header".to_string(),
+        Some(name) => format!(
+            "tell the user it ships from Theodore on {name}, where this space runs \
+             (they follow it from another device, which has no Ship)"
+        ),
+    }
+}
+
+fn base_system_prompt(space: &Space, hosted_on: Option<&str>) -> String {
+    let ship = ship_hint(hosted_on);
     format!(
         "You are working in a Theodore space: an isolated git worktree for one change.\n\
          Goal: {goal}\n\
          Base branch: {base}. The change will be shipped as branch {branch}.\n\
          Rules: work only inside the current directory. Shipping goes through Theodore: \
          never run git push, gh pr create or another PR command, and do not switch, create \
-         or rebase branches or rewrite history yourself; without the ship tool, point the \
-         user to Ship in the space's header. Theodore commits your edits after every turn, \
+         or rebase branches or rewrite history yourself; without the ship tool, {ship}. \
+         Theodore commits your edits after every turn, \
          so you don't need to. End each turn with a short summary of what you \
          changed and anything left to do.",
         goal = if space.blank {
@@ -2406,5 +2464,18 @@ mod tests {
         let p = turn_prompt(&[first], "next");
         assert!(p.contains("[user]\nsee the screenshot\n(attached: shot.png)\n"));
         assert!(!p.contains("/data/attachments"));
+    }
+}
+
+#[cfg(test)]
+mod ship_hint_tests {
+    use super::ship_hint;
+
+    #[test]
+    fn a_space_run_for_another_device_ships_from_its_host() {
+        assert!(ship_hint(None).contains("Ship in the space's header"));
+        let hosted = ship_hint(Some("mac-A"));
+        assert!(hosted.contains("ships from Theodore on mac-A"));
+        assert!(!hosted.contains("header"));
     }
 }

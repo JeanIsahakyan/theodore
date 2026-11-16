@@ -1,0 +1,115 @@
+/**
+ * Android: Material 3 buttons. primary, glassProminent ─▶ `Button`
+ * (filled), secondary, glass ─▶ `FilledTonalButton`, plain ─▶ `TextButton`,
+ * destructive ─▶ `OutlinedButton` in the danger color (quieter than the
+ * filled action next to it: Untrust). In a `Form` section's card:
+ * a clickable `ListItem` (accent, or danger); in a `plain` section, the
+ * button itself (Sign out: filled, error color, across the screen).
+ */
+import {
+  Button as FilledButton,
+  CircularProgressIndicator,
+  FilledTonalButton,
+  ListItem,
+  OutlinedButton,
+  Row,
+  Text,
+  TextButton,
+} from '@expo/ui/jetpack-compose';
+import {
+  alpha,
+  clickable,
+  fillMaxWidth,
+  semantics,
+  size,
+  testID as testIDMod,
+  type ModifierConfig,
+} from '@expo/ui/jetpack-compose/modifiers';
+import { usePalette } from '../theme';
+import { useInCard, useInForm } from './context';
+import { ControlHost } from './host.android';
+import type { ButtonProps } from './types';
+
+export function Button({
+  label,
+  onPress,
+  variant = 'secondary',
+  disabled,
+  loading,
+  fullWidth,
+  accessibilityLabel,
+  testID,
+  style,
+}: ButtonProps) {
+  const p = usePalette();
+  const inForm = useInForm();
+  const inCard = useInCard();
+  const off = !!disabled || !!loading;
+  const mods: ModifierConfig[] = [];
+  if (accessibilityLabel)
+    mods.push(semantics({ contentDescription: accessibilityLabel }));
+  if (testID) mods.push(testIDMod(testID));
+
+  if (inForm && inCard) {
+    const color = variant === 'destructive' ? p.danger : p.accent;
+    return (
+      <ListItem
+        // Remounted when it turns on or off: Compose keeps the state and
+        // click handler it was mounted with (an enabled Send answer stayed
+        // grey and dead).
+        key={off ? 'off' : 'on'}
+        colors={{ containerColor: 'transparent' }}
+        modifiers={[...(off ? [alpha(0.38)] : [clickable(onPress)]), ...mods]}
+      >
+        <ListItem.HeadlineContent>
+          <Text color={color}>{label}</Text>
+        </ListItem.HeadlineContent>
+        {loading ? (
+          <ListItem.TrailingContent>
+            <CircularProgressIndicator
+              color={color}
+              strokeWidth={2}
+              modifiers={[size(20, 20)]}
+            />
+          </ListItem.TrailingContent>
+        ) : null}
+      </ListItem>
+    );
+  }
+
+  if (fullWidth) mods.push(fillMaxWidth());
+  const Component =
+    variant === 'secondary' || variant === 'glass'
+      ? FilledTonalButton
+      : variant === 'plain'
+        ? TextButton
+        : variant === 'destructive'
+          ? OutlinedButton
+          : FilledButton;
+  const colors =
+    variant === 'destructive' ? { contentColor: p.danger } : undefined;
+  return (
+    <ControlHost style={style} width={fullWidth ? 'fill' : 'content'}>
+      <Component
+        // See above: remounted when it turns on or off.
+        key={off ? 'off' : 'on'}
+        onClick={off ? undefined : onPress}
+        enabled={!off}
+        // Only when set: an undefined prop reaches Compose as null, which
+        // can't be read as ButtonColors.
+        {...(colors ? { colors } : {})}
+        modifiers={mods}
+      >
+        <Row verticalAlignment="center" horizontalArrangement={{ spacedBy: 8 }}>
+          {loading ? (
+            <CircularProgressIndicator
+              strokeWidth={2}
+              modifiers={[size(16, 16)]}
+            />
+          ) : null}
+          <Text>{label}</Text>
+        </Row>
+      </Component>
+    </ControlHost>
+  );
+}

@@ -138,6 +138,51 @@ fn the_fleet_journal_keeps_the_last_events_per_space() {
     assert_eq!(store.fleet_journal_since("rs_2", 0, 10).unwrap().len(), 1);
 }
 
+#[test]
+fn the_fleet_journal_keeps_only_the_latest_mirror_of_a_row() {
+    let store = SqliteStore::open_in_memory().unwrap();
+    let mirror =
+        |id: &str, n: u64| json!({"kind": "mirror", "model": "space", "id": id, "data": {"n": n}});
+    store
+        .fleet_journal_append("rs_1", 1, &json!({"kind": "started"}), 4)
+        .unwrap();
+    for seq in 2..=6 {
+        store
+            .fleet_journal_put_mirror("rs_1", seq, &mirror("rs_1", seq), ("space", "rs_1"), 4)
+            .unwrap();
+    }
+    store
+        .fleet_journal_put_mirror("rs_1", 7, &mirror("m1", 7), ("space", "m1"), 4)
+        .unwrap();
+    store
+        .fleet_journal_put_mirror("rs_2", 1, &mirror("rs_2", 1), ("space", "rs_2"), 4)
+        .unwrap();
+    let journal = store.fleet_journal_since("rs_1", 0, 10).unwrap();
+    // Holes in seq, in order; the other space's row untouched.
+    assert_eq!(
+        journal,
+        vec![
+            (1, json!({"kind": "started"})),
+            (6, mirror("rs_1", 6)),
+            (7, mirror("m1", 7)),
+        ]
+    );
+    assert_eq!(store.fleet_journal_since("rs_2", 0, 10).unwrap().len(), 1);
+    // The cap counts events, not a seq range: holes don't eat it.
+    for seq in 8..=9 {
+        store
+            .fleet_journal_append("rs_1", seq, &json!({"n": seq}), 4)
+            .unwrap();
+    }
+    let seqs: Vec<u64> = store
+        .fleet_journal_since("rs_1", 0, 10)
+        .unwrap()
+        .into_iter()
+        .map(|(s, _)| s)
+        .collect();
+    assert_eq!(seqs, vec![6, 7, 8, 9]);
+}
+
 /// Seen fleet requests outlive the process; done never goes back to
 /// claiming, and old ones are forgotten.
 #[test]

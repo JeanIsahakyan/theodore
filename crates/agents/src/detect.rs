@@ -56,6 +56,7 @@ pub async fn detect_one(id: AgentId, cfg: &AgentBinaryConfig) -> AgentInfo {
                 path: Some(path),
                 version,
                 installed: true,
+                signed_in: None,
             }
         }
         None => AgentInfo {
@@ -63,6 +64,7 @@ pub async fn detect_one(id: AgentId, cfg: &AgentBinaryConfig) -> AgentInfo {
             path: None,
             version: None,
             installed: false,
+            signed_in: None,
         },
     }
 }

@@ -26,6 +26,7 @@ pub mod models;
 pub mod process;
 pub mod pty;
 pub mod shell;
+pub mod sign_in;
 
 use async_trait::async_trait;
 use theodore_domain::AgentId;
@@ -61,6 +62,40 @@ pub struct AgentCli {
     /// `codex debug models`: a success for the process, a failure (not
     /// installed, or the listing broke) for `CODEX_RETRY_AFTER`.
     codex_models: std::sync::Arc<tokio::sync::Mutex<CodexModels>>,
+    /// Each CLI's sign-in, as last checked or as a run found it.
+    sign_in: std::sync::Arc<std::sync::Mutex<SignInCache>>,
+}
+
+/// How long a sign-in check's answer stands: as long as the fleet's
+/// catalog of agents (`fleet_agents.rs`).
+const SIGN_IN_TTL: std::time::Duration = std::time::Duration::from_secs(10 * 60);
+
+/// How long "couldn't tell" stands before asking again.
+const SIGN_IN_UNKNOWN_TTL: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// Each agent's sign-in and when it was learned.
+#[derive(Debug, Default)]
+struct SignInCache(std::collections::HashMap<AgentId, (std::time::Instant, Option<bool>)>);
+
+impl SignInCache {
+    /// The known answer for `id` if it still stands at `now`.
+    fn fresh(&self, id: AgentId, now: std::time::Instant) -> Option<Option<bool>> {
+        let (at, known) = self.0.get(&id)?;
+        let ttl = if known.is_some() {
+            SIGN_IN_TTL
+        } else {
+            SIGN_IN_UNKNOWN_TTL
+        };
+        (now.duration_since(*at) < ttl).then_some(*known)
+    }
+
+    fn known(&self, id: AgentId) -> Option<bool> {
+        self.0.get(&id).and_then(|(_, k)| *k)
+    }
+
+    fn set(&mut self, id: AgentId, now: std::time::Instant, known: Option<bool>) {
+        self.0.insert(id, (now, known));
+    }
 }
 
 /// How long a failed codex model listing stands before it's tried again:
@@ -161,6 +196,75 @@ impl AgentCli {
 }
 
 impl AgentCli {
+    /// One agent's `detect`: its binary, version and sign-in.
+    async fn detect_agent(&self, id: AgentId) -> AgentInfo {
+        let cfg = self.configs.get(id);
+        let Some(path) = detect::locate_binary(id, &cfg) else {
+            return AgentInfo {
+                id,
+                path: None,
+                version: None,
+                installed: false,
+                signed_in: None,
+            };
+        };
+        let (version, signed_in) =
+            tokio::join!(detect::read_version(&path), self.signed_in(id, &path));
+        if let Some(v) = &version {
+            self.versions
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .insert(id, v.clone());
+        }
+        AgentInfo {
+            id,
+            path: Some(path),
+            version,
+            installed: true,
+            signed_in,
+        }
+    }
+
+    /// `id`'s sign-in: the cached answer while it stands, else checked now
+    /// (`sign_in::check`, with a run's env).
+    async fn signed_in(&self, id: AgentId, program: &std::path::Path) -> Option<bool> {
+        let now = std::time::Instant::now();
+        if let Some(known) = self
+            .sign_in
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .fresh(id, now)
+        {
+            return known;
+        }
+        let home = dirs::home_dir();
+        let known = sign_in::check(id, program, &env::filtered_env(), home.as_deref()).await;
+        if known == Some(false) {
+            tracing::info!(agent = id.as_str(), "agent isn't signed in");
+        }
+        self.sign_in.lock().unwrap_or_else(|p| p.into_inner()).set(
+            id,
+            std::time::Instant::now(),
+            known,
+        );
+        known
+    }
+
+    /// What a run that fails signed out calls: `id` is known signed out
+    /// until it's checked again.
+    fn signed_out_hook(&self, id: AgentId) -> process::SignedOutHook {
+        let cache = self.sign_in.clone();
+        std::sync::Arc::new(move || {
+            cache.lock().unwrap_or_else(|p| p.into_inner()).set(
+                id,
+                std::time::Instant::now(),
+                Some(false),
+            );
+        })
+    }
+}
+
+impl AgentCli {
     /// One CLI process for `req`; `steerable` (Claude only) keeps its stdin
     /// open for steered messages.
     async fn spawn(
@@ -242,6 +346,7 @@ impl AgentCli {
                 .unwrap_or_else(|p| p.into_inner())
                 .get(&req.agent)
                 .cloned(),
+            on_signed_out: Some(self.signed_out_hook(req.agent)),
         };
         if !steerable {
             return process::spawn_and_stream(spec, parser).map(|run| (run, None));
@@ -259,20 +364,42 @@ impl AgentCli {
 
 #[async_trait]
 impl AgentPort for AgentCli {
+    /// Every agent at once: each finds its CLI, reads `--version` and
+    /// checks its sign-in (cached, `SIGN_IN_TTL`) side by side.
     async fn detect(&self) -> Vec<AgentInfo> {
-        let mut out = Vec::with_capacity(AgentId::ALL.len());
-        for id in AgentId::ALL {
-            let cfg = self.configs.get(id);
-            let info = detect::detect_one(id, &cfg).await;
-            if let Some(v) = &info.version {
-                self.versions
-                    .lock()
-                    .unwrap_or_else(|p| p.into_inner())
-                    .insert(id, v.clone());
-            }
-            out.push(info);
+        let tasks: Vec<_> = AgentId::ALL
+            .into_iter()
+            .map(|id| {
+                let cli = self.clone();
+                tokio::spawn(async move { cli.detect_agent(id).await })
+            })
+            .collect();
+        let mut out = Vec::with_capacity(tasks.len());
+        for (id, task) in AgentId::ALL.into_iter().zip(tasks) {
+            out.push(task.await.unwrap_or(AgentInfo {
+                id,
+                path: None,
+                version: None,
+                installed: false,
+                signed_in: None,
+            }));
         }
         out
+    }
+
+    async fn recheck_sign_in(&self) {
+        self.sign_in
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .0
+            .clear();
+    }
+
+    fn known_sign_in(&self, agent: AgentId) -> Option<bool> {
+        self.sign_in
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .known(agent)
     }
 
     async fn run(&self, req: AgentRequest) -> Result<AgentRun, AgentError> {
@@ -369,6 +496,74 @@ mod tests {
         assert_eq!((list.len(), log), (1, None));
         let much_later = t0 + CODEX_RETRY_AFTER * 10;
         assert_eq!(cache.cached(much_later), Some(vec![model("m")]));
+    }
+
+    #[test]
+    fn a_sign_in_stands_for_a_while_and_unknown_for_less() {
+        let mut cache = SignInCache::default();
+        let t0 = Instant::now();
+        assert_eq!(cache.fresh(AgentId::Codex, t0), None, "never checked");
+        cache.set(AgentId::Codex, t0, Some(false));
+        cache.set(AgentId::Claude, t0, None);
+        let later = t0 + SIGN_IN_UNKNOWN_TTL;
+        assert_eq!(cache.fresh(AgentId::Codex, later), Some(Some(false)));
+        assert_eq!(cache.fresh(AgentId::Claude, later), None, "asked again");
+        assert_eq!(cache.fresh(AgentId::Codex, t0 + SIGN_IN_TTL), None);
+        assert_eq!(cache.known(AgentId::Codex), Some(false));
+    }
+
+    /// A fake CLI at `<dir>/<name>` that prints `out` for any arguments.
+    fn fake_cli(dir: &std::path::Path, name: &str, out: &str, code: i32) -> std::path::PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let path = dir.join(name);
+        std::fs::write(&path, format!("#!/bin/sh\necho '{out}'\nexit {code}\n")).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        path
+    }
+
+    #[tokio::test]
+    async fn detect_checks_sign_in_once_and_a_signed_out_run_marks_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let claude = fake_cli(dir.path(), "claude", r#"{"loggedIn": true}"#, 0);
+        let cli = AgentCli::new()
+            .with_config(
+                AgentId::Claude,
+                AgentBinaryConfig {
+                    path: Some(claude.clone()),
+                    ..Default::default()
+                },
+            )
+            .with_config(
+                AgentId::Codex,
+                AgentBinaryConfig {
+                    path: Some(dir.path().join("no-codex")),
+                    ..Default::default()
+                },
+            )
+            .with_config(
+                AgentId::Gemini,
+                AgentBinaryConfig {
+                    path: Some(dir.path().join("no-gemini")),
+                    ..Default::default()
+                },
+            );
+        let by_id = |list: Vec<AgentInfo>, id| list.into_iter().find(|a| a.id == id).unwrap();
+        let info = by_id(cli.detect().await, AgentId::Claude);
+        // The fake says so (or a key in this process's env does first).
+        assert_eq!(info.signed_in, Some(true));
+        assert_eq!(by_id(cli.detect().await, AgentId::Codex).signed_in, None);
+
+        // A run found it signed out: known without checking, until asked.
+        (cli.signed_out_hook(AgentId::Claude))();
+        assert_eq!(cli.known_sign_in(AgentId::Claude), Some(false));
+        assert_eq!(
+            by_id(cli.detect().await, AgentId::Claude).signed_in,
+            Some(false)
+        );
+        cli.recheck_sign_in().await;
+        assert_eq!(cli.known_sign_in(AgentId::Claude), None);
+        let again = by_id(cli.detect().await, AgentId::Claude);
+        assert_ne!(again.signed_in, Some(false), "checked again");
     }
 
     #[tokio::test]

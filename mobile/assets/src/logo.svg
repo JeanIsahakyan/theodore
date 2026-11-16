@@ -1,0 +1,69 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <title>Theodore</title>
+  <defs>
+    <radialGradient id="blob" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#0C5BC0" stop-opacity="0.95"/>
+      <stop offset="1" stop-color="#0C5BC0" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="glass" x1="0" y1="0" x2="0.3" y2="1">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.72"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0.14"/>
+    </linearGradient>
+    <linearGradient id="rim" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="1"/>
+      <stop offset="0.5" stop-color="#FFFFFF" stop-opacity="0.25"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0.7"/>
+    </linearGradient>
+    <clipPath id="tile">
+      <rect x="100" y="100" width="824" height="824" rx="185"/>
+    </clipPath>
+    <clipPath id="lenses">
+      <circle cx="352" cy="500" r="150"/>
+      <circle cx="672" cy="500" r="150"/>
+    </clipPath>
+  </defs>
+
+  <!-- фон -->
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="#3F86D6"/>
+  <g clip-path="url(#tile)">
+    <circle cx="300" cy="330" r="300" fill="url(#blob)"/>
+    <circle cx="740" cy="380" r="320" fill="url(#blob)"/>
+    <circle cx="520" cy="800" r="330" fill="url(#blob)"/>
+  </g>
+
+  <!-- тень под линзами -->
+  <g fill="#03306B" fill-opacity="0.18" transform="translate(0 26)">
+    <circle cx="352" cy="500" r="150"/>
+    <circle cx="672" cy="500" r="150"/>
+  </g>
+
+  <!-- стёкла -->
+  <circle cx="352" cy="500" r="150" fill="url(#glass)" fill-opacity="0.75"/>
+  <circle cx="672" cy="500" r="150" fill="url(#glass)" fill-opacity="0.75"/>
+
+  <!-- преломление внутри линз -->
+  <g clip-path="url(#lenses)" stroke="#FFFFFF" stroke-opacity="0.45" stroke-width="40">
+    <path d="M100 330 L 924 330"/>
+    <path d="M100 440 L 924 440"/>
+    <path d="M100 550 L 924 550"/>
+    <path d="M100 660 L 924 660"/>
+  </g>
+
+  <!-- кромка линз -->
+  <g fill="none" stroke="url(#rim)" stroke-width="6">
+    <circle cx="352" cy="500" r="150"/>
+    <circle cx="672" cy="500" r="150"/>
+  </g>
+
+  <!-- перемычка -->
+  <path d="M500 486 C 506 456, 518 456, 524 486" fill="none" stroke="#FFFFFF" stroke-width="20" stroke-linecap="round"/>
+
+  <!-- блики -->
+  <g fill="none" stroke="#FFFFFF" stroke-width="12" stroke-linecap="round">
+    <path d="M250 430 A 120 120 0 0 1 300 380"/>
+    <path d="M570 430 A 120 120 0 0 1 620 380"/>
+  </g>
+
+  <!-- светлая кромка иконки -->
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="none" stroke="#FFFFFF" stroke-opacity="0.6" stroke-width="6"/>
+</svg>

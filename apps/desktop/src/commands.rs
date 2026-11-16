@@ -168,9 +168,11 @@ pub async fn submit_review(
 #[specta::specta]
 pub async fn detect_agents(
     op: crate::op::Op,
+    recheck: Option<bool>,
     core: State<'_, Arc<dyn CoreApi>>,
 ) -> Result<Vec<AgentStatus>, CommandError> {
-    op.run(async move { core.detect_agents().await }).await
+    op.run(async move { core.detect_agents(recheck.unwrap_or(false)).await })
+        .await
 }
 
 #[tauri::command]
@@ -1186,6 +1188,18 @@ pub async fn fleet_remove_device(
     core: State<'_, Arc<dyn CoreApi>>,
 ) -> Result<theodore_contract::FleetStatus, CommandError> {
     op.run(async move { core.fleet_remove_device(device_id).await })
+        .await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn fleet_delegate(
+    op: crate::op::Op,
+    device_id: String,
+    on: bool,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<theodore_contract::FleetStatus, CommandError> {
+    op.run(async move { core.fleet_delegate(device_id, on).await })
         .await
 }
 

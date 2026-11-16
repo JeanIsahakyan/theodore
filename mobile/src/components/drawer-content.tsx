@@ -1,0 +1,347 @@
+// Adapted from EvanBacon/chat-template (MIT)
+/**
+ * The drawer (native) and the sidebar (web): Theodore's "chats" are its
+ * spaces.
+ *
+ * ```text
+ * Theodore
+ * [⌕ Search spaces            ]
+ * ✎ New space
+ * Today
+ *   Fix the login redirect   ●      ● running (accent) / waiting (warning) / failed (red)
+ * Yesterday · Previous 7 days · Older
+ * ──────────────────────────────
+ * ▢ Devices
+ * (JI) Jean · Acme            ⚙     account line ─▶ Settings, gear ─▶ Settings
+ * ```
+ *
+ * iOS: grouped-list look (10 pt rounded highlight). Android: Material 3
+ * navigation drawer items (full pill, 56 dp, the active one tinted).
+ */
+import { usePathname, type Href } from 'expo-router';
+import { useEffect, useMemo, useState } from 'react';
+import {
+  Pressable,
+  SectionList,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
+import type { SpaceView } from '../fleet/types';
+import { useServices } from '../services';
+import { useAuthState } from '../shell/AppProviders';
+import { spaceHref } from '../shell/navigate';
+import { useFleetState } from '../state/fleet';
+import { initials, spaceDot, spaceSections, type SpaceDot } from '../ui/drawer';
+import { spaceTitle } from '../ui/logic';
+import { usePalette } from '../ui/theme';
+import { SymbolImage, type SymbolName } from './symbol-image';
+import { SafeAreaView } from './tw';
+
+const android = process.env.EXPO_OS === 'android';
+
+const DOT_CLASS: Record<SpaceDot, string> = {
+  running: 'bg-primary',
+  waiting: 'bg-warning',
+  failed: 'bg-danger',
+};
+
+const DOT_LABEL: Record<SpaceDot, string> = {
+  running: 'running',
+  waiting: 'waiting for you',
+  failed: 'failed',
+};
+
+/** The organization's name, once the cloud says it. */
+function useOrganizationName(): string | null {
+  const { auth } = useServices();
+  const { session } = useAuthState();
+  const org = session?.organizationId ?? null;
+  const [found, setFound] = useState<{ org: string; name: string } | null>(
+    null,
+  );
+  useEffect(() => {
+    let live = true;
+    if (!org) return undefined;
+    auth
+      .organizations()
+      .then((list) => {
+        const name = list.find((o) => o.id === org)?.name;
+        if (live && name) setFound({ org, name });
+      })
+      .catch(() => {
+        // the line shows the account alone
+      });
+    return () => {
+      live = false;
+    };
+  }, [auth, org]);
+  return found && found.org === org ? found.name : null;
+}
+
+/** Now, moved on every minute: "Today" turns into "Yesterday" at midnight. */
+function useMinute(): number {
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 60_000);
+    return () => clearInterval(t);
+  }, []);
+  return now;
+}
+
+function NavItem({
+  label,
+  icon,
+  active,
+  onPress,
+  testID,
+}: {
+  label: string;
+  icon: SymbolName;
+  active?: boolean;
+  onPress: () => void;
+  testID?: string;
+}) {
+  const p = usePalette();
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityState={{ selected: !!active }}
+      testID={testID}
+      android_ripple={{ color: p.border }}
+      className={
+        android
+          ? `mx-3 h-14 flex-row items-center gap-3 overflow-hidden rounded-full px-4 ${active ? 'bg-primary/15' : ''}`
+          : `mx-2 flex-row items-center gap-3 rounded-[10px] px-4 py-3 active:bg-muted ${active ? 'bg-muted' : ''}`
+      }
+    >
+      <SymbolImage name={icon} size={android ? 24 : 20} color={p.text} />
+      <Text
+        className={`text-base text-foreground ${active ? 'font-semibold' : ''}`}
+      >
+        {label}
+      </Text>
+    </Pressable>
+  );
+}
+
+function SpaceItem({
+  space,
+  active,
+  onPress,
+}: {
+  space: SpaceView;
+  active: boolean;
+  onPress: () => void;
+}) {
+  const p = usePalette();
+  const dot = spaceDot(space);
+  const title = spaceTitle(space) || 'Untitled space';
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={dot ? `${title}, ${DOT_LABEL[dot]}` : title}
+      accessibilityState={{ selected: active }}
+      android_ripple={{ color: p.border }}
+      className={
+        android
+          ? `mx-3 h-12 flex-row items-center gap-2 overflow-hidden rounded-full px-4 ${active ? 'bg-primary/15' : ''}`
+          : `mx-2 flex-row items-center gap-2 rounded-[10px] px-4 py-2.5 active:bg-accent ${active ? 'bg-muted' : ''}`
+      }
+    >
+      <Text
+        numberOfLines={1}
+        className={`flex-1 text-[15px] ${active ? 'text-foreground' : android ? 'text-foreground' : 'text-muted-foreground'}`}
+      >
+        {title}
+      </Text>
+      {dot ? (
+        <View className={`h-2 w-2 rounded-full ${DOT_CLASS[dot]}`} />
+      ) : null}
+    </Pressable>
+  );
+}
+
+function SearchField({
+  value,
+  onChangeText,
+}: {
+  value: string;
+  onChangeText: (text: string) => void;
+}) {
+  const p = usePalette();
+  return (
+    <View
+      className={
+        android
+          ? 'mx-3 mb-2 h-12 flex-row items-center gap-2 rounded-full bg-muted px-4'
+          : 'mx-4 mb-2 h-9 flex-row items-center gap-1.5 rounded-[10px] bg-muted px-2'
+      }
+    >
+      <SymbolImage name="search" size={android ? 22 : 16} color={p.muted} />
+      <TextInput
+        value={value}
+        onChangeText={onChangeText}
+        placeholder="Search spaces"
+        placeholderTextColor={p.muted}
+        accessibilityLabel="Search spaces"
+        autoCorrect={false}
+        autoCapitalize="none"
+        returnKeyType="search"
+        clearButtonMode="while-editing"
+        className="flex-1 py-0 text-base text-foreground"
+        style={{ outlineStyle: 'none' } as object}
+      />
+    </View>
+  );
+}
+
+function AccountLine({ onPress }: { onPress: () => void }) {
+  const p = usePalette();
+  const { session } = useAuthState();
+  const org = useOrganizationName();
+  const who = session?.name || session?.email || 'Signed in';
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={`Account: ${who}${org ? `, ${org}` : ''}. Settings`}
+      android_ripple={{ color: p.border, borderless: false }}
+      className="flex-1 flex-row items-center gap-2.5 overflow-hidden rounded-full p-1.5 active:opacity-60"
+    >
+      <View className="h-8 w-8 items-center justify-center rounded-full bg-muted">
+        <Text className="text-[13px] font-semibold text-foreground">
+          {initials(session?.name, session?.email)}
+        </Text>
+      </View>
+      <View className="flex-1">
+        <Text numberOfLines={1} className="text-sm text-foreground">
+          {who}
+        </Text>
+        {org ? (
+          <Text numberOfLines={1} className="text-xs text-muted-foreground">
+            {org}
+          </Text>
+        ) : null}
+      </View>
+    </Pressable>
+  );
+}
+
+export function DrawerContent({
+  onNavigate,
+  onNewSpace,
+  edges = ['top', 'bottom', 'left'],
+}: {
+  /** Opens a page from the drawer (a space, Devices, Settings). */
+  onNavigate: (href: Href) => void;
+  onNewSpace: () => void;
+  edges?: ('top' | 'bottom' | 'left')[];
+}) {
+  const p = usePalette();
+  const path = usePathname();
+  const spaces = useFleetState((s) => s.spaces);
+  const [query, setQuery] = useState('');
+  const now = useMinute();
+  const sections = useMemo(
+    () => spaceSections(spaces, now, query),
+    [spaces, now, query],
+  );
+
+  return (
+    <SafeAreaView className="flex-1 bg-sidebar" edges={edges}>
+      <View className={android ? 'px-7 pt-4 pb-3' : 'px-4 pt-2 pb-3'}>
+        <Text
+          accessibilityRole="header"
+          className={
+            android
+              ? 'text-[22px] text-foreground'
+              : 'text-[28px] font-bold text-foreground'
+          }
+        >
+          Theodore
+        </Text>
+      </View>
+
+      <SearchField value={query} onChangeText={setQuery} />
+
+      <SectionList
+        className="flex-1"
+        sections={sections}
+        keyExtractor={(s) => s.space}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
+        stickySectionHeadersEnabled={false}
+        contentContainerStyle={{ paddingBottom: 8 }}
+        ListHeaderComponent={
+          <NavItem
+            label="New space"
+            icon="compose"
+            active={path === '/'}
+            onPress={onNewSpace}
+            testID="drawer-new-space"
+          />
+        }
+        renderSectionHeader={({ section }) => (
+          <Text
+            accessibilityRole="header"
+            className={
+              android
+                ? 'px-7 pt-5 pb-2 text-sm font-medium text-muted-foreground'
+                : 'px-6 pt-5 pb-1.5 text-[13px] font-semibold text-muted-foreground'
+            }
+          >
+            {section.title}
+          </Text>
+        )}
+        renderItem={({ item }) => {
+          const href = spaceHref(item.space);
+          return (
+            <SpaceItem
+              space={item}
+              active={path === href}
+              onPress={() => onNavigate(href)}
+            />
+          );
+        }}
+        ListEmptyComponent={
+          <Text className="px-6 pt-6 text-[15px] text-muted-foreground">
+            {query.trim()
+              ? `No space matches “${query.trim()}”`
+              : 'Spaces you start or follow show here.'}
+          </Text>
+        }
+      />
+
+      <View
+        className="gap-1 border-t border-border pt-2 pb-2"
+        style={{ borderTopWidth: StyleSheet.hairlineWidth }}
+      >
+        <NavItem
+          label="Devices"
+          icon="devices"
+          active={path === '/devices'}
+          onPress={() => onNavigate('/devices' as Href)}
+          testID="drawer-devices"
+        />
+        <View className="mx-2 flex-row items-center gap-1 pr-1">
+          <AccountLine onPress={() => onNavigate('/settings' as Href)} />
+          <Pressable
+            onPress={() => onNavigate('/settings' as Href)}
+            accessibilityRole="button"
+            accessibilityLabel="Settings"
+            testID="drawer-settings"
+            hitSlop={6}
+            android_ripple={{ color: p.border, borderless: true, radius: 24 }}
+            className="h-10 w-10 items-center justify-center rounded-full active:bg-muted"
+          >
+            <SymbolImage name="settings" size={22} color={p.muted} />
+          </Pressable>
+        </View>
+      </View>
+    </SafeAreaView>
+  );
+}

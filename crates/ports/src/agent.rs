@@ -14,6 +14,11 @@ pub struct AgentInfo {
     pub path: Option<PathBuf>,
     pub version: Option<String>,
     pub installed: bool,
+    /// Whether the CLI has credentials (docs/fleet.md "Sign-in"): `None`
+    /// when not installed, or when the check couldn't tell (timed out, an
+    /// older CLI without a status command) — usable, but unconfirmed.
+    #[serde(default)]
+    pub signed_in: Option<bool>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -394,6 +399,15 @@ const SIGN_IN: &[(&str, &str, &str)] = &[
     ),
 ];
 
+/// How to sign `agent` (the CLI name) in, from a terminal on the
+/// computer it runs on: the fix a signed-out run's message ends with.
+pub fn sign_in_fix(agent: &str) -> Option<&'static str> {
+    SIGN_IN
+        .iter()
+        .find(|(name, ..)| *name == agent)
+        .map(|(.., fix)| *fix)
+}
+
 fn signed_out_text(label: &str, fix: &str) -> String {
     format!("{label} isn't signed in. {fix}")
 }
@@ -553,6 +567,15 @@ pub trait AgentPort: Send + Sync {
     /// agent that can't list them (not installed, no listing) gives `[]`.
     async fn models(&self, _agent: AgentId) -> Vec<ModelInfo> {
         Vec::new()
+    }
+    /// Forget what's known of each agent's sign-in: the next
+    /// [`detect`](Self::detect) checks again (the user signed in or out).
+    async fn recheck_sign_in(&self) {}
+    /// What's known of `agent`'s sign-in without checking (no process
+    /// spawned): the last check's answer, or a run that failed signed out.
+    /// `None`: unknown.
+    fn known_sign_in(&self, _agent: AgentId) -> Option<bool> {
+        None
     }
 }
 

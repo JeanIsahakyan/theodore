@@ -4,7 +4,9 @@
 
 use std::path::{Path, PathBuf};
 
-use theodore_contract::{AskRequest, ChatMessage, RunSkillRequest, RunStatus, SkillRun, models};
+use theodore_contract::{
+    AgentStatus, AskRequest, ChatMessage, RunSkillRequest, RunStatus, SkillRun, models,
+};
 use theodore_domain::{AgentId, Author, Finding, FindingId, Fix, PrId};
 use theodore_ports::{
     AgentAttachment, AgentEvent, AgentMode, AgentRequest, NewAction, SyncActionCode,
@@ -211,26 +213,50 @@ impl Core {
         Ok(message_id)
     }
 
-    /// `configured` unless it's disabled, in which case the first enabled
-    /// installed agent (plan "enable/disable agents"): falls back instead
-    /// of silently running a CLI the user turned off. Returns `configured`
-    /// unchanged if every installed agent is disabled — a hard failure
-    /// here would be worse than running the one the setting already named.
+    /// `configured` unless it's disabled or known signed out, in which
+    /// case the first enabled installed agent not signed out (plan
+    /// "enable/disable agents", docs/fleet.md "Sign-in"): falls back
+    /// instead of running a CLI the user turned off or one that can't sign
+    /// in. With none such: `configured` while enabled, else the first
+    /// enabled installed agent, else `configured` unchanged — a hard
+    /// failure here would be worse than running the one the setting named.
     pub(crate) async fn effective_agent(&self, configured: AgentId) -> AgentId {
-        if self.agent_enabled(configured).await {
+        let agents = &self.0.deps.agents;
+        let enabled = self.agent_enabled(configured).await;
+        if enabled && agents.known_sign_in(configured) != Some(false) {
             return configured;
         }
-        let installed: Vec<AgentId> = self
-            .0
-            .deps
-            .agents
-            .detect()
+        let detected = agents.detect().await;
+        let installed = |usable_only: bool| -> Vec<AgentId> {
+            detected
+                .iter()
+                .filter(|a| a.installed && !(usable_only && a.signed_in == Some(false)))
+                .map(|a| a.id)
+                .collect()
+        };
+        if let Some(a) = self.first_enabled(&installed(true)).await {
+            return a;
+        }
+        if enabled {
+            return configured;
+        }
+        self.first_enabled(&installed(false))
             .await
-            .into_iter()
-            .filter(|a| a.installed)
-            .map(|a| a.id)
-            .collect();
-        self.first_enabled(&installed).await.unwrap_or(configured)
+            .unwrap_or(configured)
+    }
+
+    /// Each agent CLI: installed, its version, and whether it's signed in
+    /// (docs/fleet.md "Sign-in"). `recheck`: sign-ins are checked again
+    /// rather than read from the cache (the user just signed in). A
+    /// sign-in that differs from what the fleet lists is announced.
+    pub async fn detect_agents(&self, recheck: bool) -> AppResult<Vec<AgentStatus>> {
+        let agents = &self.0.deps.agents;
+        if recheck {
+            agents.recheck_sign_in().await;
+        }
+        let detected = agents.detect().await;
+        self.fleet_note_detected(&detected).await;
+        Ok(detected.into_iter().map(agent_status).collect())
     }
 
     pub async fn cancel_run(&self, run: String) -> AppResult<()> {
@@ -378,6 +404,22 @@ impl Core {
     }
 }
 
+/// One detected agent as the UI shows it: a hint to sign in unless it's
+/// known signed in.
+fn agent_status(a: theodore_ports::AgentInfo) -> AgentStatus {
+    let sign_in_hint = (a.installed && a.signed_in != Some(true))
+        .then(|| theodore_ports::sign_in_fix(a.id.as_str()).map(str::to_string))
+        .flatten();
+    AgentStatus {
+        id: a.id,
+        installed: a.installed,
+        version: a.version,
+        path: a.path.map(|p| p.display().to_string()),
+        signed_in: a.signed_in,
+        sign_in_hint,
+    }
+}
+
 async fn drive_skill_run(
     core: &Core,
     run_id: String,
@@ -508,6 +550,7 @@ async fn drive_skill_run(
             duration_ms = ms,
             "skill run couldn't sign in to the agent"
         );
+        core.fleet_agent_signed_out(last_agent).await;
     } else if let Some(e) = &error {
         tracing::warn!(
             error.code = "skill.failed",
@@ -891,6 +934,9 @@ async fn drive_ask(
         } else {
             None
         };
+        if expected == Some(theodore_ports::AGENT_SIGNED_OUT_CODE) {
+            core.fleet_agent_signed_out(agent).await;
+        }
         match expected {
             Some(code) => tracing::info!(
                 error.code = code,

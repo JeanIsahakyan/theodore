@@ -37,7 +37,28 @@ idle_ms: number } |
  *  drops its row and closes its socket; it can register again only as
  *  a new device.
  */
-{ type: "remove_device"; device_id: string };
+{ type: "remove_device"; device_id: string } |
+/**  This device's push token (phone app); an empty token removes it. */
+{ type: "register_push"; provider: PushProvider; token: string } |
+/**  A [`Delegation`] signed by this device as its origin. */
+{ type: "delegate"; envelope: SignedEnvelope };
+
+/**
+ *  An origin lets another of its user's devices follow the spaces it
+ *  started: subscribe to them and get their questions (docs/mobile.md
+ *  "Following a computer's spaces"). Signed by the origin
+ *  ([`Domain::Delegate`]); it grants no power on hosts, whose own trust still
+ *  decides what the delegate's requests may do.
+ */
+export type Delegation = {
+	origin_device: string,
+	delegate_device: string,
+	issued_at_ms: number,
+	/**  Unix ms; the cloud drops it after. 0: no expiry. */
+	expires_at_ms: number,
+	/**  `true` withdraws an earlier delegation to the same device. */
+	revoke: boolean,
+};
 
 /**  What a device says about itself (in `hello` and `announce`). */
 export type DeviceInfo = {
@@ -52,15 +73,32 @@ export type DeviceInfo = {
 	projects: ProjectRef[],
 	accepts_remote: boolean,
 	max_mode: FleetMode,
+	/**
+	 *  Agents a remote start or send may pick: installed and enabled here,
+	 *  the default (`agents.chat`) first. Empty unless `accepts_remote`,
+	 *  and from a host older than this field (then a request naming an
+	 *  agent, model or effort is ignored there, so the origin offers none).
+	 *  Kept within [`MAX_INFO_BYTES`] by [`DeviceInfo::fit_agents`].
+	 */
+	agents?: FleetAgentInfo[],
 };
 
 export type DeviceKind =
 /**  The desktop app: runs spaces and is where a person sits. */
 "desktop" |
 /**  `theodore daemon`: runs spaces, nobody sits there. */
-"daemon";
+"daemon" |
+/**  The phone app (docs/mobile.md): a client only, never a target. */
+"mobile" |
+/**  The web app: a client only, never a target. */
+"web";
 
-export type DeviceOs = "macos" | "linux";
+export type DeviceOs = "macos" | "linux" | "windows" | "ios" | "android" |
+/**
+ *  An OS this build doesn't know (a newer client's): shown as such,
+ *  never a reason to drop the device list (see `Deserialize`).
+ */
+"other";
 
 /**  A device as the cloud lists it to the user's other devices. */
 export type DeviceSummary = {
@@ -79,6 +117,31 @@ export type DeviceSummary = {
 export type DismissReason = "answered_elsewhere" | "moved" | "resolved";
 
 /**
+ *  One agent a host runs for remote spaces (docs/fleet.md "Agent, model
+ *  and effort").
+ */
+export type FleetAgentInfo = {
+	/**  `claude`, `codex`, `gemini`. */
+	id: string,
+	label: string,
+	/**
+	 *  What runs when a request names no model (`agents.<id>.model`, else
+	 *  the first current model); `None`: the CLI's own.
+	 */
+	default_model?: string | null,
+	/**
+	 *  What runs when a request names no effort (`agents.<id>.effort` when
+	 *  the default model takes it, else that model's own).
+	 */
+	default_effort?: string | null,
+	/**
+	 *  Current models first, earlier versions after (dropped first when
+	 *  the info runs over its size).
+	 */
+	models?: FleetModelInfo[],
+};
+
+/**
  *  A space mode as the fleet speaks it; ordered from least to most power,
  *  so a cap is a comparison (`mode <= max_mode`). Plan sits between Ask and
  *  Edit: it explores and edits nothing, but its approval leads to an Edit
@@ -86,11 +149,25 @@ export type DismissReason = "answered_elsewhere" | "moved" | "resolved";
  */
 export type FleetMode = "ask" | "plan" | "edit" | "run";
 
+export type FleetModelInfo = {
+	/**  What the CLI's model flag takes; what a request's `model` names. */
+	id: string,
+	label: string,
+	/**  Levels a request's `effort` may name with this model; empty: none. */
+	efforts?: string[],
+	default_effort?: string | null,
+};
+
 export type ProjectRef = {
 	/**  The project's id on that device. */
 	id: string,
 	name: string,
 };
+
+/**  Push providers the cloud can send through. */
+export type PushProvider =
+/**  Expo Push (APNs / FCM behind it). */
+"expo";
 
 export type RemoteAsk = {
 	ask_id: string,
@@ -102,10 +179,21 @@ export type RemoteAsk = {
 };
 
 export type RemoteOp = { op: "start_space"; space: string; project_id: string; goal: string; mode: FleetMode; agent?: string | null; model?: string | null;
+/**
+ *  One of the model's efforts (the host's default model's when no
+ *  model is named); `None`: the host's default.
+ */
+effort?: string | null;
 /**  The remote space whose agent asked for this one, if any. */
 parent?: string | null;
 /**  0 for a space a person started. */
-depth: number } | { op: "send"; space: string; text: string; mode?: FleetMode | null } | { op: "stop"; space: string } |
+depth: number } | { op: "send"; space: string; text: string; mode?: FleetMode | null;
+/**
+ *  From this turn on, as a local send's: the space's agent, model
+ *  and effort, each checked against what the host lists
+ *  (`DeviceInfo::agents`). `None` keeps the space's.
+ */
+agent?: string | null; model?: string | null; effort?: string | null } | { op: "stop"; space: string } |
 /**
  *  Answers the question set `ask_id` of `space`: one entry per question,
  *  the chosen options (several when the question allows), or a free
@@ -149,7 +237,16 @@ text: string } | { kind: "tool"; turn: number; name: string;
 /**  One line, ≤ 200 chars. */
 summary: string } | { kind: "reply"; turn: number;
 /**  The agent's reply for the turn, truncated to 8000 chars. */
-text: string } | { kind: "turn_ended"; turn: number; outcome: TurnOutcome; message?: string | null } | { kind: "question"; ask_id: string; questions: RemoteQuestion[] } | { kind: "question_cleared"; ask_id: string };
+text: string } | { kind: "turn_ended"; turn: number; outcome: TurnOutcome; message?: string | null } | { kind: "question"; ask_id: string; questions: RemoteQuestion[] } | { kind: "question_cleared"; ask_id: string } |
+/**
+ *  One row of the space as the host's own UI sees it (docs/spaces.md
+ *  models): `model` is `space` (the space row, local-only fields
+ *  blanked), `chat_message` (its chat), or `turn_step` (a step of a run;
+ *  `id` = `<run>:<n>`). `data` is the contract JSON; `None` deletes it.
+ *  The origin mirrors these so a remote space renders exactly like a
+ *  local one. Each event's JSON stays under [`MIRROR_ROW_MAX_BYTES`].
+ */
+{ kind: "mirror"; model: string; id: string; data?: unknown | null };
 
 export type RemoteSpaceStatus = "running" |
 /**  Settled, waiting for the next message. */
@@ -205,7 +302,12 @@ resume: { [key in string]: number } } |
  */
 { type: "space_gap"; space: string; from: number; to: number } |
 /**  A host's signed [`RemoteAsk`], forwarded unchanged. */
-{ type: "ask"; envelope: SignedEnvelope; via: AskVia } | { type: "dismiss"; ask_id: string; reason: DismissReason } | { type: "error"; code: string; message: string };
+{ type: "ask"; envelope: SignedEnvelope; via: AskVia } | { type: "dismiss"; ask_id: string; reason: DismissReason } | { type: "error"; code: string; message: string } |
+/**
+ *  The live delegations naming this device (as origin or delegate), each
+ *  as the origin signed it; sent after welcome and on change.
+ */
+{ type: "delegations"; list: SignedEnvelope[] };
 
 /**
  *  A request body signed by its origin device. `body` is the JSON text of a

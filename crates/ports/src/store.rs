@@ -192,7 +192,7 @@ pub trait Store: Send + Sync {
     }
 
     /// Journals event `seq` of hosted space `space`, then keeps only its
-    /// last `keep` events.
+    /// last `keep` events (counted: compacted mirrors leave holes in seq).
     fn fleet_journal_append(
         &self,
         _space: &str,
@@ -201,6 +201,21 @@ pub trait Store: Send + Sync {
         _keep: usize,
     ) -> StoreResult<()> {
         Ok(())
+    }
+
+    /// Journals `mirror` event `seq` of `space`, the row `(model, id)`:
+    /// older journaled mirrors of that row go (only its latest is kept),
+    /// then the space keeps its last `keep` events. Default: a plain
+    /// `fleet_journal_append`.
+    fn fleet_journal_put_mirror(
+        &self,
+        space: &str,
+        seq: u64,
+        event: &serde_json::Value,
+        _row: (&str, &str),
+        keep: usize,
+    ) -> StoreResult<()> {
+        self.fleet_journal_append(space, seq, event, keep)
     }
 
     /// Up to `limit` journaled events of `space` after `since`, oldest first.

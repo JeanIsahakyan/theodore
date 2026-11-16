@@ -24,7 +24,7 @@ export const commands = {
 } | null, CommandError>(__TAURI_INVOKE("tool_payload", { run, call })),
 	cancelRun: (run: string) => typedError<null, CommandError>(__TAURI_INVOKE("cancel_run", { run })),
 	submitReview: (req: SubmitReviewRequest) => typedError<null, CommandError>(__TAURI_INVOKE("submit_review", { req })),
-	detectAgents: () => typedError<AgentStatus[], CommandError>(__TAURI_INVOKE("detect_agents")),
+	detectAgents: (recheck: boolean | null) => typedError<AgentStatus[], CommandError>(__TAURI_INVOKE("detect_agents", { recheck })),
 	agentModels: (agent: AgentId) => typedError<AgentModel[], CommandError>(__TAURI_INVOKE("agent_models", { agent })),
 	/**
 	 *  The core doesn't know about updates the shell already downloaded in the
@@ -260,6 +260,7 @@ export const commands = {
 	fleetSetSettings: (req: FleetSettingsRequest) => typedError<FleetStatus, CommandError>(__TAURI_INVOKE("fleet_set_settings", { req })),
 	fleetTrustDevice: (req: FleetTrustRequest) => typedError<FleetStatus, CommandError>(__TAURI_INVOKE("fleet_trust_device", { req })),
 	fleetRemoveDevice: (deviceId: string) => typedError<FleetStatus, CommandError>(__TAURI_INVOKE("fleet_remove_device", { deviceId })),
+	fleetDelegate: (deviceId: string, on: boolean) => typedError<FleetStatus, CommandError>(__TAURI_INVOKE("fleet_delegate", { deviceId, on })),
 	fleetStartSpace: (req: FleetStartRequest) => typedError<FleetRemoteSpace, CommandError>(__TAURI_INVOKE("fleet_start_space", { req })),
 	fleetSend: (req: FleetSendRequest) => typedError<null, CommandError>(__TAURI_INVOKE("fleet_send", { req })),
 	fleetStop: (space: string) => typedError<null, CommandError>(__TAURI_INVOKE("fleet_stop", { space })),
@@ -465,6 +466,14 @@ export type AgentStatus = {
 	installed: boolean,
 	version: string | null,
 	path: string | null,
+	/**
+	 *  Whether the CLI has credentials (docs/fleet.md "Sign-in"): `false`
+	 *  shows the agent disabled with `sign_in_hint`; `null` when not
+	 *  installed or the check couldn't tell (usable, unconfirmed).
+	 */
+	signed_in?: boolean | null,
+	/**  How to sign it in on this computer, when it isn't (or might not be). */
+	sign_in_hint?: string | null,
 };
 
 /**  Host-neutral point in a diff. Adapters map it to host positions. */
@@ -1165,6 +1174,19 @@ export type FindSymbolRequest = {
 	side?: DiffSide | null,
 };
 
+/**
+ *  An agent another device runs, with its models (`description` none,
+ *  `older` false: the host lists current models first).
+ */
+export type FleetAgent = {
+	id: AgentId,
+	label: string,
+	/**  What runs there when none is picked. */
+	default_model: string | null,
+	default_effort: string | null,
+	models: AgentModel[],
+};
+
 export type FleetAnswerRequest = {
 	space: string,
 	ask_id: string,
@@ -1176,7 +1198,10 @@ export type FleetDevice = {
 	device_id: string,
 	name: string,
 	os: FleetOs,
-	/**  `desktop` or `daemon`. */
+	/**
+	 *  `desktop` or `daemon` (computers: they run spaces), `mobile` or `web`
+	 *  (the phone and web app: clients only, never a space's target).
+	 */
 	kind: string,
 	online: boolean,
 	/**  Unix ms; 0 if never. */
@@ -1201,11 +1226,25 @@ export type FleetDevice = {
 	/**  This device trusts it (its key is pinned here). */
 	trusted: boolean,
 	this_device: boolean,
+	/**
+	 *  This device sends its spaces' questions there (docs/mobile.md
+	 *  "Following a computer's spaces"): asked for here, and still trusted.
+	 */
+	delegated: boolean,
+	/**  The cloud holds that delegation, as this device signed it. */
+	delegation_live: boolean,
+	/**
+	 *  Agents a space started or steered there may pick, as it lists them
+	 *  (installed and enabled there, its default first). Empty: a host too
+	 *  old to list them, or not taking remote spaces; then nothing is
+	 *  picked and its own defaults run.
+	 */
+	agents?: FleetAgent[],
 };
 
 export type FleetLineKind = "started" | "status" | "turn" | "tool" | "reply" | "ended" | "question" | "gap";
 
-export type FleetOs = "macos" | "linux";
+export type FleetOs = "macos" | "linux" | "windows" | "ios" | "android" | "other";
 
 export type FleetPresenceRequest = {
 	focused: boolean,
@@ -1264,6 +1303,10 @@ export type FleetSendRequest = {
 	space: string,
 	text: string,
 	mode?: SpaceMode | null,
+	/**  From this turn on, as a local send; `None` keeps the space's. */
+	agent?: AgentId | null,
+	model?: string | null,
+	effort?: string | null,
 };
 
 export type FleetSettingsRequest = {
@@ -1288,6 +1331,10 @@ export type FleetStartRequest = {
 	project_id: string,
 	goal: string,
 	mode: SpaceMode,
+	/**  One the host lists (`FleetDevice::agents`); `None`: its default. */
+	agent?: AgentId | null,
+	model?: string | null,
+	effort?: string | null,
 };
 
 export type FleetStatus = {
@@ -2181,6 +2228,12 @@ export type Space = {
 	 *  can be dismissed in bulk once that turn ends.
 	 */
 	sent_feedback?: SentFeedback[],
+	/**
+	 *  Set when this space runs on another device (docs/fleet.md, a
+	 *  mirror of the host's space): actions go to the host through the
+	 *  fleet; local-only parts (worktree, diff, terminal) are the host's.
+	 */
+	remote?: SpaceRemote | null,
 	created_at: number,
 	updated_at: number,
 	/**
@@ -2473,6 +2526,23 @@ export type SpaceQueuedRequest = {
 	action: QueuedAction,
 };
 
+/**
+ *  One agent turn of a space: the messages it answered and the checkpoint
+ *  it moved the space from and to.
+ *  Where a mirrored space runs.
+ */
+export type SpaceRemote = {
+	/**  The fleet id (`rs_…`). */
+	space: string,
+	host_device: string,
+	/**  The host's name as pinned on this device. */
+	host_name: string,
+	/**  The host's project name (`project` is the host's id, not one here). */
+	project_name: string,
+	/**  Started from this device (vs followed through a delegation). */
+	started_here: boolean,
+};
+
 /**  Where "Revert" takes a file back to. */
 export type SpaceRevertFrom =
 /**  As it is in the base: the space's change to it is gone. */
@@ -2627,10 +2697,6 @@ export type SpaceTrustRequest = {
 	hash: string,
 };
 
-/**
- *  One agent turn of a space: the messages it answered and the checkpoint
- *  it moved the space from and to.
- */
 export type SpaceTurn = {
 	/**
 	 *  The `chat_message` id of your message that started it; the reply's

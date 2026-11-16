@@ -1,0 +1,20 @@
+{
+  "hello": {
+    "nonce_b64": "CQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQk=",
+    "signature": "WiT3YZ0bdSx3C40cIKSzxSJiuq824KHNX3Itg0Ffws0lGMEw0/5e+DNS0TYC7tUWF0QBUJiaN/Xk0ojUu7GVAQ=="
+  },
+  "public_key": "6kpsY+KcUgq+9VB7Ey7F+ZVHdq6+vnuSQh7qaRRG0iw=",
+  "request": {
+    "body": "{\"req_id\":\"req_vector\",\"origin_device\":\"dev_00000000-0000-4000-8000-000000000001\",\"target_device\":\"dev_00000000-0000-4000-8000-000000000002\",\"target_key\":\"target-key\",\"issued_at_ms\":1700000000000,\"op\":{\"op\":\"send\",\"space\":\"rs_vector\",\"text\":\"hello\",\"mode\":\"edit\",\"agent\":\"claude\",\"model\":\"opus\",\"effort\":\"high\"}}",
+    "signature": "9sFEcpeYg5ZPl2iAo+fgeQDnAWoTATZ7AuiEgfMJiA6DcylMLIn749UnZb4FL2B1plQ569ImUvl4G44hl4mKAg=="
+  },
+  "seed_b64": "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=",
+  "tags": {
+    "ask": "theodore-fleet-ask-v3\u0000",
+    "delegate": "theodore-fleet-delegate-v3\u0000",
+    "event": "theodore-fleet-event-v3\u0000",
+    "hello": "theodore-fleet-hello-v3\u0000",
+    "reply": "theodore-fleet-reply-v3\u0000",
+    "request": "theodore-fleet-request-v3\u0000"
+  }
+}

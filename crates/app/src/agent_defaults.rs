@@ -118,6 +118,14 @@ impl AgentPort for AgentDefaults {
     async fn models(&self, agent: AgentId) -> Vec<ModelInfo> {
         self.inner.models(agent).await
     }
+
+    async fn recheck_sign_in(&self) {
+        self.inner.recheck_sign_in().await
+    }
+
+    fn known_sign_in(&self, agent: AgentId) -> Option<bool> {
+        self.inner.known_sign_in(agent)
+    }
 }
 
 #[cfg(test)]
