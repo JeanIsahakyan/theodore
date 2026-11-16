@@ -154,6 +154,9 @@ async fn a_branch_behind_its_base_ships_without_the_base_as_a_parent() {
         h._tmp.path(),
         &["clone", "-q", h.bare.to_str().unwrap(), "other"],
     );
+    // A fresh clone has no identity of its own (CI has no global one).
+    git(&clone, &["config", "user.email", "a@b.com"]);
+    git(&clone, &["config", "user.name", "test"]);
     std::fs::write(clone.join("from-main.txt"), "newer\n").unwrap();
     commit_all(&clone, "main moves on");
     git(&clone, &["push", "-q", "origin", "main"]);

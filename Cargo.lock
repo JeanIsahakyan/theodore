@@ -5710,6 +5710,7 @@ version = "0.1.20"
 dependencies = [
  "async-trait",
  "dirs 6.0.0",
+ "nix 0.31.3",
  "portable-pty",
  "pretty_assertions",
  "serde",
@@ -6224,8 +6225,11 @@ dependencies = [
 name = "theodore-secrets"
 version = "0.1.20"
 dependencies = [
+ "dirs 6.0.0",
  "serde_json",
+ "tempfile",
  "theodore-ports",
+ "tracing",
 ]
 
 [[package]]

@@ -15,6 +15,7 @@ pub mod fleet_tools;
 pub mod git;
 pub mod host;
 pub mod issues;
+pub mod login_shell;
 pub mod secrets;
 pub mod space_agent_tools;
 pub mod space_tools;

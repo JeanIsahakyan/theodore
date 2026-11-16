@@ -20,10 +20,8 @@ env:
 
 jobs:
   rust:
-    # Every crate (incl. the Tauri shell) targets macOS; run the whole
-    # workspace there rather than installing Linux GTK/WebKit dev packages
-    # just to compile a macOS-only app. The release builds' runner
-    # (build.yml), so CI compiles against the same SDK.
+    # fmt and clippy on the macOS release runner (build.yml), so CI
+    # compiles against the same SDK; rust-test-linux covers Linux.
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
@@ -63,6 +61,58 @@ jobs:
           cargo run -p theodore-contract --bin export-ts
           cargo run -p theodore-desktop -- --export-bindings
           git diff --exit-code -- ui/src/gen
+
+  # The workspace's tests on Linux, which ships too (build.yml): catches
+  # code that only compiles or passes on macOS. The release builds'
+  # Ubuntu, and their apt packages.
+  rust-test-linux:
+    runs-on: ubuntu-22.04
+    # A hang fails with its log. (Runs once died with no log at all: a group
+    # kill through procps' `kill` hit the runner's own process group; signals
+    # now go by syscall, `theodore_agents::signals`.)
+    timeout-minutes: 75
+    # No incremental state and no debug info keep the build inside the
+    # hosted runner's disk.
+    env:
+      CARGO_INCREMENTAL: 0
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_TEST_DEBUG: 0
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: free disk space
+        # The hosted image ships ~30 GB of SDKs this job never uses.
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
+
+      - name: apt packages (webkit2gtk, tauri build deps)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libjavascriptcoregtk-4.1-dev \
+            libsoup-3.0-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libdbus-1-dev \
+            patchelf \
+            file
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/staging' }}
+
+      - name: test
+        # The desktop crate (WebKitGTK) is built on Linux by `ui-e2e`.
+        run: cargo test --workspace --exclude theodore-desktop --no-fail-fast
+
+      - name: disk left
+        if: always()
+        run: df -h /
 
   ui:
     runs-on: ubuntu-latest

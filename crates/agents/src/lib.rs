@@ -27,6 +27,7 @@ pub mod process;
 pub mod pty;
 pub mod shell;
 pub mod sign_in;
+pub mod signals;
 
 use async_trait::async_trait;
 use theodore_domain::AgentId;

@@ -23,7 +23,8 @@ use serde::{Deserialize, Serialize};
 use theodore_ports::code_intel::{InstallState, TrustMode};
 
 use crate::manifest::{
-    BIN_PLACEHOLDER, DATA_PLACEHOLDER, DIR_PLACEHOLDER, RUNTIME_PLACEHOLDER, ServerSpec,
+    BIN_PLACEHOLDER, DATA_PLACEHOLDER, DIR_PLACEHOLDER, PLATFORM_DIR_PLACEHOLDER,
+    RUNTIME_PLACEHOLDER, ServerSpec,
 };
 use crate::runtime::{JavaLookup, Runtime};
 
@@ -113,6 +114,8 @@ pub(crate) struct LaunchVars<'a> {
     pub bin: Option<&'a Path>,
     /// `{dir}`: where the download was unpacked.
     pub dir: Option<&'a Path>,
+    /// `{platform_dir}`: the download's per-platform directory, joined to `dir`.
+    pub platform_dir: Option<&'a Path>,
     /// `{data}`: writable, per worktree, outside it.
     pub data: Option<&'a Path>,
     /// `{runtime}`.
@@ -129,7 +132,11 @@ pub(crate) fn launch_argv(spec: &ServerSpec, vars: LaunchVars<'_>) -> Vec<OsStri
             _ => {
                 // Inside an argument: `-Dosgi.x={dir}/config`.
                 let mut out = a.clone();
-                for (name, value) in [(DIR_PLACEHOLDER, vars.dir), (DATA_PLACEHOLDER, vars.data)] {
+                for (name, value) in [
+                    (DIR_PLACEHOLDER, vars.dir),
+                    (PLATFORM_DIR_PLACEHOLDER, vars.platform_dir),
+                    (DATA_PLACEHOLDER, vars.data),
+                ] {
                     if let Some(v) = value {
                         out = out.replace(name, &v.to_string_lossy());
                     }
@@ -193,6 +200,7 @@ pub(crate) async fn find_system(
         data,
         runtime: runtime.map(|r| r.exe.as_path()),
         dir: None,
+        platform_dir: None,
     };
     Some(ResolvedServer {
         name: spec.name.clone(),
@@ -427,13 +435,14 @@ workspace_folders: true
         let spec: ServerSpec = serde_yaml::from_str(
             r#"
 name: s
-launch: ["{runtime}", "-Dcfg={dir}/config", "-jar", "{bin}", "-data", "{data}/ws", "{bin}x"]
+launch: ["{runtime}", "-Dcfg={dir}/config", "-Dplat={platform_dir}", "-jar", "{bin}", "-data", "{data}/ws", "{bin}x"]
 "#,
         )
         .unwrap();
-        let (bin, dir, data, rt) = (
+        let (bin, dir, plat, data, rt) = (
             PathBuf::from("/s/1/l.jar"),
             PathBuf::from("/s/1"),
+            PathBuf::from("/s/1/config_linux"),
             PathBuf::from("/d/ab"),
             PathBuf::from("/jdk/bin/java"),
         );
@@ -442,6 +451,7 @@ launch: ["{runtime}", "-Dcfg={dir}/config", "-jar", "{bin}", "-data", "{data}/ws
             LaunchVars {
                 bin: Some(&bin),
                 dir: Some(&dir),
+                platform_dir: Some(&plat),
                 data: Some(&data),
                 runtime: Some(&rt),
             },
@@ -449,6 +459,7 @@ launch: ["{runtime}", "-Dcfg={dir}/config", "-jar", "{bin}", "-data", "{data}/ws
         let want: Vec<OsString> = [
             "/jdk/bin/java",
             "-Dcfg=/s/1/config",
+            "-Dplat=/s/1/config_linux",
             "-jar",
             "/s/1/l.jar",
             "-data",

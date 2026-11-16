@@ -18,7 +18,7 @@
 //! On disk, under `<data dir>/code-intel/`:
 //!
 //! ```text
-//! grammars/<package>-<version>/   grammar.dylib, <language>.tags.scm
+//! grammars/<package>-<version>/   grammar.dylib (grammar.so on Linux), <language>.tags.scm
 //! servers/<name>/<version>/       the unpacked server
 //! servers/<name>/<version>.partial  an install in progress (renamed when done)
 //! server-data/<name>/<hash>/      a server's `{data}`: one per worktree and trust mode
@@ -45,7 +45,7 @@ use theodore_ports::code_intel::{
 
 pub use detect::git_ls_files;
 pub use download::{OnBytes, http_client};
-pub use grammar::{LoadedGrammar, check_abi, supported_abi};
+pub use grammar::{LIB_FILE as GRAMMAR_LIB_FILE, LoadedGrammar, check_abi, supported_abi};
 pub use manifest::{
     ArchiveFormat, Artifact, BIN_PLACEHOLDER, DATA_PLACEHOLDER, DIR_PLACEHOLDER, GRAMMARS_SCHEMA,
     GrammarLanguage, GrammarSpec, LanguageSpec, Manifest, RUNTIME_PLACEHOLDER, ServerDownload,
@@ -68,7 +68,13 @@ const DATA_DIR_MARK: &str = ".last-used";
 /// This machine's manifest platform key: `darwin-arm64`, `darwin-x64`,
 /// `linux-x64`, `linux-arm64`, `windows-x64`.
 pub fn current_platform() -> &'static str {
-    match (std::env::consts::OS, std::env::consts::ARCH) {
+    platform_key(std::env::consts::OS, std::env::consts::ARCH)
+}
+
+/// The manifest platform key for a Rust `std::env::consts` OS and
+/// architecture pair; `unknown` for one no manifest entry can name.
+pub fn platform_key(os: &str, arch: &str) -> &'static str {
+    match (os, arch) {
         ("macos", "aarch64") => "darwin-arm64",
         ("macos", "x86_64") => "darwin-x64",
         ("linux", "x86_64") => "linux-x64",
@@ -599,6 +605,7 @@ impl Toolchain {
         let version = spec.version.as_deref()?;
         let dir = self.server_dir(&spec.name, version);
         let bin = dir.join(&dl.bin);
+        let platform_dir = dl.platform_dir.as_deref().map(|p| dir.join(p));
         bin.is_file().then(|| ResolvedServer {
             name: spec.name.clone(),
             argv: server::launch_argv(
@@ -606,6 +613,7 @@ impl Toolchain {
                 LaunchVars {
                     bin: Some(&bin),
                     dir: Some(&dir),
+                    platform_dir: platform_dir.as_deref(),
                     data: data.as_deref(),
                     runtime: runtime.map(|r| r.exe.as_path()),
                 },
@@ -960,6 +968,57 @@ fn remove_logged(dir: &Path) {
         Ok(()) => tracing::info!(target: "code_intel", dir = %dir.display(), "removed"),
         Err(e) => {
             tracing::warn!(target: "code_intel", dir = %dir.display(), error = %e, "remove failed")
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn platform_keys() {
+        for (os, arch, want) in [
+            ("macos", "aarch64", "darwin-arm64"),
+            ("macos", "x86_64", "darwin-x64"),
+            ("linux", "x86_64", "linux-x64"),
+            ("linux", "aarch64", "linux-arm64"),
+            ("windows", "x86_64", "windows-x64"),
+            ("linux", "riscv64", "unknown"),
+            ("freebsd", "x86_64", "unknown"),
+        ] {
+            assert_eq!(platform_key(os, arch), want, "{os}/{arch}");
+        }
+        assert_eq!(
+            current_platform(),
+            platform_key(std::env::consts::OS, std::env::consts::ARCH)
+        );
+    }
+
+    /// An ELF binary (Linux) is never handed to `codesign`, and signing is
+    /// not what makes it runnable: the unpacker sets the executable bit.
+    #[test]
+    fn sign_adhoc_leaves_a_non_mach_o_file_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let bin = dir.path().join("server");
+        let elf = b"\x7fELF\x02\x01\x01\0rest";
+        std::fs::write(&bin, elf).unwrap();
+        assert!(!is_mach_o(&bin));
+        sign_adhoc(&bin);
+        assert_eq!(std::fs::read(&bin).unwrap(), elf);
+    }
+
+    #[test]
+    fn mach_o_magics() {
+        let dir = tempfile::tempdir().unwrap();
+        let bin = dir.path().join("server");
+        for magic in [
+            [0xcf, 0xfa, 0xed, 0xfe],
+            [0xce, 0xfa, 0xed, 0xfe],
+            [0xca, 0xfe, 0xba, 0xbe],
+        ] {
+            std::fs::write(&bin, magic).unwrap();
+            assert!(is_mach_o(&bin));
         }
     }
 }

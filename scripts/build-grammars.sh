@@ -1,35 +1,41 @@
 #!/usr/bin/env bash
-# Builds one dylib per tree-sitter grammar package pinned in grammars.toml
-# (docs/code-intel.md §4.1), compiled for this Mac's arch, and the generated
-# manifest fragment (grammars.json) that lists them with their download
-# URLs and checksums.
+# Builds one shared library per tree-sitter grammar package pinned in
+# grammars.toml (docs/code-intel.md §4.1), compiled for this host, and the
+# generated manifest fragment (grammars.json) that lists them with their
+# download URLs and checksums.
 #
-#   grammars.toml ─▶ shallow fetch at rev ─▶ cc parser.c (+scanner.c) ─▶
-#     codesign ─▶ sha256 ─▶ <package>-<version>.dylib
-#                         + <package>-<version>-<lang>.tags.scm
+#   macOS  grammars.toml ─▶ shallow fetch at rev ─▶ cc parser.c (+scanner.c)
+#            ─▶ codesign ─▶ sha256 ─▶ <package>-<version>.dylib
+#   Linux  the same, `cc -shared`, no signature
+#            ─▶ <package>-<version>-linux-<x64|arm64>.so
+#   both   + <package>-<version>-<lang>.tags.scm
 #   ─▶ grammars.json (generated; crates/code-intel-toolchain/manifest/)
+#
+# One run builds for the host it runs on (darwin-arm64, linux-x64 or
+# linux-arm64, by `uname`) and its grammars.json lists only that platform's
+# downloads. .github/workflows/grammars.yml runs this once per platform and
+# merges the fragments, which is the file committed.
 #
 # Everything lands in a gitignored output dir (default target/grammars/);
 # nothing here is committed by this script. .github/workflows/grammars.yml
-# runs this in CI and publishes the dylibs + queries as release assets;
-# grammars.json is committed by hand in a follow-up PR once that release
-# exists.
+# publishes the libraries + queries as release assets; grammars.json is
+# committed by hand in a follow-up PR once that release exists.
 #
 # The shipped app is macOS arm64 only today (build.yml targets
 # aarch64-apple-darwin); GRAMMARS_TARGETS below is the one line to touch to
 # add x86_64 (lipo'd into a universal dylib automatically once there is more
-# than one target).
+# than one target). macOS only: a Linux build is for the host's own arch.
 #
 # Bash 3.2 compatible (macOS's shipped /bin/bash): indexed arrays only, no
 # associative arrays, no mapfile/readarray. grammars.toml is parsed by a
-# tiny inline python3 snippet (python3 is on every macOS runner) rather
-# than a shell TOML parser.
+# tiny inline python3 snippet (python3 is on every runner) rather than a
+# shell TOML parser.
 #
 # Env overrides (all optional):
 #   GRAMMARS_OUT_DIR       output dir                 (default: target/grammars)
 #   GRAMMARS_TARGETS       space-separated clang -arch values
-#                                                      (default: arm64)
-#   GRAMMARS_MACOS_MIN     -mmacosx-version-min       (default: from
+#                                                      (default: arm64; macOS only)
+#   GRAMMARS_MACOS_MIN     -mmacosx-version-min       (macOS only; default: from
 #                                                       apps/desktop/tauri.conf.json,
 #                                                       else 11.0)
 #   GRAMMARS_RELEASE_BASE  release assets base URL    (default:
@@ -47,6 +53,7 @@
 #                                                       still produces a new one)
 #   CODESIGN_IDENTITY      a Developer ID to sign dylibs with
 #                          (--options runtime); unset: ad-hoc `codesign -s -`
+#                          (macOS only: a Linux library is not signed)
 #   CODESIGN_KEYCHAIN      keychain to find that identity in (`codesign
 #                          --keychain`), when it's not on the default
 #                          search list — e.g. a throwaway keychain a CI job
@@ -64,7 +71,36 @@ manifest_out="$out_dir/grammars.json"
 
 targets="${GRAMMARS_TARGETS:-arm64}"
 
-if [ -z "${GRAMMARS_MACOS_MIN:-}" ]; then
+# The host decides the library kind and the manifest platform key.
+host_os=$(uname -s)
+host_arch=$(uname -m)
+case "$host_os" in
+  Darwin)
+    # Only arm64 is shipped; GRAMMARS_TARGETS may add more (lipo'd).
+    platform="darwin-arm64"
+    lib_ext="dylib"
+    ;;
+  Linux)
+    case "$host_arch" in
+      x86_64) platform="linux-x64" ;;
+      aarch64 | arm64) platform="linux-arm64" ;;
+      *)
+        echo "✗ unsupported Linux architecture: $host_arch" >&2
+        exit 1
+        ;;
+    esac
+    lib_ext="so"
+    ;;
+  *)
+    echo "✗ unsupported host: $host_os" >&2
+    exit 1
+    ;;
+esac
+
+macos_min=""
+if [ "$host_os" != "Darwin" ]; then
+  :
+elif [ -z "${GRAMMARS_MACOS_MIN:-}" ]; then
   tauri_conf="$root/apps/desktop/tauri.conf.json"
   if [ -f "$tauri_conf" ]; then
     macos_min=$(python3 -c "
@@ -107,12 +143,21 @@ else
 fi
 
 echo "output dir:    $out_dir"
-echo "targets:       $targets"
-echo "macOS min:     $macos_min"
+echo "platform:      $platform"
+if [ "$host_os" = "Darwin" ]; then
+  echo "targets:       $targets"
+  echo "macOS min:     $macos_min"
+fi
 echo "release:       $release_base/$release_tag"
 echo
 
 mkdir -p "$out_dir" "$work_dir" "$checkout_dir"
+
+# Extra compiler flags: the macOS deployment target; none on Linux.
+cc_min_flag=()
+if [ "$host_os" = "Darwin" ]; then
+  cc_min_flag=("-mmacosx-version-min=$macos_min")
+fi
 
 # --- 1. flatten grammars.toml into one JSON object per line (ndjson). ----
 # A tiny hand-rolled parser: the file only ever uses `[[grammar]]`,
@@ -252,13 +297,13 @@ while IFS= read -r grammar_json; do
 
     echo "  compiling $lang_id ($lang_symbol)"
     parser_obj="$pkg_work/$lang_id-parser.o"
-    cc -std=c11 -O2 -fPIC -mmacosx-version-min="$macos_min" \
+    cc -std=c11 -O2 -fPIC ${cc_min_flag[@]+"${cc_min_flag[@]}"} \
       -I "$src_dir" -c "$src_dir/parser.c" -o "$parser_obj"
     obj_files+=("$parser_obj")
 
     if [ -f "$src_dir/scanner.c" ]; then
       scanner_obj="$pkg_work/$lang_id-scanner.o"
-      cc -std=c11 -O2 -fPIC -mmacosx-version-min="$macos_min" \
+      cc -std=c11 -O2 -fPIC ${cc_min_flag[@]+"${cc_min_flag[@]}"} \
         -I "$src_dir" -c "$src_dir/scanner.c" -o "$scanner_obj"
       obj_files+=("$scanner_obj")
     fi
@@ -304,35 +349,44 @@ print(json.dumps({'url': sys.argv[1], 'sha256': sys.argv[2]}))
     lang_idx=$((lang_idx + 1))
   done
 
-  # --- link: one arch at a time, lipo together if there's more than one. -
-  dylib_name="$package-$version.dylib"
-  per_arch_dylibs=()
-  # shellcheck disable=SC2086 # $targets is intentionally word-split: "arm64" or "arm64 x86_64"
-  set -- $targets
-  n_targets=$#
-  for arch in "$@"; do
-    arch_dylib="$pkg_work/$package.$arch.dylib"
-    cc -dynamiclib -arch "$arch" -mmacosx-version-min="$macos_min" \
-      -o "$arch_dylib" "${obj_files[@]}"
-    per_arch_dylibs+=("$arch_dylib")
-  done
+  # --- link ------------------------------------------------------------
+  if [ "$host_os" = "Darwin" ]; then
+    # One arch at a time, lipo together if there's more than one.
+    dylib_name="$package-$version.dylib"
+    per_arch_dylibs=()
+    # shellcheck disable=SC2086 # $targets is intentionally word-split: "arm64" or "arm64 x86_64"
+    set -- $targets
+    n_targets=$#
+    for arch in "$@"; do
+      arch_dylib="$pkg_work/$package.$arch.dylib"
+      cc -dynamiclib -arch "$arch" -mmacosx-version-min="$macos_min" \
+        -o "$arch_dylib" "${obj_files[@]}"
+      per_arch_dylibs+=("$arch_dylib")
+    done
 
-  final_dylib="$out_dir/$dylib_name"
-  if [ "$n_targets" -gt 1 ]; then
-    echo "  lipo: $targets"
-    lipo -create "${per_arch_dylibs[@]}" -output "$final_dylib"
-  else
-    cp "${per_arch_dylibs[0]}" "$final_dylib"
-  fi
-
-  if [ -n "${CODESIGN_IDENTITY:-}" ]; then
-    if [ -n "${CODESIGN_KEYCHAIN:-}" ]; then
-      codesign --force --keychain "$CODESIGN_KEYCHAIN" --sign "$CODESIGN_IDENTITY" --options runtime "$final_dylib"
+    final_dylib="$out_dir/$dylib_name"
+    if [ "$n_targets" -gt 1 ]; then
+      echo "  lipo: $targets"
+      lipo -create "${per_arch_dylibs[@]}" -output "$final_dylib"
     else
-      codesign --force --sign "$CODESIGN_IDENTITY" --options runtime "$final_dylib"
+      cp "${per_arch_dylibs[0]}" "$final_dylib"
+    fi
+
+    if [ -n "${CODESIGN_IDENTITY:-}" ]; then
+      if [ -n "${CODESIGN_KEYCHAIN:-}" ]; then
+        codesign --force --keychain "$CODESIGN_KEYCHAIN" --sign "$CODESIGN_IDENTITY" --options runtime "$final_dylib"
+      else
+        codesign --force --sign "$CODESIGN_IDENTITY" --options runtime "$final_dylib"
+      fi
+    else
+      codesign --force -s - "$final_dylib"
     fi
   else
-    codesign --force -s - "$final_dylib"
+    # Linux: the host's own arch; the platform in the name keeps the x64 and
+    # arm64 libraries of one package apart in the shared release.
+    dylib_name="$package-$version-$platform.so"
+    final_dylib="$out_dir/$dylib_name"
+    cc -shared -o "$final_dylib" "${obj_files[@]}"
   fi
 
   dylib_sha=$(shasum -a 256 "$final_dylib" | awk '{print $1}')
@@ -340,8 +394,8 @@ print(json.dumps({'url': sys.argv[1], 'sha256': sys.argv[2]}))
   dylib_url="$release_base/$release_tag/$dylib_name"
   downloads=$(python3 -c "
 import json, sys
-print(json.dumps({'darwin-arm64': {'url': sys.argv[1], 'sha256': sys.argv[2], 'size': int(sys.argv[3])}}))
-" "$dylib_url" "$dylib_sha" "$dylib_size")
+print(json.dumps({sys.argv[4]: {'url': sys.argv[1], 'sha256': sys.argv[2], 'size': int(sys.argv[3])}}))
+" "$dylib_url" "$dylib_sha" "$dylib_size" "$platform")
 
   # Now that the dylib's checksum is known, finish each language's entry.
   lang_idx=0
@@ -413,4 +467,4 @@ with open(out, "w") as f:
 PY
 
 echo "wrote $manifest_out"
-echo "wrote $(find "$out_dir" -maxdepth 1 -name '*.dylib' | wc -l | tr -d ' ') dylib(s) and $(find "$out_dir" -maxdepth 1 -name '*.tags.scm' | wc -l | tr -d ' ') tags query/queries to $out_dir"
+echo "wrote $(find "$out_dir" -maxdepth 1 -name "*.$lib_ext" | wc -l | tr -d ' ') $lib_ext librar(ies) and $(find "$out_dir" -maxdepth 1 -name '*.tags.scm' | wc -l | tr -d ' ') tags query/queries to $out_dir"

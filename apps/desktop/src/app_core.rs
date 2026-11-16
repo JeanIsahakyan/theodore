@@ -318,9 +318,26 @@ fn remote_config(
     theodore_telemetry::RemoteConfig::resolve(&[from_env, s.sources(), c::BUILT_IN])
 }
 
-/// `macOS 15.1` and the like, for the problem report.
+/// `PRETTY_NAME` from an `/etc/os-release` body ("Ubuntu 24.04.1 LTS").
+fn pretty_name(os_release: &str) -> Option<String> {
+    os_release
+        .lines()
+        .find_map(|l| l.strip_prefix("PRETTY_NAME="))
+        .map(|v| v.trim().trim_matches(['"', '\'']).to_string())
+        .filter(|v| !v.is_empty())
+}
+
+/// `macOS 15.1`, `Ubuntu 24.04.1 LTS` and the like, for the problem report.
 async fn os_version() -> String {
     let os = std::env::consts::OS;
+    if os == "linux"
+        && let Some(name) = ["/etc/os-release", "/usr/lib/os-release"]
+            .iter()
+            .find_map(|p| std::fs::read_to_string(p).ok())
+            .and_then(|text| pretty_name(&text))
+    {
+        return name;
+    }
     if os == "macos"
         && let Ok(out) = tokio::process::Command::new("sw_vers")
             .arg("-productVersion")
@@ -1356,6 +1373,17 @@ impl CoreApi for AppCore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_distro_name_comes_from_os_release() {
+        let text = "NAME=\"Ubuntu\"\nPRETTY_NAME=\"Ubuntu 24.04.1 LTS\"\nID=ubuntu\n";
+        assert_eq!(pretty_name(text).as_deref(), Some("Ubuntu 24.04.1 LTS"));
+        assert_eq!(pretty_name("NAME=Arch\n"), None);
+        assert_eq!(
+            pretty_name("PRETTY_NAME=Arch Linux\n").as_deref(),
+            Some("Arch Linux")
+        );
+    }
 
     #[test]
     fn a_missing_sign_in_has_its_own_code() {

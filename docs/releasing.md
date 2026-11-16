@@ -178,11 +178,13 @@ git push -u origin HEAD          # PR into staging, merge
 ```
 
 Every push to `main` runs `.github/workflows/release.yml`: `build.yml`
-checks both version files agree, builds `aarch64-apple-darwin`, signs,
-packages the DMG and the updater artifacts and writes `latest.json`. Then:
+checks both version files agree, builds macOS (`aarch64`) and Linux
+(`x86_64`, `aarch64`; see "Linux builds"), signs, packages the DMG, the
+AppImages, the `.deb`s and the updater artifacts and writes `latest.json`.
+Then:
 
 - **No `v0.3.0` tag yet** → it creates the tag at that commit and a GitHub
-  release with the DMG, the `.app.tar.gz` + `.sig`, and `latest.json`.
+  release with every asset (table in "Linux builds") and `latest.json`.
   Installed production builds pick it up from `releases/latest`.
 - **`v0.3.0` already exists** (a merge without a bump) → build only: the
   assets stay as a workflow artifact on the run, nothing is published.
@@ -223,8 +225,9 @@ with `THEODORE_BUILD_ENV=staging` and the staging client id, as version
 number only grows, so each build is newer to the updater). It publishes to
 one rolling **pre-release tagged `channel-staging`**, made on the first run:
 
-1. uploads the versioned DMG, `.app.tar.gz` and `.sig`,
-2. then `latest.json`, pointing at that tarball,
+1. uploads the versioned assets: DMG, `.app.tar.gz`, AppImages, `.deb`s
+   and their `.sig`s,
+2. then `latest.json`, pointing at them,
 3. then deletes the previous build's assets and names this build's commit
    in the release notes.
 
@@ -244,6 +247,58 @@ or `beta` and never to staging (`effective_channel` in
   `.../releases/latest/download/latest.json` — publish a pre-release tagged
   exactly `channel-beta` and overwrite its `latest.json` on each beta build.
 - **Never re-tag a published release.** Ship a new patch instead.
+
+## Linux builds
+
+`build.yml` builds every platform from one version and fails as a whole:
+a release or a staging build never ships one platform without the others.
+
+```
+version ─┬─▶ build   macos-26          aarch64 ─┐
+         └─▶ linux   ubuntu-22.04      x86_64  ─┼─▶ manifest ─▶ artifact theodore-<env>
+                     ubuntu-22.04-arm  aarch64 ─┘   latest.json   (staging.yml / release.yml
+                                                                   publish it)
+```
+
+| Platform | Install | Updater asset (+ `.sig`) | `latest.json` keys |
+| --- | --- | --- | --- |
+| macOS aarch64 | `Theodore_<v>_aarch64.dmg` | `Theodore_<v>_aarch64.app.tar.gz` | `darwin-aarch64` |
+| Linux x86_64 | `Theodore_<v>_x86_64.AppImage`, `Theodore_<v>_amd64.deb` | the AppImage, the `.deb` | `linux-x86_64`, `linux-x86_64-appimage`, `linux-x86_64-deb` |
+| Linux aarch64 | `Theodore_<v>_aarch64.AppImage`, `Theodore_<v>_arm64.deb` | the AppImage, the `.deb` | `linux-aarch64`, `linux-aarch64-appimage`, `linux-aarch64-deb` |
+
+- Same signing key, client ids, cloud URL and telemetry keys as macOS: no
+  Linux-only secret. `scripts/updater-manifest.sh` writes `latest.json`.
+- Built on Ubuntu 22.04: needs glibc 2.35+. The `.deb` depends on
+  `libwebkit2gtk-4.1-0`, `libgtk-3-0` and `git` (Ubuntu 22.04+, Debian 12+).
+- Sign-in uses the loopback redirect, `http://127.0.0.1:47823/callback`,
+  already registered on both WorkOS environments: no URL scheme needed.
+- Staging gets its own binary, `theodore-app-staging` (package
+  `theodore-staging`), so its `.deb` installs beside production's.
+
+Updates: the updater asks for `<os>-<arch>-<installed as>` first, then
+`<os>-<arch>`.
+
+```
+installed as  asks for               downloads   installs by
+AppImage      linux-<arch>-appimage  .AppImage   rewriting the AppImage file in place
+.deb          linux-<arch>-deb       .deb        dpkg -i, via pkexec (password prompt)
+```
+
+- The AppImage must sit where the user can write it (`~/Applications`, not
+  a root-owned dir), or the update fails.
+- The bare `linux-<arch>` key is the AppImage. A `.deb` must never fall
+  back to it: dpkg would get an AppImage.
+
+Verify, the first Linux release and after changing this build:
+
+1. Both `linux` jobs green; `dpkg-deb --info` in their log shows the
+   package name, version and `Depends`.
+2. `latest.json` on the release has the seven keys above, each URL resolving.
+3. Ubuntu 22.04 and 24.04, x86_64: `chmod +x` the AppImage, it starts;
+   `sudo apt install ./Theodore_<v>_amd64.deb`, it starts from the app menu.
+   About shows `<v> · <sha> · <env>`, not `-incomplete`; sign-in works.
+4. Updates: install staging build N as AppImage and as `.deb`, push to
+   `staging`, both reach N+1.
 
 ## Local nightly builds
 
