@@ -1,6 +1,7 @@
 /**
  * iOS: SwiftUI `Picker` with `.menu` style: in a `Form` the Settings row
- * "Label   Value ⌃⌄", standalone a button showing the choice.
+ * "Label   Value ⌃⌄", standalone a button showing the choice; `glass`: on a
+ * Liquid Glass capsule (iOS 26+).
  */
 import { Picker, Text } from '@expo/ui/swift-ui';
 import {
@@ -9,7 +10,7 @@ import {
   pickerStyle,
   tag,
 } from '@expo/ui/swift-ui/modifiers';
-import { ControlHost } from './host.ios';
+import { ControlHost, glassBehind } from './host.ios';
 import type { SelectProps } from './types';
 
 /** The tag of the placeholder shown while nothing is chosen. */
@@ -22,6 +23,7 @@ export function Select<T extends string>({
   onChange,
   placeholder = 'Choose…',
   disabled,
+  glass,
   accessibilityLabel,
   testID,
   style,
@@ -40,6 +42,9 @@ export function Select<T extends string>({
           pickerStyle('menu'),
           a11yLabel(accessibilityLabel ?? label),
           ...(disabled ? [disabledMod(true)] : []),
+          ...(glass
+            ? glassBehind('capsule', { inset: 4, interactive: true })
+            : []),
         ]}
       >
         {value == null ? (

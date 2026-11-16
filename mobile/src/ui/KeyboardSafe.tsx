@@ -3,7 +3,8 @@
  * `keyboard.ts`).
  *
  * ```text
- * screen under a header ─▶ KeyboardScreen (padding, offset = header height)
+ * screen under a header ─▶ KeyboardScreen (padding, offset = header height;
+ *                           0 under a glass header, which overlays the screen)
  *   ├─ scroll view: keyboardShouldPersistTaps="handled", dismissMode(os)
  *   │    └─ DismissKeyboard: a tap outside a field closes the keyboard
  *   └─ bar pinned to the bottom (composer) ─▶ rides on the keyboard
@@ -20,6 +21,7 @@ import {
   type ViewStyle,
 } from 'react-native';
 import { useHeaderHeight } from 'expo-router/react-navigation';
+import { glassHeader } from '../shell/glassHeader';
 import { avoidBehavior, dismissMode } from './keyboard';
 
 export const keyboardDismissMode = dismissMode(Platform.OS);
@@ -31,7 +33,9 @@ export function KeyboardScreen({ children }: { children: ReactNode }) {
     <KeyboardAvoidingView
       style={styles.flex}
       behavior={avoidBehavior(Platform.OS)}
-      keyboardVerticalOffset={header}
+      // Under the iOS 26 glass header the screen starts at the window's
+      // top, so nothing above it is to be subtracted.
+      keyboardVerticalOffset={glassHeader ? 0 : header}
     >
       {children}
     </KeyboardAvoidingView>

@@ -9,6 +9,10 @@
  * └────────────────────────┘
  * 2 more waiting               native plain button; "Show fewer" once open
  * ```
+ *
+ * `glass`: the cards are Liquid Glass on iOS 26+ (`QuestionCard`). `top`:
+ * room for a header that overlays it (`useGlassHeaderInset`), only while
+ * it shows.
  */
 import { useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
@@ -19,7 +23,13 @@ import { usePalette } from './theme';
 
 const android = process.env.EXPO_OS === 'android';
 
-export function QuestionsBanner() {
+export function QuestionsBanner({
+  top = 0,
+  glass,
+}: {
+  top?: number;
+  glass?: boolean;
+}) {
   const p = usePalette();
   const questions = useFleetState((s) => s.questions);
   const [all, setAll] = useState(false);
@@ -29,7 +39,11 @@ export function QuestionsBanner() {
   const title = android ? 'Waiting for you' : 'WAITING FOR YOU';
   return (
     <View
-      style={[styles.wrap, { backgroundColor: p.background }]}
+      style={[
+        styles.wrap,
+        { backgroundColor: p.background },
+        top ? { paddingTop: styles.wrap.paddingTop + top } : null,
+      ]}
       accessibilityLabel="Questions waiting for you"
     >
       <Text
@@ -42,7 +56,7 @@ export function QuestionsBanner() {
         {questions.length > 1 ? `${title} · ${questions.length}` : title}
       </Text>
       {shown.map((q) => (
-        <QuestionCard key={q.askId} question={q} />
+        <QuestionCard key={q.askId} question={q} glass={glass} />
       ))}
       {more > 0 || (all && questions.length > 1) ? (
         <View style={styles.actions}>

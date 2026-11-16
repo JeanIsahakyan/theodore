@@ -1,4 +1,7 @@
-/** Web (and the type every platform shares): the React Native button of `../kit`. */
+/**
+ * Web (and the type every platform shares): the React Native button of
+ * `../kit`. glass / glassProminent look like secondary / primary.
+ */
 import { ActivityIndicator, Pressable, StyleSheet, Text } from 'react-native';
 import { usePalette } from '../theme';
 import { useInForm } from './context';
@@ -20,6 +23,12 @@ export function Button({
   const inForm = useInForm();
   const off = !!disabled || !!loading;
   const danger = variant === 'destructive';
+  const look =
+    variant === 'glass'
+      ? 'secondary'
+      : variant === 'glassProminent'
+        ? 'primary'
+        : variant;
 
   if (inForm) {
     const color = danger ? p.danger : p.accent;
@@ -44,17 +53,17 @@ export function Button({
   }
 
   const bg =
-    variant === 'primary'
+    look === 'primary'
       ? p.accent
       : danger
         ? p.danger
-        : variant === 'secondary'
+        : look === 'secondary'
           ? p.surfaceMuted
           : 'transparent';
   const fg =
-    variant === 'primary' || danger
+    look === 'primary' || danger
       ? p.onAccent
-      : variant === 'plain'
+      : look === 'plain'
         ? p.accent
         : p.text;
   return (

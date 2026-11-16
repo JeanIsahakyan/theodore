@@ -3,7 +3,9 @@
  * when the question allows, "Other…" free text, answered through
  * `fleet.answer(space, askId, answers)`. Same card as the desktop's, with
  * native controls: option chips (`OptionChip`), the "Other…" field
- * (`ChatField`) and Send answer (the kit's `Button`).
+ * (`ChatField`) and Send answer (the kit's `Button`). `glass` (the banner
+ * over the tabs): a Liquid Glass card on iOS 26+, tinted with the warning
+ * color; the plain card elsewhere.
  */
 import { useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
@@ -22,17 +24,20 @@ import {
   typeOther,
   type Draft,
 } from './logic';
-import { Button } from './native';
+import { Button, Glass, liquidGlass } from './native';
 import { OptionChip } from './OptionChip';
 import { usePalette } from './theme';
 
 export function QuestionCard({
   question,
   onFocusAnswer,
+  glass,
 }: {
   question: QuestionView;
   /** The "Other…" field took focus: the host keeps the card in view. */
   onFocusAnswer?: () => void;
+  /** On Liquid Glass (iOS 26+) rather than a card. */
+  glass?: boolean;
 }) {
   const { fleet } = useServices();
   const p = usePalette();
@@ -57,8 +62,8 @@ export function QuestionCard({
       .finally(() => setBusy(false));
   };
 
-  return (
-    <Card style={{ borderColor: p.warning }}>
+  const content = (
+    <>
       <Text selectable style={[styles.from, { color: p.warning }]}>
         {from} is waiting for your answer
       </Text>
@@ -101,13 +106,21 @@ export function QuestionCard({
       {error ? <Notice tone="danger">{error}</Notice> : null}
       <Button
         label="Send answer"
-        variant="primary"
+        variant={glass ? 'glassProminent' : 'primary'}
         fullWidth
         disabled={!isAnswered(drafts)}
         loading={busy}
         onPress={send}
       />
-    </Card>
+    </>
+  );
+
+  return glass && liquidGlass ? (
+    <Glass radius={22} tint={`${p.warning}26`} style={styles.glass}>
+      {content}
+    </Glass>
+  ) : (
+    <Card style={{ borderColor: p.warning }}>{content}</Card>
   );
 }
 
@@ -117,4 +130,5 @@ const styles = StyleSheet.create({
   question: { fontSize: 16, fontWeight: '600' },
   options: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   hint: { fontSize: 12 },
+  glass: { padding: 14, gap: 8 },
 });

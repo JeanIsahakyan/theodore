@@ -1,7 +1,10 @@
 /**
  * iOS: SwiftUI `Button`. primary ─▶ `.borderedProminent`, secondary ─▶
  * `.bordered`, plain ─▶ `.borderless`, destructive ─▶ `.bordered` with
- * `role: .destructive`. In a `Form`: a row button (accent, or red).
+ * `role: .destructive`, glass / glassProminent ─▶ `.glass` /
+ * `.glassProminent` on iOS 26+ (`.bordered` / `.borderedProminent` below:
+ * SwiftUI's own fallback is `.automatic`, a bare label). In a `Form`: a row
+ * button (accent, or red).
  */
 import {
   Button as SButton,
@@ -18,6 +21,7 @@ import {
   type ModifierConfig,
 } from '@expo/ui/swift-ui/modifiers';
 import { useInForm } from './context';
+import { liquidGlass } from './liquidGlass';
 import { ControlHost } from './host.ios';
 import type { ButtonProps } from './types';
 
@@ -26,6 +30,8 @@ const styles = {
   secondary: 'bordered',
   plain: 'borderless',
   destructive: 'bordered',
+  glass: liquidGlass ? 'glass' : 'bordered',
+  glassProminent: liquidGlass ? 'glassProminent' : 'borderedProminent',
 } as const;
 
 export function Button({

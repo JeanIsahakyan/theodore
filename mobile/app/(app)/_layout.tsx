@@ -12,7 +12,9 @@
  *
  * Headers: on iOS and Android the tabs are native and draw none, so this
  * stack's native header shows the focused tab's title; the web's JS tabs
- * draw their own. Pushed screens use `PushedHeader` everywhere.
+ * draw their own. Pushed screens use `PushedHeader` (a Material top app bar
+ * on Android), except on iOS 26+, where every header is the native Liquid
+ * Glass bar over the content (`src/shell/glassHeader.ts`).
  */
 import { Stack, router, usePathname, type Href } from 'expo-router';
 import { getFocusedRouteNameFromRoute } from 'expo-router/react-navigation';
@@ -21,6 +23,7 @@ import { handleNotificationResponses } from '../../src/push';
 import { useServices } from '../../src/services';
 import { setActiveSpace } from '../../src/shell/AppProviders';
 import { spaceIdFromPath } from '../../src/shell/paths';
+import { glassHeader } from '../../src/shell/glassHeader';
 import { PushedHeader } from '../../src/shell/PushedHeader';
 import { tabTitle } from '../../src/shell/tabs';
 import { usePalette } from '../../src/ui/theme';
@@ -42,14 +45,24 @@ export default function AppLayout() {
   );
 
   // Their own question card is on the page: no banner here.
-  const pushed = (title: string) => ({
-    title,
-    header: ({ options }: { options: { title?: string } }) => (
-      <PushedHeader
-        title={typeof options.title === 'string' ? options.title : title}
-      />
-    ),
-  });
+  const pushed = (title: string) =>
+    glassHeader
+      ? {
+          // No background set: the system's glass bar, over the content.
+          title,
+          headerBackButtonDisplayMode: 'minimal' as const,
+          headerTintColor: p.accent,
+          // Else a transparent bar draws the title in the tint.
+          headerTitleStyle: { color: p.text },
+        }
+      : {
+          title,
+          header: ({ options }: { options: { title?: string } }) => (
+            <PushedHeader
+              title={typeof options.title === 'string' ? options.title : title}
+            />
+          ),
+        };
 
   return (
     <Stack screenOptions={{ contentStyle: { backgroundColor: p.background } }}>
@@ -58,13 +71,20 @@ export default function AppLayout() {
         options={({ route }) =>
           process.env.EXPO_OS === 'web'
             ? { headerShown: false }
-            : {
-                title: tabTitle(getFocusedRouteNameFromRoute(route)),
-                headerStyle: { backgroundColor: p.background },
-                headerTintColor: p.accent,
-                headerTitleStyle: { color: p.text },
-                headerShadowVisible: false,
-              }
+            : glassHeader
+              ? {
+                  // No background: the glass bar, content scrolls under it.
+                  title: tabTitle(getFocusedRouteNameFromRoute(route)),
+                  headerTintColor: p.accent,
+                  headerTitleStyle: { color: p.text },
+                }
+              : {
+                  title: tabTitle(getFocusedRouteNameFromRoute(route)),
+                  headerStyle: { backgroundColor: p.background },
+                  headerTintColor: p.accent,
+                  headerTitleStyle: { color: p.text },
+                  headerShadowVisible: false,
+                }
         }
       />
       <Stack.Screen name="space/[id]" options={pushed('Space')} />

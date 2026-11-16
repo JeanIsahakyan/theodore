@@ -1,7 +1,12 @@
-/** Android: Material 3 `CircularProgressIndicator` / `LinearProgressIndicator`. */
+/**
+ * Android: Material 3 `LinearProgressIndicator`; circular with a value ─▶
+ * `CircularProgressIndicator`, without one ─▶ the Material 3 Expressive
+ * `LoadingIndicator` (morphing shapes).
+ */
 import {
   CircularProgressIndicator,
   LinearProgressIndicator,
+  LoadingIndicator,
 } from '@expo/ui/jetpack-compose';
 import {
   fillMaxWidth,
@@ -37,9 +42,14 @@ export function Progress({
           color={p.accent}
           modifiers={[fillMaxWidth(), ...mods]}
         />
+      ) : value == null ? (
+        <LoadingIndicator
+          color={p.accent}
+          modifiers={[size(36, 36), ...mods]}
+        />
       ) : (
         <CircularProgressIndicator
-          progress={value ?? null}
+          progress={value}
           color={p.accent}
           strokeWidth={3}
           modifiers={[size(28, 28), ...mods]}

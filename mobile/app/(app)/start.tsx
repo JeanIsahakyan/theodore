@@ -7,6 +7,7 @@
  *
  * ```text
  * header      ‹ Back      Start a space      Start      (iOS, Android)
+ *             iOS 26+: the native glass bar, Start a prominent glass item
  * (no title)  Device   mac-A ⌄      Project   theodore ⌄
  * Goal        multiline field
  * Mode        Ask | Plan | Edit (up to the device's max)   footer: hint
@@ -43,6 +44,8 @@ import {
   Select,
   TextField,
 } from '../../src/ui/native';
+import { glassHeader, useGlassHeaderInset } from '../../src/shell/glassHeader';
+import { usePalette } from '../../src/ui/theme';
 import { ActionHeader } from '../../src/ui/start/ActionHeader';
 import { KeyboardForm } from '../../src/ui/start/KeyboardForm';
 
@@ -51,6 +54,8 @@ const web = process.env.EXPO_OS === 'web';
 
 export default function StartScreen() {
   const { fleet } = useServices();
+  const p = usePalette();
+  const top = useGlassHeaderInset();
   const allDevices = useFleetState((s) => s.devices);
   const devices = useMemo(() => startableDevices(allDevices), [allDevices]);
   const [deviceId, setDeviceId] = useState<string | null>(null);
@@ -93,7 +98,28 @@ export default function StartScreen() {
     />
   );
 
-  const header = (
+  const header = glassHeader ? (
+    // iOS 26+: a bar button item on the native glass bar; busy reads as
+    // disabled (a bar item has no spinner).
+    <Stack.Screen
+      options={{
+        title: TITLE,
+        unstable_headerRightItems: () =>
+          device
+            ? [
+                {
+                  type: 'button',
+                  label: 'Start',
+                  variant: 'prominent',
+                  tintColor: p.accent,
+                  disabled: !ready,
+                  onPress: start,
+                },
+              ]
+            : [],
+      }}
+    />
+  ) : (
     <Stack.Screen
       options={{
         title: TITLE,
@@ -109,7 +135,7 @@ export default function StartScreen() {
 
   if (devices.length === 0 || !device) {
     return (
-      <View style={styles.empty}>
+      <View style={[styles.empty, top ? { paddingTop: 16 + top } : null]}>
         {header}
         <Empty
           title="No computer can take a space right now"
