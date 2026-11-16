@@ -7,6 +7,10 @@ name: Release
 #   main @ 0.3.0, no v0.3.0  ──▶ build ──▶ tag v0.3.0 + GitHub release
 #   main @ 0.3.0, v0.3.0 set ──▶ build ──▶ workflow artifact only
 #
+# The release carries every asset build.yml made: the macOS DMG and
+# updater tarball, the Linux AppImages and .debs (x86_64, aarch64), each
+# updater asset's .sig, and latest.json.
+#
 # Cutting a release is bumping the version and merging it to main; a merge
 # that doesn't bump still proves main builds. Tags are made here, never
 # pushed by hand (docs/releasing.md "Cutting a production release").

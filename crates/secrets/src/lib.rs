@@ -1,4 +1,5 @@
-//! Secrets in one OS keychain item (macOS via /usr/bin/security).
+//! Secrets in one OS keychain item (macOS via /usr/bin/security, Linux via
+//! the Secret Service with a file fallback, see `linux`).
 //!
 //! All Theodore secrets live in ONE macOS keychain generic-password item:
 //! - Service: `app.theodore.secrets` (`VAULT_SERVICE`) for production; any
@@ -10,14 +11,24 @@
 //! This ensures only one keychain ACL prompt when the binary changes.
 //! Secrets are read via `/usr/bin/security find-generic-password` and written
 //! interactively via `/usr/bin/security -i` to avoid exposing them in process arguments.
+//!
+//! Linux stores the same JSON map as one Secret Service item (attributes
+//! `service` and `account`), or in a 0600 file when no Secret Service is
+//! reachable. Windows has no backend yet: every call returns an error.
 
 #![forbid(unsafe_code)]
 
 use std::collections::HashMap;
+#[cfg(target_os = "macos")]
 use std::process::{Command, Stdio};
 use std::sync::Mutex;
 use theodore_ports::Secrets;
 use theodore_ports::SecretsError;
+
+// Compiled on Linux, and in unit tests on any unix so the fallback logic is
+// exercised on a Mac too.
+#[cfg(any(target_os = "linux", all(test, unix)))]
+mod linux;
 
 /// The production build's keychain service; other builds suffix it.
 pub const VAULT_SERVICE: &str = "app.theodore.secrets";
@@ -46,8 +57,10 @@ trait CommandRunner: Send + Sync {
 }
 
 /// Real command runner using `/usr/bin/security`.
+#[cfg(target_os = "macos")]
 struct RealCommandRunner;
 
+#[cfg(target_os = "macos")]
 impl CommandRunner for RealCommandRunner {
     fn read_keychain(&self, service: &str, account: &str) -> Result<Option<String>, SecretsError> {
         let output = Command::new("/usr/bin/security")
@@ -161,6 +174,7 @@ impl CommandRunner for RealCommandRunner {
 ///   the output of `ascii_escape_json`, which turns both into plain-ASCII
 ///   `\u00XX` / backslash-letter escapes before this function ever sees
 ///   them.
+#[cfg(target_os = "macos")]
 fn security_quote(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 2);
     out.push('"');
@@ -173,6 +187,42 @@ fn security_quote(s: &str) -> String {
     }
     out.push('"');
     out
+}
+
+/// Stand-in on OSes without a backend (Windows for now): every call fails.
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+struct UnsupportedRunner;
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+impl CommandRunner for UnsupportedRunner {
+    fn read_keychain(&self, _: &str, _: &str) -> Result<Option<String>, SecretsError> {
+        Err(unsupported())
+    }
+
+    fn write_keychain(&self, _: &str, _: &str, _: &str) -> Result<(), SecretsError> {
+        Err(unsupported())
+    }
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+fn unsupported() -> SecretsError {
+    SecretsError::Keychain("secrets storage is not supported on this OS yet".to_string())
+}
+
+/// The runner for the OS this build targets.
+fn platform_runner() -> Box<dyn CommandRunner> {
+    #[cfg(target_os = "macos")]
+    {
+        Box::new(RealCommandRunner)
+    }
+    #[cfg(target_os = "linux")]
+    {
+        Box::new(linux::LinuxRunner::new(None))
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    {
+        Box::new(UnsupportedRunner)
+    }
 }
 
 /// Re-escapes every non-ASCII character of a JSON string as `\uXXXX`
@@ -203,7 +253,8 @@ fn ascii_escape_json(json: &str) -> String {
     out
 }
 
-/// Keychain-backed secrets (macOS production implementation).
+/// Keychain-backed secrets: the macOS keychain, or the Linux Secret Service
+/// (file fallback when none is reachable).
 ///
 /// `cache` and `write_lock` are two separate mutexes on purpose: `write_lock`
 /// is held for the *entire* read-modify-write of `set`/`delete` (one lock
@@ -231,8 +282,25 @@ impl KeychainSecrets {
             service: service.into(),
             cache: Mutex::new(None),
             write_lock: Mutex::new(()),
-            runner: Box::new(RealCommandRunner),
+            runner: platform_runner(),
         }
+    }
+
+    /// Linux only: keep the no-Secret-Service fallback file in `dir` instead
+    /// of `$XDG_DATA_HOME/theodore` (the build's own data dir). No-op on
+    /// other OSes.
+    #[must_use]
+    pub fn with_fallback_dir(mut self, dir: impl Into<std::path::PathBuf>) -> Self {
+        #[cfg(target_os = "linux")]
+        {
+            self.runner = Box::new(linux::LinuxRunner::new(Some(dir.into())));
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = &mut self;
+            let _ = dir.into();
+        }
+        self
     }
 
     /// Create a new keychain secrets store with a custom command runner (for testing).
@@ -615,16 +683,19 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_os = "macos")]
     fn test_security_quote_simple() {
         assert_eq!(security_quote("hello"), "\"hello\"");
     }
 
     #[test]
+    #[cfg(target_os = "macos")]
     fn test_security_quote_with_spaces() {
         assert_eq!(security_quote("hello world"), "\"hello world\"");
     }
 
     #[test]
+    #[cfg(target_os = "macos")]
     fn test_security_quote_with_single_quotes() {
         // A single quote needs no escaping inside a double-quoted value —
         // `security -i` has no special meaning for `'` there.
@@ -633,12 +704,14 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_os = "macos")]
     fn test_security_quote_with_double_quotes_and_backslashes() {
         assert_eq!(security_quote(r#"say "hi""#), r#""say \"hi\"""#);
         assert_eq!(security_quote(r"back\slash"), r#""back\\slash""#);
     }
 
     #[test]
+    #[cfg(target_os = "macos")]
     fn test_security_quote_with_unicode() {
         // Not escaped by `security_quote` itself — callers must have
         // already run the text through `ascii_escape_json` first.
@@ -719,11 +792,15 @@ mod tests {
 
     /// Never the real `VAULT_SERVICE`/`VAULT_ACCOUNT` — a throwaway item,
     /// deleted in `Drop` regardless of how the test exits.
+    #[cfg(target_os = "macos")]
     const TEST_SERVICE: &str = "app.theodore.test.secrets.rust-review-23";
+    #[cfg(target_os = "macos")]
     const TEST_ACCOUNT: &str = "roundtrip";
 
+    #[cfg(target_os = "macos")]
     struct DeleteTestItemOnDrop;
 
+    #[cfg(target_os = "macos")]
     impl Drop for DeleteTestItemOnDrop {
         fn drop(&mut self) {
             let _ = Command::new("/usr/bin/security")
@@ -749,6 +826,7 @@ mod tests {
     ///   cargo test --package theodore-secrets -- --ignored --nocapture real_keychain_roundtrip
     #[test]
     #[ignore]
+    #[cfg(target_os = "macos")]
     fn real_keychain_roundtrip() {
         let _cleanup = DeleteTestItemOnDrop;
         // Best-effort: clear any leftover item from a previous crashed run.

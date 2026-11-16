@@ -138,11 +138,15 @@ impl RotatingFile {
                 self.day.format("%Y%m%d"),
                 Utc::now().format("-%H%M%S%3f")
             );
-            let mut target = self.dir.join(format!("{PREFIX}{stamp}{SUFFIX}"));
-            let mut n = 1;
+            // Always numbered, zero-padded: two rotations in the same
+            // millisecond (a fast disk) must still sort oldest first. A bare
+            // name and a `-1` one sorted the newer first ('-' < '.'), and
+            // pruning then dropped the newest file instead of the oldest.
+            let mut n = 0;
+            let mut target = self.dir.join(format!("{PREFIX}{stamp}-{n:03}{SUFFIX}"));
             while target.exists() {
-                target = self.dir.join(format!("{PREFIX}{stamp}-{n}{SUFFIX}"));
                 n += 1;
+                target = self.dir.join(format!("{PREFIX}{stamp}-{n:03}{SUFFIX}"));
             }
             std::fs::rename(&current, &target)?;
         }
@@ -330,6 +334,28 @@ mod tests {
             .map(|n| std::fs::read_to_string(dir.path().join(n)).unwrap())
             .collect();
         assert!(!all.contains("00xxx"));
+    }
+
+    #[test]
+    fn rotations_in_the_same_millisecond_still_sort_oldest_first() {
+        let dir = tempfile::tempdir().unwrap();
+        let rotation = Rotation {
+            max_file_bytes: 10,
+            max_total_bytes: 10_000,
+            max_files: 100,
+        };
+        let mut f = RotatingFile::with_clock(dir.path(), rotation, Box::new(|| day(0))).unwrap();
+        for i in 0..30 {
+            f.write_line(&format!("{i:02}{}", "x".repeat(10))).unwrap();
+        }
+        f.flush().unwrap();
+        let firsts: Vec<String> = rotated_files(dir.path())
+            .iter()
+            .map(|(p, _)| std::fs::read_to_string(p).unwrap()[..2].to_string())
+            .collect();
+        let mut sorted = firsts.clone();
+        sorted.sort();
+        assert_eq!(firsts, sorted, "rotated files sort by age");
     }
 
     #[test]

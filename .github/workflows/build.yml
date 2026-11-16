@@ -1,11 +1,18 @@
 name: Build
 
-# Plan §11.1/§11.2. The one macOS (aarch64) build both release workflows
-# call: release.yml (push to main) and staging.yml (push to staging).
-# Builds the app, signs it (ad-hoc by default; Developer ID + notarization
-# when the secrets below are set), packages a DMG and the updater artifacts,
-# writes the `latest.json` the app polls, and uploads them all as one
-# workflow artifact. Publishing is the caller's job.
+# Plan §11.1/§11.2. The one build both release workflows call:
+# release.yml (push to main) and staging.yml (push to staging).
+#
+#   version ─┬─▶ build (macOS aarch64)  .dmg, .app.tar.gz + .sig ──┐
+#            └─▶ linux (x86_64,         .AppImage + .sig,          ├─▶ manifest
+#                       aarch64)        .deb + .sig ───────────────┘   + latest.json
+#                                                                        │
+#                                    one workflow artifact: theodore-<env> ◀─┘
+#
+# macOS is signed ad-hoc by default (Developer ID + notarization when the
+# secrets below are set). Every updater asset is signed with
+# TAURI_SIGNING_PRIVATE_KEY. Any platform failing fails the build: nothing
+# is published half. Publishing is the caller's job.
 #
 # One-time setup for all of this to work: docs/releasing.md.
 #
@@ -51,26 +58,20 @@ on:
     outputs:
       version:
         description: "the version the build carries, suffix included"
-        value: ${{ jobs.build.outputs.version }}
+        value: ${{ jobs.manifest.outputs.version }}
       artifact:
         description: "the workflow artifact holding the release assets"
-        value: ${{ jobs.build.outputs.artifact }}
+        value: ${{ jobs.manifest.outputs.artifact }}
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build:
-    # macOS 26's SDK: apps linked against an older one run in compatibility
-    # mode on macOS 26, with the old small window controls whatever the
-    # window does (apps/desktop/src/chrome.rs).
-    runs-on: macos-26
+  # The version every platform carries, checked once.
+  version:
+    runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
-      artifact: theodore-${{ inputs.build-env }}
-    env:
-      # `secrets` can't be read in a step `if`; expose presence as a flag.
-      HAS_APPLE_CERT: ${{ secrets.APPLE_CERTIFICATE != '' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -91,8 +92,20 @@ jobs:
             echo "  run scripts/bump-version.sh <version> and commit." >&2
             exit 1
           fi
-          echo "VERSION=$cargo_ver$SUFFIX" >> "$GITHUB_ENV"
           echo "version=$cargo_ver$SUFFIX" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: version
+    # macOS 26's SDK: apps linked against an older one run in compatibility
+    # mode on macOS 26, with the old small window controls whatever the
+    # window does (apps/desktop/src/chrome.rs).
+    runs-on: macos-26
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      # `secrets` can't be read in a step `if`; expose presence as a flag.
+      HAS_APPLE_CERT: ${{ secrets.APPLE_CERTIFICATE != '' }}
+    steps:
+      - uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -167,7 +180,7 @@ jobs:
           # The build stamp Settings → About shows (docs/releasing.md).
           THEODORE_BUILD_ENV: ${{ inputs.build-env }}
           THEODORE_GIT_SHA: ${{ github.sha }}
-          THEODORE_VERSION: ${{ steps.version.outputs.version }}
+          THEODORE_VERSION: ${{ needs.version.outputs.version }}
           # Compiled in as the lowest-priority client id (docs/releasing.md).
           THEODORE_WORKOS_CLIENT_ID: ${{ inputs.workos-client-id }}
           # The Theodore cloud for this channel, the lowest-priority source
@@ -254,27 +267,188 @@ jobs:
           cp "$tarball" "dist/Theodore_${VERSION}_aarch64.app.tar.gz"
           cp "$tarball.sig" "dist/Theodore_${VERSION}_aarch64.app.tar.gz.sig"
 
+      - uses: actions/upload-artifact@v4
+        with:
+          name: theodore-${{ inputs.build-env }}-macos-aarch64
+          path: dist/
+          if-no-files-found: error
+          retention-days: 1
+
+  # The AppImage and the .deb, each signed for the updater. Built on the
+  # oldest Ubuntu the release supports: the binaries need its glibc (2.35)
+  # or newer. Native runners, no cross-compiling.
+  linux:
+    needs: version
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - arch: x86_64
+            deb-arch: amd64
+            runner: ubuntu-22.04
+          - arch: aarch64
+            deb-arch: arm64
+            runner: ubuntu-22.04-arm
+    runs-on: ${{ matrix.runner }}
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      TARGET: ${{ matrix.arch }}-unknown-linux-gnu
+    steps:
+      - uses: actions/checkout@v4
+
+      # ci.yml's ui-e2e list minus its WebDriver and xvfb, plus libdbus
+      # for the Secret Service keychain, and jq: the arm64 image is slimmer.
+      - name: apt packages (webkit2gtk, tauri build deps)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libjavascriptcoregtk-4.1-dev \
+            libsoup-3.0-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libdbus-1-dev \
+            patchelf \
+            file \
+            jq
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ env.TARGET }}
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: install tauri-cli
+        run: cargo install tauri-cli --version "^2" --locked
+
+      - uses: pnpm/action-setup@v4
+        if: hashFiles('ui/package.json') != ''
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        if: hashFiles('ui/package.json') != ''
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: ui/pnpm-lock.yaml
+
+      - name: build ui
+        if: hashFiles('ui/package.json') != ''
+        run: |
+          pnpm -C ui install --frozen-lockfile
+          pnpm -C ui build
+
+      - name: app icon in this build's colours
+        if: inputs.build-env != 'production'
+        env:
+          BUILD_ENV: ${{ inputs.build-env }}
+        run: |
+          icons="$PWD/target/icons/$BUILD_ENV"
+          sh scripts/icon-variant.sh "$BUILD_ENV" "$icons"
+          echo "ICON_DIR=$icons" >> "$GITHUB_ENV"
+
+      # Same env as the macOS build above: keep the two in step. The
+      # bundler signs the .AppImage and the .deb themselves (`.sig` next to
+      # each); the updater installs either directly, no tarball.
+      - name: build AppImage, deb and updater signatures
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          THEODORE_BUILD_ENV: ${{ inputs.build-env }}
+          THEODORE_GIT_SHA: ${{ github.sha }}
+          THEODORE_VERSION: ${{ needs.version.outputs.version }}
+          THEODORE_WORKOS_CLIENT_ID: ${{ inputs.workos-client-id }}
+          THEODORE_CLOUD_URL: ${{ inputs.cloud-url }}
+          THEODORE_GITHUB_CLIENT_ID: ${{ vars.THEODORE_GITHUB_CLIENT_ID }}
+          THEODORE_OTLP_ENDPOINT: ${{ vars.THEODORE_OTLP_ENDPOINT }}
+          THEODORE_OTLP_HEADERS: ${{ secrets.THEODORE_OTLP_HEADERS }}
+          THEODORE_POSTHOG_HOST: ${{ vars.THEODORE_POSTHOG_HOST }}
+          THEODORE_POSTHOG_KEY: ${{ vars.THEODORE_POSTHOG_KEY }}
+        # As on macOS, plus outside production its own binary name: a .deb
+        # installs /usr/bin/<binary> and icons named after it, so staging
+        # needs its own to install beside production.
+        run: |
+          case "$THEODORE_BUILD_ENV" in
+            production) names='{}' ;;
+            *) names=$(jq -c --arg bin "theodore-app-$THEODORE_BUILD_ENV" \
+                 '. + { mainBinaryName: $bin }' \
+                 "apps/desktop/tauri.$THEODORE_BUILD_ENV.conf.json") ;;
+          esac
+          config=$(jq -nc --argjson names "$names" --arg version "$VERSION" \
+            --arg icons "${ICON_DIR:-}" '
+            $names * { version: $version }
+            * if $icons == "" then {} else
+                { bundle: { icon: [ "32x32.png", "128x128.png", "128x128@2x.png" ]
+                                  | map("\($icons)/\(.)") } }
+              end')
+          echo "config: $config"
+          cargo tauri build --target "$TARGET" --bundles appimage,deb \
+            --config "$config"
+
+      # Versioned names like the DMG's; arch as each format spells it.
+      - name: collect release assets
+        env:
+          ARCH: ${{ matrix.arch }}
+          DEB_ARCH: ${{ matrix.deb-arch }}
+        run: |
+          bundle="target/$TARGET/release/bundle"
+          appimage=$(find "$bundle/appimage" -maxdepth 1 -name '*.AppImage' | head -n1)
+          deb=$(find "$bundle/deb" -maxdepth 1 -name '*.deb' | head -n1)
+          test -f "$appimage" && test -f "$appimage.sig"
+          test -f "$deb" && test -f "$deb.sig"
+          mkdir -p dist
+          cp "$appimage" "dist/Theodore_${VERSION}_${ARCH}.AppImage"
+          cp "$appimage.sig" "dist/Theodore_${VERSION}_${ARCH}.AppImage.sig"
+          cp "$deb" "dist/Theodore_${VERSION}_${DEB_ARCH}.deb"
+          cp "$deb.sig" "dist/Theodore_${VERSION}_${DEB_ARCH}.deb.sig"
+          dpkg-deb --info "dist/Theodore_${VERSION}_${DEB_ARCH}.deb"
+          ls -l dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: theodore-${{ inputs.build-env }}-linux-${{ matrix.arch }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 1
+
+  # Every platform's assets in one artifact, and the latest.json the app
+  # polls, pointing at them (scripts/updater-manifest.sh).
+  manifest:
+    needs: [version, build, linux]
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ needs.version.outputs.version }}
+      artifact: theodore-${{ inputs.build-env }}
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: theodore-${{ inputs.build-env }}-*
+          merge-multiple: true
+          path: dist
+
       - name: build latest.json
         env:
           RELEASE_TAG: ${{ inputs.release-tag }}
         run: |
           tag="${RELEASE_TAG:-v$VERSION}"
-          tarball_name="Theodore_${VERSION}_aarch64.app.tar.gz"
-          signature=$(cat "dist/$tarball_name.sig")
-          pub_date=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-          jq -n \
-            --arg version "$VERSION" \
-            --arg pub_date "$pub_date" \
-            --arg signature "$signature" \
-            --arg url "https://github.com/${{ github.repository }}/releases/download/$tag/$tarball_name" \
-            '{
-              version: $version,
-              notes: "See the GitHub release notes.",
-              pub_date: $pub_date,
-              platforms: {
-                "darwin-aarch64": { signature: $signature, url: $url }
-              }
-            }' > dist/latest.json
+          base="https://github.com/${{ github.repository }}/releases/download/$tag"
+          sh scripts/updater-manifest.sh dist "$VERSION" "$base" > dist/latest.json
+          cat dist/latest.json
+          # Every platform built above must be in it.
+          for key in darwin-aarch64 \
+            linux-x86_64 linux-x86_64-appimage linux-x86_64-deb \
+            linux-aarch64 linux-aarch64-appimage linux-aarch64-deb; do
+            jq -e --arg k "$key" '.platforms[$k].url' dist/latest.json >/dev/null || {
+              echo "✗ latest.json has no $key" >&2
+              exit 1
+            }
+          done
           ls -l dist
 
       - uses: actions/upload-artifact@v4

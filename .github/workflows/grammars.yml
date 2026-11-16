@@ -1,11 +1,17 @@
 name: Grammars
 
-# Builds the tree-sitter grammar dylibs pinned in grammars.toml
-# (docs/code-intel.md §4.1) and publishes them as a GitHub release's
-# assets, plus the generated manifest fragment (grammars.json) as a
-# workflow artifact.
+# Builds the tree-sitter grammar libraries pinned in grammars.toml
+# (docs/code-intel.md §4.1) for every platform the manifest keys, and
+# publishes them as a GitHub release's assets, plus the generated manifest
+# fragment (grammars.json) as a workflow artifact.
 #
-#   grammars.toml ─▶ scripts/build-grammars.sh ─▶ dylibs + *.tags.scm
+#   grammars.toml ─▶ scripts/build-grammars.sh, once per platform:
+#       macos-26         ─▶ *.dylib  (darwin-arm64, signed)
+#       ubuntu-24.04     ─▶ *.so     (linux-x64)
+#       ubuntu-24.04-arm ─▶ *.so     (linux-arm64)
+#     each + *.tags.scm + a grammars.json listing its own platform
+#   ─▶ publish: merge the three grammars.json (one entry per package, every
+#       platform's download inside)
 #     ─▶ release "grammars-<content hash of grammars.toml>" (prerelease)
 #     ─▶ grammars.json (workflow artifact only — a human commits it,
 #        in crates/code-intel-toolchain/manifest/, once this release exists)
@@ -22,10 +28,11 @@ name: Grammars
 # "Staging channel"), so it can never be picked up as an app update.
 #
 # Secrets (optional, the same ones build.yml uses for Developer ID
-# signing): APPLE_CERTIFICATE, APPLE_CERTIFICATE_PASSWORD,
-# APPLE_SIGNING_IDENTITY. Unset: dylibs are ad-hoc signed, same as the app
-# is today (docs/code-intel.md §4.1, docs/releasing.md "Optional: Developer
-# ID signing").
+# signing; the macOS leg only — a Linux library is not signed):
+# APPLE_CERTIFICATE, APPLE_CERTIFICATE_PASSWORD, APPLE_SIGNING_IDENTITY.
+# Unset: dylibs are ad-hoc signed, same as the app is today
+# (docs/code-intel.md §4.1, docs/releasing.md "Optional: Developer ID
+# signing").
 
 on:
   workflow_dispatch:
@@ -40,13 +47,19 @@ concurrency:
 
 jobs:
   build:
-    # Matches build.yml / ci.yml's macOS runner, so the dylibs are built on
-    # the same SDK the app itself ships against.
-    runs-on: macos-26
+    name: build (${{ matrix.platform }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # macOS matches build.yml / ci.yml's runner, so the dylibs are
+          # built on the same SDK the app itself ships against.
+          - { os: macos-26, platform: darwin-arm64 }
+          - { os: ubuntu-24.04, platform: linux-x64 }
+          - { os: ubuntu-24.04-arm, platform: linux-arm64 }
+    runs-on: ${{ matrix.os }}
     env:
       HAS_APPLE_CERT: ${{ secrets.APPLE_CERTIFICATE != '' }}
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@v4
 
@@ -57,7 +70,7 @@ jobs:
       # Same pattern as build.yml's DMG-signing step: the cert only lives
       # in a throwaway keychain for this job.
       - name: import Developer ID certificate
-        if: env.HAS_APPLE_CERT == 'true'
+        if: runner.os == 'macOS' && env.HAS_APPLE_CERT == 'true'
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -76,19 +89,83 @@ jobs:
 
       - name: build grammars
         env:
-          CODESIGN_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          CODESIGN_IDENTITY: ${{ runner.os == 'macOS' && secrets.APPLE_SIGNING_IDENTITY || '' }}
           CODESIGN_KEYCHAIN: ${{ env.GRAMMARS_KEYCHAIN }}
         run: bash scripts/build-grammars.sh
 
       - name: delete signing keychain
-        if: always() && env.HAS_APPLE_CERT == 'true'
+        if: always() && runner.os == 'macOS' && env.HAS_APPLE_CERT == 'true'
         run: security delete-keychain "$GRAMMARS_KEYCHAIN" || true
 
-      - name: read the release tag grammars.json was generated for
-        id: tag
+      # Every leg's grammars.json carries the same release tag; `publish`
+      # checks that and merges them.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: grammars-leg-${{ matrix.platform }}
+          path: |
+            target/grammars/*.dylib
+            target/grammars/*.so
+            target/grammars/*.tags.scm
+            target/grammars/grammars.json
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: grammars-leg-*
+          path: legs
+
+      # One manifest entry per package, every platform's download inside.
+      # The legs must agree on everything but `downloads`: the same pin
+      # built them, so a difference is a bug, not something to paper over.
+      - name: merge the per-platform grammars.json
         run: |
-          tag=$(python3 -c "import json; print(json.load(open('target/grammars/grammars.json'))['release_tag'])")
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          mkdir -p release
+          python3 - <<'PY'
+          import glob, json, shutil, sys
+
+          legs = sorted(glob.glob("legs/*/grammars.json"))
+          if len(legs) != 3:
+              sys.exit(f"expected 3 platform manifests, found {legs}")
+          merged = None
+          for path in legs:
+              m = json.load(open(path))
+              if merged is None:
+                  merged = m
+                  continue
+              if m["schema"] != merged["schema"] or m["release_tag"] != merged["release_tag"]:
+                  sys.exit(f"{path}: schema or release tag differs from {legs[0]}")
+              by_pkg = {g["package"]: g for g in merged["grammars"]}
+              if sorted(by_pkg) != sorted(g["package"] for g in m["grammars"]):
+                  sys.exit(f"{path}: a different set of packages than {legs[0]}")
+              for g in m["grammars"]:
+                  base = by_pkg[g["package"]]
+                  rest = lambda x: {k: v for k, v in x.items() if k != "downloads"}
+                  if rest(base) != rest(g):
+                      sys.exit(f"{path}: {g['package']} differs outside downloads")
+                  dup = set(base["downloads"]) & set(g["downloads"])
+                  if dup:
+                      sys.exit(f"{path}: {g['package']} builds for {sorted(dup)} twice")
+                  base["downloads"].update(g["downloads"])
+          for g in merged["grammars"]:
+              g["downloads"] = dict(sorted(g["downloads"].items()))
+          with open("release/grammars.json", "w") as f:
+              json.dump(merged, f, indent=2)
+              f.write("\n")
+          print(merged["release_tag"], file=open("release/TAG", "w"))
+          # The tags queries are byte-identical across legs (same sources):
+          # one copy of each. Libraries are named per platform.
+          for pat in ("*.dylib", "*.so", "*.tags.scm"):
+              for p in glob.glob(f"legs/*/{pat}"):
+                  shutil.copy(p, "release/")
+          PY
+          echo "tag=$(cat release/TAG)" >> "$GITHUB_OUTPUT"
+        id: merge
 
       # A content-addressed tag (grammars-<hash of grammars.toml>): re-running
       # on an unchanged pin republishes the same tag's assets instead of
@@ -96,23 +173,23 @@ jobs:
       - name: publish the grammars release (prerelease, never "latest")
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ steps.tag.outputs.tag }}
+          TAG: ${{ steps.merge.outputs.tag }}
         run: |
           if ! gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
             gh release create "$TAG" \
               --repo "${{ github.repository }}" \
               --target "${{ github.sha }}" \
               --title "Grammars ($TAG)" \
-              --notes "tree-sitter grammar dylibs built from grammars.toml at ${{ github.sha }}. Not an app release: never polled by the updater (docs/releasing.md)." \
+              --notes "tree-sitter grammar libraries (macOS arm64 .dylib, Linux x64 and arm64 .so) built from grammars.toml at ${{ github.sha }}. Not an app release: never polled by the updater (docs/releasing.md)." \
               --prerelease \
               --latest=false
           fi
           shopt -s nullglob
-          assets=(target/grammars/*.dylib target/grammars/*.tags.scm)
+          assets=(release/*.dylib release/*.so release/*.tags.scm)
           gh release upload "$TAG" --repo "${{ github.repository }}" --clobber "${assets[@]}"
 
       - uses: actions/upload-artifact@v4
         with:
           name: grammars-manifest
-          path: target/grammars/grammars.json
+          path: release/grammars.json
           if-no-files-found: error

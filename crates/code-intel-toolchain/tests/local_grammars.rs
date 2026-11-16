@@ -22,7 +22,9 @@ use std::path::{Path, PathBuf};
 use theodore_code_intel_syntax::{
     DEFAULT_MAX_FILE_BYTES, FileEntry, Grammar, Snapshot, SyntaxIndex, blob_sha,
 };
-use theodore_code_intel_toolchain::{Manifest, Toolchain, current_platform, supported_abi};
+use theodore_code_intel_toolchain::{
+    GRAMMAR_LIB_FILE, Manifest, Toolchain, current_platform, supported_abi,
+};
 use theodore_ports::code_intel::{CodeSymbolKind as K, LanguageId};
 
 const LANGUAGES_YAML: &str = include_str!("../manifest/languages.yaml");
@@ -323,8 +325,15 @@ fn install_into(root: &Path, out: &Path, manifest: &Manifest) {
         let dir = root.join("grammars").join(g.dir_name());
         std::fs::create_dir_all(&dir).unwrap();
         let name = g.dir_name();
-        std::fs::copy(out.join(format!("{name}.dylib")), dir.join("grammar.dylib"))
-            .unwrap_or_else(|e| panic!("{name}.dylib: {e}"));
+        // build-grammars.sh names a Mac's library `<name>.dylib` and a
+        // Linux one `<name>-linux-<arch>.so`.
+        let built = if cfg!(target_os = "macos") {
+            format!("{name}.dylib")
+        } else {
+            format!("{name}-{}.so", current_platform())
+        };
+        std::fs::copy(out.join(&built), dir.join(GRAMMAR_LIB_FILE))
+            .unwrap_or_else(|e| panic!("{built}: {e}"));
         for l in &g.languages {
             std::fs::copy(
                 out.join(format!("{name}-{}.tags.scm", l.id)),

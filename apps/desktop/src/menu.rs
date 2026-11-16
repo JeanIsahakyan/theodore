@@ -35,16 +35,18 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
         .about(Some(about))
         .item(&i("check-updates", "Check for Updates…", None)?)
         .separator()
-        .item(&i("settings", "Settings…", Some("CmdOrCtrl+,"))?)
+        .item(&i("settings", "Settings…", Some("CmdOrCtrl+,"))?);
+    // Services and Hide/Show are macOS-only; elsewhere they'd be skipped
+    // and leave two separators in a row.
+    #[cfg(target_os = "macos")]
+    let theodore = theodore
         .separator()
         .services()
         .separator()
         .hide()
         .hide_others()
-        .show_all()
-        .separator()
-        .quit()
-        .build()?;
+        .show_all();
+    let theodore = theodore.separator().quit().build()?;
 
     let file = SubmenuBuilder::new(app, "File")
         .item(&i("new-tab", "New Tab", Some("CmdOrCtrl+T"))?)
@@ -121,13 +123,6 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
         .item(&i("refresh-inbox", "Refresh Inbox", Some("CmdOrCtrl+R"))?)
         .build()?;
 
-    let window = SubmenuBuilder::new(app, "Window")
-        .minimize()
-        .maximize()
-        .separator()
-        .close_window()
-        .build()?;
-
     let help = SubmenuBuilder::new(app, "Help")
         .item(&i("shortcuts", "Keyboard Shortcuts", Some("CmdOrCtrl+/"))?)
         .item(&i("report-issue", "Report an Issue…", None)?)
@@ -135,10 +130,20 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
         .item(&i("report-problem", "Report a Problem…", None)?)
         .build()?;
 
-    Menu::with_items(
-        app,
-        &[&theodore, &file, &edit, &view, &go, &review, &window, &help],
-    )
+    let menu = Menu::with_items(app, &[&theodore, &file, &edit, &view, &go, &review])?;
+    // GTK menus don't support minimize / maximize / close, and the title
+    // bar has them: a Window menu there would be empty.
+    #[cfg(target_os = "macos")]
+    menu.append(
+        &SubmenuBuilder::new(app, "Window")
+            .minimize()
+            .maximize()
+            .separator()
+            .close_window()
+            .build()?,
+    )?;
+    menu.append(&help)?;
+    Ok(menu)
 }
 
 /// Forwards app menu picks to the UI.

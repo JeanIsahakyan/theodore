@@ -145,7 +145,7 @@ pub(crate) enum RuntimeCheck {
 pub struct JavaLookup {
     /// `$JAVA_HOME`.
     pub java_home_env: Option<PathBuf>,
-    /// `/usr/libexec/java_home`.
+    /// `/usr/libexec/java_home` (macOS; `None` where it does not exist).
     pub java_home_tool: Option<PathBuf>,
     /// Directories holding Homebrew's keg-only `openjdk*/bin/java`.
     pub keg_roots: Vec<PathBuf>,
@@ -158,10 +158,14 @@ impl JavaLookup {
             java_home_env: std::env::var_os("JAVA_HOME")
                 .filter(|v| !v.is_empty())
                 .map(PathBuf::from),
-            java_home_tool: Some(PathBuf::from("/usr/libexec/java_home")),
+            // macOS only. Left unset elsewhere: with a tool set and missing,
+            // `candidates` would take every `/usr/bin/java` for macOS's
+            // JDK-less wrapper and skip a real one (Linux's).
+            java_home_tool: Some(PathBuf::from("/usr/libexec/java_home")).filter(|p| p.is_file()),
             keg_roots: vec![
                 PathBuf::from("/opt/homebrew/opt"),
                 PathBuf::from("/usr/local/opt"),
+                PathBuf::from("/home/linuxbrew/.linuxbrew/opt"),
             ],
         }
     }

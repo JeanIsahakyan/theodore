@@ -5,7 +5,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
 use sha2::{Digest, Sha256};
-use theodore_code_intel_toolchain::{Manifest, ServerOrigin, Toolchain};
+use theodore_code_intel_toolchain::{GRAMMAR_LIB_FILE, Manifest, ServerOrigin, Toolchain};
 use theodore_ports::code_intel::{CodeIntelError, InstallState, LanguageId, TrustMode};
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -387,7 +387,7 @@ async fn grammar_that_does_not_load_is_failed_not_a_crash() {
     assert_eq!(tc.grammar_state(&json), InstallState::Missing);
     assert!(tc.ensure_grammar(&json).await.is_err());
     let dir = root.path().join("grammars/tree-sitter-json-0.24.8");
-    assert_eq!(dir_names(&dir), vec!["grammar.dylib", "json.tags.scm"]);
+    assert_eq!(dir_names(&dir), vec![GRAMMAR_LIB_FILE, "json.tags.scm"]);
     assert!(matches!(
         tc.grammar_state(&json),
         InstallState::Failed { .. }
@@ -569,4 +569,141 @@ async fn remove_grammar_deletes_the_package_and_forgets_it() {
         tc.remove_grammar(&LanguageId::new("nope")).unwrap(),
         Vec::<LanguageId>::new()
     );
+}
+
+/// Three platform keys, a different download under each: a toolchain
+/// installs only its own (Linux x64 and arm64 are keys like any other), and
+/// one with no entry installs nothing.
+#[tokio::test]
+async fn each_platform_key_installs_its_own_download() {
+    let http = MockServer::start().await;
+    let bodies = [
+        ("darwin-arm64", b"#!/bin/sh\necho darwin\n".as_slice()),
+        ("linux-x64", b"#!/bin/sh\necho linux-x64\n".as_slice()),
+        ("linux-arm64", b"#!/bin/sh\necho linux-arm64\n".as_slice()),
+    ];
+    let mut downloads = String::new();
+    for (platform, body) in bodies {
+        let archive = gzip(body);
+        serve(&http, &format!("/srv-{platform}.gz"), archive.clone()).await;
+        downloads.push_str(&format!(
+            "      {platform}: {{ url: \"{}/srv-{platform}.gz\", sha256: \"{}\", format: gz, bin: srv }}\n",
+            http.uri(),
+            sha(&archive),
+        ));
+    }
+    let yaml = format!(
+        r#"
+servers:
+  - name: srv
+    version: "1.0"
+    detect: [["srv-not-on-path"]]
+    download:
+{downloads}    launch: ["{{bin}}"]
+languages:
+  - id: x
+    globs: ["*.x"]
+    servers: [srv]
+"#
+    );
+    let build = |root: &Path, platform: &str| {
+        let (m, warnings) = Manifest::parse(&yaml, r#"{"schema":1,"grammars":[]}"#).unwrap();
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let empty_path = root.join("no-path");
+        std::fs::create_dir_all(&empty_path).unwrap();
+        Toolchain::builder(root)
+            .manifest(m)
+            .platform(platform)
+            .search_path(empty_path)
+            .build()
+    };
+
+    for (platform, body) in bodies {
+        let root = tempfile::tempdir().unwrap();
+        let tc = build(root.path(), platform);
+        assert_eq!(tc.platform(), platform);
+        let spec = tc.manifest().server("srv").unwrap().clone();
+        let r = tc.install_server(&spec).await.unwrap();
+        assert_eq!(std::fs::read(&r.bin).unwrap(), body, "{platform}");
+        let mode = std::fs::metadata(&r.bin).unwrap().permissions().mode();
+        assert_ne!(mode & 0o111, 0, "{platform}: executable");
+    }
+    let mut paths: Vec<String> = http
+        .received_requests()
+        .await
+        .unwrap()
+        .iter()
+        .map(|r| r.url.path().to_string())
+        .collect();
+    paths.sort();
+    assert_eq!(
+        paths,
+        [
+            "/srv-darwin-arm64.gz",
+            "/srv-linux-arm64.gz",
+            "/srv-linux-x64.gz"
+        ]
+    );
+
+    let root = tempfile::tempdir().unwrap();
+    let tc = build(root.path(), "linux-riscv64");
+    let spec = tc.manifest().server("srv").unwrap().clone();
+    assert!(matches!(
+        tc.install_server(&spec).await,
+        Err(CodeIntelError::Unsupported(_))
+    ));
+}
+
+/// `{platform_dir}` resolves to the platform's own directory of one shared
+/// archive (jdtls: `config_linux` / `config_linux_arm`).
+#[tokio::test]
+async fn platform_dir_picks_the_platforms_directory_of_a_shared_archive() {
+    let http = MockServer::start().await;
+    let archive = tar_gz(&[
+        ("plugins/launcher.jar", b"jar", 0o644),
+        ("config_linux/config.ini", b"x64", 0o644),
+        ("config_linux_arm/config.ini", b"arm", 0o644),
+    ]);
+    serve(&http, "/jdt.tar.gz", archive.clone()).await;
+    let yaml = format!(
+        r#"
+servers:
+  - name: srv
+    version: "1.0"
+    download:
+      linux-x64: {{ url: "{uri}/jdt.tar.gz", sha256: "{sha}", format: tar.gz, bin: plugins/launcher.jar, platform_dir: config_linux }}
+      linux-arm64: {{ url: "{uri}/jdt.tar.gz", sha256: "{sha}", format: tar.gz, bin: plugins/launcher.jar, platform_dir: config_linux_arm }}
+    launch: ["{{bin}}", "-Dcfg={{platform_dir}}"]
+languages:
+  - id: x
+    globs: ["*.x"]
+    servers: [srv]
+"#,
+        uri = http.uri(),
+        sha = sha(&archive),
+    );
+    for (platform, config) in [
+        ("linux-x64", "config_linux"),
+        ("linux-arm64", "config_linux_arm"),
+    ] {
+        let (m, warnings) = Manifest::parse(&yaml, r#"{"schema":1,"grammars":[]}"#).unwrap();
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let root = tempfile::tempdir().unwrap();
+        let tc = Toolchain::builder(root.path())
+            .manifest(m)
+            .platform(platform)
+            .build();
+        let spec = tc.manifest().server("srv").unwrap().clone();
+        let r = tc.install_server(&spec).await.unwrap();
+        let want = root.path().join("servers/srv/1.0").join(config);
+        assert!(want.join("config.ini").is_file(), "{platform}");
+        assert_eq!(
+            tc.launch_config(&r, &spec, TrustMode::Review).argv,
+            vec![
+                r.bin.clone().into_os_string(),
+                format!("-Dcfg={}", want.display()).into()
+            ],
+            "{platform}"
+        );
+    }
 }

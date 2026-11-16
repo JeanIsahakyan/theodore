@@ -196,13 +196,9 @@ async fn terminate(child: &mut Child, grace: Duration) {
 }
 
 pub(crate) async fn signal_group(pid: u32, signal: &str) {
-    let _ = Command::new("kill")
-        .arg(signal)
-        .arg(format!("-{pid}"))
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .await;
+    if let Some(signal) = crate::signals::Signal::parse(signal) {
+        let _ = crate::signals::signal_group(pid, signal);
+    }
 }
 
 fn pump<R: AsyncRead + Unpin + Send + 'static>(
