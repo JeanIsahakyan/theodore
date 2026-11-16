@@ -1,13 +1,15 @@
 /**
  * Android: a scrolling Compose `Column` in a `Host` that fills the screen;
- * `Section` ─▶ a titled `Card`, `Row` ─▶ Material 3 `ListItem`,
- * `FormSlot` ─▶ `RNHostView`.
+ * `Section` ─▶ a titled `Card` (`plain`: no card), `Row` ─▶ Material 3
+ * `ListItem` (`icon` ─▶ its leading Material Symbol), `FormSlot` ─▶
+ * `RNHostView`.
  */
 import {
   Card,
   CircularProgressIndicator,
   Column,
   Host,
+  Icon,
   ListItem,
   RNHostView,
   Row as CRow,
@@ -27,7 +29,8 @@ import {
 } from '@expo/ui/jetpack-compose/modifiers';
 import { View } from 'react-native';
 import { usePalette } from '../theme';
-import { InForm } from './context';
+import { InCard, InForm } from './context';
+import { MATERIAL } from './materialIcons';
 import { useHostTheme } from './host.android';
 import type { FormProps, FormSlotProps, RowProps, SectionProps } from './types';
 
@@ -50,7 +53,7 @@ export function Form({ children, testID }: FormProps) {
   );
 }
 
-export function Section({ title, footer, children }: SectionProps) {
+export function Section({ title, footer, plain, children }: SectionProps) {
   const p = usePalette();
   return (
     <Column verticalArrangement={{ spacedBy: 8 }} modifiers={[fillMaxWidth()]}>
@@ -63,9 +66,18 @@ export function Section({ title, footer, children }: SectionProps) {
           {title}
         </Text>
       ) : null}
-      <Card colors={{ containerColor: p.surface }} modifiers={[fillMaxWidth()]}>
-        <Column>{children}</Column>
-      </Card>
+      {plain ? (
+        <Column modifiers={[fillMaxWidth()]}>{children}</Column>
+      ) : (
+        <Card
+          colors={{ containerColor: p.surface }}
+          modifiers={[fillMaxWidth()]}
+        >
+          <InCard.Provider value>
+            <Column>{children}</Column>
+          </InCard.Provider>
+        </Card>
+      )}
       {footer ? (
         <Text
           color={p.muted}
@@ -83,6 +95,7 @@ export function Row({
   label,
   detail,
   value,
+  icon,
   onPress,
   selected,
   destructive,
@@ -114,7 +127,23 @@ export function Row({
       </CRow>
     ) : null;
   return (
-    <ListItem colors={{ containerColor: 'transparent' }} modifiers={mods}>
+    <ListItem
+      // Remounted when it turns on or off: Compose keeps the click handler
+      // it was mounted with.
+      key={off ? 'off' : 'on'}
+      colors={{ containerColor: 'transparent' }}
+      modifiers={mods}
+    >
+      {icon ? (
+        <ListItem.LeadingContent>
+          {/* No tint: the list item's leading color (onSurfaceVariant). */}
+          <Icon
+            source={MATERIAL[icon]}
+            size={24}
+            {...(destructive ? { tint: p.danger } : {})}
+          />
+        </ListItem.LeadingContent>
+      ) : null}
       <ListItem.HeadlineContent>
         <Text color={destructive ? p.danger : p.text}>{label}</Text>
       </ListItem.HeadlineContent>
@@ -134,7 +163,9 @@ export function FormSlot({ children }: FormSlotProps) {
   return (
     <RNHostView matchContents={{ vertical: true }}>
       <View style={{ paddingHorizontal: 16, paddingVertical: 8 }}>
-        <InForm.Provider value={false}>{children}</InForm.Provider>
+        <InForm.Provider value={false}>
+          <InCard.Provider value={false}>{children}</InCard.Provider>
+        </InForm.Provider>
       </View>
     </RNHostView>
   );

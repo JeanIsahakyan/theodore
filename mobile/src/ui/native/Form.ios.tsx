@@ -1,7 +1,9 @@
 /**
  * iOS: a SwiftUI `Form` (inset grouped, scrolls itself) in a `Host` that
  * fills the screen; `Section` ─▶ `Section`, `Row` ─▶ a row `Button` (or a
- * plain row), `FormSlot` ─▶ `RNHostView`.
+ * plain row), `FormSlot` ─▶ `RNHostView`. A row's `icon` makes its label a
+ * `Label` (the SF Symbol in the accent, separators aligned to the title,
+ * as in Settings).
  */
 import {
   Button as SButton,
@@ -9,6 +11,7 @@ import {
   HStack,
   Host,
   Image,
+  Label,
   ProgressView,
   RNHostView,
   Section as SSection,
@@ -29,6 +32,7 @@ import {
 import { View } from 'react-native';
 import { usePalette } from '../theme';
 import { InForm } from './context';
+import { SF } from './icons';
 import { useHostTheme } from './host.ios';
 import type { FormProps, FormSlotProps, RowProps, SectionProps } from './types';
 
@@ -47,6 +51,7 @@ export function Form({ children, testID }: FormProps) {
 }
 
 export function Section({ title, footer, children }: SectionProps) {
+  // `plain` is for Android and web; a SwiftUI form section stays grouped.
   return (
     <SSection title={title} footer={footer ? <Text>{footer}</Text> : undefined}>
       {children}
@@ -58,6 +63,7 @@ export function Row({
   label,
   detail,
   value,
+  icon,
   onPress,
   chevron,
   selected,
@@ -79,17 +85,27 @@ export function Row({
       {label}
     </Text>
   );
+  const title = detail ? (
+    <VStack alignment="leading" spacing={2}>
+      {labelText}
+      <Text modifiers={[font({ textStyle: 'footnote' }), secondary]}>
+        {detail}
+      </Text>
+    </VStack>
+  ) : (
+    labelText
+  );
   const content = (
     <HStack spacing={12}>
-      {detail ? (
-        <VStack alignment="leading" spacing={2}>
-          {labelText}
-          <Text modifiers={[font({ textStyle: 'footnote' }), secondary]}>
-            {detail}
-          </Text>
-        </VStack>
+      {icon ? (
+        <Label
+          systemImage={SF[icon]}
+          modifiers={destructive ? [foregroundStyle(p.danger)] : []}
+        >
+          {title}
+        </Label>
       ) : (
-        labelText
+        title
       )}
       <Spacer />
       {value != null ? (

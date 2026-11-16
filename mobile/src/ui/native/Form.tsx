@@ -1,6 +1,7 @@
 /**
  * Web: an inset grouped list in React Native (the iOS Settings look):
- * `Form` ─▶ `ScrollView`, `Section` ─▶ a titled card, rows split by hairlines.
+ * `Form` ─▶ `ScrollView`, `Section` ─▶ a titled card (`plain`: none), rows
+ * split by hairlines, a row's `icon` leading it.
  */
 import { Children, Fragment, isValidElement, type ReactNode } from 'react';
 import {
@@ -11,9 +12,10 @@ import {
   View,
 } from 'react-native';
 import { usePalette } from '../theme';
-import { InForm } from './context';
+import { InCard, InForm } from './context';
 import { webStyles } from './rnStyles';
 import type { FormProps, FormSlotProps, RowProps, SectionProps } from './types';
+import { WebIcon } from './webIcons';
 
 export function Form({ children, testID }: FormProps) {
   const p = usePalette();
@@ -38,7 +40,7 @@ function rows(children: ReactNode): ReactNode[] {
   );
 }
 
-export function Section({ title, footer, children }: SectionProps) {
+export function Section({ title, footer, plain, children }: SectionProps) {
   const p = usePalette();
   const items = rows(children);
   return (
@@ -51,18 +53,24 @@ export function Section({ title, footer, children }: SectionProps) {
           {title}
         </Text>
       ) : null}
-      <View style={[webStyles.card, { backgroundColor: p.surface }]}>
-        {items.map((item, i) => (
-          <Fragment key={i}>
-            {i > 0 ? (
-              <View
-                style={[webStyles.separator, { backgroundColor: p.border }]}
-              />
-            ) : null}
-            {item}
-          </Fragment>
-        ))}
-      </View>
+      {plain ? (
+        children
+      ) : (
+        <View style={[webStyles.card, { backgroundColor: p.surface }]}>
+          <InCard.Provider value>
+            {items.map((item, i) => (
+              <Fragment key={i}>
+                {i > 0 ? (
+                  <View
+                    style={[webStyles.separator, { backgroundColor: p.border }]}
+                  />
+                ) : null}
+                {item}
+              </Fragment>
+            ))}
+          </InCard.Provider>
+        </View>
+      )}
       {footer ? (
         <Text style={[webStyles.footer, { color: p.muted }]}>{footer}</Text>
       ) : null}
@@ -74,6 +82,7 @@ export function Row({
   label,
   detail,
   value,
+  icon,
   onPress,
   chevron,
   selected,
@@ -87,6 +96,9 @@ export function Row({
   const off = !!disabled || !!loading;
   const body = (
     <>
+      {icon ? (
+        <WebIcon name={icon} color={destructive ? p.danger : p.text} />
+      ) : null}
       <View style={webStyles.rowText}>
         <Text
           style={[
@@ -158,7 +170,9 @@ export function Row({
 export function FormSlot({ children }: FormSlotProps) {
   return (
     <View style={webStyles.slot}>
-      <InForm.Provider value={false}>{children}</InForm.Provider>
+      <InForm.Provider value={false}>
+        <InCard.Provider value={false}>{children}</InCard.Provider>
+      </InForm.Provider>
     </View>
   );
 }

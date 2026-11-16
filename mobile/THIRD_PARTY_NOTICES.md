@@ -4,7 +4,8 @@
 
 https://github.com/EvanBacon/chat-template
 
-The app's shell and composer are adapted from it. Each derived file starts
+The app's shell and composer, and the look of Settings and Devices, are
+adapted from it. Each derived file starts
 with the line `Adapted from EvanBacon/chat-template (MIT)`.
 
 | File (mobile/) | From (template src/) |
@@ -24,6 +25,8 @@ with the line `Adapted from EvanBacon/chat-template (MIT)`.
 | `src/components/chat/prompt-input.tsx`, `.web.tsx` | `components/chat/prompt-input.tsx`, `.web.tsx` |
 | `src/components/chat/composer-dock.tsx`, `.web.tsx` | `components/chat/conversation.tsx` (keyboard handling) |
 | `src/components/chat/index.ts` | `components/chat/index.ts` |
+| `app/(app)/settings.tsx` | `app/(settings)/settings.tsx`, `app/(settings)/_layout.tsx` (grouped sections with icons, Appearance, sign out at the bottom) |
+| `app/(app)/devices.tsx` | `app/(settings)/capabilities.tsx` (icon rows with a secondary line) |
 
 ```text
 MIT License

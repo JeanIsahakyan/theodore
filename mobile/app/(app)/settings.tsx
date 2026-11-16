@@ -1,14 +1,17 @@
+// Adapted from EvanBacon/chat-template (MIT)
 /**
  * Settings, the native kit's reference screen (docs/mobile.md "Native UI"):
- * one grouped `Form`, like iOS Settings / a Material list.
+ * one grouped `Form`, like iOS Settings / a Material 3 settings list, each
+ * row led by its icon (SF Symbol / Material Symbol / Lucide).
  *
  * ```text
+ * Appearance     Theme  Light | Dark | System ─▶ applied app-wide, kept
  * Account        Email, Name
  * Organization   one row per org (checkmark on the current; tap to switch)
- * This device    Name, Status, Fingerprint (to compare on the computer)
+ * This device    Name, Status, Fingerprint (monospace; compare on the computer)
  * Notifications  switch
- *                Sign out ─▶ system confirm ─▶ signed out
  * About          Version, Server
+ * ━━ Sign out ━━ red, full width ─▶ system confirm ─▶ signed out
  * ```
  *
  * A failed organization switch is said under its section and never signs
@@ -16,41 +19,35 @@
  */
 import Constants from 'expo-constants';
 import { useEffect, useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
 import type { Organization, Session } from '../../src/auth/types';
 import { config } from '../../src/config';
 import { useServices } from '../../src/services';
 import { useFleetState } from '../../src/state/fleet';
-import { Fingerprint } from '../../src/ui/kit';
+import { THEME_CHOICES } from '../../src/ui/appearance';
+import { FingerprintItem } from '../../src/ui/DeviceItem';
+import { CONNECTION_LABEL } from '../../src/ui/deviceView';
 import { errorText, roleLabel, switchErrorText } from '../../src/ui/logic';
 import {
   Button,
   Form,
-  FormSlot,
   Row,
   Section,
+  Select,
   Switch,
   confirm,
 } from '../../src/ui/native';
+import { kindIcon } from '../../src/ui/native/icons';
 import {
   getNotificationsEnabled,
   pushAvailable,
   setNotificationsEnabled,
 } from '../../src/ui/pushAdapter';
-import { usePalette } from '../../src/ui/theme';
-
-const STATUS = {
-  off: 'Off',
-  connecting: 'Connecting…',
-  connected: 'Connected',
-  error: 'Not connected',
-} as const;
+import { setTheme, useThemeSetting } from '../../src/ui/themeSetting';
 
 const host = (url: string) => url.replace(/^\w+:\/\//, '').replace(/\/.*$/, '');
 
 export default function SettingsScreen() {
   const { auth, fleet } = useServices();
-  const p = usePalette();
   const [session, setSession] = useState<Session | null>(null);
   const [orgs, setOrgs] = useState<Organization[]>([]);
   const [switching, setSwitching] = useState<string | null>(null);
@@ -59,6 +56,7 @@ export default function SettingsScreen() {
   const [notifyError, setNotifyError] = useState<string | null>(null);
   const [signingOut, setSigningOut] = useState(false);
   const [signOutError, setSignOutError] = useState<string | null>(null);
+  const theme = useThemeSetting((s) => s.theme);
   const connection = useFleetState((s) => s.connection);
   const fingerprint = useFleetState((s) => s.fingerprint);
   const me = useFleetState((s) => s.devices.find((d) => d.thisDevice));
@@ -124,9 +122,22 @@ export default function SettingsScreen() {
 
   return (
     <Form testID="settings">
+      <Section title="Appearance">
+        <Select
+          label="Theme"
+          icon="theme"
+          choices={THEME_CHOICES}
+          value={theme}
+          onChange={setTheme}
+          testID="settings-theme"
+        />
+      </Section>
+
       <Section title="Account">
-        <Row label="Email" value={session?.email ?? '—'} />
-        {session?.name ? <Row label="Name" value={session.name} /> : null}
+        <Row icon="email" label="Email" value={session?.email ?? '—'} />
+        {session?.name ? (
+          <Row icon="person" label="Name" value={session.name} />
+        ) : null}
       </Section>
 
       <Section
@@ -142,6 +153,7 @@ export default function SettingsScreen() {
           orgs.map((o) => (
             <Row
               key={o.id}
+              icon="organization"
               label={o.name}
               detail={
                 o.id === session?.organizationId && role
@@ -157,6 +169,7 @@ export default function SettingsScreen() {
           ))
         ) : (
           <Row
+            icon="organization"
             label={
               current?.name ?? (session?.organizationId ? 'Organization' : '—')
             }
@@ -169,20 +182,22 @@ export default function SettingsScreen() {
         title="This device"
         footer="Compare the fingerprint with the one your computer shows before you trust this device there."
       >
-        <Row label="Name" value={me?.name || '—'} />
-        <Row label="Status" value={STATUS[connection]} />
-        <FormSlot>
-          <View style={styles.slot}>
-            <Text style={[styles.slotLabel, { color: p.muted }]}>
-              Fingerprint
-            </Text>
-            <Fingerprint value={fingerprint} />
-          </View>
-        </FormSlot>
+        <Row
+          icon={kindIcon(me?.kind ?? 'mobile')}
+          label="Name"
+          value={me?.name || '—'}
+        />
+        <Row
+          icon="status"
+          label="Status"
+          value={CONNECTION_LABEL[connection]}
+        />
+        <FingerprintItem label="Fingerprint" value={fingerprint} />
       </Section>
 
       <Section title="Notifications" footer={notifyError ?? undefined}>
         <Switch
+          icon="notifications"
           label="Notifications"
           detail={
             pushAvailable()
@@ -195,24 +210,25 @@ export default function SettingsScreen() {
         />
       </Section>
 
-      <Section footer={signOutError ?? undefined}>
+      <Section title="About">
+        <Row
+          icon="info"
+          label="Version"
+          value={Constants.expoConfig?.version ?? '—'}
+        />
+        <Row icon="server" label="Server" value={host(config.cloudUrl)} />
+      </Section>
+
+      <Section plain footer={signOutError ?? undefined}>
         <Button
           label="Sign out"
           variant="destructive"
+          fullWidth
           loading={signingOut}
           onPress={() => void signOut()}
+          testID="settings-sign-out"
         />
-      </Section>
-
-      <Section title="About">
-        <Row label="Version" value={Constants.expoConfig?.version ?? '—'} />
-        <Row label="Server" value={host(config.cloudUrl)} />
       </Section>
     </Form>
   );
 }
-
-const styles = StyleSheet.create({
-  slot: { gap: 6 },
-  slotLabel: { fontSize: 13 },
-});

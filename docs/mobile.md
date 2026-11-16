@@ -25,8 +25,8 @@ iPhone / Android / browser                     Theodore cloud            your co
 | Drawer | Fleet spaces you started from here or follow, newest activity first by day (Today, Yesterday, Previous 7 days, Older), a status dot, search; Devices, Settings, the account and organization |
 | Home (new space) | The goal in the composer; chips for the computer · project (trusted, online, accepting remote spaces), the mode up to its cap, agent · model · effort |
 | Space | Its history (lines), send a message when it's idle or waiting, Stop while it runs, answer its question |
-| Devices | Your devices, fingerprints, trust / untrust with the fingerprint confirm, this device's fingerprint to show on the computer |
-| Settings | Account, organization switch, this device (name, status, fingerprint), notifications on/off, sign out, about (version, server) |
+| Devices | This device's fingerprint to show on the computer; your devices, computers first (kind, online, mode cap, the agents a computer offers, fingerprint), trust / untrust with the fingerprint confirm |
+| Settings | Theme (Light / Dark / System), account, organization switch, this device (name, status, fingerprint), notifications on/off, about (version, server), sign out |
 
 Questions and "space finished" arrive as push notifications; a question's
 options are notification buttons (one tap answers it, signed on the phone,
@@ -192,16 +192,19 @@ import { Button, Form, Row, Section, Switch, confirm } from '../../src/ui/native
 | Kit | iOS (SwiftUI) | Android (Compose, Material 3) | Web (React Native) |
 | --- | --- | --- | --- |
 | `Button` primary / secondary / plain / destructive, `loading`, `disabled`, `fullWidth` | `Button` `.borderedProminent` / `.bordered` / `.borderless` / role destructive | `Button` / `FilledTonalButton` / `TextButton` / filled in danger | `Pressable` |
+| `Button` `fullWidth` in a `Section` `plain` (Sign out) | row button, label centered | the button across the screen, no card | the button across the screen, no card |
 | `Button` glassProminent / glass (floating over content) | 26+: `.glassProminent` / `.glass`; before: `.borderedProminent` / `.bordered` | `Button` / `FilledTonalButton` | as primary / secondary |
 | `Segmented` (Ask/Plan/Edit, short sets) | `Picker` `.segmented` | `SingleChoiceSegmentedButtonRow` | joined segments |
 | `Select` (device, project: longer lists) | `Picker` `.menu` | `ExposedDropdownMenuBox` | row that unfolds the choices |
+| `Select` in a `Form` (Theme) | `Picker` `.menu`: "Theme   System ⌃⌄" | `ListItem` (value as supporting text) + `DropdownMenu` | row that unfolds the choices |
 | `glass` on `Segmented`, `Select`, `TextField` (standalone) | 26+: `glassEffect` capsule / rounded behind it; before: as without | ignored | ignored |
 | `Glass` (RN content on a surface: banner, panel; `shape`, `radius`, `tint`, `fallback`) | 26+: `GlassView` (`expo-glass-effect`); before: the `fallback` | `View`, `fallback` in Material You colors | `View`, `fallback` |
 | `TopBar` (pushed screen: `title`, `onBack`, `action`) | before 26: "‹ Back", title, action (26+: the native glass bar instead) | Material 3 `TopAppBar` (back arrow, `titleLarge`) | "‹ Back", title, action |
-| `Switch` (label, `detail`) | `Toggle` | `ListItem` + `Switch`, row `toggleable` | row + RN `Switch` |
+| `Switch` (label, `detail`, `icon`) | `Toggle` | `ListItem` + `Switch`, row `toggleable` | row + RN `Switch` |
 | `TextField` (single / `multiline`, `placeholder`, `onSubmit`, `submitLabel`) | `TextField` (vertical axis, `lineLimit`) | `OutlinedTextField` (ime action) | `TextInput` |
 | `Progress` circular / linear, `value` 0…1 or none | `ProgressView` | `CircularProgressIndicator` (a value) / Expressive `LoadingIndicator` (none) / `LinearProgressIndicator` | `ActivityIndicator` / bar |
-| `Form` › `Section` (`title`, `footer`) › `Row` (`label`, `value`, `detail`, `chevron`, `selected`, `destructive`, `loading`, `onPress`) | `Form` (inset grouped, scrolls) › `Section` › row `Button` | scrolling `Column` › titled `Card` › `ListItem` (no chevron) | `ScrollView` › card › rows |
+| `Form` › `Section` (`title`, `footer`, `plain`) › `Row` (`label`, `value`, `detail`, `icon`, `chevron`, `selected`, `destructive`, `loading`, `onPress`) | `Form` (inset grouped, scrolls) › `Section` › row `Button` | scrolling `Column` › titled `Card` › `ListItem` (no chevron) | `ScrollView` › card › rows |
+| `icon` on `Row`, `Switch`, `Select` (`src/ui/native/icons.ts`) | SF Symbol in a `Label` (accent) | Material Symbol, the `ListItem`'s leading content (`assets/icons/*.xml`) | Lucide |
 | `FormSlot` (any RN view inside a `Form`) | `RNHostView` | `RNHostView` | `View` |
 | `Menu` (`label`, `groups` of choices with a check on the current one; agent · model · effort in the composer) | `Menu` with a `Picker` submenu per group (glass button on iOS 26) | `AssistChip` + `DropdownMenu`, a heading per group | pill + sheet |
 | `confirm()` / `notify()` (promise) | `UIAlertController` (RN `Alert`) | `AlertDialog` (RN `Alert`) | `window.confirm` / `alert` |
@@ -272,8 +275,14 @@ Rules for screens:
   the accessibility name; pass `accessibilityLabel` when the visible text is
   not enough ("Switch to Acme" on a row reading "Acme"), `testID` for ids.
 - Colors come from `usePalette()` (accent `#2F74C8` light / `#6AA7EC` dark;
-  Material You's roles on Android 12+); each `Host` follows the system
-  scheme and is tinted with the accent (Android 12+: the wallpaper's).
+  Material You's roles on Android 12+); each `Host` follows the app's
+  scheme (`useScheme()`, the Theme setting) and is tinted with the accent
+  (Android 12+: the wallpaper's). Never read React Native's
+  `useColorScheme()` directly: on web it ignores the setting.
+- Android icons are Material Symbols (outlined, 24 dp vector drawables from
+  google/material-design-icons, in `assets/icons`), drawn by Compose's
+  `Icon`; a new one is a new XML there and a line in
+  `src/ui/native/materialIcons.ts`.
 - Every component needs its web `X.tsx`; `pnpm -C mobile build:web` and
   `npx expo export --platform ios --platform android` both must bundle.
 - Settings (`app/(app)/settings.tsx`) is the reference screen.
@@ -335,6 +344,24 @@ Android 12+      applyThemeVars() overwrites them with Material You's roles at s
                  (src/components/theme-vars.android.ts), as usePalette() does
 uniwind-types.d.ts  written by Metro (uniwind); committed so typecheck needs no Metro run
 ```
+
+#### Theme (Settings → Appearance)
+
+```text
+start           readTheme() (sync) ─▶ Uniwind.setTheme(t)          src/ui/themeSetting.ts
+Settings pick   Uniwind.setTheme(t) ─▶ writeTheme(t)
+                  kept: secure-store on iOS / Android, localStorage on web
+                  (src/ui/themeStore.*); a device setting, kept across sign-out
+
+Uniwind.setTheme(light | dark | system)
+  ├─▶ className tokens: the light / dark variants of src/global.css (web: .dark on <html>)
+  ├─▶ native: Appearance.setColorScheme ─▶ UIKit / AppCompat (glass bars, alerts, keyboard)
+  └─▶ useScheme() = Uniwind's current theme ─▶ usePalette(), every Host's colorScheme,
+                    the status bar
+```
+
+Default System. Android 12+ keeps Material You in both schemes
+(`getMaterialColors` per scheme).
 
 - Pressed states are `active:` classes, never a `style` function on
   `Pressable` (Uniwind doesn't apply those); no `var(--…)` in inline styles.

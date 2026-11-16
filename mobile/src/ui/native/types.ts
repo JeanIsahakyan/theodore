@@ -9,6 +9,9 @@
  */
 import type { ReactElement, ReactNode } from 'react';
 import type { StyleProp, ViewProps, ViewStyle } from 'react-native';
+import type { IconName } from './icons';
+
+export type { IconName } from './icons';
 
 interface Common {
   accessibilityLabel?: string;
@@ -27,6 +30,15 @@ interface Placed {
  */
 interface Floating {
   glass?: boolean;
+}
+
+/**
+ * A leading glyph on a settings row (SF Symbol in a SwiftUI `Label` on iOS,
+ * a Material Symbol as the `ListItem`'s leading content on Android, Lucide
+ * on web). Read by no screen reader: the label says it.
+ */
+interface WithIcon {
+  icon?: IconName;
 }
 
 /**
@@ -52,7 +64,11 @@ export interface ButtonProps extends Common, Placed {
   disabled?: boolean;
   /** A spinner next to the label; not pressable meanwhile. */
   loading?: boolean;
-  /** Stretch to the width it is given (a form's main action). */
+  /**
+   * Stretch to the width it is given (a form's main action). In a `Form`:
+   * iOS, a row with the label centered; Android and web, a real button
+   * across the screen when its `Section` is `plain` (else a row).
+   */
   fullWidth?: boolean;
 }
 
@@ -72,8 +88,13 @@ export interface SegmentedProps<T extends string>
   disabled?: boolean;
 }
 
+/**
+ * In a `Form`: a settings row "Label   Value" that opens the choices (iOS
+ * `Picker` `.menu`, Android `ListItem` + `DropdownMenu`, web a row that
+ * unfolds them). Standalone: a menu button / an exposed dropdown field.
+ */
 export interface SelectProps<T extends string>
-  extends Common, Placed, Floating {
+  extends Common, Placed, Floating, WithIcon {
   /** What is being chosen ("Device"): the row's label. */
   label: string;
   choices: readonly Choice<T>[];
@@ -110,7 +131,7 @@ export interface MenuProps extends Common, Placed, Floating {
   disabled?: boolean;
 }
 
-export interface SwitchProps extends Common, Placed {
+export interface SwitchProps extends Common, Placed, WithIcon {
   label: string;
   /** A second, smaller line under the label. */
   detail?: string;
@@ -156,11 +177,16 @@ export interface SectionProps {
   title?: string;
   /** A note under the section. */
   footer?: string;
+  /**
+   * No card (Android, web): the children sit on the screen, for a lone
+   * `fullWidth` action (Sign out). iOS: a section like any other.
+   */
+  plain?: boolean;
   /** `Row`, `Switch`, `Select`, `Segmented`, `TextField`, `Button`, `FormSlot`. */
   children: ReactNode;
 }
 
-export interface RowProps extends Common {
+export interface RowProps extends Common, WithIcon {
   label: string;
   /** Under the label, smaller. */
   detail?: string;

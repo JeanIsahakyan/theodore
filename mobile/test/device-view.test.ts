@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
+import { mockDevices } from '../src/dev/mock';
 import {
+  agentsLine,
   deviceDetail,
   fingerprintLabel,
+  groupDevices,
   trustPrompt,
 } from '../src/ui/deviceView';
 
@@ -42,5 +45,36 @@ describe('Devices wording', () => {
     );
     expect(prompt.confirmLabel).toBe('Trust Studio');
     expect(prompt.destructive).toBeUndefined();
+  });
+
+  it('lists the agents a computer offers', () => {
+    expect(agentsLine([{ label: 'Claude' }, { label: 'Codex' }])).toBe(
+      'Claude · Codex',
+    );
+    expect(agentsLine([])).toBe('');
+  });
+
+  it('groups devices: computers first, online first, then by name', () => {
+    const others = mockDevices.filter((d) => !d.thisDevice);
+    const browser = {
+      ...others[0]!,
+      deviceId: 'dev-web',
+      name: 'Chrome',
+      kind: 'web',
+    };
+    const groups = groupDevices([browser, ...others]);
+    expect(groups.map((g) => g.title)).toEqual([
+      'Computers',
+      'Phones and browsers',
+    ]);
+    expect(groups[0]!.devices.map((d) => d.deviceId)).toEqual([
+      'dev-box',
+      'dev-mac',
+      'dev-new',
+      'dev-work',
+    ]);
+    expect(groups[1]!.devices.map((d) => d.deviceId)).toEqual(['dev-web']);
+    expect(groupDevices(others).map((g) => g.key)).toEqual(['computers']);
+    expect(groupDevices([])).toEqual([]);
   });
 });

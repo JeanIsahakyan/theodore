@@ -4,7 +4,7 @@
  * `role: .destructive`, glass / glassProminent ─▶ `.glass` /
  * `.glassProminent` on iOS 26+ (`.bordered` / `.borderedProminent` below:
  * SwiftUI's own fallback is `.automatic`, a bare label). In a `Form`: a row
- * button (accent, or red).
+ * button (accent, or red); `fullWidth`, its label centered (Sign out).
  */
 import {
   Button as SButton,
@@ -53,7 +53,9 @@ export function Button({
   }
   if (disabled || loading) mods.push(disabledMod(true));
   mods.push(a11yLabel(accessibilityLabel ?? label));
-  const wide = fullWidth && !inForm ? [frame({ maxWidth: Infinity })] : [];
+  const wide = fullWidth
+    ? [frame({ maxWidth: Infinity, alignment: 'center' })]
+    : [];
   return (
     <ControlHost style={style} width={fullWidth ? 'fill' : 'content'}>
       <SButton

@@ -1,5 +1,13 @@
-/** Android: a `ListItem` with a Material 3 `Switch`; the whole row toggles. */
-import { ListItem, Switch as CSwitch, Text } from '@expo/ui/jetpack-compose';
+/**
+ * Android: a `ListItem` with a Material 3 `Switch`; the whole row toggles;
+ * `icon` leads it.
+ */
+import {
+  Icon,
+  ListItem,
+  Switch as CSwitch,
+  Text,
+} from '@expo/ui/jetpack-compose';
 import {
   alpha,
   semantics,
@@ -8,6 +16,7 @@ import {
 } from '@expo/ui/jetpack-compose/modifiers';
 import { usePalette } from '../theme';
 import { ControlHost } from './host.android';
+import { MATERIAL } from './materialIcons';
 import type { SwitchProps } from './types';
 
 export function Switch({
@@ -16,6 +25,7 @@ export function Switch({
   value,
   onValueChange,
   disabled,
+  icon,
   accessibilityLabel,
   testID,
   style,
@@ -24,6 +34,9 @@ export function Switch({
   return (
     <ControlHost style={style} width="fill">
       <ListItem
+        // Remounted when it turns on or off: Compose keeps the `toggleable`
+        // it was mounted with.
+        key={disabled ? 'off' : 'on'}
         colors={{ containerColor: 'transparent' }}
         modifiers={[
           toggleable(value, () => onValueChange(!value), {
@@ -35,6 +48,11 @@ export function Switch({
           ...(testID ? [testIDMod(testID)] : []),
         ]}
       >
+        {icon ? (
+          <ListItem.LeadingContent>
+            <Icon source={MATERIAL[icon]} size={24} />
+          </ListItem.LeadingContent>
+        ) : null}
         <ListItem.HeadlineContent>
           <Text color={p.text}>{label}</Text>
         </ListItem.HeadlineContent>

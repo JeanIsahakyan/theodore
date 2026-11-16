@@ -1,10 +1,11 @@
 /**
  * Web (and the type every platform shares): the React Native button of
- * `../kit`. glass / glassProminent look like secondary / primary.
+ * `../kit`. glass / glassProminent look like secondary / primary. In a
+ * `Form` section's card: a row; in a `plain` section, the button itself.
  */
 import { ActivityIndicator, Pressable, StyleSheet, Text } from 'react-native';
 import { usePalette } from '../theme';
-import { useInForm } from './context';
+import { useInCard, useInForm } from './context';
 import { webStyles } from './rnStyles';
 import type { ButtonProps } from './types';
 
@@ -21,6 +22,7 @@ export function Button({
 }: ButtonProps) {
   const p = usePalette();
   const inForm = useInForm();
+  const inCard = useInCard();
   const off = !!disabled || !!loading;
   const danger = variant === 'destructive';
   const look =
@@ -30,7 +32,7 @@ export function Button({
         ? 'primary'
         : variant;
 
-  if (inForm) {
+  if (inForm && inCard) {
     const color = danger ? p.danger : p.accent;
     return (
       <Pressable

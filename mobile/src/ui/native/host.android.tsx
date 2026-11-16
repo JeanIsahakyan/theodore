@@ -11,14 +11,14 @@
  */
 import { Host, isDynamicColorAvailable } from '@expo/ui/jetpack-compose';
 import type { ReactNode } from 'react';
-import { useColorScheme, type StyleProp, type ViewStyle } from 'react-native';
-import { usePalette } from '../theme';
+import type { StyleProp, ViewStyle } from 'react-native';
+import { usePalette, useScheme } from '../theme';
 import { useInForm, useInHost } from './context';
 
 const hex = (c: string) => c as `#${string}`;
 
 export function useHostTheme() {
-  const scheme = useColorScheme();
+  const scheme = useScheme();
   const p = usePalette();
   const colorScheme =
     scheme === 'dark' ? ('dark' as const) : ('light' as const);
