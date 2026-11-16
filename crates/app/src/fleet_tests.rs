@@ -4111,6 +4111,135 @@ async fn remote_picks_are_checked_against_what_the_host_lists_then_applied() {
     );
 }
 
+fn listed_ids(info: &theodore_fleet_protocol::DeviceInfo) -> Vec<&str> {
+    info.agents.iter().map(|a| a.id.as_str()).collect()
+}
+
+/// Announced since `from` with exactly `ids` listed.
+fn announced(f: &Fixtures, from: usize, ids: &[&str]) -> bool {
+    commands(f, 0).iter().skip(from).any(|c| {
+        matches!(c, FakeFleetCommand::Update { info, .. }
+            if listed_ids(info) == ids)
+    })
+}
+
+#[tokio::test]
+async fn a_signed_out_agent_is_not_offered_and_a_pick_naming_it_says_why() {
+    use theodore_domain::AgentId;
+    let f = fixtures();
+    agents_listed(&f);
+    // The default is the signed-out one: the first listed is signed in.
+    user_setting(&f, "agents.chat", json!("codex"));
+    f.agents.set_signed_in(AgentId::Codex, Some(false));
+    let (core, _recv, project, origin) = target(&f).await;
+    let info = core.fleet_info(&core.fleet_settings().await).await;
+    assert_eq!(listed_ids(&info), ["claude"]);
+
+    let op = RemoteOp::StartSpace {
+        space: "rs_x".into(),
+        project_id: project.id.clone(),
+        goal: "Fix it".into(),
+        mode: FleetMode::Edit,
+        agent: Some("codex".into()),
+        model: None,
+        effort: None,
+        parent: None,
+        depth: 0,
+    };
+    let (id, env) = sealed(&f, &origin, op, now(&f));
+    deliver(&f, env);
+    assert_eq!(refusal(&f, &id).await, codes::AGENT_UNAVAILABLE);
+    match reply_of(&f, &id).unwrap() {
+        ReplyOutcome::Err { message, .. } => assert_eq!(
+            message,
+            "Codex isn't signed in on this device. Run `codex login` in a terminal."
+        ),
+        ok => panic!("{ok:?}"),
+    }
+
+    // No agent named: the space runs the first signed-in one, not the
+    // signed-out default.
+    f.agents.push_script(done("one"));
+    let ok = run(&f, &origin, start_op(&project.id, "rs_1")).await;
+    assert!(matches!(ok, ReplyOutcome::Ok { .. }), "{ok:?}");
+    assert_eq!(space(&f, &local_of(&f, "rs_1")).agent, AgentId::Claude);
+}
+
+#[tokio::test]
+async fn a_sign_in_that_changes_is_announced() {
+    use theodore_domain::AgentId;
+    let f = fixtures();
+    agents_listed(&f);
+    let (core, _recv, _project, _origin) = target(&f).await;
+    let info = core.fleet_info(&core.fleet_settings().await).await;
+    assert_eq!(listed_ids(&info), ["claude", "codex"]);
+
+    // Found signed out by a look from this device's UI.
+    let from = commands(&f, 0).len();
+    f.agents.set_signed_in(AgentId::Codex, Some(false));
+    let shown = core.detect_agents(false).await.unwrap();
+    let codex = shown.iter().find(|a| a.id == AgentId::Codex).unwrap();
+    assert_eq!(codex.signed_in, Some(false));
+    assert_eq!(
+        codex.sign_in_hint.as_deref(),
+        Some("Run `codex login` in a terminal.")
+    );
+    let claude = shown.iter().find(|a| a.id == AgentId::Claude).unwrap();
+    assert!(claude.sign_in_hint.is_some(), "unknown: says how anyway");
+    wait_until("announced without codex", || {
+        announced(&f, from, &["claude"])
+    })
+    .await;
+
+    // Signed in again, checked on demand.
+    let from = commands(&f, 0).len();
+    let rechecks = f.agents.rechecks();
+    f.agents.set_signed_in(AgentId::Codex, Some(true));
+    core.detect_agents(true).await.unwrap();
+    assert_eq!(f.agents.rechecks(), rechecks + 1);
+    wait_until("announced with codex", || {
+        announced(&f, from, &["claude", "codex"])
+    })
+    .await;
+
+    // Nothing changed: nothing announced.
+    let from = commands(&f, 0).len();
+    core.detect_agents(false).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert_eq!(commands(&f, 0).len(), from);
+}
+
+#[tokio::test]
+async fn a_run_that_fails_signed_out_takes_its_agent_off_the_list() {
+    let f = fixtures();
+    agents_listed(&f);
+    let (core, _recv, project, origin) = target(&f).await;
+    let info = core.fleet_info(&core.fleet_settings().await).await;
+    assert_eq!(listed_ids(&info), ["claude", "codex"]);
+    let from = commands(&f, 0).len();
+    f.agents.push_script(vec![AgentEvent::Error {
+        message: theodore_ports::signed_out_message("codex"),
+        stderr_tail: String::new(),
+    }]);
+    let op = RemoteOp::StartSpace {
+        space: "rs_1".into(),
+        project_id: project.id.clone(),
+        goal: "Fix it".into(),
+        mode: FleetMode::Edit,
+        agent: Some("codex".into()),
+        model: None,
+        effort: None,
+        parent: None,
+        depth: 0,
+    };
+    let ok = run(&f, &origin, op).await;
+    assert!(matches!(ok, ReplyOutcome::Ok { .. }), "{ok:?}");
+    wait_until("announced without codex", || {
+        announced(&f, from, &["claude"])
+    })
+    .await;
+}
+
 #[tokio::test]
 async fn a_start_from_here_carries_the_picks_under_the_signature() {
     let f = fixtures();

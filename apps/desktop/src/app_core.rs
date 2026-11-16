@@ -470,21 +470,8 @@ impl CoreApi for AppCore {
     async fn submit_review(&self, req: SubmitReviewRequest) -> Result<(), CommandError> {
         self.core.submit_review(req).await.map_err(err)
     }
-    async fn detect_agents(&self) -> Result<Vec<AgentStatus>, CommandError> {
-        Ok(self
-            .core
-            .deps()
-            .agents
-            .detect()
-            .await
-            .into_iter()
-            .map(|a| AgentStatus {
-                id: a.id,
-                installed: a.installed,
-                version: a.version,
-                path: a.path.map(|p| p.display().to_string()),
-            })
-            .collect())
+    async fn detect_agents(&self, recheck: bool) -> Result<Vec<AgentStatus>, CommandError> {
+        self.core.detect_agents(recheck).await.map_err(err)
     }
     async fn agent_models(&self, agent: AgentId) -> Result<Vec<AgentModel>, CommandError> {
         Ok(self

@@ -1,84 +1,111 @@
 /**
  * Home: start a new space, in the chat template's empty-chat style. The
- * goal is the first message; where it runs and how are chips.
+ * goal is the first message; where it runs and how are the composer's
+ * chips (docs/mobile.md "New space").
  *
  * ```text
  * [☰]            New space           [🔔][✎]
  *  (questions waiting, connection)
  *
  *                  ⌘  New space
- *          Runs on ( mac-A · theodore ⌄ )        Device ─ Project picker
- *            Edit files in the space
+ *       It runs on your computer; follow it from here.
+ *        ( api · build-box ) ( web · mac-A )        recent projects: one tap
  *
- * ╭──────────────────────────────────────────╮
- * │ What should the agent work on?           │
- * │ (Edit ⌄) (Opus 4.1 · High ⌄)         (↑) │   Mode up to the device's cap,
- * ╰──────────────────────────────────────────╯   agent · model · effort
+ *  ╭ Run lets the agent run any command… ╮          only in Run
+ * ╭──────────────────────────────────────────────╮
+ * │ What should the agent work on?               │
+ * │ (mac-A · repo ⌄)(Opus 4.1 · High ⌄)(Edit ⌄)(↑)│  chips scroll sideways
+ * ╰──────────────────────────────────────────────╯
  *
+ * picks: src/state/compose.ts (shared with the sheets, remembered per
+ *        account + org); only what was picked is sent
+ * ✎ / drawer "New space" ─▶ the goal cleared, the composer focused
+ *        (not at a cold start: the keyboard would cover Home at launch)
  * no computer can take one ─▶ "No computer can take a space right now…",
  *                             Devices, the composer off
- * Send ─▶ fleet.startSpace ─▶ push /space/<id>, the field cleared
+ * Send ─▶ fleet.startSpace ─▶ recent projects ─▶ push /space/<id>
  * ```
  */
 import { router, type Href } from 'expo-router';
 import * as Haptics from 'expo-haptics';
-import { useMemo, useState } from 'react';
-import { Keyboard, Pressable, Text, View } from 'react-native';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  Keyboard,
+  Pressable,
+  Text,
+  View,
+  type TextInputInstance,
+} from 'react-native';
 import { ComposerDock, PromptInput } from '../../src/components/chat';
 import { MainHeader } from '../../src/components/main-header';
-import { PickerMenu } from '../../src/components/picker-menu';
+import {
+  ModeMenu,
+  ModelChip,
+  WhereChip,
+} from '../../src/components/pickers/composer-chips';
+import { useHome } from '../../src/components/pickers/use-picker';
 import { SymbolImage } from '../../src/components/symbol-image';
-import type { FleetMode } from '../../src/gen/fleet';
 import { useServices } from '../../src/services';
 import { useGlassHeaderInset } from '../../src/shell/glassHeader';
 import { spaceHref } from '../../src/shell/navigate';
-import { useFleetState } from '../../src/state/fleet';
-import { AgentMenu } from '../../src/ui/AgentMenu';
-import { NO_PICK, startPicks, type Pick } from '../../src/ui/agents';
-import { ConnectionBanner } from '../../src/ui/ConnectionBanner';
 import {
-  MODE_HINT,
-  MODE_LABEL,
-  RUN_WARNING,
-  capMode,
-  errorText,
-  modesUpTo,
-  startableDevices,
-} from '../../src/ui/logic';
-import { Button } from '../../src/ui/native';
+  applyWhere,
+  noteStarted,
+  requestNewSpace,
+  setHomeMode,
+  useCompose,
+} from '../../src/state/compose';
+import { startPicks } from '../../src/ui/agents';
+import { ConnectionBanner } from '../../src/ui/ConnectionBanner';
+import { recentChips } from '../../src/ui/homeDraft';
+import { RUN_WARNING, errorText, modesUpTo } from '../../src/ui/logic';
+import { Button, Glass } from '../../src/ui/native';
 import { QuestionsBanner } from '../../src/ui/QuestionsBanner';
 import { usePalette } from '../../src/ui/theme';
 
 const TITLE = 'New space';
 const PLACEHOLDER = 'What should the agent work on?';
+const HINT = 'It runs on your computer; follow it from here.';
 const web = process.env.EXPO_OS === 'web';
 
 export default function NewSpaceScreen() {
   const { fleet } = useServices();
   const p = usePalette();
   const top = useGlassHeaderInset();
-  const allDevices = useFleetState((s) => s.devices);
-  const devices = useMemo(() => startableDevices(allDevices), [allDevices]);
-  const [deviceId, setDeviceId] = useState<string | null>(null);
-  const [projectId, setProjectId] = useState<string | null>(null);
-  const [mode, setMode] = useState<FleetMode>('edit');
-  // Only what's picked goes; the device's own defaults run for the rest.
-  const [pick, setPick] = useState<Pick>(NO_PICK);
+  const { device, project, mode, pick, startable } = useHome();
+  const recent = useCompose((s) => s.recent);
+  const fresh = useCompose((s) => s.fresh);
   const [goal, setGoal] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const input = useRef<TextInputInstance>(null);
 
-  // The device picked, else the first; its first project likewise.
-  const device = devices.find((d) => d.deviceId === deviceId) ?? devices[0];
-  const project =
-    device?.projects.find((x) => x.id === projectId) ?? device?.projects[0];
-  const shownMode = device ? capMode(mode, device.maxMode) : mode;
-  const ready = !!device && !!project && goal.trim() !== '' && !busy;
-
-  const reset = () => {
+  // "New space" (✎, the drawer): a clean field, focused. Not at a cold
+  // start: only a request made after Home mounted.
+  const handled = useRef(fresh);
+  useEffect(() => {
+    if (fresh === handled.current) return;
+    handled.current = fresh;
     setGoal('');
     setError(null);
-  };
+    // After the pop back to Home and the drawer's close.
+    const t = setTimeout(() => input.current?.focus(), web ? 0 : 300);
+    return () => clearTimeout(t);
+  }, [fresh]);
+
+  const quick = useMemo(
+    () =>
+      recentChips(
+        recent,
+        startable,
+        device && project
+          ? { deviceId: device.deviceId, projectId: project.id }
+          : null,
+      ),
+    [recent, startable, device, project],
+  );
+
+  const ready = !!device && !!project && goal.trim() !== '' && !busy;
 
   const start = () => {
     if (!device || !project || !ready) return;
@@ -89,7 +116,7 @@ export default function NewSpaceScreen() {
         deviceId: device.deviceId,
         projectId: project.id,
         goal: goal.trim(),
-        mode: shownMode,
+        mode,
         ...startPicks(device.agents, pick),
       })
       .then((space) => {
@@ -97,6 +124,7 @@ export default function NewSpaceScreen() {
           void Haptics.notificationAsync(
             Haptics.NotificationFeedbackType.Success,
           );
+        noteStarted(device.deviceId, project.id);
         setGoal('');
         router.push(spaceHref(space.space));
       })
@@ -104,48 +132,24 @@ export default function NewSpaceScreen() {
       .finally(() => setBusy(false));
   };
 
-  const chooseDevice = (id: string) => {
-    const d = devices.find((x) => x.deviceId === id);
-    setDeviceId(id);
-    setProjectId(null);
-    // Another device lists its own agents and models.
-    setPick(NO_PICK);
-    if (d) setMode((m) => capMode(m, d.maxMode));
-  };
-
-  const chips = device ? (
-    <>
-      <PickerMenu
-        label={MODE_LABEL[shownMode]}
-        accessibilityLabel={`Mode: ${MODE_LABEL[shownMode]}`}
-        groups={[
-          {
-            label: 'Mode',
-            choices: modesUpTo(device.maxMode).map((m) => ({
-              value: m,
-              label: MODE_LABEL[m],
-            })),
-            value: shownMode,
-            onChange: (m) => setMode(m as FleetMode),
-          },
-        ]}
-        disabled={busy}
-        testID="start-mode"
-      />
-      <AgentMenu
-        agents={device.agents}
-        pick={pick}
-        current={NO_PICK}
-        onPick={setPick}
-        disabled={busy}
-        glass={false}
-      />
-    </>
-  ) : null;
+  const chips =
+    device && project ? (
+      <>
+        <WhereChip disabled={busy} />
+        <ModelChip disabled={busy} />
+        <ModeMenu
+          modes={modesUpTo(device.maxMode)}
+          value={mode}
+          onChange={setHomeMode}
+          disabled={busy}
+          testID="start-mode"
+        />
+      </>
+    ) : null;
 
   return (
     <View className="flex-1 bg-background" style={{ paddingTop: top }}>
-      <MainHeader title={TITLE} onNewSpace={reset} />
+      <MainHeader title={TITLE} onNewSpace={requestNewSpace} />
       <QuestionsBanner glass />
       <ConnectionBanner style={{ alignSelf: 'center', marginTop: 8 }} />
 
@@ -163,42 +167,22 @@ export default function NewSpaceScreen() {
             >
               {TITLE}
             </Text>
-            <View className="flex-row flex-wrap items-center justify-center gap-2">
-              <Text className="text-sm text-muted-foreground">Runs on</Text>
-              <PickerMenu
-                label={`${device.name} · ${project.name}`}
-                accessibilityLabel={`Runs on ${device.name}, project ${project.name}`}
-                groups={[
-                  {
-                    label: 'Device',
-                    choices: devices.map((d) => ({
-                      value: d.deviceId,
-                      label: d.name,
-                    })),
-                    value: device.deviceId,
-                    onChange: chooseDevice,
-                  },
-                  {
-                    label: 'Project',
-                    choices: device.projects.map((x) => ({
-                      value: x.id,
-                      label: x.name,
-                    })),
-                    value: project.id,
-                    onChange: setProjectId,
-                  },
-                ]}
-                disabled={busy}
-                testID="start-where"
-              />
-            </View>
-            <Text className="max-w-xs text-center text-[13px] text-muted-foreground">
-              {`${MODE_HINT[shownMode]}. ${device.name} allows up to ${MODE_LABEL[device.maxMode]}.`}
+            <Text className="max-w-xs text-center text-sm text-muted-foreground">
+              {HINT}
             </Text>
-            {shownMode === 'run' ? (
-              <Text className="max-w-xs text-center text-[13px] text-warning">
-                {RUN_WARNING}
-              </Text>
+            {quick.length > 0 ? (
+              <View className="mt-3 flex-row flex-wrap justify-center gap-2">
+                {quick.map((r) => (
+                  <Button
+                    key={`${r.deviceId}/${r.projectId}`}
+                    label={r.label}
+                    accessibilityLabel={r.accessibilityLabel}
+                    variant="secondary"
+                    pill
+                    onPress={() => applyWhere(r.deviceId, r.projectId)}
+                  />
+                ))}
+              </View>
             ) : null}
           </>
         ) : (
@@ -225,6 +209,11 @@ export default function NewSpaceScreen() {
       </Pressable>
 
       <ComposerDock>
+        {device && mode === 'run' ? (
+          <Glass radius={20} style={{ padding: 12, marginBottom: 8 }}>
+            <Text className="text-[13px] text-warning">{RUN_WARNING}</Text>
+          </Glass>
+        ) : null}
         <PromptInput
           value={goal}
           onChangeText={setGoal}
@@ -236,6 +225,8 @@ export default function NewSpaceScreen() {
           canSubmit={ready}
           leading={chips}
           error={error}
+          autoFocus={web}
+          inputRef={input}
           testID="start-space"
         />
       </ComposerDock>

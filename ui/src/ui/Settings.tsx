@@ -50,6 +50,7 @@ import { useRootStore, useUi } from '../stores/context';
 import type { SettingsPage as Page } from '../stores/UiStore';
 import { AgentTag, Avatar, Btn, K, Spinner } from './bits';
 import {
+  AGENT_NAME,
   CLAUDE_MODELS,
   EFFORTS,
   agentEffort,
@@ -60,6 +61,7 @@ import {
   takesEffort,
 } from './agentModel';
 import { AccountCard } from './AccountCard';
+import { SignInHint } from './AgentMenu';
 import { DevicesPage } from './fleet/DevicesPage';
 import { buildLabel, buildReport, builtAtIso } from './buildStamp';
 import { DeviceLoginPanel } from './DeviceLoginPanel';
@@ -529,21 +531,50 @@ const AccountPage = observer(function AccountPage() {
   );
 });
 
+/** An installed agent's sign-in, as Settings → Agents shows it. */
+function signInLabel(a: AgentStatus): string | null {
+  if (!a.installed) return null;
+  if (a.signed_in === true) return 'signed in';
+  if (a.signed_in === false) return 'not signed in';
+  return "couldn't check sign-in";
+}
+
 const AgentsPage = observer(function AgentsPage() {
   const store = useRootStore();
   const [detected, setDetected] = useState<AgentStatus[] | null>(null);
+  const [checking, setChecking] = useState(false);
   useEffect(() => {
     void api
       .detectAgents()
       .then(setDetected)
       .catch(() => setDetected([]));
   }, []);
+  // Signed in or out in a terminal: asked again, not read from the cache.
+  const recheck = () => {
+    setChecking(true);
+    void api
+      .detectAgents(true)
+      .then(setDetected)
+      .catch(() => {})
+      .finally(() => setChecking(false));
+  };
   return (
     <>
       <section className="flex flex-col gap-2">
-        <Typography.Heading level={6}>
-          Agents on this computer
-        </Typography.Heading>
+        <div className="flex items-center gap-2">
+          <Typography.Heading level={6} className="flex-1">
+            Agents on this computer
+          </Typography.Heading>
+          <Button
+            size="sm"
+            variant="tertiary"
+            isDisabled={!detected || checking}
+            onPress={recheck}
+          >
+            {checking ? <Spinner /> : null}
+            Check again
+          </Button>
+        </div>
         {!detected ? (
           <Spinner />
         ) : (
@@ -581,8 +612,19 @@ const AgentsPage = observer(function AgentsPage() {
                   >
                     {a.path ?? '—'}
                   </span>
-                  <span className="text-xs text-muted">
-                    {a.installed ? (a.version ?? 'installed') : 'not found'}
+                  <span className="flex flex-col items-end text-xs text-muted">
+                    <span>
+                      {a.installed ? (a.version ?? 'installed') : 'not found'}
+                    </span>
+                    {signInLabel(a) && (
+                      <span
+                        className={
+                          a.signed_in === false ? 'text-warning' : undefined
+                        }
+                      >
+                        {signInLabel(a)}
+                      </span>
+                    )}
                   </span>
                 </div>
               );
@@ -592,9 +634,21 @@ const AgentsPage = observer(function AgentsPage() {
         <span className="text-xs text-muted">
           Disabled agents are hidden from the chat picker and skipped for
           grouping, skills and fixes. Agents use their own sign-in (
-          <code className="font-mono">claude login</code>
-          ); keys never reach this app.
+          <code className="font-mono">claude auth login</code>,{' '}
+          <code className="font-mono">codex login</code>
+          ); keys never reach this app. One that isn&apos;t signed in is shown
+          but can&apos;t be picked, and your other devices don&apos;t see it.
         </span>
+        {detected
+          ?.filter(
+            (a) => a.installed && a.signed_in === false && a.sign_in_hint,
+          )
+          .map((a) => (
+            <span key={a.id} className="text-xs text-warning">
+              {AGENT_NAME[a.id]} isn&apos;t signed in.{' '}
+              <SignInHint hint={a.sign_in_hint!} />
+            </span>
+          ))}
       </section>
       <Separator />
       <section className="flex flex-col gap-2">

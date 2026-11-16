@@ -246,7 +246,9 @@ export const api = {
   cancelRun: (run: string) => call<null>('cancel_run', { run }),
   submitReview: (req: SubmitReviewRequest) =>
     call<null>('submit_review', { req }),
-  detectAgents: () => call<AgentStatus[]>('detect_agents'),
+  /** `recheck`: sign-ins checked again, not read from the cache. */
+  detectAgents: (recheck = false) =>
+    call<AgentStatus[]>('detect_agents', { recheck }),
   agentModels: (agent: AgentId) =>
     call<AgentModel[]>('agent_models', { agent }),
   appInfo: () => call<AppInfo>('app_info'),

@@ -1732,6 +1732,7 @@ async fn drive_turn(core: &Core, turn: Turn) {
             duration_ms = ms,
             "space turn couldn't sign in to the agent"
         );
+        core.fleet_agent_signed_out(agent).await;
     } else if let (Some(e), false) = (&error, cancelled) {
         tracing::warn!(
             error.code = "space.turn_failed",

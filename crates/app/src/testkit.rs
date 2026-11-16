@@ -2175,6 +2175,11 @@ pub struct FakeAgent {
         Mutex<std::collections::HashMap<theodore_domain::AgentId, Vec<theodore_ports::ModelInfo>>>,
     /// How many times `detect` ran.
     detects: std::sync::atomic::AtomicUsize,
+    /// What `detect` says of each agent's sign-in (`set_signed_in`);
+    /// unknown by default.
+    signed_in: Mutex<std::collections::HashMap<theodore_domain::AgentId, Option<bool>>>,
+    /// How many times `recheck_sign_in` ran.
+    rechecks: std::sync::atomic::AtomicUsize,
 }
 
 /// What an untagged, unscripted call gets: one plain, successful turn.
@@ -2199,6 +2204,14 @@ impl FakeAgent {
         list: Vec<theodore_ports::ModelInfo>,
     ) {
         self.models.lock().unwrap().insert(agent, list);
+    }
+    /// What `detect` (and `known_sign_in`) says of `agent`'s sign-in.
+    pub fn set_signed_in(&self, agent: theodore_domain::AgentId, signed_in: Option<bool>) {
+        self.signed_in.lock().unwrap().insert(agent, signed_in);
+    }
+    /// How many times `recheck_sign_in` ran.
+    pub fn rechecks(&self) -> usize {
+        self.rechecks.load(std::sync::atomic::Ordering::SeqCst)
     }
     /// How many times `detect` ran.
     pub fn detects(&self) -> usize {
@@ -2284,8 +2297,21 @@ impl AgentPort for FakeAgent {
                 path: None,
                 version: None,
                 installed: true,
+                signed_in: self.known_sign_in(id),
             })
             .collect()
+    }
+    async fn recheck_sign_in(&self) {
+        self.rechecks
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
+    fn known_sign_in(&self, agent: theodore_domain::AgentId) -> Option<bool> {
+        self.signed_in
+            .lock()
+            .unwrap()
+            .get(&agent)
+            .copied()
+            .flatten()
     }
     async fn run(&self, req: AgentRequest) -> Result<AgentRun, AgentError> {
         let stream_text = req.stream_text;

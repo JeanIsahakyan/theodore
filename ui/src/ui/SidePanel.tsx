@@ -750,7 +750,13 @@ function Chat({ pr }: { pr: PrId }) {
         // The `agents.chat` agent leads: the chip shows it, questions go to it.
         const first = chatAgentGuess(store);
         const ids = all
-          .filter((a) => a.installed && isAgentEnabled(store, a.id))
+          // Not one known signed out: it would fail (Settings → Agents says why).
+          .filter(
+            (a) =>
+              a.installed &&
+              isAgentEnabled(store, a.id) &&
+              a.signed_in !== false,
+          )
           .map((a) => a.id)
           .sort((a, b) => Number(b === first) - Number(a === first));
         if (!live) return;

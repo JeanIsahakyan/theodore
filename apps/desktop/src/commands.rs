@@ -168,9 +168,11 @@ pub async fn submit_review(
 #[specta::specta]
 pub async fn detect_agents(
     op: crate::op::Op,
+    recheck: Option<bool>,
     core: State<'_, Arc<dyn CoreApi>>,
 ) -> Result<Vec<AgentStatus>, CommandError> {
-    op.run(async move { core.detect_agents().await }).await
+    op.run(async move { core.detect_agents(recheck.unwrap_or(false)).await })
+        .await
 }
 
 #[tauri::command]

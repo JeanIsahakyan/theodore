@@ -21,12 +21,17 @@ line `Adapted from EvanBacon/chat-template (MIT)`.
 | `src/components/drawer-context.tsx`, `drawer-content.tsx` | `components/drawer-content.tsx` |
 | `src/components/app-shell.tsx`, `.web.tsx` | `app/_layout.tsx`, `app/_layout.web.tsx`, `components/sidebar.web.tsx` |
 | `src/components/main-header.tsx`, `.ios.tsx`, `.android.tsx` | `components/main-header*.tsx` |
-| `src/components/picker-menu.tsx`, `.android.tsx` | `app/model-picker.tsx`, `components/main-header.swiftui.tsx`, `components/model-context.tsx` |
+| `app/(app)/model-picker.tsx`, `src/components/pickers/model-picker-list.tsx`, `sheet-rows.tsx` | `app/model-picker.tsx`, `app/_layout.tsx` (the formSheet), `components/model-context.tsx` |
 | `src/components/chat/prompt-input.tsx`, `.web.tsx` | `components/chat/prompt-input.tsx`, `.web.tsx` |
 | `src/components/chat/composer-dock.tsx`, `.web.tsx` | `components/chat/conversation.tsx` (keyboard handling) |
 | `src/components/chat/index.ts` | `components/chat/index.ts` |
-| `app/(app)/settings.tsx` | `app/(settings)/settings.tsx`, `app/(settings)/_layout.tsx` (grouped sections with icons, Appearance, sign out at the bottom) |
-| `app/(app)/devices.tsx` | `app/(settings)/capabilities.tsx` (icon rows with a secondary line) |
+| `app/(app)/settings/index.tsx` | `app/(settings)/settings.tsx`, `app/(settings)/_layout.tsx` (account card, flat icon rows with chevrons, dividers, sign out at the bottom) |
+| `app/(app)/devices.tsx` | `app/(settings)/capabilities.tsx` (section headers, cards with a secondary line) |
+| `src/components/settings/settings-row.tsx` | `app/(settings)/settings.tsx` (`SettingsRow`) |
+| `src/components/settings/settings-toggle-row.tsx` | `app/(settings)/settings.tsx` (`SettingsToggleRow`), `app/(settings)/capabilities.tsx` (`CapabilityToggle`) |
+| `src/components/settings/settings-menu-row.tsx` | `app/(settings)/settings.tsx` (`SettingsRow` with a detail) |
+| `src/components/settings/section.tsx` | `app/(settings)/settings.tsx` (`SectionDivider`, the scroll view), `app/(settings)/capabilities.tsx` (`SectionHeader`) |
+| `src/components/settings/account-card.tsx` | `app/(settings)/settings.tsx` (the email card) |
 | `src/components/chat/conversation.tsx`, `.web.tsx` | `components/chat/conversation.tsx`, `.web.tsx` |
 | `src/components/chat/message.tsx`, `.web.tsx` | `components/chat/message.tsx`, `.web.tsx` |
 | `src/components/chat/streaming-message.tsx` | `components/chat/streaming-message.tsx`, `global.css` (shimmer) |

@@ -107,7 +107,7 @@ Two kinds of refusal, told apart on the wire:
 | `fleet.unknown_project` / `fleet.unknown_space` | target | not on the target |
 | `fleet.depth` | target, cloud | deeper than 2 or more than 5 children (starts in flight count) |
 | `fleet.invalid` | target, cloud | the op doesn't fit what it acts on (answers that don't answer the set, an empty message, a space id started already); origin = target |
-| `fleet.agent_unavailable` | target | a start or send names an agent, model or effort the target doesn't list (`DeviceInfo.agents`): not installed, turned off, or not that model's ("Agent, model and effort") |
+| `fleet.agent_unavailable` | target | a start or send names an agent, model or effort the target doesn't list (`DeviceInfo.agents`): not installed, turned off, not signed in ("Sign-in"), or not that model's ("Agent, model and effort") |
 | `fleet.busy` | target, cloud | a send to a space whose turn is running |
 | `fleet.internal` | target | the target couldn't record the request, so it didn't run it |
 | `fleet.offline` | cloud | target not connected within 10 s grace |
@@ -121,9 +121,9 @@ does for its spaces.
 
 ```
 host: detect + agent_models (cached 10 min: detecting spawns the CLIs)
-  ─▶ installed ∩ agents.<id>.enabled, agents.chat first
-  ─▶ DeviceInfo.agents ─▶ hello / announce (again when an agents.* setting
-     or a project changes)
+  ─▶ installed ∩ agents.<id>.enabled ∩ not signed out, agents.chat first
+  ─▶ DeviceInfo.agents ─▶ hello / announce (again when an agents.* setting,
+     a project or a sign-in changes)
 origin UI: FleetDevice.agents ─▶ the chip in New space / the space's box
   ─▶ start{agent?, model?, effort?} / send{agent?, model?, effort?}, signed
 host gate: each one named must be listed ─▶ else fleet.agent_unavailable
@@ -154,6 +154,38 @@ What the host checks, before the claim:
 | `model` | one of that agent's listed models (by id) |
 | `effort` | one of the levels of the model in effect: the one named, else the space's own while its agent stays (send), else the agent's default; any listed model's when that one isn't listed. `ultracode` for Claude wherever a model takes a level |
 | a model or effort without an agent | the space's agent (send), else the host's default (start: then named explicitly) |
+
+#### Sign-in
+
+A device only offers the agents that can run there: one whose CLI isn't
+signed in is left out of `DeviceInfo.agents`, so the phone's pickers and
+its "Default (…)" never name it. A start or send naming it is refused with
+`fleet.agent_unavailable`: "Codex isn't signed in on this device. Run
+`codex login` in a terminal." A start naming no agent runs the first listed
+one (`effective_agent` skips a signed-out `agents.chat`).
+
+How each CLI is checked (`crates/agents/src/sign_in.rs`), with the env a
+run gets, ≤ 5 s each, all three side by side:
+
+| Agent | Signed in when | Signed out when |
+| --- | --- | --- |
+| Claude Code | `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`, `CLAUDE_CODE_USE_BEDROCK` / `_VERTEX` set; else `claude auth status` says `"loggedIn": true` | it says `"loggedIn": false` (or "Not logged in") |
+| Codex | `CODEX_API_KEY` / `CODEX_ACCESS_TOKEN` set; else `codex login status` says "Logged in using …" | it says "Not logged in" — unless `OPENAI_API_KEY` is set: unknown (the status command doesn't read it) |
+| Gemini CLI (no status command) | `GEMINI_API_KEY`, `GOOGLE_API_KEY`, `GOOGLE_GENAI_USE_VERTEXAI`, `GOOGLE_GENAI_USE_GCA` set; `~/.gemini/oauth_creds.json`; an auth type in `~/.gemini/settings.json` (`security.auth.selectedType`, or `selectedAuthType`); a key in `~/.gemini/.env` | none of these |
+
+A timeout, a CLI without the status command or output it can't read is
+"unknown": offered, as before. `AgentStatus.signed_in` / `.sign_in_hint`
+carry it to the desktop UI.
+
+```
+checked ─▶ cached 10 min (unknown: 1 min)
+a run fails signed out (agent.signed_out) ─▶ known signed out at once
+   ─▶ the host's list drops it ─▶ announce
+detect_agents (the UI's pickers, Settings → Agents) ─▶ differs from the
+   list ─▶ announce;  "Check again" (recheck) ─▶ cache cleared first
+while linked, every 10 min ─▶ checked again ─▶ announce if it changed
+   (`codex login` in a terminal reaches the phone without a click)
+```
 
 ## Events and history
 

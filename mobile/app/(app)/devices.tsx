@@ -1,82 +1,60 @@
 // Adapted from EvanBacon/chat-template (MIT)
 /**
- * Devices: this phone's fingerprint (to show on your computer so it can trust
- * this phone), and every other device with trust / untrust, as one grouped
- * native `Form` (docs/mobile.md "Native UI"):
+ * Devices: this device's fingerprint first (to show on your computer so it
+ * can trust this device), then a card per device with trust / untrust
+ * (docs/mobile.md "Settings and Devices").
  *
  * ```text
- * This device           [icon] name · status; fingerprint, large
- * Computers             one section per device, online first, then by name:
- *                         [icon] name ● · kind · OS · online · max mode   ✓ Trusted
- *                                agents it offers ("Claude · Codex")
- *                                fingerprint
- *                         Trust ─▶ fingerprint confirm ─▶ trusted   | Untrust
- *                         (a failed trust / untrust is said under its section)
- * Phones and browsers   the same
+ * [connection banner, when not connected]
+ * ╭ This device ─────────────── ● Connected ╮   FingerprintCard: large, Copy,
+ * │ 1a2b 3c4d 5e6f 7a8b / 9c0d …            │   "Show this on your computer…"
+ * ╰─────────────────────────────────────────╯
+ * Computers                    2 of 3 online   online first, then by name
+ *   DeviceCard  [kind] name ● Online / line / fingerprint / Trust | Untrust
+ * Phones and browsers                  online
+ *   DeviceCard …
+ * (none) ─▶ "No other devices yet" + how to add one
  * ```
  */
 import { useMemo } from 'react';
-import { View } from 'react-native';
-import type { FleetDeviceView } from '../../src/fleet/types';
-import { useGlassHeaderInset } from '../../src/shell/glassHeader';
+import { Text, View } from 'react-native';
+import {
+  DeviceCard,
+  FingerprintCard,
+  SectionHeader,
+  SettingsScroll,
+  kindSymbol,
+} from '../../src/components/settings';
+import { SymbolImage } from '../../src/components/symbol-image';
 import { useFleetState } from '../../src/state/fleet';
 import { ConnectionBanner } from '../../src/ui/ConnectionBanner';
-import { DeviceItem, FingerprintItem } from '../../src/ui/DeviceItem';
-import {
-  CONNECTION_LABEL,
-  agentsLine,
-  deviceDetail,
-  groupDevices,
-} from '../../src/ui/deviceView';
-import { Button, Form, Row, Section } from '../../src/ui/native';
-import { kindIcon } from '../../src/ui/native/icons';
+import { groupDevices, groupOnline } from '../../src/ui/deviceView';
 import { usePalette } from '../../src/ui/theme';
-import { useTrust } from '../../src/ui/TrustConfirm';
 
-function DeviceSection({
-  device,
-  title,
-}: {
-  device: FleetDeviceView;
-  title?: string;
-}) {
-  const { trust, untrust, busy, error } = useTrust(device);
+const android = process.env.EXPO_OS === 'android';
+
+function NoDevices() {
+  const p = usePalette();
   return (
-    <Section title={title} footer={error ?? undefined}>
-      <DeviceItem
-        name={device.name}
-        kind={device.kind}
-        online={device.online}
-        detail={deviceDetail(device)}
-        fingerprint={device.fingerprint}
-        trusted={device.trusted}
-        agents={agentsLine(device.agents)}
-      />
-      {device.trusted ? (
-        <Button
-          label="Untrust"
-          variant="destructive"
-          loading={busy}
-          accessibilityLabel={`Untrust ${device.name}`}
-          onPress={untrust}
-        />
-      ) : (
-        <Button
-          label="Trust"
-          variant="primary"
-          loading={busy}
-          accessibilityLabel={`Trust ${device.name}`}
-          onPress={() => void trust()}
-        />
-      )}
-    </Section>
+    <View
+      className={`${android ? 'mx-4 rounded-3xl' : 'mx-5 rounded-2xl'} mt-2 items-center gap-2 border border-dashed border-border px-6 py-10`}
+      style={{ borderCurve: 'continuous' }}
+    >
+      <View className="mb-1 h-12 w-12 items-center justify-center rounded-full bg-muted">
+        <SymbolImage name="devices" size={24} color={p.muted} />
+      </View>
+      <Text className="text-[17px] font-semibold text-foreground">
+        No other devices yet
+      </Text>
+      <Text className="text-center text-[15px] leading-snug text-muted-foreground">
+        Open Theodore on a computer signed in to the same account. It shows up
+        here to trust.
+      </Text>
+    </View>
   );
 }
 
 export default function DevicesScreen() {
-  const p = usePalette();
-  // iOS 26+: the glass header overlays the screen; the form insets itself.
-  const top = useGlassHeaderInset();
   const fingerprint = useFleetState((s) => s.fingerprint);
   const connection = useFleetState((s) => s.connection);
   const allDevices = useFleetState((s) => s.devices);
@@ -87,40 +65,31 @@ export default function DevicesScreen() {
   );
 
   return (
-    <View style={{ flex: 1, backgroundColor: p.background }}>
-      <ConnectionBanner style={top ? { marginTop: top } : null} />
-      <Form testID="devices">
-        <Section
-          title="This device"
-          footer="Show this fingerprint on your computer to trust this device there."
-        >
-          <Row
-            icon={kindIcon(me?.kind ?? 'mobile')}
-            label={me?.name || 'This device'}
-            value={CONNECTION_LABEL[connection]}
-          />
-          <FingerprintItem value={fingerprint} size="large" />
-        </Section>
+    <SettingsScroll testID="devices">
+      <ConnectionBanner style={{ marginTop: 12 }} />
+      <FingerprintCard
+        name={me?.name || 'This device'}
+        icon={kindSymbol(me?.kind ?? 'mobile')}
+        connection={connection}
+        value={fingerprint}
+        hint="Show this on your computer to trust this device."
+      />
 
-        {groups.length === 0 ? (
-          <Section
-            title="Your devices"
-            footer="Open Theodore on a computer signed in to the same account."
-          >
-            <Row label="No other devices yet" />
-          </Section>
-        ) : (
-          groups.flatMap((g) =>
-            g.devices.map((d, i) => (
-              <DeviceSection
-                key={d.deviceId}
-                device={d}
-                title={i === 0 ? g.title : undefined}
-              />
-            )),
-          )
-        )}
-      </Form>
-    </View>
+      {groups.length === 0 ? (
+        <>
+          <SectionHeader title="Your devices" />
+          <NoDevices />
+        </>
+      ) : (
+        groups.map((g) => (
+          <View key={g.key}>
+            <SectionHeader title={g.title} trailing={groupOnline(g.devices)} />
+            {g.devices.map((d) => (
+              <DeviceCard key={d.deviceId} device={d} />
+            ))}
+          </View>
+        ))
+      )}
+    </SettingsScroll>
   );
 }

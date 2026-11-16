@@ -1,15 +1,18 @@
 /**
  * The signed-in shell: the drawer (web: the sidebar) around a stack with
  * Home (`/`, a new space) at its root. Groups don't change URLs: `/`,
- * `/space/<id>`, `/devices`, `/settings`; `/start` redirects to `/`.
+ * `/space/<id>`, `/devices`, `/settings` (its pages `/settings/organization`,
+ * `/settings/device`, `/settings/about`); `/start` redirects to `/`.
  *
  * ```text
  * drawer ─ spaces by day, search, Devices, account / Settings
  *    │ pick
  *    ▼
  * Home ── push ─▶ space/[id] | devices | settings ── back ─▶ Home
+ *                                          └─ push ─▶ settings/organization | device | about
  *      └─ Send ─▶ push space/[id]
  * notification / deep link ─▶ space/[id] over Home (the anchor)
+ * composer chip (iOS) ─▶ model-picker | where-picker as a formSheet
  * ```
  *
  * Headers: Home's is `MainHeader` (menu, questions, new space; iOS bar
@@ -28,6 +31,7 @@ import { setActiveSpace } from '../../src/shell/AppProviders';
 import { glassHeader } from '../../src/shell/glassHeader';
 import { spaceIdFromPath } from '../../src/shell/paths';
 import { PushedHeader } from '../../src/shell/PushedHeader';
+import { liquidGlass } from '../../src/ui/native';
 import { usePalette } from '../../src/ui/theme';
 
 export const unstable_settings = { anchor: 'index' };
@@ -84,6 +88,19 @@ export default function AppLayout() {
         gestureEnabled: false,
       };
 
+  // The picker sheets (iOS: the chips present them; Android and web open
+  // theirs in place). iOS 26+: no background, the system's glass sheet.
+  const sheet = (title: string) => ({
+    title,
+    presentation: 'formSheet' as const,
+    sheetAllowedDetents: [0.5, 1],
+    sheetGrabberVisible: true,
+    headerShown: false,
+    contentStyle: {
+      backgroundColor: liquidGlass ? 'transparent' : p.surface,
+    },
+  });
+
   return (
     <DrawerProvider>
       <AppShell>
@@ -93,8 +110,19 @@ export default function AppLayout() {
           <Stack.Screen name="index" options={home} />
           <Stack.Screen name="space/[id]" options={pushed('Space')} />
           <Stack.Screen name="devices" options={pushed('Devices')} />
-          <Stack.Screen name="settings" options={pushed('Settings')} />
+          <Stack.Screen name="settings/index" options={pushed('Settings')} />
+          <Stack.Screen
+            name="settings/organization"
+            options={pushed('Organization')}
+          />
+          <Stack.Screen
+            name="settings/device"
+            options={pushed('This device')}
+          />
+          <Stack.Screen name="settings/about" options={pushed('About')} />
           <Stack.Screen name="start" options={{ headerShown: false }} />
+          <Stack.Screen name="model-picker" options={sheet('Model')} />
+          <Stack.Screen name="where-picker" options={sheet('Runs on')} />
         </Stack>
       </AppShell>
     </DrawerProvider>

@@ -999,6 +999,14 @@ Model and effort (§8.5 `agents.<id>.model` / `.effort`) per CLI:
 | Codex | `-m <slug>` | `-c model_reasoning_effort="<level>"` | `codex debug models`, `visibility: list`, by `priority` |
 | Gemini CLI | `-m <name>` | — | none |
 
+Sign-in: `detect` also says whether each CLI has credentials (`claude auth
+status`, `codex login status`, Gemini's env and `~/.gemini` files; cached 10
+min, ≤ 5 s a check; docs/fleet.md "Sign-in"). The desktop's pickers show a
+signed-out agent disabled, with the command that signs it in, and default to
+a signed-in one; Settings → Agents shows each one's sign-in and checks again
+on "Check again". A run that fails signed out marks its agent signed out at
+once. Other devices aren't offered a signed-out agent at all.
+
 ### 8.2 Lifecycle
 
 ```

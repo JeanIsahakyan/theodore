@@ -139,6 +139,14 @@ export type AgentStatus = {
 	installed: boolean,
 	version: string | null,
 	path: string | null,
+	/**
+	 *  Whether the CLI has credentials (docs/fleet.md "Sign-in"): `false`
+	 *  shows the agent disabled with `sign_in_hint`; `null` when not
+	 *  installed or the check couldn't tell (usable, unconfirmed).
+	 */
+	signed_in?: boolean | null,
+	/**  How to sign it in on this computer, when it isn't (or might not be). */
+	sign_in_hint?: string | null,
 };
 
 /**  Host-neutral point in a diff. Adapters map it to host positions. */

@@ -23,13 +23,11 @@ iPhone / Android / browser                     Theodore cloud            your co
 | --- | --- |
 | Sign in | AuthKit hosted page (PKCE, no secret), org picker when you're in several (through the cloud, like the desktop) |
 | Drawer | Fleet spaces you started from here or follow, newest activity first by day (Today, Yesterday, Previous 7 days, Older), a status dot, search; Devices, Settings, the account and organization |
-| Home (new space) | The goal in the composer; chips for the computer · project (trusted, online, accepting remote spaces), the mode up to its cap, agent · model · effort |
+| Home (new space) | The goal in the composer; chips for the computer · project (a sheet), agent · model · effort (the model sheet), the mode up to its cap; last picks remembered; recent projects one tap away (below, "New space") |
 | Space | Its history (lines), send a message when it's idle or waiting, Stop while it runs, answer its question |
-| Devices | This device's fingerprint to show on the computer; your devices, computers first (kind, online, mode cap, the agents a computer offers, fingerprint), trust / untrust with the fingerprint confirm |
-| Settings | Theme (Light / Dark / System), account, organization switch, this device (name, status, fingerprint), notifications on/off, about (version, server), sign out |
+| Devices | This device's fingerprint (large, copy) to show on the computer; a card per device, computers first (kind, online, OS · mode cap · agents, fingerprint), trust / untrust with the fingerprint confirm |
+| Settings | Account card; Organization (switch), Devices, This device (fingerprint, copy), Appearance (Light / Dark / System), Notifications, About (version, server); sign out |
 | Space | Its chat (or history lines), send a message when it's idle or waiting, Stop while it runs, Approve / Revise a plan, answer its question |
-| Devices | Your devices, fingerprints, trust / untrust with the fingerprint confirm, this device's fingerprint to show on the computer |
-| Settings | Account, organization switch, this device (name, status, fingerprint), notifications on/off, sign out, about (version, server) |
 
 Questions and "space finished" arrive as push notifications; a question's
 options are notification buttons (one tap answers it, signed on the phone,
@@ -134,7 +132,10 @@ sign-out ─▶ the set is removed     org switch ─▶ kept (sets are per org)
 mobile/
   app/                 expo-router routes: (auth)/sign-in, choose-organization, callback;
                        (app)/ drawer around a stack: index (Home, new space),
-                       space/[id], devices, settings pushed over it; start ─▶ /
+                       space/[id], devices, settings pushed over it; start ─▶ /;
+                       model-picker, where-picker: the composer's sheets (iOS)
+                       space/[id], devices, settings (+ settings/organization,
+                       device, about) pushed over it; start ─▶ /
   src/components/      the shell and composer, adapted from the chat template (below)
   src/auth/            AuthKit PKCE, session + refresh, org select/switch via cloud, RS256 check
   src/shell/           wiring: AppProviders (auth + fleet clients, auth state, fleet lifecycle)
@@ -194,7 +195,7 @@ import { Button, Form, Row, Section, Switch, confirm } from '../../src/ui/native
 
 | Kit | iOS (SwiftUI) | Android (Compose, Material 3) | Web (React Native) |
 | --- | --- | --- | --- |
-| `Button` primary / secondary / plain / destructive, `loading`, `disabled`, `fullWidth` | `Button` `.borderedProminent` / `.bordered` / `.borderless` / role destructive | `Button` / `FilledTonalButton` / `TextButton` / filled in danger | `Pressable` |
+| `Button` primary / secondary / plain / destructive, `loading`, `disabled`, `fullWidth` | `Button` `.borderedProminent` / `.bordered` / `.borderless` / role destructive | `Button` / `FilledTonalButton` / `TextButton` / `OutlinedButton` in danger | `Pressable` (destructive: outlined, red text) |
 | `Button` `fullWidth` in a `Section` `plain` (Sign out) | row button, label centered | the button across the screen, no card | the button across the screen, no card |
 | `Button` glassProminent / glass (floating over content) | 26+: `.glassProminent` / `.glass`; before: `.borderedProminent` / `.bordered` | `Button` / `FilledTonalButton` | as primary / secondary |
 | `Segmented` (Ask/Plan/Edit, short sets) | `Picker` `.segmented` | `SingleChoiceSegmentedButtonRow` | joined segments |
@@ -209,7 +210,7 @@ import { Button, Form, Row, Section, Switch, confirm } from '../../src/ui/native
 | `Form` › `Section` (`title`, `footer`, `plain`) › `Row` (`label`, `value`, `detail`, `icon`, `chevron`, `selected`, `destructive`, `loading`, `onPress`) | `Form` (inset grouped, scrolls) › `Section` › row `Button` | scrolling `Column` › titled `Card` › `ListItem` (no chevron) | `ScrollView` › card › rows |
 | `icon` on `Row`, `Switch`, `Select` (`src/ui/native/icons.ts`) | SF Symbol in a `Label` (accent) | Material Symbol, the `ListItem`'s leading content (`assets/icons/*.xml`) | Lucide |
 | `FormSlot` (any RN view inside a `Form`) | `RNHostView` | `RNHostView` | `View` |
-| `Menu` (`label`, `groups` of choices with a check on the current one; agent · model · effort in the composer) | `Menu` with a `Picker` submenu per group (glass button on iOS 26) | `AssistChip` + `DropdownMenu`, a heading per group | pill + sheet |
+| `Menu` (`label`, `groups` of choices with a check on the current one; the composer's Mode) | `Menu` with a `Picker` submenu per group, a lone group inline (glass button on iOS 26) | `AssistChip` + `DropdownMenu`, a heading per group | pill + sheet |
 | `confirm()` / `notify()` (promise) | `UIAlertController` (RN `Alert`) | `AlertDialog` (RN `Alert`) | `window.confirm` / `alert` |
 
 ```
@@ -237,7 +238,8 @@ Android: isDynamicColorAvailable (Android 12+)
 | Space's header (name, "on host · status") | native glass bar, two-line title view | RN bar, "‹ Back", two lines | Material 3 top app bar, title + subtitle |
 | Drawer | behind the content, which slides off it (rounded corners) | same | Material 3 modal navigation drawer over a scrim, pill items |
 | Composer | Liquid Glass, interactive | system chrome blur | `surfaceContainerHigh`, 28 dp corners, filled send |
-| Composer pickers | SwiftUI `Menu` | same | assist chip ─▶ modal bottom sheet, radio lists |
+| Composer: Mode | SwiftUI `Menu`, choices inline | same | assist chip ─▶ `DropdownMenu` |
+| Composer: where, model | bordered capsule ─▶ formSheet route, glass sheet, grabber | bordered capsule ─▶ formSheet route, grabber | assist chip ─▶ Compose `ModalBottomSheet` |
 | Space composer | `PromptInput` floating over the chat, notes on a `Glass` panel above it | same, chrome blur, notes on a card | same, `surfaceContainerHigh`, notes on a card |
 | Scroll to the newest message | glass circle | blur circle | raised `card` circle, ripple |
 | Plan's Approve / Revise, Send answer | capsule `.borderedProminent` / `.bordered` (kit `Button` `pill`) | same | `Button` / `FilledTonalButton` |
@@ -273,7 +275,9 @@ Rules for screens:
 
 - Actions use the kit: no raw `Pressable`/`TouchableOpacity` buttons, no
   `src/ui/kit` `Button`/`Chip`/`Field`/`Confirm` in converted screens. Choices
-  are `Segmented` (≤ 4) or `Select`; lists of settings-like rows are a `Form`.
+  are `Segmented` (≤ 4) or `Select`; lists of settings-like rows are a `Form`,
+  except Settings and Devices, which are the shell's settings rows
+  ("Settings and Devices" below).
 - A `Form` is the screen's scroll view (it scrolls itself): don't put it in a
   `ScrollView`. Inside it only kit controls and `FormSlot`; strings must be
   props (SwiftUI and Compose can't render a bare RN `<Text>`).
@@ -291,7 +295,7 @@ Rules for screens:
   `src/ui/native/materialIcons.ts`.
 - Every component needs its web `X.tsx`; `pnpm -C mobile build:web` and
   `npx expo export --platform ios --platform android` both must bundle.
-- Settings (`app/(app)/settings.tsx`) is the reference screen.
+- `app/(auth)/choose-organization.tsx` is the reference `Form` screen.
 - Found on devices, keep them:
   - **Compose keeps what it was mounted with:** a `Button` or chip that turns
     on or off is remounted (`key` on the enabled state), or an enabled "Send
@@ -333,8 +337,9 @@ new space (✎)      ─▶ dismissTo Home         bell ─▶ the first waiting
 | Markdown: mdast (micromark, GFM tables and strikethrough) ─▶ React Native views; code blocks highlighted (highlight.js, a fixed set of languages, never guessed) | `src/components/markdown/` |
 | A space's header (name, "on host · status") | `src/components/space-header{.ios,.android,}.tsx`, `space-title.tsx` |
 | A space's steps: compact grey rows that open in place (folding: `src/ui/turnRows.ts`) | `src/ui/Timeline.tsx`, `src/ui/SpaceChat.tsx` |
-| Pickers (Mode, Device · Project, agent · model · effort) | `src/components/picker-menu{.android,}.tsx`, `src/ui/AgentMenu.tsx` |
+| Composer chips and picker sheets (Mode, where, agent · model · effort) | `src/components/pickers/`, routes `app/(app)/model-picker.tsx`, `where-picker.tsx`; logic `src/ui/modelPicker.ts`, `src/ui/homeDraft.ts`; picks `src/state/compose.ts` |
 | Icons: SF Symbols (iOS), Material Symbols (Android), Lucide (web) | `src/components/symbol-image.tsx` |
+| Settings and Devices: rows, sections, account / fingerprint / device cards | `src/components/settings/` (below) |
 
 - The space's last activity (`SpaceView.activeAt`): its mirrored row's
   `updated_at`, else when something of it last arrived here.
@@ -347,6 +352,87 @@ new space (✎)      ─▶ dismissTo Home         bell ─▶ the first waiting
 - Fleet text is untrusted in the markdown too: a link is its words and its
   address in muted text (nothing opens), an image is `[image: alt]`
   (nothing loads), raw HTML is text, nesting deeper than 16 is plain text.
+
+### New space: chips and sheets
+
+```text
+Home composer   [mac-A · repo ▾] [Opus 4.1 · High ▾] [Edit ▾]  (↑)   chips scroll sideways
+                 where sheet      model sheet         quick menu
+space composer  [Edit ▾] [Opus 4.1 · High ▾]                  the space's pick, kept per space
+
+chip ─▶ iOS      router.push(/model-picker[?space=id] | /where-picker)
+                 formSheet, detents 0.5 / 1, grabber; iOS 26+: no background, the glass sheet
+        Android  Compose ModalBottomSheet in place (drag handle, scrim, Back), Compose rows
+        web      a modal card over the window
+```
+
+| Sheet | Content | A tap |
+| --- | --- | --- |
+| Model | the host's agents (a heading each, 2+ listed), a row per model: label, "Default" or the agent's name, ✓ on what runs; Effort: "Default (High)" + the chosen model's levels as a segmented control; Reset to defaults | a model: applied at once (haptic), the sheet closes only when the model takes no effort; an effort or Reset: applied, stays open |
+| Where | computers you trust, online dot, those that can take a space first ("2 projects · up to Edit", else "Offline" / "Doesn't take spaces…" / "No projects", dimmed) ─▶ a device's projects | a device with one project, or a project: picked, closed; another device drops the agent pick and caps the mode |
+
+```text
+picks (src/state/compose.ts, zustand: the iOS sheets are routes)
+  home        {deviceId, projectId, mode, pick}  only what was picked
+  spacePicks  {space id: pick}
+  recent      projects spaces were started in (≤ 5; ≤ 3 quick chips on Home)
+
+kept: <data storage> theodore.fleet.picks.<user>.<org>, written 300 ms after a change
+account / org ─▶ cleared ─▶ read back, shape-checked   sign-out ─▶ removed
+shown: resolveHome(startable devices now): a device gone ─▶ the first, its pick
+       dropped; a project gone ─▶ the first; agent / model / effort no longer
+       listed ─▶ dropped; the mode capped
+sent:  only what was picked (startPicks / sendPicks), the host's defaults otherwise
+```
+
+- "New space" (✎, the drawer): Home's goal cleared, the field focused. Not
+  at a cold start: the keyboard would cover Home (and its recent projects)
+  at launch; web focuses it on load.
+- Run in the mode menu: the warning shows above the composer.
+### Settings and Devices
+
+The template's settings look: flat icon rows, a chevron on a row that
+opens a page, thin dividers between groups, cards for what you read
+(the account, a fingerprint, a device).
+
+```text
+Settings (/settings)
+  (JI) name · email · ▦ org · role                      AccountCard
+  ▦ Organization   Acme       › ─▶ /settings/organization   rows, a check on the current
+  ▭ Devices        2 online   › ─▶ /devices                 org; tap another ─▶ switch
+  ▯ This device    iPhone     › ─▶ /settings/device         FingerprintCard
+  ──────
+  ◐ Appearance     System ⌃⌄    native menu (iOS SwiftUI Menu, Android M3 dropdown)
+  🔔 Notifications       (  ●)   haptic tick on change
+  ──────
+  ⓘ About          1.0.0      › ─▶ /settings/about          version, server
+  ──────
+  ⇥ Sign out (red)              system confirm ─▶ signed out
+
+Devices (/devices)
+  [connection banner]
+  FingerprintCard   name ● Connected / fingerprint 2 × 4 groups / ( Copy ) / hint
+  Computers                         2 of 3 online
+    DeviceCard      [kind] name ● Online / "macOS · up to Edit · Claude, Codex"
+                    fingerprint (small, monospace) / ✓ Trusted (Untrust) | [Trust]
+  Phones and browsers …            none ─▶ "No other devices yet"
+```
+
+| Piece | iOS | Android | Web |
+| --- | --- | --- | --- |
+| `SettingsRow` | 20 pt symbol, 17 pt label, detail on the right, `›` | Material 3 list item: 24 dp icon, 16 sp label, detail as supporting text, ripple, no chevron | as iOS, Lucide |
+| `SettingsToggleRow` | `UISwitch` | the kit's `Switch` (Compose list item, the whole row toggles) | RN `Switch` |
+| `SettingsMenuRow` | SwiftUI `Menu`, its label drawn as a row, inline `Picker` | `ListItem` + `DropdownMenu` | the row unfolds the choices |
+| Trust / Untrust | kit `Button` `.borderedProminent` / `.bordered` red | `Button` / `OutlinedButton` red | filled / outlined red |
+| Copy fingerprint | `expo-clipboard`, success haptic, "Copied" for 2 s | same | same, no haptic |
+
+- Wording is plain TS and tested: `src/ui/settingsView.ts`,
+  `src/ui/deviceView.ts`.
+- Accessibility names stay what tests tap: "Switch to <org>", "Trust
+  <name>", "Untrust <name>", "Copy fingerprint"; the trust confirm is
+  `trustPrompt()` (fingerprint in full, what trust allows).
+- The pages sit under the glass header on iOS 26+ (`SettingsScroll`:
+  automatic insets) and pad the bottom safe area themselves.
 
 ### Styling: Uniwind (Tailwind v4)
 
@@ -385,7 +471,7 @@ Default System. Android 12+ keeps Material You in both schemes
   `react-native-reanimated` + `react-native-worklets`,
   `react-native-gesture-handler`, `react-native-keyboard-controller`,
   `react-native-svg`, `expo-blur`, `expo-haptics`, `expo-image`,
-  `expo-system-ui`.
+  `expo-system-ui`; with Settings and Devices, `expo-clipboard`.
 
 ### Connection banner
 

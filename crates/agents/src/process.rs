@@ -183,7 +183,13 @@ pub struct SpawnSpec {
     /// when known.
     pub agent: String,
     pub version: Option<String>,
+    /// Called when the run fails because the CLI isn't signed in, so what
+    /// the device offers stops listing it (docs/fleet.md "Sign-in").
+    pub on_signed_out: Option<SignedOutHook>,
 }
+
+/// What a run that failed signed out tells (`SpawnSpec::on_signed_out`).
+pub type SignedOutHook = std::sync::Arc<dyn Fn() + Send + Sync>;
 
 /// What the log says about a run (docs/telemetry.md "Error codes").
 #[derive(Clone)]
@@ -191,6 +197,7 @@ struct RunLog {
     agent: String,
     version: String,
     started: tokio::time::Instant,
+    on_signed_out: Option<SignedOutHook>,
 }
 
 impl RunLog {
@@ -302,6 +309,7 @@ fn spawn(
         agent: spec.agent.clone(),
         version: spec.version.clone().unwrap_or_default(),
         started: tokio::time::Instant::now(),
+        on_signed_out: spec.on_signed_out.clone(),
     };
     let mut child = cmd.spawn().map_err(|e| {
         tracing::warn!(
@@ -802,6 +810,9 @@ fn log_terminal(
                 return;
             }
             if failure == Failure::SignedOut {
+                if let Some(hook) = &log.on_signed_out {
+                    hook();
+                }
                 // The raw error (a 401 and its headers) is in `stderr_tail`.
                 tracing::info!(
                     error.code = AGENT_SIGNED_OUT_CODE,

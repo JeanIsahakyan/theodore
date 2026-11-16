@@ -5,11 +5,12 @@
  * ```text
  * drawer pick on Home        ─▶ push      [Home, pick]
  * drawer pick anywhere else  ─▶ replace   [Home, pick]   (back: Home)
- * new space                  ─▶ dismissTo [Home]
+ * new space                  ─▶ dismissTo [Home], its goal cleared and focused
  * notification / deep link   ─▶ push      [Home, space]  (Home is the anchor)
  * ```
  */
 import { router, type Href } from 'expo-router';
+import { requestNewSpace } from '../state/compose';
 
 /** `/space/<id>` of a space. */
 export const spaceHref = (id: string): Href =>
@@ -22,6 +23,7 @@ export function openFromDrawer(href: Href, path: string): void {
 }
 
 export function goNewSpace(path: string): void {
+  requestNewSpace();
   if (path === '/') return;
   if (router.canDismiss()) router.dismissTo('/' as Href);
   else router.replace('/' as Href);
