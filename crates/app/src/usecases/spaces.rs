@@ -605,6 +605,12 @@ impl Core {
             }
             None => CodeTools::Off,
         };
+        let hosted = self.fleet_hosts_local(&space.id).await;
+        let device_name = if hosted {
+            self.fleet_name(&self.fleet_settings().await).await
+        } else {
+            String::new()
+        };
         let turn = Turn {
             live: attach,
             follow_up: false,
@@ -628,8 +634,8 @@ impl Core {
                             &space,
                             self.0.deps.tools.is_some(),
                             code,
-                            !self.fleet_hosts_local(&space.id).await
-                                && self.user_mcp_allowed().await,
+                            !hosted && self.user_mcp_allowed().await,
+                            hosted.then_some(device_name.as_str()),
                         ),
                         self.0.deps.tools.is_some() && self.fleet_tools_available(),
                     ),
@@ -2203,8 +2209,17 @@ fn with_fleet_tools(mut prompt: String, fleet: bool) -> String {
     prompt
 }
 
-fn system_prompt(space: &Space, tools: bool, code: CodeTools, user_mcp: bool) -> String {
-    let mut prompt = base_system_prompt(space);
+/// `hosted_on`: this computer's name when the space runs here for another
+/// device (docs/fleet.md): the user follows it from there, where there is
+/// no Ship.
+fn system_prompt(
+    space: &Space,
+    tools: bool,
+    code: CodeTools,
+    user_mcp: bool,
+    hosted_on: Option<&str>,
+) -> String {
+    let mut prompt = base_system_prompt(space, hosted_on);
     if tools {
         prompt.push('\n');
         prompt.push_str(SPACE_TOOLS_PROMPT);
@@ -2220,15 +2235,27 @@ fn system_prompt(space: &Space, tools: bool, code: CodeTools, user_mcp: bool) ->
     prompt
 }
 
-fn base_system_prompt(space: &Space) -> String {
+/// Where the user ships from, for the agent without the ship tool.
+fn ship_hint(hosted_on: Option<&str>) -> String {
+    match hosted_on {
+        None => "point the user to Ship in the space's header".to_string(),
+        Some(name) => format!(
+            "tell the user it ships from Theodore on {name}, where this space runs \
+             (they follow it from another device, which has no Ship)"
+        ),
+    }
+}
+
+fn base_system_prompt(space: &Space, hosted_on: Option<&str>) -> String {
+    let ship = ship_hint(hosted_on);
     format!(
         "You are working in a Theodore space: an isolated git worktree for one change.\n\
          Goal: {goal}\n\
          Base branch: {base}. The change will be shipped as branch {branch}.\n\
          Rules: work only inside the current directory. Shipping goes through Theodore: \
          never run git push, gh pr create or another PR command, and do not switch, create \
-         or rebase branches or rewrite history yourself; without the ship tool, point the \
-         user to Ship in the space's header. Theodore commits your edits after every turn, \
+         or rebase branches or rewrite history yourself; without the ship tool, {ship}. \
+         Theodore commits your edits after every turn, \
          so you don't need to. End each turn with a short summary of what you \
          changed and anything left to do.",
         goal = if space.blank {
@@ -2436,5 +2463,18 @@ mod tests {
         let p = turn_prompt(&[first], "next");
         assert!(p.contains("[user]\nsee the screenshot\n(attached: shot.png)\n"));
         assert!(!p.contains("/data/attachments"));
+    }
+}
+
+#[cfg(test)]
+mod ship_hint_tests {
+    use super::ship_hint;
+
+    #[test]
+    fn a_space_run_for_another_device_ships_from_its_host() {
+        assert!(ship_hint(None).contains("Ship in the space's header"));
+        let hosted = ship_hint(Some("mac-A"));
+        assert!(hosted.contains("ships from Theodore on mac-A"));
+        assert!(!hosted.contains("header"));
     }
 }
