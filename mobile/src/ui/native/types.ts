@@ -70,6 +70,12 @@ export interface ButtonProps extends Common, Placed {
    * across the screen when its `Section` is `plain` (else a row).
    */
   fullWidth?: boolean;
+  /**
+   * A compact capsule (a chat's inline actions: Approve, Revise, Send
+   * answer). iOS: capsule border shape, regular size; Android: Material 3
+   * buttons are capsules already; web: fully rounded, 36 px.
+   */
+  pill?: boolean;
 }
 
 export interface Choice<T extends string> {

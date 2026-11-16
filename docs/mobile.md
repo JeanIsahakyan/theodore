@@ -27,6 +27,9 @@ iPhone / Android / browser                     Theodore cloud            your co
 | Space | Its history (lines), send a message when it's idle or waiting, Stop while it runs, answer its question |
 | Devices | This device's fingerprint to show on the computer; your devices, computers first (kind, online, mode cap, the agents a computer offers, fingerprint), trust / untrust with the fingerprint confirm |
 | Settings | Theme (Light / Dark / System), account, organization switch, this device (name, status, fingerprint), notifications on/off, about (version, server), sign out |
+| Space | Its chat (or history lines), send a message when it's idle or waiting, Stop while it runs, Approve / Revise a plan, answer its question |
+| Devices | Your devices, fingerprints, trust / untrust with the fingerprint confirm, this device's fingerprint to show on the computer |
+| Settings | Account, organization switch, this device (name, status, fingerprint), notifications on/off, sign out, about (version, server) |
 
 Questions and "space finished" arrive as push notifications; a question's
 options are notification buttons (one tap answers it, signed on the phone,
@@ -231,10 +234,13 @@ Android: isDynamicColorAvailable (Android 12+)
 | --- | --- | --- | --- |
 | Home's header | native glass bar, ☰ / 🔔 / ✎ bar items | opaque native header, same items | Material 3 top app bar (menu, badged bell, edit) |
 | Pushed screens' header | native glass bar, "‹" back (minimal) | `TopBar` ("‹ Back") | `TopBar`: Material 3 top app bar |
+| Space's header (name, "on host · status") | native glass bar, two-line title view | RN bar, "‹ Back", two lines | Material 3 top app bar, title + subtitle |
 | Drawer | behind the content, which slides off it (rounded corners) | same | Material 3 modal navigation drawer over a scrim, pill items |
 | Composer | Liquid Glass, interactive | system chrome blur | `surfaceContainerHigh`, 28 dp corners, filled send |
 | Composer pickers | SwiftUI `Menu` | same | assist chip ─▶ modal bottom sheet, radio lists |
-| Space composer | floats over the chat: notes on a `Glass` panel, glass `Segmented`, glass field, `glassProminent` Send | bar under the chat | bar under the chat, no divider |
+| Space composer | `PromptInput` floating over the chat, notes on a `Glass` panel above it | same, chrome blur, notes on a card | same, `surfaceContainerHigh`, notes on a card |
+| Scroll to the newest message | glass circle | blur circle | raised `card` circle, ripple |
+| Plan's Approve / Revise, Send answer | capsule `.borderedProminent` / `.bordered` (kit `Button` `pill`) | same | `Button` / `FilledTonalButton` |
 | Option chips | `.glassProminent` / `.glass` capsules | `.borderedProminent` / `.bordered` | `FilterChip` |
 | Questions banner (on Home) | `Glass` cards tinted with the warning color | cards | cards in Material You surface |
 | Connection banner | `Glass` capsule | muted pill | muted pill |
@@ -323,6 +329,10 @@ new space (✎)      ─▶ dismissTo Home         bell ─▶ the first waiting
 | Drawer content (spaces by day, search, Devices, account, Settings) | `src/components/drawer-content.tsx`, groups in `src/ui/drawer.ts` |
 | Home's header | `src/components/main-header{.ios,.android,}.tsx` |
 | Composer: `PromptInput` (field, Send / Stop, `leading` / `trailing` chips) and `ComposerDock` (rides on the keyboard) | `src/components/chat/` |
+| Chat: `Conversation` (Legend List, keyboard-aware, `ConversationScrollButton`), `Message` (your bubble / the agent's full width), `StreamingMessage` + `Shimmer` (the live turn) | `src/components/chat/` |
+| Markdown: mdast (micromark, GFM tables and strikethrough) ─▶ React Native views; code blocks highlighted (highlight.js, a fixed set of languages, never guessed) | `src/components/markdown/` |
+| A space's header (name, "on host · status") | `src/components/space-header{.ios,.android,}.tsx`, `space-title.tsx` |
+| A space's steps: compact grey rows that open in place (folding: `src/ui/turnRows.ts`) | `src/ui/Timeline.tsx`, `src/ui/SpaceChat.tsx` |
 | Pickers (Mode, Device · Project, agent · model · effort) | `src/components/picker-menu{.android,}.tsx`, `src/ui/AgentMenu.tsx` |
 | Icons: SF Symbols (iOS), Material Symbols (Android), Lucide (web) | `src/components/symbol-image.tsx` |
 
@@ -330,7 +340,13 @@ new space (✎)      ─▶ dismissTo Home         bell ─▶ the first waiting
   `updated_at`, else when something of it last arrived here.
 - Keyboard: `react-native-keyboard-controller` (`KeyboardProvider` at the
   root); the dock's bottom is max(safe area, keyboard), on Android edge to
-  edge the IME padding.
+  edge the IME padding. A space's list is Legend List's
+  `KeyboardAwareLegendList`: its end inset is the floating dock's height +
+  max(safe area, keyboard) + 8, and it lifts with the keyboard only when
+  you are at the end.
+- Fleet text is untrusted in the markdown too: a link is its words and its
+  address in muted text (nothing opens), an image is `[image: alt]`
+  (nothing loads), raw HTML is text, nesting deeper than 16 is plain text.
 
 ### Styling: Uniwind (Tailwind v4)
 

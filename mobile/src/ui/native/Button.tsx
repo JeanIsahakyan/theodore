@@ -16,6 +16,7 @@ export function Button({
   disabled,
   loading,
   fullWidth,
+  pill,
   accessibilityLabel,
   testID,
   style,
@@ -78,6 +79,7 @@ export function Button({
       onPress={onPress}
       style={({ pressed }) => [
         styles.button,
+        pill ? styles.pill : null,
         fullWidth ? styles.full : null,
         { backgroundColor: bg, opacity: off ? 0.45 : pressed ? 0.75 : 1 },
         style,
@@ -100,6 +102,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 8,
   },
+  pill: { minHeight: 36, borderRadius: 999, paddingHorizontal: 14 },
   full: { alignSelf: 'stretch' },
   text: { fontSize: 16, fontWeight: '600' },
 });

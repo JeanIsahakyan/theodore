@@ -1,13 +1,24 @@
 /**
- * A mirrored space's chat, the desktop's `SpaceLog` / `ChatMessage` in React
- * Native: your messages as bubbles on the right, the agent's replies with
- * their activity and markdown, the plan card's Approve / Revise, the live
- * turn, queued messages and the question. The rules are `chat.ts`.
+ * A mirrored space's chat, the desktop's `SpaceLog` / `ChatMessage` drawn
+ * the chat template's way (`components/chat`): your messages as bubbles on
+ * the right, the agent's replies full width (its steps as compact grey rows,
+ * then its markdown), Approve / Revise as pills under a plan, the live turn
+ * with a shimmering status, queued messages. The rules are `chat.ts`.
+ *
+ * ```text
+ *                               ╭ fix the login bug ╮
+ *                               ╰───────────────────╯
+ * › 4 tool calls, 2 messages  ▤ ▸_
+ * The login now checks the token's expiry…          markdown
+ * (Approve) (Revise)  Approve implements it in Edit  plan reply
+ * 1m 12s · 3:37 PM   [auth.ts +12 −3]
+ * ```
  */
 import { memo, useEffect, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
+import { Message, Shimmer } from '../components/chat';
+import { ChatMarkdown } from '../components/markdown';
 import type { ChatMessage, SpaceProgress } from '../fleet/contract';
-import { Markdown } from './Markdown';
 import { Button } from './native';
 import { Spinner } from './Spinner';
 import { TimelineRows } from './Timeline';
@@ -36,11 +47,19 @@ export interface PlanProps {
   onRevise: () => void;
 }
 
-function UserBubble({ m, queued }: { m: ChatMessage; queued?: boolean }) {
+function UserBubble({
+  m,
+  queued,
+  undone,
+}: {
+  m: ChatMessage;
+  queued?: boolean;
+  undone?: boolean;
+}) {
   const p = usePalette();
   return (
     <View
-      style={[styles.userRow, queued && styles.dim]}
+      style={[styles.userRow, (queued || undone) && styles.dim]}
       accessibilityLabel={queued ? 'Queued message' : 'Your message'}
     >
       {queued ? (
@@ -63,11 +82,7 @@ function UserBubble({ m, queued }: { m: ChatMessage; queued?: boolean }) {
         </View>
       ) : null}
       {m.text || !m.attachments?.length ? (
-        <View style={[styles.bubble, { backgroundColor: p.surfaceMuted }]}>
-          <Text selectable style={[styles.body, { color: p.text }]}>
-            {m.text}
-          </Text>
-        </View>
+        <Message from="user">{m.text}</Message>
       ) : null}
     </View>
   );
@@ -97,12 +112,14 @@ export function PlanActions({ build, busy, onApprove, onRevise }: PlanProps) {
       <Button
         label="Approve"
         variant="primary"
+        pill
         loading={busy}
         onPress={onApprove}
       />
       <Button
         label="Revise"
         variant="secondary"
+        pill
         disabled={busy}
         onPress={onRevise}
       />
@@ -158,7 +175,7 @@ function AgentReply({
   const agent = m.author.kind === 'agent' ? m.author.agent : '';
   const badges = (tagged && agent) || marks.plan || marks.undone;
   return (
-    <View style={[styles.agent, marks.undone && styles.dim]}>
+    <Message from="assistant" dim={marks.undone}>
       {badges ? (
         <View style={styles.badges}>
           {tagged && agent ? <Tag label={agent} tone="muted" /> : null}
@@ -180,7 +197,7 @@ function AgentReply({
         />
       ) : null}
       {m.failed && m.text && !m.text_in_steps ? (
-        <Markdown text={m.text} />
+        <ChatMarkdown>{m.text}</ChatMarkdown>
       ) : null}
       {m.failed === STOPPED ? (
         <Text style={[styles.small, { color: p.muted }]}>Stopped</Text>
@@ -194,7 +211,7 @@ function AgentReply({
           </Text>
         </View>
       ) : !m.text_in_steps && m.text ? (
-        <Markdown text={m.text} />
+        <ChatMarkdown>{m.text}</ChatMarkdown>
       ) : null}
       {plan ? <PlanActions {...plan} /> : null}
       {m.duration_ms != null || m.changed_files?.length ? (
@@ -207,7 +224,7 @@ function AgentReply({
           {m.changed_files?.length ? <Files m={m} /> : null}
         </View>
       ) : null}
-    </View>
+    </Message>
   );
 }
 
@@ -227,13 +244,7 @@ export const MessageRow = memo(function MessageRow({
   /** Approve / Revise, on the reply they act on. */
   actions: PlanProps | null;
 }) {
-  if (m.author.kind === 'me') {
-    return (
-      <View style={undone && styles.dim}>
-        <UserBubble m={m} />
-      </View>
-    );
-  }
+  if (m.author.kind === 'me') return <UserBubble m={m} undone={undone} />;
   return (
     <AgentReply m={m} marks={{ undone, plan }} tagged={tagged} plan={actions} />
   );
@@ -243,9 +254,8 @@ export function QueuedRow({ m }: { m: ChatMessage }) {
   return <UserBubble m={m} queued />;
 }
 
-/** Elapsed time under a running turn. */
+/** Elapsed time under a running turn, in its shimmering status line. */
 function LiveTimer({ since }: { since: number | null }) {
-  const p = usePalette();
   const [start] = useState(() => since ?? Date.now());
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -255,26 +265,23 @@ function LiveTimer({ since }: { since: number | null }) {
   const from = since ?? start;
   const s = Math.max(0, Math.floor((now - from) / 1000));
   return (
-    <Text style={[mono, styles.small, { color: p.muted }]}>
-      {s < 60 ? `${s}s` : formatDuration(s * 1000)}
-    </Text>
+    <Shimmer>{`Working · ${s < 60 ? `${s}s` : formatDuration(s * 1000)}`}</Shimmer>
   );
 }
 
-/** The reply still being written: its steps as they come, a spinner, the
- *  time so far. Stop is the composer's. */
+/** The reply still being written: its steps as they come (the newest text
+ *  with a cursor), "Working · 12s" shimmering under them. Stop is the
+ *  composer's. */
 export function LiveReply({ live }: { live: LiveTurn }) {
-  const p = usePalette();
   return (
-    <View style={styles.agent} accessibilityLabel="The agent is working">
+    <Message from="assistant" accessibilityLabel="The agent is working">
       {live.steps.length ? (
         <TimelineRows steps={live.steps} running keptAs={live.run} />
       ) : null}
       <View style={styles.status}>
-        <Spinner color={p.accent} />
         <LiveTimer since={live.since} />
       </View>
-    </View>
+    </Message>
   );
 }
 
@@ -284,6 +291,7 @@ export function ProgressCard({ progress }: { progress: SpaceProgress }) {
   return (
     <View
       accessibilityLabel="Agent progress"
+      className="rounded-2xl bg-card"
       style={[styles.progress, { borderColor: p.border }]}
     >
       <Text style={[styles.small, { color: p.muted }]}>
@@ -327,19 +335,10 @@ export function ProgressCard({ progress }: { progress: SpaceProgress }) {
 }
 
 const styles = StyleSheet.create({
-  body: { fontSize: 15, lineHeight: 21 },
   small: { fontSize: 12 },
   shrink: { flexShrink: 1 },
   dim: { opacity: 0.5 },
   userRow: { alignItems: 'flex-end', gap: 6 },
-  bubble: {
-    maxWidth: '85%',
-    borderRadius: 20,
-    borderCurve: 'continuous',
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-  },
-  agent: { gap: 8, minWidth: 0 },
   badges: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
   tag: {
     fontSize: 11,
@@ -350,8 +349,9 @@ const styles = StyleSheet.create({
   },
   failed: {
     borderWidth: 1,
-    borderRadius: 10,
-    paddingHorizontal: 10,
+    borderRadius: 14,
+    borderCurve: 'continuous',
+    paddingHorizontal: 12,
     paddingVertical: 8,
   },
   planActions: {
@@ -384,7 +384,7 @@ const styles = StyleSheet.create({
   },
   progress: {
     borderWidth: StyleSheet.hairlineWidth,
-    borderRadius: 10,
+    borderCurve: 'continuous',
     paddingHorizontal: 12,
     paddingVertical: 8,
     gap: 3,

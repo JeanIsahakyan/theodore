@@ -14,6 +14,7 @@ import {
 } from '@expo/ui/swift-ui';
 import {
   accessibilityLabel as a11yLabel,
+  buttonBorderShape,
   buttonStyle,
   controlSize,
   disabled as disabledMod,
@@ -41,6 +42,7 @@ export function Button({
   disabled,
   loading,
   fullWidth,
+  pill,
   accessibilityLabel,
   testID,
   style,
@@ -49,7 +51,8 @@ export function Button({
   const mods: ModifierConfig[] = [];
   if (!inForm) {
     mods.push(buttonStyle(styles[variant]));
-    if (variant !== 'plain') mods.push(controlSize('large'));
+    if (pill) mods.push(buttonBorderShape('capsule'));
+    if (variant !== 'plain') mods.push(controlSize(pill ? 'regular' : 'large'));
   }
   if (disabled || loading) mods.push(disabledMod(true));
   mods.push(a11yLabel(accessibilityLabel ?? label));

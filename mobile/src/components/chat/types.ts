@@ -9,7 +9,7 @@
  * ╰──────────────────────────────────────────╯
  * ```
  */
-import type { ReactNode, Ref } from 'react';
+import type { ReactElement, ReactNode, Ref } from 'react';
 import type { TextInputInstance } from 'react-native';
 
 export interface PromptInputProps {
@@ -20,9 +20,11 @@ export interface PromptInputProps {
   placeholder?: string;
   /** Field and buttons off (nothing can be sent now). */
   disabled?: boolean;
+  /** The field takes typing; default: not `disabled`. */
+  editable?: boolean;
   /** Send is in flight: a spinner on the button, not pressable. */
   sending?: boolean;
-  /** A turn runs: the button is Stop (`onStop`); the field stays editable. */
+  /** A turn runs: the button is Stop (`onStop`); the field follows `editable`. */
   running?: boolean;
   onStop?: () => void;
   /** Stop is in flight. */
@@ -55,4 +57,31 @@ export interface ComposerDockProps {
   floating?: boolean;
   /** The dock's height, for content scrolling under a floating one. */
   onHeight?: (height: number) => void;
+}
+
+/** Space between a floating dock and the safe area or the keyboard. */
+export const DOCK_GAP = 8;
+
+export interface ConversationHandle {
+  /** To the newest row (after a send, or a field in the footer focused). */
+  scrollToEnd: () => void;
+}
+
+export interface ConversationProps<T> {
+  ref?: Ref<ConversationHandle>;
+  data: readonly T[];
+  renderItem: (info: { item: T; index: number }) => ReactNode;
+  keyExtractor: (item: T) => string;
+  /** Above the first row (the space's details). */
+  header?: ReactElement | null;
+  /** After the last row, always mounted (the live turn, the question). */
+  footer?: ReactElement | null;
+  /** Shown when `data` is empty. */
+  empty?: ReactElement | null;
+  /** The floating composer's height (`ComposerDock`'s `onHeight`). */
+  composerHeight: number;
+  /** Room for a header drawn over the list (the iOS 26 glass bar). */
+  topInset?: number;
+  /** `ConversationScrollButton`, drawn over the list. */
+  children?: ReactNode;
 }

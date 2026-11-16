@@ -4,9 +4,9 @@
 
 https://github.com/EvanBacon/chat-template
 
-The app's shell and composer, and the look of Settings and Devices, are
-adapted from it. Each derived file starts
-with the line `Adapted from EvanBacon/chat-template (MIT)`.
+The app's shell, composer, chat, markdown renderer, and the look of
+Settings and Devices are adapted from it. Each derived file starts with the
+line `Adapted from EvanBacon/chat-template (MIT)`.
 
 | File (mobile/) | From (template src/) |
 | --- | --- |
@@ -27,6 +27,15 @@ with the line `Adapted from EvanBacon/chat-template (MIT)`.
 | `src/components/chat/index.ts` | `components/chat/index.ts` |
 | `app/(app)/settings.tsx` | `app/(settings)/settings.tsx`, `app/(settings)/_layout.tsx` (grouped sections with icons, Appearance, sign out at the bottom) |
 | `app/(app)/devices.tsx` | `app/(settings)/capabilities.tsx` (icon rows with a secondary line) |
+| `src/components/chat/conversation.tsx`, `.web.tsx` | `components/chat/conversation.tsx`, `.web.tsx` |
+| `src/components/chat/message.tsx`, `.web.tsx` | `components/chat/message.tsx`, `.web.tsx` |
+| `src/components/chat/streaming-message.tsx` | `components/chat/streaming-message.tsx`, `global.css` (shimmer) |
+| `src/components/markdown/index.ts`, `types.ts`, `utils.ts` | `components/markdown/index.ts`, `types.ts`, `utils.ts` |
+| `src/components/markdown/parse.ts` | `components/markdown/markdown.tsx`, `utils.ts`, `chat-markdown.tsx` |
+| `src/components/markdown/ast-renderer.ts`, `render-rules.tsx` | `components/markdown/ast-renderer.ts`, `render-rules.tsx` |
+| `src/components/markdown/markdown.tsx`, `chat-markdown.tsx` | `components/markdown/markdown.tsx`, `chat-markdown.tsx` |
+| `src/components/markdown/code-block.tsx` | `components/markdown/code-block.tsx` |
+| `src/components/space-header.tsx`, `.ios.tsx`, `.android.tsx`, `space-title.tsx` | `components/main-header*.tsx` |
 
 ```text
 MIT License

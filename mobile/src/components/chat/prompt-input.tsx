@@ -129,6 +129,7 @@ export function PromptInput({
   onSubmit,
   placeholder = 'Message',
   disabled,
+  editable,
   sending,
   running,
   onStop,
@@ -169,7 +170,7 @@ export function PromptInput({
           placeholder={placeholder}
           placeholderTextColor={p.muted}
           accessibilityLabel={placeholder}
-          editable={!disabled}
+          editable={editable ?? !disabled}
           autoFocus={autoFocus}
           maxLength={maxLength}
           multiline

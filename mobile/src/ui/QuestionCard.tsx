@@ -1,11 +1,21 @@
 /**
  * A question an agent on another device asks (`ask_user`): options, several
  * when the question allows, "Other…" free text, answered through
- * `fleet.answer(space, askId, answers)`. Same card as the desktop's, with
- * native controls: option chips (`OptionChip`), the "Other…" field
- * (`ChatField`) and Send answer (the kit's `Button`). `glass` (the banner
- * on Home): a Liquid Glass card on iOS 26+, tinted with the warning
- * color; the plain card elsewhere.
+ * `fleet.answer(space, askId, answers)`. Drawn like the chat template's
+ * cards, with native controls: options as pills (`OptionChip`), the
+ * "Other…" field (`ChatField`), Send answer a pill (the kit's `Button`).
+ * `glass` (the banner on Home): a Liquid Glass card on iOS 26+, tinted
+ * with the warning color; the plain card elsewhere.
+ *
+ * ```text
+ * ╭──────────────────────────────────────────╮
+ * │ ● mac-A · fix-login is waiting for you…  │
+ * │ Which database?                          │
+ * │ (Postgres) (✓ SQLite) (MySQL)            │   pills; several if multi
+ * │ ( Other…                              )  │
+ * │ (              Send answer             ) │
+ * ╰──────────────────────────────────────────╯
+ * ```
  */
 import { useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
@@ -13,7 +23,7 @@ import { useServices } from '../services';
 import { useFleetState } from '../state/fleet';
 import type { QuestionView } from '../fleet/types';
 import { ChatField } from './ChatField';
-import { Card, Notice } from './kit';
+import { Notice } from './kit';
 import {
   emptyDraft,
   errorText,
@@ -64,9 +74,12 @@ export function QuestionCard({
 
   const content = (
     <>
-      <Text selectable style={[styles.from, { color: p.warning }]}>
-        {from} is waiting for your answer
-      </Text>
+      <View style={styles.head}>
+        <View style={[styles.dot, { backgroundColor: p.warning }]} />
+        <Text selectable style={[styles.from, { color: p.warning }]}>
+          {from} is waiting for your answer
+        </Text>
+      </View>
       {question.questions.map((q, i) => {
         const d = drafts[i] ?? emptyDraft();
         return (
@@ -107,6 +120,7 @@ export function QuestionCard({
       <Button
         label="Send answer"
         variant={glass ? 'glassProminent' : 'primary'}
+        pill
         fullWidth
         disabled={!isAnswered(drafts)}
         loading={busy}
@@ -116,19 +130,26 @@ export function QuestionCard({
   );
 
   return glass && liquidGlass ? (
-    <Glass radius={22} tint={`${p.warning}26`} style={styles.glass}>
+    <Glass radius={22} tint={`${p.warning}26`} style={styles.card}>
       {content}
     </Glass>
   ) : (
-    <Card style={{ borderColor: p.warning }}>{content}</Card>
+    <View
+      className="rounded-[22px] border bg-card"
+      style={[styles.card, { borderColor: `${p.warning}66` }]}
+    >
+      {content}
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  from: { fontSize: 13, fontWeight: '600' },
-  item: { gap: 8 },
-  question: { fontSize: 16, fontWeight: '600' },
+  head: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  dot: { width: 8, height: 8, borderRadius: 4 },
+  from: { fontSize: 13, fontWeight: '600', flexShrink: 1 },
+  item: { gap: 10 },
+  question: { fontSize: 16, fontWeight: '600', lineHeight: 22 },
   options: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   hint: { fontSize: 12 },
-  glass: { padding: 14, gap: 8 },
+  card: { padding: 16, gap: 12, borderCurve: 'continuous' },
 });

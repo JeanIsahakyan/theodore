@@ -13,9 +13,7 @@
 import { useReanimatedKeyboardAnimation } from 'react-native-keyboard-controller';
 import Animated, { useAnimatedStyle } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import type { ComposerDockProps } from './types';
-
-const GAP = 8;
+import { DOCK_GAP as GAP, type ComposerDockProps } from './types';
 
 export function ComposerDock({
   children,
