@@ -76,7 +76,7 @@ describe('fleet crypto against the Rust vectors', () => {
     expect(body).toBe(
       '{"req_id":"r","origin_device":"o","target_device":"t","target_key":"k",' +
         '"issued_at_ms":1,"op":{"op":"start_space","space":"rs_x","project_id":"p",' +
-        '"goal":"g","mode":"ask","agent":null,"model":null,"parent":null,"depth":0}}',
+        '"goal":"g","mode":"ask","agent":null,"model":null,"effort":null,"parent":null,"depth":0}}',
     );
   });
 
@@ -106,6 +106,9 @@ describe('open', () => {
       space: 'rs_vector',
       text: 'hello',
       mode: 'edit',
+      agent: 'claude',
+      model: 'opus',
+      effort: 'high',
     });
   });
 

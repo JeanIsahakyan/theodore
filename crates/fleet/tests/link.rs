@@ -214,6 +214,7 @@ fn info(name: &str) -> DeviceInfo {
         projects: vec![],
         accepts_remote: false,
         max_mode: FleetMode::Edit,
+        agents: vec![],
     }
 }
 

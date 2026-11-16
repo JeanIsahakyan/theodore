@@ -1064,6 +1064,9 @@ describe('mirrored rows', () => {
       space,
       text: 'Plan approved, implement it.',
       mode: 'edit',
+      agent: null,
+      model: null,
+      effort: null,
     });
     sock.deliver({
       type: 'reply',
@@ -1085,7 +1088,15 @@ describe('steering', () => {
     expect(state().spaces[0]!.status).toBe('running');
     await waitFor(() => sock.of('request').length === 2, 'send');
     const req = lastRequest(sock);
-    expect(req.op).toEqual({ op: 'send', space, text: 'go on', mode: null });
+    expect(req.op).toEqual({
+      op: 'send',
+      space,
+      text: 'go on',
+      mode: null,
+      agent: null,
+      model: null,
+      effort: null,
+    });
     sock.deliver({
       type: 'reply',
       envelope: await reply(req, {

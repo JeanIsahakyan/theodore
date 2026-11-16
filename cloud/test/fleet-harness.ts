@@ -68,6 +68,7 @@ export const info = (name = 'mac', over: Partial<DeviceInfo> = {}) =>
     projects: [{ id: 'p1', name: 'theodore' }],
     accepts_remote: true,
     max_mode: 'edit',
+    agents: [],
     ...over,
   }) satisfies DeviceInfo;
 

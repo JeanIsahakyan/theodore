@@ -308,6 +308,9 @@ pub(crate) struct FleetMem {
     /// Delegates a revocation went to on this connection: one each, so a
     /// cloud that keeps listing one can't make this device loop.
     pub revoked: HashSet<String>,
+    /// Installed agents and their models, with when they were detected
+    /// (`fleet_agents`).
+    pub agent_catalog: Option<(i64, crate::usecases::fleet_agents::Catalog)>,
 }
 
 impl FleetMem {
@@ -469,7 +472,7 @@ impl Core {
     }
 
     pub(crate) async fn fleet_info(&self, s: &FleetSettings) -> DeviceInfo {
-        DeviceInfo {
+        let mut info = DeviceInfo {
             name: self.fleet_name(s).await,
             os: if cfg!(target_os = "macos") {
                 DeviceOs::Macos
@@ -487,7 +490,14 @@ impl Core {
             },
             accepts_remote: s.accept_remote,
             max_mode: s.max_mode,
-        }
+            agents: if s.accept_remote {
+                self.fleet_agents().await
+            } else {
+                Vec::new()
+            },
+        };
+        info.fit_agents();
+        info
     }
 
     pub(crate) fn fleet_cursors(&self) -> Vec<SpaceCursor> {
@@ -850,6 +860,7 @@ impl Core {
                         .iter()
                         .any(|g| g.origin_device == me && g.delegate_device == d.device_id)
                 }),
+                agents: crate::usecases::fleet_agents::ui_agents(&d.info.agents),
             })
             .collect();
         Ok(FleetStatus {

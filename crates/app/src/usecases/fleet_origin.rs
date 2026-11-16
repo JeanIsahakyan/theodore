@@ -39,6 +39,15 @@ use crate::usecases::fleet::{
 };
 use crate::usecases::fleet_host::{ui_questions, ui_status};
 
+/// The agent, model and effort a remote start asks for; `None`s are the
+/// host's defaults (docs/fleet.md "Agent, model and effort").
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct RemotePick {
+    pub agent: Option<theodore_domain::AgentId>,
+    pub model: Option<String>,
+    pub effort: Option<String>,
+}
+
 /// History kept per remote space in memory.
 const LINES_KEPT: usize = 500;
 /// Most characters of a space name or branch taken from a signed reply.
@@ -322,6 +331,11 @@ impl Core {
                 &req.project_id,
                 &req.goal,
                 req.mode,
+                RemotePick {
+                    agent: req.agent,
+                    model: req.model,
+                    effort: req.effort,
+                },
                 None,
                 0,
                 None,
@@ -339,6 +353,7 @@ impl Core {
         project_id: &str,
         goal: &str,
         mode: SpaceMode,
+        pick: RemotePick,
         parent: Option<String>,
         depth: u32,
         started_by: Option<String>,
@@ -424,8 +439,9 @@ impl Core {
                     project_id: project_id.to_string(),
                     goal: goal.to_string(),
                     mode: fleet_mode(mode),
-                    agent: None,
-                    model: None,
+                    agent: pick.agent.map(|a| a.as_str().to_string()),
+                    model: pick.model,
+                    effort: pick.effort,
                     parent,
                     depth,
                 },
@@ -495,6 +511,9 @@ impl Core {
                         space: req.space.clone(),
                         text: req.text.clone(),
                         mode: req.mode.map(fleet_mode),
+                        agent: req.agent.map(|a| a.as_str().to_string()),
+                        model: req.model.clone(),
+                        effort: req.effort.clone(),
                     },
                     false,
                 )

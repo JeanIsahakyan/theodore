@@ -45,6 +45,9 @@ fn vectors_json() -> String {
             space: "rs_vector".into(),
             text: "hello".into(),
             mode: Some(FleetMode::Edit),
+            agent: Some("claude".into()),
+            model: Some("opus".into()),
+            effort: Some("high".into()),
         },
     };
     let env = SignedEnvelope::seal(&req, &key);

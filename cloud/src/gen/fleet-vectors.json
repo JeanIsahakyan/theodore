@@ -5,8 +5,8 @@
   },
   "public_key": "6kpsY+KcUgq+9VB7Ey7F+ZVHdq6+vnuSQh7qaRRG0iw=",
   "request": {
-    "body": "{\"req_id\":\"req_vector\",\"origin_device\":\"dev_00000000-0000-4000-8000-000000000001\",\"target_device\":\"dev_00000000-0000-4000-8000-000000000002\",\"target_key\":\"target-key\",\"issued_at_ms\":1700000000000,\"op\":{\"op\":\"send\",\"space\":\"rs_vector\",\"text\":\"hello\",\"mode\":\"edit\"}}",
-    "signature": "yYAXmi9Tas5UQdEPJq5lZ3kXq2xkHMe3v2TUQGMdWJbTg4f8lZxsxkOluu45d1NK9IQfHaB/aTnp1nJQx8d0Cw=="
+    "body": "{\"req_id\":\"req_vector\",\"origin_device\":\"dev_00000000-0000-4000-8000-000000000001\",\"target_device\":\"dev_00000000-0000-4000-8000-000000000002\",\"target_key\":\"target-key\",\"issued_at_ms\":1700000000000,\"op\":{\"op\":\"send\",\"space\":\"rs_vector\",\"text\":\"hello\",\"mode\":\"edit\",\"agent\":\"claude\",\"model\":\"opus\",\"effort\":\"high\"}}",
+    "signature": "9sFEcpeYg5ZPl2iAo+fgeQDnAWoTATZ7AuiEgfMJiA6DcylMLIn749UnZb4FL2B1plQ569ImUvl4G44hl4mKAg=="
   },
   "seed_b64": "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=",
   "tags": {

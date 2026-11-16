@@ -528,7 +528,8 @@ impl Core {
     // ── what you do on a mirrored space ─────────────────────────────────
 
     /// A message for a mirrored space: its next turn, on the host. Files
-    /// stay here; the agent, model and effort are the host's.
+    /// stay here; an agent, model or effort picked goes along, for the
+    /// host to check against what it lists (`fleet.agent_unavailable`).
     pub(crate) async fn remote_space_send(
         &self,
         r: &SpaceRemote,
@@ -545,6 +546,9 @@ impl Core {
             space: r.space.clone(),
             text: req.text,
             mode: req.mode,
+            agent: req.agent,
+            model: req.model,
+            effort: req.effort,
         })
         .await?;
         crate::usecases::telemetry::space_action("fleet_send");

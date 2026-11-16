@@ -136,6 +136,121 @@ pub struct DeviceInfo {
     pub projects: Vec<ProjectRef>,
     pub accepts_remote: bool,
     pub max_mode: FleetMode,
+    /// Agents a remote start or send may pick: installed and enabled here,
+    /// the default (`agents.chat`) first. Empty unless `accepts_remote`,
+    /// and from a host older than this field (then a request naming an
+    /// agent, model or effort is ignored there, so the origin offers none).
+    /// Kept within [`MAX_INFO_BYTES`] by [`DeviceInfo::fit_agents`].
+    #[serde(default)]
+    pub agents: Vec<FleetAgentInfo>,
+}
+
+/// One agent a host runs for remote spaces (docs/fleet.md "Agent, model
+/// and effort").
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct FleetAgentInfo {
+    /// `claude`, `codex`, `gemini`.
+    pub id: String,
+    pub label: String,
+    /// What runs when a request names no model (`agents.<id>.model`, else
+    /// the first current model); `None`: the CLI's own.
+    #[serde(default)]
+    pub default_model: Option<String>,
+    /// What runs when a request names no effort (`agents.<id>.effort` when
+    /// the default model takes it, else that model's own).
+    #[serde(default)]
+    pub default_effort: Option<String>,
+    /// Current models first, earlier versions after (dropped first when
+    /// the info runs over its size).
+    #[serde(default)]
+    pub models: Vec<FleetModelInfo>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct FleetModelInfo {
+    /// What the CLI's model flag takes; what a request's `model` names.
+    pub id: String,
+    pub label: String,
+    /// Levels a request's `effort` may name with this model; empty: none.
+    #[serde(default)]
+    pub efforts: Vec<String>,
+    #[serde(default)]
+    pub default_effort: Option<String>,
+}
+
+/// The largest `DeviceInfo` (its JSON) the cloud takes.
+pub const MAX_INFO_BYTES: usize = 8 * 1024;
+/// Agents a device lists at most.
+pub const MAX_AGENTS: usize = 4;
+/// Models listed per agent at most.
+pub const MAX_AGENT_MODELS: usize = 12;
+/// Effort levels listed per model at most.
+pub const MAX_MODEL_EFFORTS: usize = 8;
+/// An agent id, at most.
+pub const MAX_AGENT_ID_CHARS: usize = 32;
+/// A model id, at most (a longer one isn't listed: it can't be cut).
+pub const MAX_MODEL_ID_CHARS: usize = 64;
+/// An agent's or model's label, at most (cut).
+pub const MAX_AGENT_LABEL_CHARS: usize = 64;
+/// An effort level, at most (a longer one isn't listed).
+pub const MAX_EFFORT_CHARS: usize = 16;
+
+fn cut(s: &str, max: usize) -> String {
+    s.chars().take(max).collect()
+}
+
+fn fits(s: &str, max: usize) -> bool {
+    !s.is_empty() && s.chars().count() <= max
+}
+
+impl DeviceInfo {
+    /// Keeps `agents` within the caps above and the whole info within
+    /// [`MAX_INFO_BYTES`]: overlong ids and levels are dropped, labels cut,
+    /// then the last model of the agent listing the most goes (earlier
+    /// versions sit last), then the last agent, until it fits.
+    pub fn fit_agents(&mut self) {
+        let effort_ok = |e: &Option<String>| e.as_deref().is_none_or(|e| fits(e, MAX_EFFORT_CHARS));
+        self.agents.retain(|a| fits(&a.id, MAX_AGENT_ID_CHARS));
+        self.agents.truncate(MAX_AGENTS);
+        for a in &mut self.agents {
+            a.label = cut(&a.label, MAX_AGENT_LABEL_CHARS);
+            if a.default_model
+                .as_deref()
+                .is_some_and(|m| !fits(m, MAX_MODEL_ID_CHARS))
+            {
+                a.default_model = None;
+            }
+            if !effort_ok(&a.default_effort) {
+                a.default_effort = None;
+            }
+            a.models.retain(|m| fits(&m.id, MAX_MODEL_ID_CHARS));
+            a.models.truncate(MAX_AGENT_MODELS);
+            for m in &mut a.models {
+                m.label = cut(&m.label, MAX_AGENT_LABEL_CHARS);
+                m.efforts.retain(|e| fits(e, MAX_EFFORT_CHARS));
+                m.efforts.truncate(MAX_MODEL_EFFORTS);
+                if !effort_ok(&m.default_effort) {
+                    m.default_effort = None;
+                }
+            }
+        }
+        let size = |i: &DeviceInfo| serde_json::to_string(i).map_or(usize::MAX, |t| t.len());
+        while !self.agents.is_empty() && size(self) > MAX_INFO_BYTES {
+            let most = self
+                .agents
+                .iter_mut()
+                .filter(|a| !a.models.is_empty())
+                .max_by_key(|a| a.models.len());
+            match most {
+                Some(a) => {
+                    a.models.pop();
+                }
+                None => {
+                    self.agents.pop();
+                }
+            }
+        }
+    }
 }
 
 /// A device as the cloud lists it to the user's other devices.
@@ -200,6 +315,10 @@ pub enum RemoteOp {
         agent: Option<String>,
         #[serde(default)]
         model: Option<String>,
+        /// One of the model's efforts (the host's default model's when no
+        /// model is named); `None`: the host's default.
+        #[serde(default)]
+        effort: Option<String>,
         /// The remote space whose agent asked for this one, if any.
         #[serde(default)]
         parent: Option<RemoteSpaceId>,
@@ -211,6 +330,15 @@ pub enum RemoteOp {
         text: String,
         #[serde(default)]
         mode: Option<FleetMode>,
+        /// From this turn on, as a local send's: the space's agent, model
+        /// and effort, each checked against what the host lists
+        /// (`DeviceInfo::agents`). `None` keeps the space's.
+        #[serde(default)]
+        agent: Option<String>,
+        #[serde(default)]
+        model: Option<String>,
+        #[serde(default)]
+        effort: Option<String>,
     },
     Stop {
         space: RemoteSpaceId,
@@ -467,6 +595,9 @@ pub mod codes {
     /// The request doesn't fit what it acts on (answers that don't answer
     /// the question set, an empty message).
     pub const INVALID: &str = "fleet.invalid";
+    /// The agent, model or effort asked for isn't one the target lists
+    /// (`DeviceInfo::agents`): not installed, turned off, or unknown.
+    pub const AGENT_UNAVAILABLE: &str = "fleet.agent_unavailable";
     pub const OFFLINE: &str = "fleet.offline";
     pub const BUSY: &str = "fleet.busy";
     pub const INTERNAL: &str = "fleet.internal";
