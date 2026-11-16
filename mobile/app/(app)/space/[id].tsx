@@ -1,59 +1,60 @@
 /**
- * One space. A host that mirrors its rows gets the desktop's chat: your
- * messages, the agent's replies with their activity, the plan card, the live
- * turn, the question, a composer with the mode, Stop while a turn runs. A host
- * that doesn't is shown by its summary lines. Fleet text is untrusted: no link
- * opens and no image loads.
+ * One space, drawn like the chat template's conversation. A host that
+ * mirrors its rows gets the desktop's chat: your messages, the agent's
+ * replies with their activity, Approve / Revise under a plan, the live
+ * turn, the question, a composer with the mode, Stop while a turn runs. A
+ * host that doesn't is shown by its summary lines. Fleet text is
+ * untrusted: no link opens and no image loads.
  *
  * ```text
- * mirror for this space ─▶ chatView(mirror) ─▶ turns ─ live ─ queued ─ question
+ * [‹]        fix the login bug…                  SpaceHeader: the space's
+ *            on mac-A · Running                  name, host · status
+ * ┌ Conversation (Legend List, keyboard-aware) ─────────────────────┐
+ * │  theodore · fix-login · Edit                  details, error     │
+ * │                           ╭ your message ╮                       │
+ * │  › 3 tool calls  ▤ ▸_                         grey rows, fold    │
+ * │  The agent's reply, markdown                                     │
+ * │  (Approve) (Revise)                           plan reply         │
+ * │  Working · 12s                                live turn, shimmer │
+ * │  ╭ question card ╮                            footer             │
+ * │                                        ( ⌄ )  scroll to the end  │
+ * │ ╭ notes (progress, run warning) ╮             Glass / card       │
+ * │ ╭ Ask the agent to change something…      ╮   PromptInput in a   │
+ * │ │ (Edit ⌄) (Opus 4.1 · High ⌄)        (↑) │   floating dock      │
+ * └─╰───────────────────────────────────────╯───────────────────────┘
+ *
+ * mirror for this space ─▶ chatView(mirror) ─▶ messages ─ live ─ queued ─ question
  * none                  ─▶ lines (started, turn, tool, reply, …)
+ * (↑) Send ─▶ fleet.send(mode only when not the space's own, picks)
+ * (■) Stop while running ─▶ confirm() ─▶ fleet.stopSpace
+ * Revise ─▶ mode Plan, the field focused; Approve ─▶ send APPROVED_TEXT in the build mode
  * ```
  *
- * The composer rides on the keyboard (iOS and Android); focusing an answer
- * in the question card keeps the card in view; dragging the list closes the
- * keyboard.
- *
- * Controls are the native kit (docs/mobile.md "Native UI"):
- *
- * ```text
- * (Opus 4.1 · High ⌄) [ Ask | Plan | Edit ] AgentMenu (Menu: the host's
- *                                            agents; hidden if it lists
- *                                            none) · Segmented
- * ( Ask the agent to change something… )    ChatField (focus() on Revise)
- * [Send]                                     Button
- * [Stop] ─▶ confirm() ─▶ stopSpace           while a turn runs
- * plan reply: [Approve] [Revise]             SpaceChat's PlanActions
- * ```
- *
- * The composer per platform:
- *
- * ```text
- * iOS 26+    floats over the chat, which scrolls under it: notes on a glass
- *            panel, glass Segmented, glass field, .glassProminent Send
- * iOS < 26   a bar under the chat (surface, hairline), bordered controls
- * Android    a bar under the chat (Material You surface), M3 controls
- * web        a bar under the chat
- * ```
+ * The composer floats over the list on every platform (iOS 26+: Liquid
+ * Glass, iOS < 26: chrome blur, Android: Material 3 surface, web: a card);
+ * the list is inset by its height and rides on the keyboard with it.
  */
-import { memo, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  FlatList,
-  StyleSheet,
-  Text,
-  View,
-  type NativeScrollEvent,
-  type NativeSyntheticEvent,
-} from 'react-native';
 import { Stack, useLocalSearchParams } from 'expo-router';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useServices } from '../../../src/services';
-import { useGlassHeaderInset } from '../../../src/shell/glassHeader';
-import { useFleetState } from '../../../src/state/fleet';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { StyleSheet, Text, View, type TextInputInstance } from 'react-native';
+import {
+  ComposerDock,
+  Conversation,
+  ConversationScrollButton,
+  Message,
+  PromptInput,
+  type ConversationHandle,
+} from '../../../src/components/chat';
+import { ChatMarkdown } from '../../../src/components/markdown';
+import { PickerMenu } from '../../../src/components/picker-menu';
+import { SpaceHeader } from '../../../src/components/space-header';
 import type { ChatMessage } from '../../../src/fleet/contract';
 import { mirrored } from '../../../src/fleet/mirror';
 import type { SpaceLine, SpaceView } from '../../../src/fleet/types';
 import type { FleetMode } from '../../../src/gen/fleet';
+import { useServices } from '../../../src/services';
+import { useGlassHeaderInset } from '../../../src/shell/glassHeader';
+import { useFleetState } from '../../../src/state/fleet';
 import { AgentMenu } from '../../../src/ui/AgentMenu';
 import {
   NO_PICK,
@@ -61,45 +62,19 @@ import {
   spaceOwn,
   type Pick,
 } from '../../../src/ui/agents';
-import { ChatField } from '../../../src/ui/ChatField';
-import type { ChatFieldHandle } from '../../../src/ui/chatFieldTypes';
-import { Badge, Empty, Notice } from '../../../src/ui/kit';
-import {
-  Button,
-  Glass,
-  Segmented,
-  confirm,
-  liquidGlass,
-} from '../../../src/ui/native';
-import { QuestionCard } from '../../../src/ui/QuestionCard';
-import { bottomPad } from '../../../src/ui/keyboard';
-import {
-  KeyboardScreen,
-  keyboardDismissMode,
-  useKeyboardUp,
-} from '../../../src/ui/KeyboardSafe';
-import {
-  LiveReply,
-  MessageRow,
-  ProgressCard,
-  QueuedRow,
-  type PlanProps,
-} from '../../../src/ui/SpaceChat';
 import {
   APPROVED_TEXT,
   buildMode,
   chatView,
   composerModes,
   sendMode,
-  type ChatTurn,
   type ChatView,
 } from '../../../src/ui/chat';
+import { Empty, Notice } from '../../../src/ui/kit';
 import {
-  MODE_HINT,
   MODE_LABEL,
   RUN_WARNING,
   STATUS_LABEL,
-  STATUS_TONE,
   canSend,
   canStop,
   errorText,
@@ -107,29 +82,31 @@ import {
   questionFor,
   spaceTitle,
 } from '../../../src/ui/logic';
+import { Glass, confirm } from '../../../src/ui/native';
+import { QuestionCard } from '../../../src/ui/QuestionCard';
+import {
+  LiveReply,
+  MessageRow,
+  ProgressCard,
+  QueuedRow,
+  type PlanProps,
+} from '../../../src/ui/SpaceChat';
 import { mono, usePalette } from '../../../src/ui/theme';
 
 const EMPTY_LINES: SpaceLine[] = [];
-/** iOS 26+: the composer floats on Liquid Glass over the chat. */
-const floating = liquidGlass;
-const android = process.env.EXPO_OS === 'android';
+/** Until the dock reports its height. */
+const DOCK_GUESS = 112;
 
 function Line({ line }: { line: SpaceLine }) {
   const p = usePalette();
   switch (line.kind) {
     case 'turn':
-      return (
-        <View style={[styles.turn, { backgroundColor: p.surfaceMuted }]}>
-          <Text selectable style={[styles.body, { color: p.text }]}>
-            {line.text}
-          </Text>
-        </View>
-      );
+      return <Message from="user">{line.text}</Message>;
     case 'reply':
       return (
-        <Text selectable style={[styles.body, { color: p.text }]}>
-          {line.text}
-        </Text>
+        <Message from="assistant">
+          <ChatMarkdown>{line.text}</ChatMarkdown>
+        </Message>
       );
     case 'tool':
       return (
@@ -143,7 +120,10 @@ function Line({ line }: { line: SpaceLine }) {
       );
     case 'question':
       return (
-        <View style={[styles.asked, { borderColor: p.warning }]}>
+        <View
+          className="rounded-2xl border px-3 py-2"
+          style={[styles.continuous, { borderColor: p.warning }]}
+        >
           <Text selectable style={[styles.body, { color: p.text }]}>
             <Text style={{ color: p.warning, fontWeight: '600' }}>Asked </Text>
             {line.text}
@@ -177,71 +157,53 @@ function Line({ line }: { line: SpaceLine }) {
   }
 }
 
-/** The whole title (the bar's is cut with "…"), the status, where it runs. */
-function Header({ space }: { space: SpaceView }) {
+/** Where it runs and how, at the top of the chat; the space's error. */
+function Details({ space }: { space: SpaceView }) {
   const p = usePalette();
+  const where = [
+    space.projectName,
+    space.branch,
+    MODE_LABEL[space.mode],
+  ].filter(Boolean);
   return (
-    <View style={styles.header}>
+    <View style={styles.details}>
       <Text
         selectable
-        numberOfLines={3}
-        style={[styles.headerTitle, { color: p.text }]}
+        style={[styles.small, styles.center, { color: p.muted }]}
       >
-        {spaceTitle(space)}
+        {where.join(' · ')}
       </Text>
-      <View style={styles.headerMeta}>
-        <Badge
-          label={STATUS_LABEL[space.status]}
-          tone={STATUS_TONE[space.status]}
-        />
-        <Text
-          selectable
-          style={[styles.small, styles.shrink, { color: p.muted }]}
-        >
-          Runs on {space.hostName}
-          {space.projectName ? ` · ${space.projectName}` : ''}
-          {space.branch ? ` · ${space.branch}` : ''} · {MODE_LABEL[space.mode]}
-        </Text>
-      </View>
       {space.error ? <Notice tone="danger">{space.error}</Notice> : null}
     </View>
   );
 }
 
-/** Your message, the replies under it, the live reply while it runs. */
-const TurnRow = memo(function TurnRow({
-  turn,
+/** A stored message of the chat, with what the space says about it. */
+const Row = memo(function Row({
+  m,
   chat,
-  live,
   plan,
 }: {
-  turn: ChatTurn;
+  m: ChatMessage;
   chat: ChatView;
-  live: boolean;
   plan: PlanProps | null;
 }) {
+  const agent = m.author.kind === 'agent';
+  const undone = chat.undone.has(m.id);
   return (
-    <View style={styles.turnRow}>
-      {turn.messages.map((m: ChatMessage) => {
-        const agent = m.author.kind === 'agent';
-        const undone = chat.undone.has(m.id);
-        return (
-          <MessageRow
-            key={m.id}
-            m={m}
-            undone={undone}
-            plan={agent && !undone && chat.plans.has(m.id)}
-            tagged={chat.tagged}
-            actions={agent && chat.planHere === m.id ? plan : null}
-          />
-        );
-      })}
-      {live && chat.live ? <LiveReply live={chat.live} /> : null}
+    <View style={styles.row}>
+      <MessageRow
+        m={m}
+        undone={undone}
+        plan={agent && !undone && chat.plans.has(m.id)}
+        tagged={chat.tagged}
+        actions={agent && chat.planHere === m.id ? plan : null}
+      />
     </View>
   );
 });
 
-function composerNote(
+function placeholderFor(
   s: SpaceView,
   revising: boolean,
   hosted: boolean,
@@ -261,6 +223,9 @@ function composerNote(
         : 'Ask the agent to change something…';
   }
 }
+
+const messageKey = (m: ChatMessage) => m.id;
+const lineKey = (l: SpaceLine) => String(l.seq);
 
 export default function SpaceScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -286,14 +251,10 @@ export default function SpaceScreen() {
   // An agent, model or effort from the host's list: from the next message
   // on, kept until changed; nothing picked keeps the space's own.
   const [agentPick, setAgentPick] = useState<Pick>(NO_PICK);
-  const input = useRef<ChatFieldHandle>(null);
-  const chatList = useRef<FlatList<ChatTurn>>(null);
-  const lineList = useRef<FlatList<SpaceLine>>(null);
-  const atEnd = useRef(true);
-  const [composerHeight, setComposerHeight] = useState(0);
-  const insets = useSafeAreaInsets();
+  const [dock, setDock] = useState(DOCK_GUESS);
+  const input = useRef<TextInputInstance>(null);
+  const list = useRef<ConversationHandle>(null);
   const top = useGlassHeaderInset();
-  const keyboardUp = useKeyboardUp();
 
   // Sticky per space: the next turn starts in the space's last mode.
   if (modeOf !== ownMode) {
@@ -318,8 +279,13 @@ export default function SpaceScreen() {
       space && mirror && mirrored(mirror) ? chatView(mirror, space) : null,
     [mirror, space],
   );
+  const messages = useMemo(
+    () => chat?.turns.flatMap((t) => t.messages) ?? [],
+    [chat],
+  );
   // Revising lasts while there is a plan to revise.
   const revising = reviseAsked && chat?.planHere != null;
+  const toEnd = useCallback(() => list.current?.scrollToEnd(), []);
 
   if (!space) {
     return (
@@ -339,6 +305,7 @@ export default function SpaceScreen() {
   const hosted = !!mirror?.space;
   const sendable =
     canSend(space.status) || (space.status === 'failed' && hosted);
+  const running = canStop(space.status);
   const modes = composerModes(host?.maxMode ?? null);
   const picked = modes.includes(mode) ? mode : (modes.at(-1) ?? 'ask');
   const build = mirror?.space ? buildMode(mirror.space) : 'edit';
@@ -352,7 +319,7 @@ export default function SpaceScreen() {
     if (!t || sending || !sendable) return;
     setSending(true);
     setError(null);
-    atEnd.current = true;
+    toEnd();
     fleet
       .send(id, t, sendMode(picked, space.mode), picks)
       .then(() => {
@@ -386,7 +353,7 @@ export default function SpaceScreen() {
     onApprove: () => {
       setApproving(true);
       setError(null);
-      atEnd.current = true;
+      toEnd();
       fleet
         .send(id, APPROVED_TEXT, build, picks)
         .catch((e: unknown) => setError(errorText(e)))
@@ -399,62 +366,32 @@ export default function SpaceScreen() {
     },
   };
 
-  const onScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
-    const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
-    atEnd.current =
-      contentSize.height - (contentOffset.y + layoutMeasurement.height) < 80;
-  };
-  const follow = () => {
-    if (!atEnd.current) return;
-    chatList.current?.scrollToEnd({ animated: false });
-    lineList.current?.scrollToEnd({ animated: false });
-  };
-  // The card is the list's last row: stick to the end, so the list
-  // shrinking for the keyboard keeps the field and Send answer in view.
-  const answering = () => {
-    atEnd.current = true;
-    follow();
-  };
-
-  const footer = chat ? (
-    <View style={styles.tail}>
-      {chat.live && chat.turns.length === 0 ? (
-        <LiveReply live={chat.live} />
-      ) : null}
-      {chat.queued.map((m) => (
-        <QueuedRow key={m.id} m={m} />
-      ))}
-      {question ? (
-        <QuestionCard
-          key={question.askId}
-          question={question}
-          onFocusAnswer={answering}
-        />
-      ) : null}
-    </View>
-  ) : question ? (
+  const card = question ? (
     <QuestionCard
       key={question.askId}
       question={question}
-      onFocusAnswer={answering}
+      onFocusAnswer={toEnd}
     />
-  ) : undefined;
-
-  const empty = (
-    <Text style={[styles.small, styles.center, { color: p.muted }]}>
-      {space.lastReply ??
-        (space.status === 'starting'
-          ? 'Waiting for the other device to start it.'
-          : 'Nothing said yet.')}
-    </Text>
+  ) : null;
+  const footer = (
+    <View style={styles.tail}>
+      {chat?.live ? <LiveReply live={chat.live} waiting={!!question} /> : null}
+      {chat?.queued.map((m) => (
+        <QueuedRow key={m.id} m={m} />
+      ))}
+      {card}
+    </View>
   );
 
-  const lastTurn = chat?.turns.at(-1)?.key;
-  // A floating composer covers the end of the list: room to scroll past it.
-  const content = floating
-    ? [styles.content, { paddingBottom: 16 + composerHeight }]
-    : styles.content;
-  const indicator = floating ? { bottom: composerHeight } : undefined;
+  const empty =
+    chat?.live || question ? null : (
+      <Text style={[styles.small, styles.center, { color: p.muted }]}>
+        {space.lastReply ??
+          (space.status === 'starting'
+            ? 'Waiting for the other device to start it.'
+            : 'Nothing said yet.')}
+      </Text>
+    );
 
   const notes = [
     chat?.error ? (
@@ -470,11 +407,6 @@ export default function SpaceScreen() {
     chat?.progress ? (
       <ProgressCard key="progress" progress={chat.progress} />
     ) : null,
-    error ? (
-      <Notice key="error" tone="danger">
-        {error}
-      </Notice>
-    ) : null,
     picked === 'run' && space.mode !== 'run' ? (
       <Text key="run" style={[styles.small, { color: p.warning }]}>
         {RUN_WARNING}
@@ -482,176 +414,115 @@ export default function SpaceScreen() {
     ) : null,
   ].filter((n) => n !== null);
 
+  const chips = (
+    <>
+      <PickerMenu
+        label={MODE_LABEL[picked]}
+        accessibilityLabel={`Mode: ${MODE_LABEL[picked]}`}
+        groups={[
+          {
+            label: 'Mode',
+            choices: modes.map((m) => ({ value: m, label: MODE_LABEL[m] })),
+            value: picked,
+            onChange: (m) => setMode(m as FleetMode),
+          },
+        ]}
+        disabled={sending}
+        testID="space-mode"
+      />
+      <AgentMenu
+        agents={hostAgents}
+        pick={agentPick}
+        current={ownAgent}
+        onPick={setAgentPick}
+        disabled={sending}
+        glass={false}
+      />
+    </>
+  );
+
   return (
-    <KeyboardScreen>
-      <Stack.Screen options={{ title: spaceTitle(space) }} />
-      <View style={styles.flex}>
-        {chat ? (
-          <FlatList
-            ref={chatList}
-            style={styles.flex}
-            data={chat.turns}
-            keyExtractor={(t) => t.key}
-            renderItem={({ item }) => (
-              <TurnRow
-                turn={item}
-                chat={chat}
-                live={item.key === lastTurn}
-                plan={plan}
-              />
-            )}
-            onScroll={onScroll}
-            scrollEventThrottle={64}
-            onContentSizeChange={follow}
-            onLayout={follow}
-            contentInsetAdjustmentBehavior="automatic"
-            contentContainerStyle={content}
-            scrollIndicatorInsets={indicator}
-            keyboardShouldPersistTaps="handled"
-            keyboardDismissMode={keyboardDismissMode}
-            ListHeaderComponent={<Header space={space} />}
-            ListEmptyComponent={chat.live ? undefined : empty}
-            ListFooterComponent={footer}
-          />
-        ) : (
-          <FlatList
-            ref={lineList}
-            style={styles.flex}
-            data={lines}
-            keyExtractor={(l) => String(l.seq)}
-            renderItem={({ item }) => <Line line={item} />}
-            onScroll={onScroll}
-            scrollEventThrottle={64}
-            onContentSizeChange={follow}
-            onLayout={follow}
-            contentInsetAdjustmentBehavior="automatic"
-            contentContainerStyle={content}
-            scrollIndicatorInsets={indicator}
-            keyboardShouldPersistTaps="handled"
-            keyboardDismissMode={keyboardDismissMode}
-            ListHeaderComponent={<Header space={space} />}
-            ListEmptyComponent={empty}
-            ListFooterComponent={footer}
-          />
-        )}
-        <View
-          onLayout={
-            floating
-              ? (e) => setComposerHeight(e.nativeEvent.layout.height)
-              : undefined
-          }
-          style={[
-            styles.composer,
-            floating
-              ? styles.floating
-              : {
-                  backgroundColor: p.surface,
-                  borderColor: p.border,
-                  // Material bars have no divider.
-                  borderTopWidth: android ? 0 : StyleSheet.hairlineWidth,
-                },
-            { paddingBottom: bottomPad(12, insets.bottom, keyboardUp) },
-          ]}
-        >
-          {floating && notes.length > 0 ? (
-            <Glass radius={18} style={styles.notes}>
-              {notes}
-            </Glass>
-          ) : (
-            notes
+    <View className="flex-1 bg-background">
+      <SpaceHeader
+        title={spaceTitle(space)}
+        subtitle={`on ${space.hostName} · ${STATUS_LABEL[space.status]}`}
+      />
+      {chat ? (
+        <Conversation
+          ref={list}
+          data={messages}
+          keyExtractor={messageKey}
+          renderItem={({ item }) => (
+            <Row
+              m={item}
+              chat={chat}
+              plan={chat.planHere === item.id ? plan : null}
+            />
           )}
-          <View style={styles.controls}>
-            <AgentMenu
-              agents={hostAgents}
-              pick={agentPick}
-              current={ownAgent}
-              onPick={setAgentPick}
-              disabled={sending}
-            />
-            <Segmented
-              label="Mode"
-              choices={modes.map((m) => ({
-                value: m,
-                label: MODE_LABEL[m],
-                accessibilityLabel: `Mode ${MODE_LABEL[m]}: ${MODE_HINT[m]}`,
-              }))}
-              value={picked}
-              onChange={setMode}
-              disabled={sending}
-              glass
-              style={styles.flex}
-            />
-          </View>
-          <View style={styles.composerRow}>
-            <ChatField
-              ref={input}
-              accessibilityLabel="Message to the space"
-              multiline
-              minLines={1}
-              maxLines={6}
-              disabled={!sendable || sending}
-              value={text}
-              onChangeText={setText}
-              placeholder={composerNote(space, revising, hosted)}
-              glass
-              style={styles.flex}
-            />
-            {canStop(space.status) ? (
-              <Button
-                label="Stop"
-                variant="destructive"
-                loading={stopping}
-                onPress={() => void stop()}
-              />
-            ) : (
-              <Button
-                label="Send"
-                variant="glassProminent"
-                disabled={!sendable || text.trim() === ''}
-                loading={sending}
-                onPress={send}
-              />
-            )}
-          </View>
-        </View>
-      </View>
-    </KeyboardScreen>
+          header={<Details space={space} />}
+          footer={footer}
+          empty={empty}
+          composerHeight={dock}
+          topInset={top}
+        >
+          <ConversationScrollButton />
+        </Conversation>
+      ) : (
+        <Conversation
+          ref={list}
+          data={lines}
+          keyExtractor={lineKey}
+          renderItem={({ item }) => (
+            <View style={styles.row}>
+              <Line line={item} />
+            </View>
+          )}
+          header={<Details space={space} />}
+          footer={footer}
+          empty={empty}
+          composerHeight={dock}
+          topInset={top}
+        >
+          <ConversationScrollButton />
+        </Conversation>
+      )}
+      <ComposerDock floating onHeight={setDock}>
+        {notes.length > 0 ? (
+          <Glass radius={20} style={styles.notes}>
+            {notes}
+          </Glass>
+        ) : null}
+        <PromptInput
+          value={text}
+          onChangeText={setText}
+          onSubmit={send}
+          placeholder={placeholderFor(space, revising, hosted)}
+          disabled={!running && !sendable}
+          editable={sendable && !sending}
+          sending={sending}
+          running={running}
+          onStop={() => void stop()}
+          stopping={stopping}
+          canSubmit={sendable && text.trim() !== ''}
+          leading={chips}
+          error={error}
+          inputRef={input}
+          testID="space-composer"
+        />
+      </ComposerDock>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  flex: { flex: 1 },
-  content: { padding: 16, gap: 18 },
-  turnRow: { gap: 14 },
-  tail: { gap: 14 },
-  header: { gap: 8 },
-  headerMeta: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    alignItems: 'center',
-    gap: 8,
-  },
-  headerTitle: { fontSize: 22, fontWeight: '700', lineHeight: 28 },
-  shrink: { flexShrink: 1 },
+  row: { paddingBottom: 18 },
+  tail: { gap: 18, paddingBottom: 4 },
+  details: { gap: 8, paddingBottom: 18, alignItems: 'center' },
+  continuous: { borderCurve: 'continuous' },
   body: { fontSize: 16, lineHeight: 22 },
   small: { fontSize: 13 },
   center: { textAlign: 'center' },
   tool: { fontSize: 12 },
-  turn: {
-    alignSelf: 'flex-end',
-    maxWidth: '85%',
-    borderRadius: 16,
-    borderCurve: 'continuous',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-  },
-  asked: {
-    borderWidth: 1,
-    borderRadius: 12,
-    borderCurve: 'continuous',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-  },
   ended: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   rule: { flex: 1, height: StyleSheet.hairlineWidth },
   gap: {
@@ -661,9 +532,5 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     alignItems: 'center',
   },
-  composer: { gap: 8, padding: 12 },
-  floating: { position: 'absolute', left: 0, right: 0, bottom: 0 },
-  notes: { gap: 8, padding: 12 },
-  composerRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 8 },
-  controls: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  notes: { gap: 8, padding: 12, marginBottom: 8 },
 });

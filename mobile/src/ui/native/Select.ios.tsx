@@ -1,7 +1,7 @@
 /**
  * iOS: SwiftUI `Picker` with `.menu` style: in a `Form` the Settings row
- * "Label   Value ⌃⌄", standalone a button showing the choice; `glass`: on a
- * Liquid Glass capsule (iOS 26+).
+ * "Label   Value ⌃⌄" (`icon`: the SF Symbol before the label), standalone a
+ * button showing the choice; `glass`: on a Liquid Glass capsule (iOS 26+).
  */
 import { Picker, Text } from '@expo/ui/swift-ui';
 import {
@@ -11,6 +11,7 @@ import {
   tag,
 } from '@expo/ui/swift-ui/modifiers';
 import { ControlHost, glassBehind } from './host.ios';
+import { SF } from './icons';
 import type { SelectProps } from './types';
 
 /** The tag of the placeholder shown while nothing is chosen. */
@@ -24,6 +25,7 @@ export function Select<T extends string>({
   placeholder = 'Choose…',
   disabled,
   glass,
+  icon,
   accessibilityLabel,
   testID,
   style,
@@ -32,6 +34,7 @@ export function Select<T extends string>({
     <ControlHost style={style}>
       <Picker<string>
         label={label}
+        {...(icon ? { systemImage: SF[icon] } : {})}
         selection={value ?? NONE}
         onSelectionChange={(v) => {
           const c = choices.find((x) => x.value === v);

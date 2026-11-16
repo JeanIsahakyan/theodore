@@ -19,3 +19,13 @@ export const InHost = createContext(false);
 export function useInHost(): boolean {
   return useContext(InHost);
 }
+
+/**
+ * Inside a `Section`'s card (Android, web): a `Button` is a row there. A
+ * `plain` section has none, and a `fullWidth` button stays a button.
+ */
+export const InCard = createContext(false);
+
+export function useInCard(): boolean {
+  return useContext(InCard);
+}

@@ -1,8 +1,9 @@
 /**
  * Android: Material 3 buttons. primary, glassProminent ─▶ `Button`
  * (filled), secondary, glass ─▶ `FilledTonalButton`, plain ─▶ `TextButton`,
- * destructive ─▶ filled in the danger color. In a `Form`: a clickable
- * `ListItem` (accent, or danger).
+ * destructive ─▶ filled in the danger color. In a `Form` section's card:
+ * a clickable `ListItem` (accent, or danger); in a `plain` section, the
+ * button itself (Sign out: filled, error color, across the screen).
  */
 import {
   Button as FilledButton,
@@ -23,7 +24,7 @@ import {
   type ModifierConfig,
 } from '@expo/ui/jetpack-compose/modifiers';
 import { usePalette } from '../theme';
-import { useInForm } from './context';
+import { useInCard, useInForm } from './context';
 import { ControlHost } from './host.android';
 import type { ButtonProps } from './types';
 
@@ -40,13 +41,14 @@ export function Button({
 }: ButtonProps) {
   const p = usePalette();
   const inForm = useInForm();
+  const inCard = useInCard();
   const off = !!disabled || !!loading;
   const mods: ModifierConfig[] = [];
   if (accessibilityLabel)
     mods.push(semantics({ contentDescription: accessibilityLabel }));
   if (testID) mods.push(testIDMod(testID));
 
-  if (inForm) {
+  if (inForm && inCard) {
     const color = variant === 'destructive' ? p.danger : p.accent;
     return (
       <ListItem

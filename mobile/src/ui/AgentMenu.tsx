@@ -7,6 +7,9 @@
  * ```text
  * ( Opus 4.1 · High ⌄ ) ─▶ Agent (2+ listed) · Model · Effort (if it takes one)
  * ```
+ *
+ * iOS: a SwiftUI menu; Android: a chip opening a Material 3 bottom sheet
+ * (`components/picker-menu`). `glass` (default on): over content.
  */
 import type { StyleProp, ViewStyle } from 'react-native';
 import type { FleetAgentView } from '../fleet/types';
@@ -20,7 +23,8 @@ import {
   runningLabel,
   type Pick,
 } from './agents';
-import { Menu, type MenuGroup } from './native';
+import { PickerMenu } from '../components/picker-menu';
+import type { MenuGroup } from './native';
 
 export function AgentMenu({
   agents,
@@ -28,6 +32,7 @@ export function AgentMenu({
   current,
   onPick,
   disabled,
+  glass = true,
   style,
 }: {
   agents: readonly FleetAgentView[];
@@ -36,6 +41,7 @@ export function AgentMenu({
   current: Pick;
   onPick: (next: Pick) => void;
   disabled?: boolean;
+  glass?: boolean;
   style?: StyleProp<ViewStyle>;
 }) {
   const now = running(agents, pick, current);
@@ -67,12 +73,12 @@ export function AgentMenu({
   }
   if (groups.length === 0) return null;
   return (
-    <Menu
+    <PickerMenu
       label={runningLabel(now)}
       accessibilityLabel={`Agent: ${runningA11y(now)}`}
       groups={groups}
       disabled={disabled}
-      glass
+      glass={glass}
       style={style}
     />
   );

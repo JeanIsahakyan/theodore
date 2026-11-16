@@ -1,10 +1,11 @@
 /**
  * Web (and the type every platform shares): the React Native button of
- * `../kit`. glass / glassProminent look like secondary / primary.
+ * `../kit`. glass / glassProminent look like secondary / primary. In a
+ * `Form` section's card: a row; in a `plain` section, the button itself.
  */
 import { ActivityIndicator, Pressable, StyleSheet, Text } from 'react-native';
 import { usePalette } from '../theme';
-import { useInForm } from './context';
+import { useInCard, useInForm } from './context';
 import { webStyles } from './rnStyles';
 import type { ButtonProps } from './types';
 
@@ -15,12 +16,14 @@ export function Button({
   disabled,
   loading,
   fullWidth,
+  pill,
   accessibilityLabel,
   testID,
   style,
 }: ButtonProps) {
   const p = usePalette();
   const inForm = useInForm();
+  const inCard = useInCard();
   const off = !!disabled || !!loading;
   const danger = variant === 'destructive';
   const look =
@@ -30,7 +33,7 @@ export function Button({
         ? 'primary'
         : variant;
 
-  if (inForm) {
+  if (inForm && inCard) {
     const color = danger ? p.danger : p.accent;
     return (
       <Pressable
@@ -76,6 +79,7 @@ export function Button({
       onPress={onPress}
       style={({ pressed }) => [
         styles.button,
+        pill ? styles.pill : null,
         fullWidth ? styles.full : null,
         { backgroundColor: bg, opacity: off ? 0.45 : pressed ? 0.75 : 1 },
         style,
@@ -98,6 +102,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 8,
   },
+  pill: { minHeight: 36, borderRadius: 999, paddingHorizontal: 14 },
   full: { alignSelf: 'stretch' },
   text: { fontSize: 16, fontWeight: '600' },
 });

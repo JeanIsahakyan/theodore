@@ -1,0 +1,41 @@
+// Adapted from EvanBacon/chat-template (MIT)
+/**
+ * The signed-in shell on iOS and Android: the drawer (spaces, Devices,
+ * Settings, account) around the stack. Web: `app-shell.web.tsx` (sidebar).
+ *
+ * The drawer opens from the menu button, or by a pan from the left edge
+ * on Home only: on a pushed screen that edge is the system's back swipe.
+ */
+import { usePathname, type Href } from 'expo-router';
+import type { ReactNode } from 'react';
+import { goNewSpace, openFromDrawer } from '../shell/navigate';
+import { useDrawer } from './drawer-context';
+import { DrawerContent } from './drawer-content';
+import { DrawerLayout } from './drawer-layout';
+
+export function AppShell({ children }: { children: ReactNode }) {
+  const { isOpen, openDrawer, closeDrawer } = useDrawer();
+  const path = usePathname();
+  return (
+    <DrawerLayout
+      open={isOpen}
+      onOpen={openDrawer}
+      onClose={closeDrawer}
+      swipeEnabled={path === '/'}
+      drawerContent={
+        <DrawerContent
+          onNavigate={(href: Href) => {
+            closeDrawer();
+            openFromDrawer(href, path);
+          }}
+          onNewSpace={() => {
+            closeDrawer();
+            goNewSpace(path);
+          }}
+        />
+      }
+    >
+      {children}
+    </DrawerLayout>
+  );
+}

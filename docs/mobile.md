@@ -22,9 +22,12 @@ iPhone / Android / browser                     Theodore cloud            your co
 | Screen | Does |
 | --- | --- |
 | Sign in | AuthKit hosted page (PKCE, no secret), org picker when you're in several (through the cloud, like the desktop) |
-| Spaces | Fleet spaces you started from here or follow: status, last reply, waiting questions first |
+| Drawer | Fleet spaces you started from here or follow, newest activity first by day (Today, Yesterday, Previous 7 days, Older), a status dot, search; Devices, Settings, the account and organization |
+| Home (new space) | The goal in the composer; chips for the computer · project (trusted, online, accepting remote spaces), the mode up to its cap, agent · model · effort |
 | Space | Its history (lines), send a message when it's idle or waiting, Stop while it runs, answer its question |
-| Start | Pick a trusted computer that accepts remote spaces, one of its projects, the goal, a mode up to its cap |
+| Devices | This device's fingerprint to show on the computer; your devices, computers first (kind, online, mode cap, the agents a computer offers, fingerprint), trust / untrust with the fingerprint confirm |
+| Settings | Theme (Light / Dark / System), account, organization switch, this device (name, status, fingerprint), notifications on/off, about (version, server), sign out |
+| Space | Its chat (or history lines), send a message when it's idle or waiting, Stop while it runs, Approve / Revise a plan, answer its question |
 | Devices | Your devices, fingerprints, trust / untrust with the fingerprint confirm, this device's fingerprint to show on the computer |
 | Settings | Account, organization switch, this device (name, status, fingerprint), notifications on/off, sign out, about (version, server) |
 
@@ -130,8 +133,9 @@ sign-out ─▶ the set is removed     org switch ─▶ kept (sets are per org)
 ```
 mobile/
   app/                 expo-router routes: (auth)/sign-in, choose-organization, callback;
-                       (app)/ stack: (tabs)/ index (Spaces), devices, settings;
-                       space/[id], start pushed over the tabs
+                       (app)/ drawer around a stack: index (Home, new space),
+                       space/[id], devices, settings pushed over it; start ─▶ /
+  src/components/      the shell and composer, adapted from the chat template (below)
   src/auth/            AuthKit PKCE, session + refresh, org select/switch via cloud, RS256 check
   src/shell/           wiring: AppProviders (auth + fleet clients, auth state, fleet lifecycle)
                        (not src/app: expo-router would take src/app as the routes root)
@@ -191,16 +195,19 @@ import { Button, Form, Row, Section, Switch, confirm } from '../../src/ui/native
 | Kit | iOS (SwiftUI) | Android (Compose, Material 3) | Web (React Native) |
 | --- | --- | --- | --- |
 | `Button` primary / secondary / plain / destructive, `loading`, `disabled`, `fullWidth` | `Button` `.borderedProminent` / `.bordered` / `.borderless` / role destructive | `Button` / `FilledTonalButton` / `TextButton` / filled in danger | `Pressable` |
+| `Button` `fullWidth` in a `Section` `plain` (Sign out) | row button, label centered | the button across the screen, no card | the button across the screen, no card |
 | `Button` glassProminent / glass (floating over content) | 26+: `.glassProminent` / `.glass`; before: `.borderedProminent` / `.bordered` | `Button` / `FilledTonalButton` | as primary / secondary |
 | `Segmented` (Ask/Plan/Edit, short sets) | `Picker` `.segmented` | `SingleChoiceSegmentedButtonRow` | joined segments |
 | `Select` (device, project: longer lists) | `Picker` `.menu` | `ExposedDropdownMenuBox` | row that unfolds the choices |
+| `Select` in a `Form` (Theme) | `Picker` `.menu`: "Theme   System ⌃⌄" | `ListItem` (value as supporting text) + `DropdownMenu` | row that unfolds the choices |
 | `glass` on `Segmented`, `Select`, `TextField` (standalone) | 26+: `glassEffect` capsule / rounded behind it; before: as without | ignored | ignored |
 | `Glass` (RN content on a surface: banner, panel; `shape`, `radius`, `tint`, `fallback`) | 26+: `GlassView` (`expo-glass-effect`); before: the `fallback` | `View`, `fallback` in Material You colors | `View`, `fallback` |
 | `TopBar` (pushed screen: `title`, `onBack`, `action`) | before 26: "‹ Back", title, action (26+: the native glass bar instead) | Material 3 `TopAppBar` (back arrow, `titleLarge`) | "‹ Back", title, action |
-| `Switch` (label, `detail`) | `Toggle` | `ListItem` + `Switch`, row `toggleable` | row + RN `Switch` |
+| `Switch` (label, `detail`, `icon`) | `Toggle` | `ListItem` + `Switch`, row `toggleable` | row + RN `Switch` |
 | `TextField` (single / `multiline`, `placeholder`, `onSubmit`, `submitLabel`) | `TextField` (vertical axis, `lineLimit`) | `OutlinedTextField` (ime action) | `TextInput` |
 | `Progress` circular / linear, `value` 0…1 or none | `ProgressView` | `CircularProgressIndicator` (a value) / Expressive `LoadingIndicator` (none) / `LinearProgressIndicator` | `ActivityIndicator` / bar |
-| `Form` › `Section` (`title`, `footer`) › `Row` (`label`, `value`, `detail`, `chevron`, `selected`, `destructive`, `loading`, `onPress`) | `Form` (inset grouped, scrolls) › `Section` › row `Button` | scrolling `Column` › titled `Card` › `ListItem` (no chevron) | `ScrollView` › card › rows |
+| `Form` › `Section` (`title`, `footer`, `plain`) › `Row` (`label`, `value`, `detail`, `icon`, `chevron`, `selected`, `destructive`, `loading`, `onPress`) | `Form` (inset grouped, scrolls) › `Section` › row `Button` | scrolling `Column` › titled `Card` › `ListItem` (no chevron) | `ScrollView` › card › rows |
+| `icon` on `Row`, `Switch`, `Select` (`src/ui/native/icons.ts`) | SF Symbol in a `Label` (accent) | Material Symbol, the `ListItem`'s leading content (`assets/icons/*.xml`) | Lucide |
 | `FormSlot` (any RN view inside a `Form`) | `RNHostView` | `RNHostView` | `View` |
 | `Menu` (`label`, `groups` of choices with a check on the current one; agent · model · effort in the composer) | `Menu` with a `Picker` submenu per group (glass button on iOS 26) | `AssistChip` + `DropdownMenu`, a heading per group | pill + sheet |
 | `confirm()` / `notify()` (promise) | `UIAlertController` (RN `Alert`) | `AlertDialog` (RN `Alert`) | `window.confirm` / `alert` |
@@ -225,14 +232,18 @@ Android: isDynamicColorAvailable (Android 12+)
 
 | Where | iOS 26+ | iOS < 26 | Android |
 | --- | --- | --- | --- |
-| Tabs' header | native glass bar, transparent, content under it | opaque native header | native header |
-| Pushed screens' header | native glass bar, "‹" back (minimal), Start = prominent glass bar item | `TopBar` ("‹ Back") | `TopBar`: Material 3 top app bar |
-| Tab bar | system glass (nothing opaque behind it) | system | Material 3 navigation bar |
-| Space composer | floats over the chat: notes on a `Glass` panel, glass `Segmented`, glass field, `glassProminent` Send | bar under the chat | bar under the chat, no divider |
+| Home's header | native glass bar, ☰ / 🔔 / ✎ bar items | opaque native header, same items | Material 3 top app bar (menu, badged bell, edit) |
+| Pushed screens' header | native glass bar, "‹" back (minimal) | `TopBar` ("‹ Back") | `TopBar`: Material 3 top app bar |
+| Space's header (name, "on host · status") | native glass bar, two-line title view | RN bar, "‹ Back", two lines | Material 3 top app bar, title + subtitle |
+| Drawer | behind the content, which slides off it (rounded corners) | same | Material 3 modal navigation drawer over a scrim, pill items |
+| Composer | Liquid Glass, interactive | system chrome blur | `surfaceContainerHigh`, 28 dp corners, filled send |
+| Composer pickers | SwiftUI `Menu` | same | assist chip ─▶ modal bottom sheet, radio lists |
+| Space composer | `PromptInput` floating over the chat, notes on a `Glass` panel above it | same, chrome blur, notes on a card | same, `surfaceContainerHigh`, notes on a card |
+| Scroll to the newest message | glass circle | blur circle | raised `card` circle, ripple |
+| Plan's Approve / Revise, Send answer | capsule `.borderedProminent` / `.bordered` (kit `Button` `pill`) | same | `Button` / `FilledTonalButton` |
 | Option chips | `.glassProminent` / `.glass` capsules | `.borderedProminent` / `.bordered` | `FilterChip` |
-| Questions banner (over the tabs) | `Glass` cards tinted with the warning color | cards | cards in Material You surface |
+| Questions banner (on Home) | `Glass` cards tinted with the warning color | cards | cards in Material You surface |
 | Connection banner | `Glass` capsule | muted pill | muted pill |
-| Start a space | "+" glass bar item | "+" bar item | extended FAB, `primaryContainer` |
 
 Rules:
 
@@ -243,8 +254,7 @@ Rules:
   own fallback is `.automatic` (a bare label) and `glassEffect` draws
   nothing, so the kit picks the bordered look instead.
 - Never paint a background behind a glass bar: no `headerStyle`
-  background on iOS 26 (expo-router then uses the system glass bar), no
-  opaque view under the tab bar. A screen under a glass header starts at
+  background on iOS 26 (expo-router then uses the system glass bar). A screen under a glass header starts at
   the window's top: scroll views use `contentInsetAdjustmentBehavior=
   "automatic"`, a SwiftUI `Form` follows the safe area itself, any other
   view at the top takes `useGlassHeaderInset()` (`src/shell/glassHeader.ts`),
@@ -271,11 +281,17 @@ Rules for screens:
   the accessibility name; pass `accessibilityLabel` when the visible text is
   not enough ("Switch to Acme" on a row reading "Acme"), `testID` for ids.
 - Colors come from `usePalette()` (accent `#2F74C8` light / `#6AA7EC` dark;
-  Material You's roles on Android 12+); each `Host` follows the system
-  scheme and is tinted with the accent (Android 12+: the wallpaper's).
+  Material You's roles on Android 12+); each `Host` follows the app's
+  scheme (`useScheme()`, the Theme setting) and is tinted with the accent
+  (Android 12+: the wallpaper's). Never read React Native's
+  `useColorScheme()` directly: on web it ignores the setting.
+- Android icons are Material Symbols (outlined, 24 dp vector drawables from
+  google/material-design-icons, in `assets/icons`), drawn by Compose's
+  `Icon`; a new one is a new XML there and a line in
+  `src/ui/native/materialIcons.ts`.
 - Every component needs its web `X.tsx`; `pnpm -C mobile build:web` and
   `npx expo export --platform ios --platform android` both must bundle.
-- Settings (`app/(app)/(tabs)/settings.tsx`) is the reference screen.
+- Settings (`app/(app)/settings.tsx`) is the reference screen.
 - Found on devices, keep them:
   - **Compose keeps what it was mounted with:** a `Button` or chip that turns
     on or off is remounted (`key` on the enabled state), or an enabled "Send
@@ -292,10 +308,84 @@ Rules for screens:
   modules: a dev build made before them must be rebuilt (`npx expo prebuild --clean`, then `pnpm ios` /
   `pnpm android`); Expo Go can't show the kit.
 
-Tabs are native (`expo-router/native-tabs`: `UITabBarController` with SF
-Symbols, Material 3 navigation bar with Material Symbols); they draw no
-header, so the stack around them shows the focused tab's title (on iOS 26+
-a glass bar the tabs' content scrolls under). The web keeps the JS tabs.
+### Shell: drawer, header, composer
+
+The look follows Evan Bacon's chat template (MIT,
+`mobile/THIRD_PARTY_NOTICES.md` lists the files adapted from it). Theodore's
+"chats" are its spaces.
+
+```text
+iOS / Android  DrawerLayout (src/components/drawer-layout.tsx) ── Stack
+                 pan from the left edge opens it on Home only (elsewhere the
+                 edge is the system's back swipe); Android Back closes it
+web            sidebar beside the stack (md+), over it with a scrim (narrow)
+
+drawer pick on Home ─▶ push [Home, pick]     elsewhere ─▶ replace [Home, pick]
+new space (✎)      ─▶ dismissTo Home         bell ─▶ the first waiting space
+```
+
+| Piece | File |
+| --- | --- |
+| Drawer content (spaces by day, search, Devices, account, Settings) | `src/components/drawer-content.tsx`, groups in `src/ui/drawer.ts` |
+| Home's header | `src/components/main-header{.ios,.android,}.tsx` |
+| Composer: `PromptInput` (field, Send / Stop, `leading` / `trailing` chips) and `ComposerDock` (rides on the keyboard) | `src/components/chat/` |
+| Chat: `Conversation` (Legend List, keyboard-aware, `ConversationScrollButton`), `Message` (your bubble / the agent's full width), `StreamingMessage` + `Shimmer` (the live turn) | `src/components/chat/` |
+| Markdown: mdast (micromark, GFM tables and strikethrough) ─▶ React Native views; code blocks highlighted (highlight.js, a fixed set of languages, never guessed) | `src/components/markdown/` |
+| A space's header (name, "on host · status") | `src/components/space-header{.ios,.android,}.tsx`, `space-title.tsx` |
+| A space's steps: compact grey rows that open in place (folding: `src/ui/turnRows.ts`) | `src/ui/Timeline.tsx`, `src/ui/SpaceChat.tsx` |
+| Pickers (Mode, Device · Project, agent · model · effort) | `src/components/picker-menu{.android,}.tsx`, `src/ui/AgentMenu.tsx` |
+| Icons: SF Symbols (iOS), Material Symbols (Android), Lucide (web) | `src/components/symbol-image.tsx` |
+
+- The space's last activity (`SpaceView.activeAt`): its mirrored row's
+  `updated_at`, else when something of it last arrived here.
+- Keyboard: `react-native-keyboard-controller` (`KeyboardProvider` at the
+  root); the dock's bottom is max(safe area, keyboard), on Android edge to
+  edge the IME padding. A space's list is Legend List's
+  `KeyboardAwareLegendList`: its end inset is the floating dock's height +
+  max(safe area, keyboard) + 8, and it lifts with the keyboard only when
+  you are at the end.
+- Fleet text is untrusted in the markdown too: a link is its words and its
+  address in muted text (nothing opens), an image is `[image: alt]`
+  (nothing loads), raw HTML is text, nesting deeper than 16 is plain text.
+
+### Styling: Uniwind (Tailwind v4)
+
+New shell code is styled with `className` (Uniwind, `metro.config.js`);
+the kit and the older screens keep `usePalette()`.
+
+```text
+src/global.css   tokens: the template's neutrals + primary #2F74C8 / #6AA7EC,
+                 success / warning / danger; light and dark variants
+Android 12+      applyThemeVars() overwrites them with Material You's roles at start
+                 (src/components/theme-vars.android.ts), as usePalette() does
+uniwind-types.d.ts  written by Metro (uniwind); committed so typecheck needs no Metro run
+```
+
+#### Theme (Settings → Appearance)
+
+```text
+start           readTheme() (sync) ─▶ Uniwind.setTheme(t)          src/ui/themeSetting.ts
+Settings pick   Uniwind.setTheme(t) ─▶ writeTheme(t)
+                  kept: secure-store on iOS / Android, localStorage on web
+                  (src/ui/themeStore.*); a device setting, kept across sign-out
+
+Uniwind.setTheme(light | dark | system)
+  ├─▶ className tokens: the light / dark variants of src/global.css (web: .dark on <html>)
+  ├─▶ native: Appearance.setColorScheme ─▶ UIKit / AppCompat (glass bars, alerts, keyboard)
+  └─▶ useScheme() = Uniwind's current theme ─▶ usePalette(), every Host's colorScheme,
+                    the status bar
+```
+
+Default System. Android 12+ keeps Material You in both schemes
+(`getMaterialColors` per scheme).
+
+- Pressed states are `active:` classes, never a `style` function on
+  `Pressable` (Uniwind doesn't apply those); no `var(--…)` in inline styles.
+- Native modules added with the shell (dev builds must be rebuilt):
+  `react-native-reanimated` + `react-native-worklets`,
+  `react-native-gesture-handler`, `react-native-keyboard-controller`,
+  `react-native-svg`, `expo-blur`, `expo-haptics`, `expo-image`,
+  `expo-system-ui`.
 
 ### Connection banner
 

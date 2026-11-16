@@ -1,34 +1,38 @@
 /**
- * The signed-in shell: a stack with the tabs at its root, and `space/[id]`
- * and `start` pushed over them (no tab bar, a "‹ Back" header). Groups
- * don't change URLs: `/`, `/devices`, `/settings`, `/space/<id>`, `/start`.
+ * The signed-in shell: the drawer (web: the sidebar) around a stack with
+ * Home (`/`, a new space) at its root. Groups don't change URLs: `/`,
+ * `/space/<id>`, `/devices`, `/settings`; `/start` redirects to `/`.
  *
  * ```text
- * (tabs): Spaces · Devices · Settings
- *   Spaces ── push ─▶ space/[id] ── back ─▶ Spaces
- *          └─ push ─▶ start ── replace ─▶ space/[id]
- * notification / deep link ─▶ space/[id] over (tabs) (the anchor)
+ * drawer ─ spaces by day, search, Devices, account / Settings
+ *    │ pick
+ *    ▼
+ * Home ── push ─▶ space/[id] | devices | settings ── back ─▶ Home
+ *      └─ Send ─▶ push space/[id]
+ * notification / deep link ─▶ space/[id] over Home (the anchor)
  * ```
  *
- * Headers: on iOS and Android the tabs are native and draw none, so this
- * stack's native header shows the focused tab's title; the web's JS tabs
- * draw their own. Pushed screens use `PushedHeader` (a Material top app bar
- * on Android), except on iOS 26+, where every header is the native Liquid
- * Glass bar over the content (`src/shell/glassHeader.ts`).
+ * Headers: Home's is `MainHeader` (menu, questions, new space; iOS bar
+ * items, Android a Material 3 top app bar, web the JS header). Pushed
+ * screens use `PushedHeader` (a Material top app bar on Android), except
+ * on iOS 26+, where every header is the native Liquid Glass bar over the
+ * content (`src/shell/glassHeader.ts`).
  */
 import { Stack, router, usePathname, type Href } from 'expo-router';
-import { getFocusedRouteNameFromRoute } from 'expo-router/react-navigation';
 import { useEffect } from 'react';
+import { AppShell } from '../../src/components/app-shell';
+import { DrawerProvider } from '../../src/components/drawer-context';
 import { handleNotificationResponses } from '../../src/push';
 import { useServices } from '../../src/services';
 import { setActiveSpace } from '../../src/shell/AppProviders';
-import { spaceIdFromPath } from '../../src/shell/paths';
 import { glassHeader } from '../../src/shell/glassHeader';
+import { spaceIdFromPath } from '../../src/shell/paths';
 import { PushedHeader } from '../../src/shell/PushedHeader';
-import { tabTitle } from '../../src/shell/tabs';
 import { usePalette } from '../../src/ui/theme';
 
-export const unstable_settings = { anchor: '(tabs)' };
+export const unstable_settings = { anchor: 'index' };
+
+const web = process.env.EXPO_OS === 'web';
 
 export default function AppLayout() {
   const p = usePalette();
@@ -44,7 +48,6 @@ export default function AppLayout() {
     [fleet],
   );
 
-  // Their own question card is on the page: no banner here.
   const pushed = (title: string) =>
     glassHeader
       ? {
@@ -64,31 +67,36 @@ export default function AppLayout() {
           ),
         };
 
+  // Home: MainHeader adds its buttons (Android: its whole app bar).
+  const home = glassHeader
+    ? {
+        title: 'New space',
+        headerTintColor: p.text,
+        headerTitleStyle: { color: p.text },
+        gestureEnabled: false,
+      }
+    : {
+        title: 'New space',
+        headerStyle: { backgroundColor: web ? p.surface : p.background },
+        headerTintColor: p.text,
+        headerTitleStyle: { color: p.text },
+        headerShadowVisible: false,
+        gestureEnabled: false,
+      };
+
   return (
-    <Stack screenOptions={{ contentStyle: { backgroundColor: p.background } }}>
-      <Stack.Screen
-        name="(tabs)"
-        options={({ route }) =>
-          process.env.EXPO_OS === 'web'
-            ? { headerShown: false }
-            : glassHeader
-              ? {
-                  // No background: the glass bar, content scrolls under it.
-                  title: tabTitle(getFocusedRouteNameFromRoute(route)),
-                  headerTintColor: p.accent,
-                  headerTitleStyle: { color: p.text },
-                }
-              : {
-                  title: tabTitle(getFocusedRouteNameFromRoute(route)),
-                  headerStyle: { backgroundColor: p.background },
-                  headerTintColor: p.accent,
-                  headerTitleStyle: { color: p.text },
-                  headerShadowVisible: false,
-                }
-        }
-      />
-      <Stack.Screen name="space/[id]" options={pushed('Space')} />
-      <Stack.Screen name="start" options={pushed('Start a space')} />
-    </Stack>
+    <DrawerProvider>
+      <AppShell>
+        <Stack
+          screenOptions={{ contentStyle: { backgroundColor: p.background } }}
+        >
+          <Stack.Screen name="index" options={home} />
+          <Stack.Screen name="space/[id]" options={pushed('Space')} />
+          <Stack.Screen name="devices" options={pushed('Devices')} />
+          <Stack.Screen name="settings" options={pushed('Settings')} />
+          <Stack.Screen name="start" options={{ headerShown: false }} />
+        </Stack>
+      </AppShell>
+    </DrawerProvider>
   );
 }

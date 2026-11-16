@@ -1,7 +1,8 @@
-/** Web: a row with React Native's `Switch`. */
+/** Web: a row with React Native's `Switch`; `icon` leads it. */
 import { Switch as RNSwitch, Text, View } from 'react-native';
 import { usePalette } from '../theme';
 import { webStyles } from './rnStyles';
+import { WebIcon } from './webIcons';
 import type { SwitchProps } from './types';
 
 export function Switch({
@@ -10,6 +11,7 @@ export function Switch({
   value,
   onValueChange,
   disabled,
+  icon,
   accessibilityLabel,
   testID,
   style,
@@ -17,6 +19,7 @@ export function Switch({
   const p = usePalette();
   return (
     <View style={[webStyles.row, style]}>
+      {icon ? <WebIcon name={icon} color={p.text} /> : null}
       <View style={webStyles.rowText}>
         <Text style={[webStyles.rowLabel, { color: p.text }]}>{label}</Text>
         {detail ? (

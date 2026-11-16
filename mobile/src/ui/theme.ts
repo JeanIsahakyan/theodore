@@ -1,5 +1,9 @@
-/** Colors for light and dark, following the system scheme. */
-import { Platform, useColorScheme } from 'react-native';
+/**
+ * Colors for light and dark, following the Theme setting (Light, Dark or
+ * System; `./themeSetting.ts`).
+ */
+import { Platform } from 'react-native';
+import { useUniwind } from 'uniwind';
 import type { Tone } from './logic';
 import { platformPalette } from './materialPalette';
 
@@ -47,11 +51,21 @@ export const dark: Palette = {
 };
 
 /**
- * The palette for the system scheme. On Android 12+ its roles come from
- * Material You (`materialPalette.android.ts`); elsewhere they are the above.
+ * The scheme the app draws in: the Theme setting, or the system's under
+ * System. Uniwind holds it (`Uniwind.setTheme`), so `className` tokens,
+ * `usePalette()` and the native Hosts agree, on web too (where React
+ * Native's `useColorScheme()` only reads the browser's).
+ */
+export function useScheme(): 'light' | 'dark' {
+  return useUniwind().theme === 'dark' ? 'dark' : 'light';
+}
+
+/**
+ * The palette for the scheme. On Android 12+ its roles come from Material
+ * You (`materialPalette.android.ts`); elsewhere they are the above.
  */
 export function usePalette(): Palette {
-  const scheme = useColorScheme() === 'dark' ? 'dark' : 'light';
+  const scheme = useScheme();
   return platformPalette(scheme === 'dark' ? dark : light, scheme);
 }
 

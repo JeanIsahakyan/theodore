@@ -1,18 +1,23 @@
 /**
  * A space turn as it happened: its text, tool calls, subagents and thinking,
- * oldest first, like the desktop's `TurnTimeline`. What folds is
- * `turnRows.ts`; a row opens in place and stays open while the chat scrolls.
+ * oldest first, like the desktop's `TurnTimeline`, drawn the chat
+ * template's way: the agent's words as full-width markdown, everything else
+ * a compact grey row that opens in place. What folds is `turnRows.ts`; a
+ * row stays open while the chat scrolls.
  *
  * ```text
- * running   rows growing, a spinner on each call still going
- * finished  ▸ 3 tool calls, 5 messages  ≡ $     opens in place
- *           ✗ Run  cargo test                   always a row
+ * running   rows growing, a spinner on each call still going,
+ *           the text being written with a cursor▌, "Thinking" shimmering
+ * finished  › 3 tool calls, 5 messages  ▤ ▸_      opens in place
+ *           ▸_ Run  cargo test  ⓘ failed           always a row
  * ```
  */
 import { memo, useMemo, useState, type ReactNode } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Shimmer, StreamingMessage } from '../components/chat';
+import { ChatMarkdown } from '../components/markdown';
+import { SymbolImage, type SymbolName } from '../components/symbol-image';
 import type { TurnStep } from '../fleet/contract';
-import { Markdown } from './Markdown';
 import { Spinner } from './Spinner';
 import { mono, usePalette } from './theme';
 import {
@@ -30,15 +35,15 @@ import {
   type TurnItem,
 } from './turnRows';
 
-/** A glyph per kind of tool (no icon font: it renders on web too). */
-export const KIND_GLYPH: Record<ToolKind, string> = {
-  read: '≡',
-  edit: '✎',
-  run: '$',
-  search: '⌕',
-  agent: '◆',
-  mcp: '◇',
-  other: '•',
+/** An icon per kind of tool: SF Symbols, Material Symbols, Lucide. */
+export const KIND_ICON: Record<ToolKind, SymbolName> = {
+  read: 'step.read',
+  edit: 'step.edit',
+  run: 'step.run',
+  search: 'step.search',
+  agent: 'step.agent',
+  mcp: 'step.mcp',
+  other: 'step.other',
 };
 
 const NO_STEPS: readonly TurnStep[] = [];
@@ -62,14 +67,14 @@ function useKeptOpen(key: string | null): [boolean, (open: boolean) => void] {
   ];
 }
 
-function Icon({ busy, glyph }: { busy: boolean; glyph: string }) {
+function Icon({ busy, name }: { busy: boolean; name: SymbolName }) {
   const p = usePalette();
   return (
     <View style={styles.icon}>
       {busy ? (
         <Spinner color={p.muted} />
       ) : (
-        <Text style={[styles.glyph, { color: p.muted }]}>{glyph}</Text>
+        <SymbolImage name={name} size={13} color={p.muted} />
       )}
     </View>
   );
@@ -78,7 +83,12 @@ function Icon({ busy, glyph }: { busy: boolean; glyph: string }) {
 function Chevron({ open }: { open: boolean }) {
   const p = usePalette();
   return (
-    <Text style={[styles.chevron, { color: p.muted }]}>{open ? '▾' : '▸'}</Text>
+    <SymbolImage
+      name="chevron.right"
+      size={10}
+      color={p.muted}
+      style={{ transform: [{ rotate: open ? '90deg' : '0deg' }] }}
+    />
   );
 }
 
@@ -122,7 +132,12 @@ function Counts({
 
 function Failed() {
   const p = usePalette();
-  return <Text style={[styles.note, { color: p.danger }]}>✗ failed</Text>;
+  return (
+    <View style={styles.failed}>
+      <SymbolImage name="step.failed" size={12} color={p.danger} />
+      <Text style={[styles.note, { color: p.danger }]}>failed</Text>
+    </View>
+  );
 }
 
 /** A row that opens: the line, then (open) what's under it. */
@@ -147,7 +162,8 @@ function Row({
         accessibilityState={{ expanded: open }}
         onPress={onToggle}
         hitSlop={4}
-        style={({ pressed }) => [styles.row, { opacity: pressed ? 0.6 : 1 }]}
+        className="rounded-lg active:opacity-60"
+        style={styles.row}
       >
         {line}
       </Pressable>
@@ -195,8 +211,8 @@ const ToolRow = memo(function ToolRow({
       onToggle={() => setOpen(!open)}
       line={
         <>
-          <Icon busy={busy} glyph={KIND_GLYPH[view.kind]} />
-          <Text numberOfLines={1} style={[styles.label, { color: p.text }]}>
+          <Icon busy={busy} name={KIND_ICON[view.kind]} />
+          <Text numberOfLines={1} style={[styles.label, { color: p.muted }]}>
             {view.label}
           </Text>
           {view.chip ? <Chip text={view.chip} /> : null}
@@ -248,8 +264,8 @@ function GroupRow({
       onToggle={() => setOpen(!open)}
       line={
         <>
-          <Icon busy={false} glyph={KIND_GLYPH[toolView(first).kind]} />
-          <Text numberOfLines={1} style={[styles.label, { color: p.text }]}>
+          <Icon busy={false} name={KIND_ICON[toolView(first).kind]} />
+          <Text numberOfLines={1} style={[styles.label, { color: p.muted }]}>
             {label}
           </Text>
           <Chevron open={open} />
@@ -288,10 +304,14 @@ function ThinkingRow({
       onToggle={() => setOpen(!open)}
       line={
         <>
-          <Icon busy={busy} glyph="✱" />
-          <Text style={[styles.label, styles.fixed, { color: p.text }]}>
-            Thinking
-          </Text>
+          <Icon busy={false} name="step.thinking" />
+          {busy ? (
+            <Shimmer>Thinking</Shimmer>
+          ) : (
+            <Text style={[styles.label, styles.fixed, { color: p.muted }]}>
+              Thinking
+            </Text>
+          )}
           {open ? (
             <Chevron open />
           ) : (
@@ -309,7 +329,9 @@ function ThinkingRow({
       }
     >
       <View style={[styles.under, { borderLeftColor: p.border }]}>
-        <Markdown text={text} size={13} muted />
+        <ChatMarkdown size={13} muted>
+          {text}
+        </ChatMarkdown>
       </View>
     </Row>
   );
@@ -359,8 +381,8 @@ function AgentRow({
       onToggle={() => setOpen(!open)}
       line={
         <>
-          <Icon busy={busy} glyph={KIND_GLYPH.agent} />
-          <Text numberOfLines={1} style={[styles.label, { color: p.text }]}>
+          <Icon busy={busy} name={KIND_ICON.agent} />
+          <Text numberOfLines={1} style={[styles.label, { color: p.muted }]}>
             {view.label}
           </Text>
           <Chevron open={open} />
@@ -377,7 +399,9 @@ function AgentRow({
       }
     >
       <View style={[styles.under, { borderLeftColor: p.border }]}>
-        {step.summary ? <Markdown text={step.summary} size={13} /> : null}
+        {step.summary ? (
+          <ChatMarkdown size={13}>{step.summary}</ChatMarkdown>
+        ) : null}
         <StepList
           own={shown}
           under={NOTHING_UNDER}
@@ -414,9 +438,12 @@ function FoldRow({
             {line}
           </Text>
           {item.icons.map((kind) => (
-            <Text key={kind} style={[styles.glyph, { color: p.muted }]}>
-              {KIND_GLYPH[kind]}
-            </Text>
+            <SymbolImage
+              key={kind}
+              name={KIND_ICON[kind]}
+              size={12}
+              color={p.muted}
+            />
           ))}
         </>
       }
@@ -473,7 +500,13 @@ function Items({
         const { step, index } = item;
         const kept = keptAs && `${keptAs}:${index}`;
         if (step.kind === 'text') {
-          return <Markdown key={index} text={step.text} />;
+          // The words being written now: plain, with a cursor, until the
+          // step is done (markdown half-written reflows as it grows).
+          return running && index === newest ? (
+            <StreamingMessage key={index} text={step.text} />
+          ) : (
+            <ChatMarkdown key={index}>{step.text}</ChatMarkdown>
+          );
         }
         if (step.kind === 'thinking') {
           return (
@@ -563,19 +596,18 @@ export const TimelineRows = memo(function TimelineRows({
 });
 
 const styles = StyleSheet.create({
-  timeline: { gap: 8, minWidth: 0 },
-  rowWrap: { gap: 6, minWidth: 0 },
+  timeline: { gap: 6, minWidth: 0 },
+  rowWrap: { gap: 4, minWidth: 0 },
   row: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    minHeight: 24,
+    minHeight: 26,
     minWidth: 0,
   },
   icon: { width: 18, alignItems: 'center', justifyContent: 'center' },
-  glyph: { fontSize: 13 },
-  chevron: { fontSize: 12, width: 12, textAlign: 'center' },
-  label: { fontSize: 14, flexShrink: 1 },
+  label: { fontSize: 13, flexShrink: 1 },
+  failed: { flexDirection: 'row', alignItems: 'center', gap: 3 },
   fixed: { flexShrink: 0 },
   shrink: { flexShrink: 1 },
   chip: {
@@ -588,7 +620,13 @@ const styles = StyleSheet.create({
   },
   note: { fontSize: 12 },
   count: { fontSize: 11 },
-  under: { borderLeftWidth: 1, paddingLeft: 10, marginLeft: 8, gap: 6 },
+  under: {
+    borderLeftWidth: StyleSheet.hairlineWidth * 2,
+    paddingLeft: 12,
+    marginLeft: 8,
+    paddingVertical: 2,
+    gap: 6,
+  },
   nested: { gap: 8, paddingLeft: 18 },
   detail: { gap: 2 },
   detailLabel: { fontSize: 11, fontWeight: '600' },

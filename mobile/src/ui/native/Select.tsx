@@ -7,6 +7,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { usePalette } from '../theme';
 import { useInForm } from './context';
 import { webStyles } from './rnStyles';
+import { WebIcon } from './webIcons';
 import type { SelectProps } from './types';
 
 export function Select<T extends string>({
@@ -16,6 +17,7 @@ export function Select<T extends string>({
   onChange,
   placeholder = 'Choose…',
   disabled,
+  icon,
   accessibilityLabel,
   testID,
   style,
@@ -48,6 +50,7 @@ export function Select<T extends string>({
           pressed && { backgroundColor: p.surfaceMuted },
         ]}
       >
+        {icon ? <WebIcon name={icon} color={p.text} /> : null}
         <Text style={[webStyles.rowLabel, { color: p.text, flex: 1 }]}>
           {label}
         </Text>

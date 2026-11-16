@@ -6,13 +6,13 @@ import {
   type ModifierConfig,
 } from '@expo/ui/swift-ui/modifiers';
 import type { ReactNode } from 'react';
-import { useColorScheme, type StyleProp, type ViewStyle } from 'react-native';
-import { usePalette } from '../theme';
+import type { StyleProp, ViewStyle } from 'react-native';
+import { usePalette, useScheme } from '../theme';
 import { useInForm, useInHost } from './context';
 import { liquidGlass } from './liquidGlass';
 
 export function useHostTheme() {
-  const scheme = useColorScheme();
+  const scheme = useScheme();
   const p = usePalette();
   return {
     colorScheme: scheme === 'dark' ? ('dark' as const) : ('light' as const),
