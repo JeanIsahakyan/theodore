@@ -14,6 +14,9 @@ export function OptionChip({
   return (
     <ControlHost>
       <FilterChip
+        // Remounted when it turns on or off (Compose keeps the click handler
+        // it was mounted with).
+        key={disabled ? 'off' : 'on'}
         selected={selected}
         enabled={!disabled}
         onClick={disabled ? undefined : onPress}

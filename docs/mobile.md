@@ -221,6 +221,17 @@ Rules for screens:
 - Every component needs its web `X.tsx`; `pnpm -C mobile build:web` and
   `npx expo export --platform ios --platform android` both must bundle.
 - Settings (`app/(app)/(tabs)/settings.tsx`) is the reference screen.
+- Found on devices, keep them:
+  - **Compose keeps what it was mounted with:** a `Button` or chip that turns
+    on or off is remounted (`key` on the enabled state), or an enabled "Send
+    answer" stays grey and dead.
+  - **No `undefined` object props to Compose** (`colors={undefined}` fails to
+    read as `ButtonColors`): spread them only when set.
+  - **Don't change a SwiftUI `Form`'s modifiers on keyboard show** (e.g. a
+    tap-to-dismiss gesture): SwiftUI rebuilds it and the focused field loses
+    focus, so nothing can be typed. Dragging dismisses the keyboard.
+  - Maestro on Android taps Compose fields poorly (it hits the first
+    dropdown); a real tap (`adb shell input tap`) works.
 - `@expo/ui` and `expo-symbols` are native modules: a dev build made before
   them must be rebuilt (`npx expo prebuild --clean`, then `pnpm ios` /
   `pnpm android`); Expo Go can't show the kit.

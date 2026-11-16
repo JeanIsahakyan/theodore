@@ -49,6 +49,10 @@ export function Button({
     const color = variant === 'destructive' ? p.danger : p.accent;
     return (
       <ListItem
+        // Remounted when it turns on or off: Compose keeps the state and
+        // click handler it was mounted with (an enabled Send answer stayed
+        // grey and dead).
+        key={off ? 'off' : 'on'}
         colors={{ containerColor: 'transparent' }}
         modifiers={[...(off ? [alpha(0.38)] : [clickable(onPress)]), ...mods]}
       >
@@ -82,9 +86,13 @@ export function Button({
   return (
     <ControlHost style={style} width={fullWidth ? 'fill' : 'content'}>
       <Component
+        // See above: remounted when it turns on or off.
+        key={off ? 'off' : 'on'}
         onClick={off ? undefined : onPress}
         enabled={!off}
-        colors={colors}
+        // Only when set: an undefined prop reaches Compose as null, which
+        // can't be read as ButtonColors.
+        {...(colors ? { colors } : {})}
         modifiers={mods}
       >
         <Row verticalAlignment="center" horizontalArrangement={{ spacedBy: 8 }}>
