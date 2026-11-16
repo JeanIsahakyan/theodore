@@ -33,6 +33,11 @@ import Animated, {
 } from 'react-native-reanimated';
 import { scheduleOnRN } from 'react-native-worklets';
 
+/** Reanimated takes hook dependencies on the web only; on native they're
+ * ignored and warn on every render. */
+const webDeps = <T extends unknown[]>(deps: T): T | undefined =>
+  process.env.EXPO_OS === 'web' ? deps : undefined;
+
 const APPROX_APP_BAR_HEIGHT = 56;
 const DEFAULT_DRAWER_WIDTH = 360;
 const SWIPE_EDGE_WIDTH = 32;
@@ -183,7 +188,7 @@ export function DrawerLayout({
             zIndex: translateX.value === -drawerWidth ? 0 : 2,
             transform: [{ translateX: translateX.value + drawerWidth }],
           },
-    [drawerWidth, translateX],
+    webDeps([drawerWidth, translateX]),
   );
 
   const drawerStyle = useAnimatedStyle(
@@ -208,7 +213,7 @@ export function DrawerLayout({
               },
             ],
           },
-    [drawerWidth, translateX],
+    webDeps([drawerWidth, translateX]),
   );
 
   return (
@@ -267,15 +272,18 @@ function Overlay({
 }) {
   const style = useAnimatedStyle(
     () => ({ opacity: FRONT ? progress.value * 0.32 : progress.value }),
-    [progress],
+    webDeps([progress]),
   );
-  const props = useAnimatedProps(() => {
-    const active = progress.value > PROGRESS_EPSILON;
-    return {
-      pointerEvents: active ? 'auto' : 'none',
-      'aria-hidden': !active,
-    } as const;
-  }, [progress]);
+  const props = useAnimatedProps(
+    () => {
+      const active = progress.value > PROGRESS_EPSILON;
+      return {
+        pointerEvents: active ? 'auto' : 'none',
+        'aria-hidden': !active,
+      } as const;
+    },
+    webDeps([progress]),
+  );
   return (
     <Animated.View
       style={style}
@@ -296,13 +304,16 @@ function Overlay({
 
 /** iOS: the drawer darkens while it is still small behind the content. */
 function DrawerDim({ progress }: { progress: SharedValue<number> }) {
-  const style = useAnimatedStyle(() => {
-    const parentScale = interpolate(progress.value, [0, 1], [0.95, 1]);
-    return {
-      opacity: interpolate(progress.value, [0, 1], [0.5, 0]),
-      transform: [{ scale: 1 / parentScale }],
-    };
-  }, [progress]);
+  const style = useAnimatedStyle(
+    () => {
+      const parentScale = interpolate(progress.value, [0, 1], [0.95, 1]);
+      return {
+        opacity: interpolate(progress.value, [0, 1], [0.5, 0]),
+        transform: [{ scale: 1 / parentScale }],
+      };
+    },
+    webDeps([progress]),
+  );
   return (
     <Animated.View
       pointerEvents="none"
