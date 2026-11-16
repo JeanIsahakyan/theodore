@@ -92,7 +92,9 @@ export function fakePlatform(over: Partial<FleetPlatform> = {}) {
   const sockets: FakeSocket[] = [];
   let active: ((a: boolean) => void) | null = null;
   let n = 0;
-  const storage: SecretStorage = memoryStorage();
+  // Passed in: the same device after a restart.
+  const storage: SecretStorage = over.storage ?? memoryStorage();
+  const data: SecretStorage = over.data ?? memoryStorage();
   const platform: FleetPlatform = {
     kind: 'mobile',
     os: 'macos',
@@ -108,6 +110,7 @@ export function fakePlatform(over: Partial<FleetPlatform> = {}) {
     randomUUID: () =>
       `00000000-0000-4000-8000-${String(++n).padStart(12, '0')}`,
     storage,
+    data,
     onActive(l) {
       active = l;
       return () => {
@@ -120,6 +123,7 @@ export function fakePlatform(over: Partial<FleetPlatform> = {}) {
     platform,
     sockets,
     storage,
+    data,
     last: () => sockets[sockets.length - 1]!,
     setActive: (a: boolean) => active?.(a),
   };

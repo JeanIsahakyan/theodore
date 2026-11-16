@@ -6,6 +6,7 @@
  */
 import Constants from 'expo-constants';
 import { createSecureStorage } from '../keys/storage';
+import { createDataStorage } from './data';
 import type { DeviceOs } from '../gen/fleet';
 import type { FleetPlatform, FleetSocket } from './platform-types';
 
@@ -42,6 +43,7 @@ export function defaultPlatform(): FleetPlatform {
       ]) as unknown as FleetSocket,
     randomUUID: () => crypto.randomUUID(),
     storage: createSecureStorage(),
+    data: createDataStorage(),
     onActive(listener) {
       if (typeof document === 'undefined') return () => {};
       const on = () => listener(document.visibilityState === 'visible');

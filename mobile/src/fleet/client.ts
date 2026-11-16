@@ -22,6 +22,18 @@
  * space_gap ─▶ a gap line; dismiss ─▶ question gone; delegations ─▶ verified, kept
  * ```
  *
+ * Kept across restarts (src/fleet/saved.ts), per account and organization:
+ *
+ * ```text
+ * connect ─▶ session ─▶ saved set of <user>.<org>, written for this org's device id
+ *   ─▶ listed at once (last known status), before the socket opens
+ * welcome ─▶ started here: subscribe{since: last seq} (with the rest)
+ * delegations ─▶ followed: its origin still delegates here ─▶ subscribe{since}
+ *                          else ─▶ dropped
+ * a change ─▶ saved within a second; the app going to the background ─▶ now
+ * sign-out, org switch ─▶ the set is removed
+ * ```
+ *
  * Following (delegation): when an origin has delegated to this device and
  * an ask (or event) for a space not tracked here verifies against a pinned
  * host, the space is followed: tracked with `startedHere: false` and
@@ -51,6 +63,7 @@ import { storageKey, type SecretStorage } from '../keys/storage-types';
 import type { DeviceKey, KeyStore } from '../keys/types';
 import { initialFleet, useFleetState } from '../state/fleet';
 import { open, peek, seal, signHello } from './crypto';
+import type { DataStorage } from './data';
 import {
   applyMirror,
   emptyMirror,
@@ -60,6 +73,7 @@ import {
   type SpaceMirror,
 } from './mirror';
 import { pinStore, type Pin, type PinStore } from './pins';
+import { SAVED_LINES, savedScope, savedSpaces, type SavedSpace } from './saved';
 import { defaultPlatform } from './platform';
 import type { FleetPlatform, FleetSocket } from './platform-types';
 import {
@@ -128,6 +142,10 @@ export interface FleetDeps {
   platform: FleetPlatform;
   /** Pins and the device id per org (defaults to the platform's). */
   storage: SecretStorage;
+  /** The spaces kept across restarts (defaults to the platform's). */
+  data: DataStorage;
+  /** A change is saved this long after it (sooner going to the background). */
+  saveDelayMs: number;
   cloudUrl: string;
   fetch: typeof fetch;
   timing: FleetTiming;
@@ -190,6 +208,10 @@ interface Tracked {
   mirror: SpaceMirror;
   /** Subscribed (after a verified ok start, or followed). */
   subscribed: boolean;
+  /** Followed, read back after a restart: subscribed once a delegation still says so. */
+  awaiting: boolean;
+  /** Last time something of it arrived: the most recent ones are kept. */
+  seenAt: number;
 }
 
 interface Link {
@@ -222,6 +244,8 @@ export function createFleetClient(
   const deps: FleetDeps = {
     platform,
     storage: overrides.storage ?? platform.storage,
+    data: overrides.data ?? platform.data,
+    saveDelayMs: overrides.saveDelayMs ?? 1000,
     cloudUrl: overrides.cloudUrl ?? config.cloudUrl,
     fetch: overrides.fetch ?? ((...a) => fetch(...a)),
     timing: overrides.timing ?? DEFAULT_TIMING,
@@ -230,6 +254,7 @@ export function createFleetClient(
   };
   const t = deps.timing;
   const pins: PinStore = pinStore(deps.storage);
+  const saved = savedSpaces(deps.data);
   const set = useFleetState.setState;
 
   // ── state ───────────────────────────────────────────────────────────────
@@ -253,6 +278,14 @@ export function createFleetClient(
   const pending = new Map<string, Pending>();
   const tracked = new Map<string, Tracked>();
   const questions = new Map<string, { view: QuestionView; host: string }>();
+  /** `<user>.<org>` whose saved set is loaded and written; `null`: none yet. */
+  let scope: string | null = null;
+  /** The device id the loaded set was written for. */
+  let savedFor: string | null = null;
+  let dirty = new Set<string>();
+  let saveTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Storage writes, one at a time and in order (a clear after a write). */
+  let ops: Promise<void> = Promise.resolve();
 
   // ── publishing ──────────────────────────────────────────────────────────
   const publishSpaces = () =>
@@ -310,6 +343,127 @@ export function createFleetClient(
     delegators = new Map();
     me = null;
     set({ ...initialFleet, fingerprint: useFleetState.getState().fingerprint });
+  };
+
+  // ── kept across restarts ────────────────────────────────────────────────
+  const queue = (op: () => Promise<void>): Promise<void> =>
+    (ops = ops.then(op).catch(() => {}));
+
+  const toSaved = (x: Tracked): SavedSpace => ({
+    view: { ...x.view },
+    lastSeq: x.lastSeq,
+    startedName: x.startedName,
+    seenAt: x.seenAt,
+    lines: x.lines.slice(-SAVED_LINES),
+    mirror: {
+      space: x.mirror.space,
+      messages: Object.values(x.mirror.messages),
+    },
+  });
+
+  /** Writes what changed now; resolves once it is stored. */
+  const flush = (): Promise<void> => {
+    if (saveTimer) clearTimeout(saveTimer);
+    saveTimer = null;
+    const s = scope;
+    const device = me ?? savedFor;
+    if (!s || !device) return ops;
+    const changed = dirty;
+    dirty = new Set();
+    const list = [...tracked.values()]
+      .filter((x) => x.subscribed || x.awaiting)
+      .map(toSaved);
+    return queue(() => saved.write(s, device, list, changed));
+  };
+
+  const scheduleSave = () => {
+    saveTimer ??= setTimeout(() => void flush(), deps.saveDelayMs);
+  };
+
+  /** Something of `x` changed: saved soon, and it counts as recent. */
+  const touch = (x: Tracked) => {
+    x.seenAt = deps.now();
+    dirty.add(x.view.space);
+    scheduleSave();
+  };
+
+  /** Sign-out or org switch: the saved set of the account left goes. */
+  const leaveScope = () => {
+    const old = scope;
+    scope = null;
+    savedFor = null;
+    dirty = new Set();
+    if (saveTimer) clearTimeout(saveTimer);
+    saveTimer = null;
+    if (old) void queue(() => saved.clear(old));
+  };
+
+  /** Spaces gone from the list: their lines and mirror leave the store too. */
+  const dropShown = (gone: string[]) => {
+    if (!gone.length) return;
+    publishSpaces();
+    set((s) => {
+      const lines = { ...s.lines };
+      const mirrors = { ...s.mirrors };
+      for (const id of gone) {
+        delete lines[id];
+        delete mirrors[id];
+      }
+      return { lines, mirrors };
+    });
+    scheduleSave();
+  };
+
+  /**
+   * The saved set of `next`, listed before the socket opens. One written
+   * for another device id (a backup restored on another phone, this one
+   * removed and joined again) is dropped.
+   */
+  const restore = async (next: string, device: string | null) => {
+    if (scope === next) return;
+    if (scope !== null) {
+      // Another account or org than the one listed: nothing of it stays.
+      leaveScope();
+      forgetFleet();
+    }
+    const list = await saved.load(next, device);
+    scope = next;
+    savedFor = device;
+    const lines: Record<string, SpaceLine[]> = {};
+    const mirrors: Record<string, SpaceMirror> = {};
+    for (const r of list) {
+      if (tracked.has(r.view.space)) continue;
+      const followed = !r.view.startedHere;
+      const x: Tracked = {
+        view: r.view,
+        lines: r.lines,
+        lastSeq: r.lastSeq,
+        startedName: r.startedName,
+        mirror: {
+          space: r.mirror.space,
+          messages: Object.fromEntries(r.mirror.messages.map((m) => [m.id, m])),
+          steps: {},
+        },
+        subscribed: !followed,
+        awaiting: followed,
+        seenAt: r.seenAt,
+      };
+      tracked.set(r.view.space, x);
+      lines[r.view.space] = [...x.lines];
+      mirrors[r.view.space] = x.mirror;
+    }
+    if (!list.length) return;
+    publishSpaces();
+    set((s) => ({
+      lines: { ...s.lines, ...lines },
+      mirrors: { ...s.mirrors, ...mirrors },
+    }));
+  };
+
+  /** A live delegation of `origin` to this device. */
+  const delegatedBy = (origin: string) => {
+    const exp = delegators.get(origin);
+    return exp !== undefined && (exp === 0 || exp > deps.now());
   };
 
   // ── the link ────────────────────────────────────────────────────────────
@@ -411,6 +565,11 @@ export function createFleetClient(
       const key = await keys.deviceKey();
       set({ fingerprint: fingerprint(key.publicKey) });
       const stored = await deps.storage.get(deviceIdKey(s.organizationId));
+      if (mine !== epoch) return;
+      await restore(
+        savedScope(s.userId, s.organizationId),
+        validDeviceId(stored) ? stored : null,
+      );
       if (mine !== epoch || !wanted || fatal || link) return;
       if (background && platform.closeInBackground) return;
       setConnection('connecting');
@@ -538,6 +697,14 @@ export function createFleetClient(
       l.handshake = null;
       attempt = 0;
       me = msg.device_id;
+      if (savedFor !== me) {
+        // What was kept belongs to another device id: the cloud won't
+        // let this one follow it.
+        const gone = savedFor ? [...tracked.keys()] : [];
+        for (const id of gone) tracked.delete(id);
+        savedFor = me;
+        dropShown(gone);
+      }
       await deps.storage.set(deviceIdKey(l.org), msg.device_id).catch(() => {});
       if (link !== l) return;
       setConnection('connected');
@@ -585,7 +752,8 @@ export function createFleetClient(
         return;
       case 'delegations':
         rawDelegations = Array.isArray(msg.list) ? msg.list : [];
-        return verifyDelegations();
+        await verifyDelegations();
+        return resumeFollowed();
       default:
         // `request` / `claim_result`: never a target, nothing to run.
         return;
@@ -634,6 +802,7 @@ export function createFleetClient(
         // Before the host's signed ok the cloud doesn't know the space.
         x.subscribed = true;
         sendMsg({ type: 'subscribe', space: p.space, since: x.lastSeq });
+        touch(x);
       } else {
         x.view.status = 'failed';
         x.view.error = answerError(a)?.message ?? null;
@@ -670,11 +839,36 @@ export function createFleetClient(
       startedName: null,
       mirror: emptyMirror(),
       subscribed: true,
+      awaiting: false,
+      seenAt: deps.now(),
     };
     tracked.set(space, x);
     sendMsg({ type: 'subscribe', space, since: 0 });
     publishSpaces();
+    touch(x);
     return x;
+  };
+
+  /**
+   * Followed spaces read back after a restart: subscribed again from the
+   * last seq while their origin (not known: any origin) still delegates
+   * here; else forgotten.
+   */
+  const resumeFollowed = () => {
+    const gone: string[] = [];
+    for (const [space, x] of [...tracked]) {
+      if (!x.awaiting) continue;
+      const origin = x.view.originDevice;
+      if (origin ? delegatedBy(origin) : delegated()) {
+        x.awaiting = false;
+        x.subscribed = true;
+        sendMsg({ type: 'subscribe', space, since: x.lastSeq });
+      } else {
+        tracked.delete(space);
+        gone.push(space);
+      }
+    }
+    dropShown(gone);
   };
 
   const delegated = () => {
@@ -714,6 +908,7 @@ export function createFleetClient(
     if (ev.kind !== 'mirror') return;
     // Compaction leaves holes in seq: they aren't gaps.
     x.lastSeq = seq;
+    touch(x);
     const before = x.mirror;
     const next = applyMirror(before, x.view.space, ev.model, ev.id, ev.data);
     if (next === before) return;
@@ -799,6 +994,7 @@ export function createFleetClient(
         break;
     }
     pushLine(x, line);
+    touch(x);
     publishSpaces();
     publishLines(v.space);
   };
@@ -815,6 +1011,7 @@ export function createFleetClient(
     const line = gapLine(from, to);
     if (x.lines.some((l) => l.kind === 'gap' && l.text === line.text)) return;
     pushLine(x, line);
+    touch(x);
     publishLines(space);
   };
 
@@ -953,6 +1150,7 @@ export function createFleetClient(
       wanted = false;
       closeLink();
       setConnection('off');
+      void flush();
     },
 
     async startSpace(req) {
@@ -1001,6 +1199,8 @@ export function createFleetClient(
         startedName: null,
         mirror: emptyMirror(),
         subscribed: false,
+        awaiting: false,
+        seenAt: deps.now(),
       };
       tracked.set(space, x);
       publishSpaces();
@@ -1169,6 +1369,7 @@ export function createFleetClient(
       push = null;
       epoch++;
       closeLink();
+      leaveScope();
       forgetFleet();
       return;
     }
@@ -1176,6 +1377,7 @@ export function createFleetClient(
     if (before && before.organizationId !== s.organizationId) {
       epoch++;
       closeLink();
+      leaveScope();
       forgetFleet();
       fatal = null;
       attempt = 0;
@@ -1205,6 +1407,8 @@ export function createFleetClient(
   platform.onActive((active) => {
     background = !active;
     if (!active) {
+      // iOS may kill the app from here on: what changed is saved now.
+      void flush();
       if (platform.closeInBackground && link) {
         closeLink();
         setConnection('off');

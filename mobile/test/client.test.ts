@@ -1142,6 +1142,280 @@ describe('following (delegation)', () => {
   });
 });
 
+describe('kept across restarts', () => {
+  const INDEX = 'theodore.fleet.spaces.user_1.org_test';
+  const savedIds = async (hub: ReturnType<typeof fakePlatform>) => {
+    const text = await hub.data.get(INDEX);
+    return text ? (JSON.parse(text) as { spaces: string[] }).spaces : null;
+  };
+  /** Polls storage (async) until `pred` holds. */
+  const until = async (pred: () => Promise<boolean>, what: string) => {
+    const end = Date.now() + 1500;
+    while (!(await pred())) {
+      if (Date.now() > end) throw new Error(`timed out waiting for ${what}`);
+      await sleep(2);
+    }
+  };
+  /** A fresh process on the same device: same storage, empty memory. */
+  const restart = (prev: ReturnType<typeof fakePlatform>) => {
+    clients.forEach((c) => c.stop());
+    useFleetState.setState(initialFleet, true);
+    return setup({ platform: { storage: prev.storage, data: prev.data } });
+  };
+  const deleg = (over = {}) =>
+    sealAs(
+      {
+        origin_device: OTHER,
+        delegate_device: ME,
+        issued_at_ms: 1,
+        expires_at_ms: 0,
+        revoke: false,
+        ...over,
+      },
+      OTHER,
+      originKey,
+      'delegate',
+    );
+
+  it('lists a started space at once on launch and resubscribes from the last seq', async () => {
+    const t = await runningSpace();
+    const { sock, space } = t;
+    for (const [seq, ev] of [
+      [
+        1,
+        {
+          kind: 'started',
+          host_device: HOST,
+          origin_device: ME,
+          project_id: 'p1',
+          project_name: 'Theodore',
+          name: 'Fix bug',
+          branch: 'th/fix',
+          mode: 'edit',
+          depth: 0,
+        },
+      ],
+      [2, { kind: 'reply', turn: 1, text: 'done it' }],
+      [5, { kind: 'status', status: 'idle' }],
+    ] as const)
+      sock.deliver({
+        type: 'space_event',
+        envelope: await event(space, seq, ev),
+      });
+    await waitFor(() => state().spaces[0]?.status === 'idle', 'idle');
+    // Backgrounding saves at once (iOS may kill the app next).
+    t.hub.setActive(false);
+    await until(async () => (await savedIds(t.hub))?.[0] === space, 'saved');
+    t.hub.setActive(true);
+
+    const r = restart(t.hub);
+    await r.client.start();
+    // Shown before the socket says anything.
+    expect(r.hub.sockets).toHaveLength(1);
+    expect(r.hub.last().of('hello')).toHaveLength(0);
+    expect(state().spaces).toHaveLength(1);
+    expect(state().spaces[0]).toMatchObject({
+      space,
+      hostDevice: HOST,
+      projectName: 'Theodore',
+      name: 'Fix bug',
+      branch: 'th/fix',
+      status: 'idle',
+      mode: 'edit',
+      lastReply: 'done it',
+      startedHere: true,
+    });
+    expect(state().lines[space]!.map((l) => l.seq)).toEqual([1, 2, 5]);
+
+    const again = await handshake(r.hub, [device(HOST, hostKey)]);
+    await waitFor(() => again.of('subscribe').length === 1, 'resubscribe');
+    expect(again.of('subscribe')[0]).toEqual({
+      type: 'subscribe',
+      space,
+      since: 5,
+    });
+    // What the cloud replays applies on top; older seqs are not applied twice.
+    again.deliver({
+      type: 'space_event',
+      envelope: await event(space, 5, { kind: 'status', status: 'failed' }),
+    });
+    again.deliver({
+      type: 'space_event',
+      envelope: await event(space, 6, { kind: 'status', status: 'running' }),
+    });
+    await waitFor(() => state().spaces[0]?.status === 'running', 'replayed');
+    expect(state().lines[space]!.map((l) => l.seq)).toEqual([1, 2, 5, 6]);
+  });
+
+  it('keeps the mirrored space row and chat', async () => {
+    const t = await runningSpace();
+    const { sock, space } = t;
+    const mirror = (seq: number, model: string, id: string, data: object) =>
+      event(space, seq, { kind: 'mirror', model, id, data });
+    sock.deliver({
+      type: 'space_event',
+      envelope: await mirror(3, 'space', space, {
+        id: space,
+        name: 'fix-bug',
+        goal: 'Fix the login bug',
+        title: 'Login fix',
+        branch: 'th/login',
+        status: 'idle',
+        agent: 'claude',
+        mode: 'plan',
+        turns: 1,
+        created_at: 1,
+        updated_at: 2,
+      }),
+    });
+    sock.deliver({
+      type: 'space_event',
+      envelope: await mirror(4, 'chat_message', 'm1', {
+        id: 'm1',
+        pr: `space:${space}`,
+        author: { kind: 'agent', agent: 'claude' },
+        text: 'The plan',
+        at: 2,
+      }),
+    });
+    await waitFor(() => state().spaces[0]?.lastReply === 'The plan', 'mirror');
+    t.hub.setActive(false);
+    await until(
+      async () =>
+        (
+          await t.hub.data.get(`${INDEX.replace('spaces', 'space')}.${space}`)
+        )?.includes('The plan') ?? false,
+      'saved',
+    );
+
+    const r = restart(t.hub);
+    await r.client.start();
+    expect(state().spaces[0]).toMatchObject({
+      name: 'Login fix',
+      mode: 'plan',
+      status: 'idle',
+    });
+    const m = state().mirrors[space]!;
+    expect(m.space).toMatchObject({ id: space, title: 'Login fix' });
+    expect(Object.values(m.messages).map((x) => x.text)).toEqual(['The plan']);
+    const again = await handshake(r.hub, [device(HOST, hostKey)]);
+    await waitFor(() => again.of('subscribe').length === 1, 'resubscribe');
+    expect(again.of('subscribe')[0]!.since).toBe(4);
+  });
+
+  it('brings a followed space back only while its origin still delegates here', async () => {
+    const { client, hub } = setup();
+    await client.start();
+    const sock = await handshake(hub, [
+      device(HOST, hostKey),
+      device(OTHER, originKey),
+    ]);
+    await waitFor(() => state().devices.length === 2, 'devices');
+    await client.trust(HOST, hostKey.publicKey);
+    sock.deliver({ type: 'delegations', list: [await deleg()] });
+    await sleep(10);
+    sock.deliver({
+      type: 'space_event',
+      envelope: await event('rs_far', 1, {
+        kind: 'status',
+        status: 'running',
+      }),
+    });
+    await waitFor(() => state().spaces.length === 1, 'followed');
+    sock.deliver({
+      type: 'space_event',
+      envelope: await event('rs_far', 1, {
+        kind: 'started',
+        host_device: HOST,
+        origin_device: OTHER,
+        project_id: 'p',
+        project_name: 'P',
+        name: 'Far',
+        branch: 'b',
+        mode: 'plan',
+        depth: 0,
+      }),
+    });
+    await waitFor(() => state().spaces[0]?.name === 'Far', 'started');
+    hub.setActive(false);
+    await until(async () => (await savedIds(hub))?.[0] === 'rs_far', 'saved');
+
+    // Still delegated: listed at once, subscribed from its seq after the check.
+    const r = restart(hub);
+    await r.client.start();
+    expect(state().spaces[0]).toMatchObject({
+      space: 'rs_far',
+      name: 'Far',
+      startedHere: false,
+      originDevice: OTHER,
+    });
+    const s2 = await handshake(r.hub, [
+      device(HOST, hostKey),
+      device(OTHER, originKey),
+    ]);
+    await sleep(10);
+    expect(s2.of('subscribe')).toEqual([]);
+    s2.deliver({ type: 'delegations', list: [await deleg()] });
+    await waitFor(() => s2.of('subscribe').length === 1, 'resubscribe');
+    expect(s2.of('subscribe')[0]).toEqual({
+      type: 'subscribe',
+      space: 'rs_far',
+      since: 1,
+    });
+
+    // Revoked meanwhile: gone from the list and from storage.
+    const r3 = restart(r.hub);
+    await r3.client.start();
+    expect(state().spaces).toHaveLength(1);
+    const s3 = await handshake(r3.hub, [
+      device(HOST, hostKey),
+      device(OTHER, originKey),
+    ]);
+    s3.deliver({ type: 'delegations', list: [await deleg({ revoke: true })] });
+    await waitFor(() => state().spaces.length === 0, 'dropped');
+    expect(state().lines['rs_far']).toBeUndefined();
+    expect(s3.of('subscribe')).toEqual([]);
+    r3.hub.setActive(false);
+    await until(async () => (await savedIds(r3.hub))?.length === 0, 'unsaved');
+  });
+
+  it('clears what it kept on sign-out', async () => {
+    const t = await runningSpace();
+    t.hub.setActive(false);
+    await until(async () => (await savedIds(t.hub))?.length === 1, 'saved');
+    t.account.emit(null);
+    await until(async () => (await savedIds(t.hub)) === null, 'cleared');
+    expect(
+      await t.hub.data.get(`theodore.fleet.space.user_1.org_test.${t.space}`),
+    ).toBeNull();
+    const r = restart(t.hub);
+    await r.client.start();
+    expect(state().spaces).toEqual([]);
+  });
+
+  it('clears what it kept on an organization switch', async () => {
+    const t = await runningSpace();
+    t.hub.setActive(false);
+    await until(async () => (await savedIds(t.hub))?.length === 1, 'saved');
+    t.hub.setActive(true);
+    t.account.emit(session('tok-1', 'org_other'));
+    await until(async () => (await savedIds(t.hub)) === null, 'cleared');
+    expect(state().spaces).toEqual([]);
+  });
+
+  it('drops a set written for another device id', async () => {
+    const t = await runningSpace();
+    t.hub.setActive(false);
+    await until(async () => (await savedIds(t.hub))?.length === 1, 'saved');
+    // A backup restored on a new phone: no device id of this org here.
+    await t.hub.storage.remove('theodore.fleet.device_id.org_test');
+    const r = restart(t.hub);
+    await r.client.start();
+    expect(state().spaces).toEqual([]);
+    expect(await savedIds(r.hub)).toBeNull();
+  });
+});
+
 describe('answer over HTTP', () => {
   it('posts a signed answer with the bearer token', async () => {
     const calls: { url: string; init: RequestInit }[] = [];

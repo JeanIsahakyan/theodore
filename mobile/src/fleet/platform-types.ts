@@ -5,6 +5,7 @@
  */
 import type { DeviceOs } from '../gen/fleet';
 import type { SecretStorage } from '../keys/storage-types';
+import type { DataStorage } from './data';
 
 /** The part of a WebSocket the client uses (browser, RN and test fakes). */
 export interface FleetSocket {
@@ -34,6 +35,8 @@ export interface FleetPlatform {
   openSocket(url: string, token: string): FleetSocket;
   randomUUID(): string;
   storage: SecretStorage;
+  /** Larger, non-secret values: the spaces kept across restarts. */
+  data: DataStorage;
   /** `true` when the app comes to the foreground, `false` when it leaves. */
   onActive(listener: (active: boolean) => void): () => void;
 }
