@@ -473,7 +473,8 @@ async fn send_stop_answer_and_approve_go_to_the_host() {
     wait_until("mirrored", || row(&f, models::SPACE, &rs).is_some()).await;
     let n = requests(&f).len();
 
-    // Send: the text and the mode; the agent and files are the host's.
+    // Send: the text, the mode and the picks (the host checks them);
+    // files stay here.
     let sent = {
         let core = core.clone();
         let rs = rs.clone();
@@ -485,7 +486,7 @@ async fn send_stop_answer_and_approve_go_to_the_host() {
                 model: Some("x".into()),
                 mode: Some(SpaceMode::Plan),
                 attachments: None,
-                effort: None,
+                effort: Some("high".into()),
             })
             .await
         })
@@ -496,6 +497,9 @@ async fn send_stop_answer_and_approve_go_to_the_host() {
             space: rs.clone(),
             text: "Go on".into(),
             mode: Some(FleetMode::Plan),
+            agent: Some("codex".into()),
+            model: Some("x".into()),
+            effort: Some("high".into()),
         }
     );
     sent.await.unwrap().unwrap();
@@ -567,6 +571,9 @@ async fn send_stop_answer_and_approve_go_to_the_host() {
             space: rs.clone(),
             text: crate::usecases::space_plan::APPROVED_TEXT.into(),
             mode: Some(FleetMode::Edit),
+            agent: None,
+            model: None,
+            effort: None,
         }
     );
     approved.await.unwrap().unwrap();

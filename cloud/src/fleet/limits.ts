@@ -19,6 +19,14 @@ export const MAX_DEPTH = 2;
 export const MAX_CHILDREN = 5;
 export const CLOUD_RING = 500;
 export const MAX_FRAME_BYTES = 256 * 1024;
+/** `DeviceInfo.agents` (`fit_agents` keeps a device's within these). */
+export const MAX_AGENTS = 4;
+export const MAX_AGENT_MODELS = 12;
+export const MAX_MODEL_EFFORTS = 8;
+export const MAX_AGENT_ID_CHARS = 32;
+export const MAX_MODEL_ID_CHARS = 64;
+export const MAX_AGENT_LABEL_CHARS = 64;
+export const MAX_EFFORT_CHARS = 16;
 
 /** A request to an offline target waits this long for it to come back. */
 export const GRACE_MS = 10_000;

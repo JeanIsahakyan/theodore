@@ -2170,6 +2170,11 @@ pub struct FakeAgent {
     /// The next run waits for this before it plays its script (a dropped
     /// sender: it never does).
     paused: Mutex<Option<tokio::sync::oneshot::Receiver<()>>>,
+    /// What `models` lists per agent (`set_models`); none by default.
+    models:
+        Mutex<std::collections::HashMap<theodore_domain::AgentId, Vec<theodore_ports::ModelInfo>>>,
+    /// How many times `detect` ran.
+    detects: std::sync::atomic::AtomicUsize,
 }
 
 /// What an untagged, unscripted call gets: one plain, successful turn.
@@ -2186,6 +2191,18 @@ impl FakeAgent {
     }
     pub fn push_script(&self, events: Vec<AgentEvent>) {
         self.scripts.lock().unwrap().push_back(events);
+    }
+    /// What `models(agent)` lists from now on.
+    pub fn set_models(
+        &self,
+        agent: theodore_domain::AgentId,
+        list: Vec<theodore_ports::ModelInfo>,
+    ) {
+        self.models.lock().unwrap().insert(agent, list);
+    }
+    /// How many times `detect` ran.
+    pub fn detects(&self) -> usize {
+        self.detects.load(std::sync::atomic::Ordering::SeqCst)
     }
     /// The next call whose request matches `matches` gets `events`
     /// instead of the next one off the FIFO queue (or the default "ok"),
@@ -2258,6 +2275,8 @@ impl FakeAgent {
 #[async_trait]
 impl AgentPort for FakeAgent {
     async fn detect(&self) -> Vec<AgentInfo> {
+        self.detects
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         theodore_domain::AgentId::ALL
             .into_iter()
             .map(|id| AgentInfo {
@@ -2373,6 +2392,15 @@ impl AgentPort for FakeAgent {
             }
         });
         Ok((run, Some(steer)))
+    }
+
+    async fn models(&self, agent: theodore_domain::AgentId) -> Vec<theodore_ports::ModelInfo> {
+        self.models
+            .lock()
+            .unwrap()
+            .get(&agent)
+            .cloned()
+            .unwrap_or_default()
     }
 }
 

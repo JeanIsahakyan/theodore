@@ -106,6 +106,8 @@ export interface Space {
   status: SpaceStatusRow;
   agent: string;
   model?: string | null;
+  /** The level its turns run at; none: the agent's setting there. */
+  effort?: string | null;
   mode: SpaceMode;
   turns: number;
   /** The turn in flight (`space:rs_…:<message>`). */

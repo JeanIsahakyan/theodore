@@ -1,7 +1,8 @@
 /**
- * Android: Material 3 buttons. primary ─▶ `Button` (filled), secondary ─▶
- * `FilledTonalButton`, plain ─▶ `TextButton`, destructive ─▶ filled in the
- * danger color. In a `Form`: a clickable `ListItem` (accent, or danger).
+ * Android: Material 3 buttons. primary, glassProminent ─▶ `Button`
+ * (filled), secondary, glass ─▶ `FilledTonalButton`, plain ─▶ `TextButton`,
+ * destructive ─▶ filled in the danger color. In a `Form`: a clickable
+ * `ListItem` (accent, or danger).
  */
 import {
   Button as FilledButton,
@@ -74,7 +75,7 @@ export function Button({
 
   if (fullWidth) mods.push(fillMaxWidth());
   const Component =
-    variant === 'secondary'
+    variant === 'secondary' || variant === 'glass'
       ? FilledTonalButton
       : variant === 'plain'
         ? TextButton

@@ -1166,6 +1166,19 @@ export type FindSymbolRequest = {
 	side?: DiffSide | null,
 };
 
+/**
+ *  An agent another device runs, with its models (`description` none,
+ *  `older` false: the host lists current models first).
+ */
+export type FleetAgent = {
+	id: AgentId,
+	label: string,
+	/**  What runs there when none is picked. */
+	default_model: string | null,
+	default_effort: string | null,
+	models: AgentModel[],
+};
+
 export type FleetAnswerRequest = {
 	space: string,
 	ask_id: string,
@@ -1212,6 +1225,13 @@ export type FleetDevice = {
 	delegated: boolean,
 	/**  The cloud holds that delegation, as this device signed it. */
 	delegation_live: boolean,
+	/**
+	 *  Agents a space started or steered there may pick, as it lists them
+	 *  (installed and enabled there, its default first). Empty: a host too
+	 *  old to list them, or not taking remote spaces; then nothing is
+	 *  picked and its own defaults run.
+	 */
+	agents?: FleetAgent[],
 };
 
 export type FleetLineKind = "started" | "status" | "turn" | "tool" | "reply" | "ended" | "question" | "gap";
@@ -1275,6 +1295,10 @@ export type FleetSendRequest = {
 	space: string,
 	text: string,
 	mode?: SpaceMode | null,
+	/**  From this turn on, as a local send; `None` keeps the space's. */
+	agent?: AgentId | null,
+	model?: string | null,
+	effort?: string | null,
 };
 
 export type FleetSettingsRequest = {
@@ -1299,6 +1323,10 @@ export type FleetStartRequest = {
 	project_id: string,
 	goal: string,
 	mode: SpaceMode,
+	/**  One the host lists (`FleetDevice::agents`); `None`: its default. */
+	agent?: AgentId | null,
+	model?: string | null,
+	effort?: string | null,
 };
 
 export type FleetStatus = {

@@ -8,7 +8,7 @@
  * visible text is not enough ("Switch to Acme" for a row showing "Acme").
  */
 import type { ReactElement, ReactNode } from 'react';
-import type { StyleProp, ViewStyle } from 'react-native';
+import type { StyleProp, ViewProps, ViewStyle } from 'react-native';
 
 interface Common {
   accessibilityLabel?: string;
@@ -20,7 +20,29 @@ interface Placed {
   style?: StyleProp<ViewStyle>;
 }
 
-export type ButtonVariant = 'primary' | 'secondary' | 'plain' | 'destructive';
+/**
+ * A control floating over content (a composer, a bar): on iOS 26+ it sits
+ * on Liquid Glass; below iOS 26, on Android and on web it keeps its plain
+ * look. Ignored inside a `Form`.
+ */
+interface Floating {
+  glass?: boolean;
+}
+
+/**
+ * `glass` / `glassProminent`: Liquid Glass on iOS 26+ (`.glass` /
+ * `.glassProminent`), `secondary` / `primary` below iOS 26 and on web,
+ * Material 3 tonal / filled on Android. For actions floating over content
+ * (a composer's Send, a bar's main action); `primary` / `secondary` stay
+ * the in-content buttons.
+ */
+export type ButtonVariant =
+  | 'primary'
+  | 'secondary'
+  | 'plain'
+  | 'destructive'
+  | 'glass'
+  | 'glassProminent';
 
 export interface ButtonProps extends Common, Placed {
   label: string;
@@ -40,7 +62,8 @@ export interface Choice<T extends string> {
   accessibilityLabel?: string;
 }
 
-export interface SegmentedProps<T extends string> extends Common, Placed {
+export interface SegmentedProps<T extends string>
+  extends Common, Placed, Floating {
   /** What is being chosen ("Mode"): read by screen readers, a row label in a `Form`. */
   label: string;
   choices: readonly Choice<T>[];
@@ -49,7 +72,8 @@ export interface SegmentedProps<T extends string> extends Common, Placed {
   disabled?: boolean;
 }
 
-export interface SelectProps<T extends string> extends Common, Placed {
+export interface SelectProps<T extends string>
+  extends Common, Placed, Floating {
   /** What is being chosen ("Device"): the row's label. */
   label: string;
   choices: readonly Choice<T>[];
@@ -58,6 +82,31 @@ export interface SelectProps<T extends string> extends Common, Placed {
   onChange: (value: T) => void;
   /** Default "Choose…". */
   placeholder?: string;
+  disabled?: boolean;
+}
+
+/** One single choice of a `Menu` ("Model": Opus, Sonnet, …). */
+export interface MenuGroup<T extends string = string> {
+  /** What it chooses: a submenu (iOS), a heading (Android, web). */
+  label: string;
+  choices: readonly Choice<T>[];
+  /** The chosen one (a checkmark); `null`: none. */
+  value: T | null;
+  onChange: (value: T) => void;
+}
+
+/**
+ * A compact button that opens a menu of single choices (a composer's
+ * agent · model · effort). iOS: SwiftUI `Menu` (glass on iOS 26+ with
+ * `glass`, bordered capsule below), each group a `.menu` `Picker`
+ * submenu; Android: Material 3 `AssistChip` + `DropdownMenu`; web: a pill
+ * and a sheet of the groups.
+ */
+export interface MenuProps extends Common, Placed, Floating {
+  /** What the button shows ("Opus 4.1 · High"); also its accessible name
+   *  unless `accessibilityLabel` is set. */
+  label: string;
+  groups: readonly MenuGroup[];
   disabled?: boolean;
 }
 
@@ -72,7 +121,7 @@ export interface SwitchProps extends Common, Placed {
 
 export type SubmitLabel = 'done' | 'go' | 'send' | 'search' | 'next';
 
-export interface TextFieldProps extends Common, Placed {
+export interface TextFieldProps extends Common, Placed, Floating {
   value: string;
   onChangeText: (text: string) => void;
   placeholder?: string;
@@ -142,4 +191,29 @@ export interface ConfirmOptions {
   cancelLabel?: string;
   /** The confirm action in the danger color. */
   destructive?: boolean;
+}
+
+export interface GlassProps extends ViewProps {
+  /** `capsule` (a pill, a banner) or `rounded` (a card, a panel). Default `rounded`. */
+  shape?: 'capsule' | 'rounded';
+  /** Corner radius of `rounded`. Default 20. */
+  radius?: number;
+  /** Reacts to touch (a pressable surface). Fixed at mount. */
+  interactive?: boolean;
+  /** A tint over the glass (iOS 26+); keep it light, e.g. a color at 20 %. */
+  tint?: string;
+  /**
+   * What it is without glass (iOS before 26, Android, web): `surface` (a
+   * card), `muted` (a quiet pill), `none` (transparent). Default `surface`.
+   */
+  fallback?: 'surface' | 'muted' | 'none';
+  children?: ReactNode;
+}
+
+export interface TopBarProps {
+  title: string;
+  /** "Back" (the leading button); none without it. */
+  onBack?: () => void;
+  /** One trailing action, a kit `Button` (`plain` in a bar). */
+  action?: ReactNode;
 }

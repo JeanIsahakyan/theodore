@@ -1,4 +1,7 @@
-/** iOS: SwiftUI `Picker` with `.segmented` style. */
+/**
+ * iOS: SwiftUI `Picker` with `.segmented` style; `glass`: on a Liquid Glass
+ * capsule (iOS 26+).
+ */
 import { Picker, Text } from '@expo/ui/swift-ui';
 import {
   accessibilityLabel as a11yLabel,
@@ -6,7 +9,7 @@ import {
   pickerStyle,
   tag,
 } from '@expo/ui/swift-ui/modifiers';
-import { ControlHost } from './host.ios';
+import { ControlHost, glassBehind } from './host.ios';
 import type { SegmentedProps } from './types';
 
 export function Segmented<T extends string>({
@@ -15,6 +18,7 @@ export function Segmented<T extends string>({
   value,
   onChange,
   disabled,
+  glass,
   accessibilityLabel,
   testID,
   style,
@@ -33,6 +37,7 @@ export function Segmented<T extends string>({
           pickerStyle('segmented'),
           a11yLabel(accessibilityLabel ?? label),
           ...(disabled ? [disabledMod(true)] : []),
+          ...(glass ? glassBehind('capsule', { inset: 4 }) : []),
         ]}
       >
         {choices.map((c) => (

@@ -81,7 +81,7 @@ and redial.
 mac1 core ─sign─▶ request{envelope: RemoteRequest{target_key: mac2's pin, op: StartSpace}} ─▶ cloud
 cloud ─▶ mac2: request{envelope, generation}       (or ─▶ mac1: refused{req_id, code, message})
 mac2 core: verify signature, trust, target_key = own key, freshness, accept_remote,
-           mode ≤ max_mode, project known
+           mode ≤ max_mode, project known, agent / model / effort listed
          ─▶ claim{req_id, generation} ─▶ claim_result{claimed}
          ─▶ create_space(...) ─▶ reply{seal_as(ReplyBody{req_id, origin, target, ok:{space, name}}, Reply)}
          ─▶ cloud, unchanged ─▶ mac1: open_as(mac2's pin, Reply) ─▶ UI
@@ -107,10 +107,53 @@ Two kinds of refusal, told apart on the wire:
 | `fleet.unknown_project` / `fleet.unknown_space` | target | not on the target |
 | `fleet.depth` | target, cloud | deeper than 2 or more than 5 children (starts in flight count) |
 | `fleet.invalid` | target, cloud | the op doesn't fit what it acts on (answers that don't answer the set, an empty message, a space id started already); origin = target |
+| `fleet.agent_unavailable` | target | a start or send names an agent, model or effort the target doesn't list (`DeviceInfo.agents`): not installed, turned off, or not that model's ("Agent, model and effort") |
 | `fleet.busy` | target, cloud | a send to a space whose turn is running |
 | `fleet.internal` | target | the target couldn't record the request, so it didn't run it |
 | `fleet.offline` | cloud | target not connected within 10 s grace |
 | `fleet.too_many_spaces` | cloud | the user's 200 spaces |
+
+### Agent, model and effort
+
+A device that takes remote spaces lists what may run there, and a start or
+send from another device picks from that list, as the desktop's own chip
+does for its spaces.
+
+```
+host: detect + agent_models (cached 10 min: detecting spawns the CLIs)
+  ─▶ installed ∩ agents.<id>.enabled, agents.chat first
+  ─▶ DeviceInfo.agents ─▶ hello / announce (again when an agents.* setting
+     or a project changes)
+origin UI: FleetDevice.agents ─▶ the chip in New space / the space's box
+  ─▶ start{agent?, model?, effort?} / send{agent?, model?, effort?}, signed
+host gate: each one named must be listed ─▶ else fleet.agent_unavailable
+  ─▶ start: create_space(agent, model, effort)  send: that turn on, as a
+     local send with those fields
+```
+
+| Wire field | Type | Notes |
+| --- | --- | --- |
+| `DeviceInfo.agents` | `FleetAgentInfo[]`, default `[]` | empty unless `accepts_remote`, and from an older host: the origin then shows no chip and sends none |
+| `FleetAgentInfo` | `{id, label, default_model?, default_effort?, models: FleetModelInfo[]}` | `default_*`: what runs when a request names none (`agents.<id>.model` / `.effort`, else the first current model and its own level) |
+| `FleetModelInfo` | `{id, label, efforts: string[], default_effort?}` | current models first, earlier versions after |
+| `RemoteOp::StartSpace.effort` | `string?` | next to `agent`, `model` |
+| `RemoteOp::Send.agent` / `.model` / `.effort` | `string?` | from that turn on; `null` keeps the space's |
+
+Caps (`DeviceInfo::fit_agents`, the cloud's wire check the same): ≤ 4
+agents, ≤ 12 models each, ≤ 8 levels a model; ids ≤ 32 (agent) / 64
+(model), levels ≤ 16, labels ≤ 64 characters. An overlong id or level
+isn't listed (it can't be cut), a label is cut; then, while the info's JSON
+is over 8 KiB, the last model of the agent listing the most goes (earlier
+versions first), then the last agent.
+
+What the host checks, before the claim:
+
+| Named | Must be |
+| --- | --- |
+| `agent` | listed |
+| `model` | one of that agent's listed models (by id) |
+| `effort` | one of the levels of the model in effect: the one named, else the space's own while its agent stays (send), else the agent's default; any listed model's when that one isn't listed. `ultracode` for Claude wherever a model takes a level |
+| a model or effort without an agent | the space's agent (send), else the host's default (start: then named explicitly) |
 
 ## Events and history
 
@@ -257,9 +300,11 @@ claim_result{claimed: true} ─▶ seen done kept in the store (else fleet.inter
 
 - "Op fits": start — mode ≤ `max_mode`, project here, depth ≤ 2, < 5
   children of its parent hosted or starting here, the space id not hosted or
-  starting; send — space hosted and not running (`fleet.busy`), mode ≤ cap
-  (the space's own when none given, and that mode is what runs); answer —
-  the question set waits and the answers fit it (`fleet.invalid` otherwise).
+  starting, agent / model / effort listed (`fleet.agent_unavailable`); send —
+  space hosted and not running (`fleet.busy`), mode ≤ cap (the space's own
+  when none given, and that mode is what runs), agent / model / effort
+  listed; answer — the question set waits and the answers fit it
+  (`fleet.invalid` otherwise).
 - Starts in flight: a start that passes the gate reserves its slot in
   memory (children cap, space id) under the same lock as the check, so
   concurrent starts can't all pass. The slot goes when the start ends —
@@ -275,9 +320,9 @@ claim_result{claimed: true} ─▶ seen done kept in the store (else fleet.inter
   restart too; once run, refused or rejected it's a replay
   (`fleet.stale_request`), after a restart too (`fleet_seen`, 10 min past
   `issued_at`).
-- `start_space` runs the usual `create_space` (goal, mode, agent, model) and
-  stores the mapping in `fleet_spaces` (remote id, local space, origin,
-  parent, depth, bookkeeping as JSON).
+- `start_space` runs the usual `create_space` (goal, mode, agent, model,
+  effort) and stores the mapping in `fleet_spaces` (remote id, local space,
+  origin, parent, depth, bookkeeping as JSON).
 
 ### Hosted spaces: events and journal
 

@@ -2,6 +2,7 @@
  * iOS: SwiftUI `TextField` (vertical axis when multiline). The text lives
  * in native state; `value` is pushed in only when it differs from what the
  * field last reported (a clear after sending), so typing never fights it.
+ * `glass` (standalone): on Liquid Glass (iOS 26+) instead of a card fill.
  */
 import { TextField as STextField, useNativeState } from '@expo/ui/swift-ui';
 import {
@@ -20,7 +21,8 @@ import {
 import { useEffect, useRef } from 'react';
 import { usePalette } from '../theme';
 import { useInForm } from './context';
-import { ControlHost } from './host.ios';
+import { ControlHost, glassBehind } from './host.ios';
+import { liquidGlass } from './liquidGlass';
 import type { TextFieldProps } from './types';
 
 const caps = { none: 'never', sentences: 'sentences', words: 'words' } as const;
@@ -39,6 +41,7 @@ export function TextField({
   maxLength,
   autoCapitalize,
   autoCorrect,
+  glass,
   accessibilityLabel,
   testID,
   style,
@@ -64,7 +67,12 @@ export function TextField({
   if (disabled) mods.push(disabledMod(true));
   const a11y = accessibilityLabel ?? placeholder;
   if (a11y) mods.push(a11yLabel(a11y));
-  if (!inForm) {
+  if (!inForm && glass && liquidGlass) {
+    mods.push(
+      padding({ horizontal: 14, vertical: 10 }),
+      ...glassBehind('rounded', { radius: 20, interactive: true }),
+    );
+  } else if (!inForm) {
     mods.push(
       padding({ horizontal: 12, vertical: 10 }),
       background(p.surface),

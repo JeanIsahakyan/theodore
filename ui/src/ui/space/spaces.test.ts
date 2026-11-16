@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import type { RepoRef, Space } from '../../gen/contract';
+import type { FleetAgent, RepoRef, Space } from '../../gen/contract';
 import { ALL } from '../../core/workspaces';
 import {
+  remoteStartPicks,
   AUTO_ARCHIVE_KEY,
   BUILD_MODE_KEY,
   REVIEW_AGENT_KEY,
@@ -682,5 +683,41 @@ describe('the drawers under a space page', () => {
     expect(toggleDrawer('logs', 'terminal')).toBe('terminal');
     expect(toggleDrawer('terminal', 'logs')).toBe('logs');
     expect(toggleDrawer('logs', 'logs')).toBeNull();
+  });
+});
+
+describe('remoteStartPicks', () => {
+  const host = (ids: FleetAgent['id'][]): FleetAgent[] =>
+    ids.map((id) => ({
+      id,
+      label: id,
+      default_model: null,
+      default_effort: null,
+      models: [],
+    }));
+  const none = () => null;
+
+  it('sends nothing unless something was picked from the list', () => {
+    const empty = { agent: null, model: null, effort: null };
+    expect(remoteStartPicks([], 'codex', () => 'm', none)).toEqual(empty);
+    expect(remoteStartPicks(host(['claude']), null, none, none)).toEqual(empty);
+    // An agent the host doesn't list stands for its first.
+    expect(remoteStartPicks(host(['claude']), 'codex', none, none)).toEqual(
+      empty,
+    );
+  });
+
+  it('names the agent shown with what was picked for it', () => {
+    expect(
+      remoteStartPicks(host(['claude', 'codex']), 'codex', none, none),
+    ).toEqual({ agent: 'codex', model: null, effort: null });
+    expect(
+      remoteStartPicks(
+        host(['claude', 'codex']),
+        null,
+        (a) => (a === 'claude' ? 'opus' : null),
+        () => 'high',
+      ),
+    ).toEqual({ agent: 'claude', model: 'opus', effort: 'high' });
   });
 });

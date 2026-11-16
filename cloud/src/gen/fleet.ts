@@ -73,6 +73,14 @@ export type DeviceInfo = {
 	projects: ProjectRef[],
 	accepts_remote: boolean,
 	max_mode: FleetMode,
+	/**
+	 *  Agents a remote start or send may pick: installed and enabled here,
+	 *  the default (`agents.chat`) first. Empty unless `accepts_remote`,
+	 *  and from a host older than this field (then a request naming an
+	 *  agent, model or effort is ignored there, so the origin offers none).
+	 *  Kept within [`MAX_INFO_BYTES`] by [`DeviceInfo::fit_agents`].
+	 */
+	agents?: FleetAgentInfo[],
 };
 
 export type DeviceKind =
@@ -109,12 +117,46 @@ export type DeviceSummary = {
 export type DismissReason = "answered_elsewhere" | "moved" | "resolved";
 
 /**
+ *  One agent a host runs for remote spaces (docs/fleet.md "Agent, model
+ *  and effort").
+ */
+export type FleetAgentInfo = {
+	/**  `claude`, `codex`, `gemini`. */
+	id: string,
+	label: string,
+	/**
+	 *  What runs when a request names no model (`agents.<id>.model`, else
+	 *  the first current model); `None`: the CLI's own.
+	 */
+	default_model?: string | null,
+	/**
+	 *  What runs when a request names no effort (`agents.<id>.effort` when
+	 *  the default model takes it, else that model's own).
+	 */
+	default_effort?: string | null,
+	/**
+	 *  Current models first, earlier versions after (dropped first when
+	 *  the info runs over its size).
+	 */
+	models?: FleetModelInfo[],
+};
+
+/**
  *  A space mode as the fleet speaks it; ordered from least to most power,
  *  so a cap is a comparison (`mode <= max_mode`). Plan sits between Ask and
  *  Edit: it explores and edits nothing, but its approval leads to an Edit
  *  turn.
  */
 export type FleetMode = "ask" | "plan" | "edit" | "run";
+
+export type FleetModelInfo = {
+	/**  What the CLI's model flag takes; what a request's `model` names. */
+	id: string,
+	label: string,
+	/**  Levels a request's `effort` may name with this model; empty: none. */
+	efforts?: string[],
+	default_effort?: string | null,
+};
 
 export type ProjectRef = {
 	/**  The project's id on that device. */
@@ -137,10 +179,21 @@ export type RemoteAsk = {
 };
 
 export type RemoteOp = { op: "start_space"; space: string; project_id: string; goal: string; mode: FleetMode; agent?: string | null; model?: string | null;
+/**
+ *  One of the model's efforts (the host's default model's when no
+ *  model is named); `None`: the host's default.
+ */
+effort?: string | null;
 /**  The remote space whose agent asked for this one, if any. */
 parent?: string | null;
 /**  0 for a space a person started. */
-depth: number } | { op: "send"; space: string; text: string; mode?: FleetMode | null } | { op: "stop"; space: string } |
+depth: number } | { op: "send"; space: string; text: string; mode?: FleetMode | null;
+/**
+ *  From this turn on, as a local send's: the space's agent, model
+ *  and effort, each checked against what the host lists
+ *  (`DeviceInfo::agents`). `None` keeps the space's.
+ */
+agent?: string | null; model?: string | null; effort?: string | null } | { op: "stop"; space: string } |
 /**
  *  Answers the question set `ask_id` of `space`: one entry per question,
  *  the chosen options (several when the question allows), or a free

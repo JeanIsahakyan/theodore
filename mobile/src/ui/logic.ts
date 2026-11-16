@@ -232,6 +232,8 @@ const FLEET_HINTS: Record<string, string> = {
   'fleet.busy': 'The space is still working. Wait until it settles, then send.',
   'fleet.unknown_project': 'That project isn’t on that computer anymore.',
   'fleet.unknown_space': 'That space isn’t on that computer anymore.',
+  'fleet.agent_unavailable':
+    'That computer doesn’t offer this agent, model or effort any more. Pick another.',
 };
 
 /** Any thrown value as a sentence; a fleet refusal by what to do about it. */

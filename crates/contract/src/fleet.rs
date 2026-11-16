@@ -12,7 +12,9 @@
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
-use crate::SpaceMode;
+use theodore_domain::AgentId;
+
+use crate::{AgentModel, SpaceMode};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
 pub struct FleetProject {
@@ -61,6 +63,24 @@ pub struct FleetDevice {
     pub delegated: bool,
     /// The cloud holds that delegation, as this device signed it.
     pub delegation_live: bool,
+    /// Agents a space started or steered there may pick, as it lists them
+    /// (installed and enabled there, its default first). Empty: a host too
+    /// old to list them, or not taking remote spaces; then nothing is
+    /// picked and its own defaults run.
+    #[serde(default)]
+    pub agents: Vec<FleetAgent>,
+}
+
+/// An agent another device runs, with its models (`description` none,
+/// `older` false: the host lists current models first).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+pub struct FleetAgent {
+    pub id: AgentId,
+    pub label: String,
+    /// What runs there when none is picked.
+    pub default_model: Option<String>,
+    pub default_effort: Option<String>,
+    pub models: Vec<AgentModel>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
@@ -117,6 +137,13 @@ pub struct FleetStartRequest {
     pub project_id: String,
     pub goal: String,
     pub mode: SpaceMode,
+    /// One the host lists (`FleetDevice::agents`); `None`: its default.
+    #[serde(default)]
+    pub agent: Option<AgentId>,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub effort: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
@@ -125,6 +152,13 @@ pub struct FleetSendRequest {
     pub text: String,
     #[serde(default)]
     pub mode: Option<SpaceMode>,
+    /// From this turn on, as a local send; `None` keeps the space's.
+    #[serde(default)]
+    pub agent: Option<AgentId>,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub effort: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]

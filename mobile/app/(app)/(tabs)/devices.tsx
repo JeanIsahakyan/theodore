@@ -14,6 +14,7 @@
 import { useMemo } from 'react';
 import { View } from 'react-native';
 import type { FleetDeviceView } from '../../../src/fleet/types';
+import { useGlassHeaderInset } from '../../../src/shell/glassHeader';
 import { useFleetState } from '../../../src/state/fleet';
 import { ConnectionBanner } from '../../../src/ui/ConnectionBanner';
 import { DeviceItem, FingerprintItem } from '../../../src/ui/DeviceItem';
@@ -64,6 +65,8 @@ function DeviceSection({
 
 export default function DevicesScreen() {
   const p = usePalette();
+  // iOS 26+: the glass header overlays the screen; the form insets itself.
+  const top = useGlassHeaderInset();
   const fingerprint = useFleetState((s) => s.fingerprint);
   const allDevices = useFleetState((s) => s.devices);
   const devices = useMemo(
@@ -73,7 +76,7 @@ export default function DevicesScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: p.background }}>
-      <ConnectionBanner />
+      <ConnectionBanner style={top ? { marginTop: top } : null} />
       <Form testID="devices">
         <Section
           title="This device"

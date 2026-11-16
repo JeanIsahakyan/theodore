@@ -240,6 +240,15 @@ describe('errorText for fleet refusals', () => {
     expect(
       errorText(new Error('refused by the cloud: fleet.upgrade_required')),
     ).toMatch(/older Theodore/);
+    expect(
+      errorText(
+        new Error(
+          'the other device refused: fleet.agent_unavailable: codex is off',
+        ),
+      ),
+    ).toBe(
+      'That computer doesn’t offer this agent, model or effort any more. Pick another.',
+    );
     expect(errorText(new Error('plain failure'))).toBe('plain failure');
     expect(errorText(42)).toBe('Something went wrong. Try again.');
   });

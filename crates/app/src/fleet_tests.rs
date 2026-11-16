@@ -123,6 +123,7 @@ fn summary(id: &str, key: &DeviceKey, name: &str, projects: Vec<ProjectRef>) -> 
             accepts_remote: !projects.is_empty(),
             projects,
             max_mode: FleetMode::Edit,
+            agents: vec![],
         },
         online: true,
         last_seen_ms: 0,
@@ -328,6 +329,7 @@ fn start_with(
         mode,
         agent: None,
         model: None,
+        effort: None,
         parent: parent.map(str::to_string),
         depth,
     }
@@ -777,6 +779,9 @@ async fn send_and_stop_steer_a_hosted_space() {
             space: "rs_1".into(),
             text: "go".into(),
             mode: Some(FleetMode::Run),
+            agent: None,
+            model: None,
+            effort: None,
         },
         now(&f),
     );
@@ -791,6 +796,9 @@ async fn send_and_stop_steer_a_hosted_space() {
             space: "rs_1".into(),
             text: "next".into(),
             mode: None,
+            agent: None,
+            model: None,
+            effort: None,
         },
     )
     .await;
@@ -1043,6 +1051,9 @@ async fn a_space_started_from_here_is_signed_and_tracked() {
             project_id: "local:app".into(),
             goal: "Port it".into(),
             mode: SpaceMode::Plan,
+            agent: None,
+            model: None,
+            effort: None,
         })
         .await
         .unwrap();
@@ -1077,6 +1088,7 @@ async fn a_space_started_from_here_is_signed_and_tracked() {
             mode: FleetMode::Plan,
             agent: None,
             model: None,
+            effort: None,
             parent: None,
             depth: 0,
         }
@@ -1187,6 +1199,9 @@ async fn a_space_started_from_here_is_signed_and_tracked() {
             project_id: "local:app".into(),
             goal: "Run it all".into(),
             mode: SpaceMode::Run,
+            agent: None,
+            model: None,
+            effort: None,
         })
         .await
         .unwrap();
@@ -1224,6 +1239,9 @@ async fn a_space_started_from_here_is_signed_and_tracked() {
             project_id: "local:app".into(),
             goal: "Later".into(),
             mode: SpaceMode::Edit,
+            agent: None,
+            model: None,
+            effort: None,
         })
         .await;
     assert!(offline.unwrap_err().to_string().contains("not connected"));
@@ -1771,6 +1789,9 @@ async fn an_agent_reaches_only_the_spaces_its_own_space_started() {
             project_id: "local:app".into(),
             goal: "Mine, not the agent's".into(),
             mode: SpaceMode::Edit,
+            agent: None,
+            model: None,
+            effort: None,
         })
         .await
         .unwrap();
@@ -1975,6 +1996,9 @@ async fn the_origin_takes_events_and_asks_only_as_a_pinned_host_signed_them() {
             project_id: "local:app".into(),
             goal: "Look".into(),
             mode: SpaceMode::Ask,
+            agent: None,
+            model: None,
+            effort: None,
         })
         .await
         .unwrap_err();
@@ -1986,6 +2010,9 @@ async fn the_origin_takes_events_and_asks_only_as_a_pinned_host_signed_them() {
             project_id: "local:app".into(),
             goal: "Port it".into(),
             mode: SpaceMode::Edit,
+            agent: None,
+            model: None,
+            effort: None,
         })
         .await
         .unwrap();
@@ -2234,6 +2261,9 @@ async fn a_claimed_request_is_checked_again_right_before_it_runs() {
             space: "rs_3".into(),
             text: "next".into(),
             mode: None,
+            agent: None,
+            model: None,
+            effort: None,
         },
         now(&f),
     );
@@ -2357,6 +2387,9 @@ async fn start_remote(f: &Fixtures, core: &Core, n: usize) -> (String, RemoteReq
             project_id: "local:app".into(),
             goal: "Port it".into(),
             mode: SpaceMode::Edit,
+            agent: None,
+            model: None,
+            effort: None,
         })
         .await
         .unwrap();
@@ -2701,6 +2734,9 @@ async fn a_send_to_a_running_hosted_space_is_refused_as_busy() {
         space: "rs_1".into(),
         text: "next".into(),
         mode: None,
+        agent: None,
+        model: None,
+        effort: None,
     };
 
     // Idle at the gate, running by the time it's claimed.
@@ -2859,6 +2895,9 @@ async fn an_agent_reads_a_refusal_by_its_code_and_the_ui_by_its_words() {
                 space,
                 text: "again".into(),
                 mode: None,
+                agent: None,
+                model: None,
+                effort: None,
             })
             .await
         }
@@ -2963,6 +3002,9 @@ async fn unsigned_ids_and_names_are_checked_before_an_agent_sees_them() {
             project_id: "local:app".into(),
             goal: "Go".into(),
             mode: SpaceMode::Edit,
+            agent: None,
+            model: None,
+            effort: None,
         })
         .await
         .unwrap_err()
@@ -3159,6 +3201,9 @@ async fn a_phone_or_the_web_app_is_trusted_but_never_a_target() {
                 project_id: "local:app".into(),
                 goal: "Port it".into(),
                 mode: SpaceMode::Edit,
+                agent: None,
+                model: None,
+                effort: None,
             })
             .await
             .unwrap_err();
@@ -3860,6 +3905,280 @@ async fn a_tool_calls_end_and_the_runs_text_go_as_live_steps() {
         (s[4].0.as_str(), &s[4].1["text"]),
         ("space:rs_1:m1:2", &"Bye".into())
     );
+}
+
+// ── agent, model and effort ───────────────────────────────────────────────
+
+fn model_info(id: &str, efforts: &[&str], older: bool) -> theodore_ports::ModelInfo {
+    theodore_ports::ModelInfo {
+        id: id.into(),
+        label: id.to_uppercase(),
+        description: Some("long words that never go out".into()),
+        efforts: efforts.iter().map(|e| e.to_string()).collect(),
+        default_effort: efforts.get(1).map(|e| e.to_string()),
+        older,
+    }
+}
+
+/// Claude lists opus (and an older one), Codex gpt-5.5; Gemini is off.
+fn agents_listed(f: &Fixtures) {
+    use theodore_domain::AgentId;
+    f.agents.set_models(
+        AgentId::Claude,
+        vec![
+            model_info("opus-old", &["low", "high"], true),
+            model_info("opus", &["low", "medium", "high"], false),
+        ],
+    );
+    f.agents.set_models(
+        AgentId::Codex,
+        vec![model_info("gpt-5.5", &["low", "medium", "high"], false)],
+    );
+    user_setting(f, "agents.gemini.enabled", json!(false));
+}
+
+fn user_setting(f: &Fixtures, key: &str, value: serde_json::Value) {
+    f.store
+        .apply(vec![theodore_ports::NewAction {
+            model: models::SETTING.into(),
+            model_id: format!("user:{key}"),
+            action: theodore_ports::SyncActionCode::I,
+            data: Some(json!({ "key": key, "scope": "user", "value": value })),
+        }])
+        .unwrap();
+}
+
+#[tokio::test]
+async fn a_host_lists_its_enabled_agents_once_detected_and_again_on_a_change() {
+    let f = fixtures();
+    agents_listed(&f);
+    user_setting(&f, "agents.chat", json!("codex"));
+    user_setting(&f, "agents.claude.effort", json!("high"));
+    let (core, _recv, _project, _origin) = target(&f).await;
+    let detected = f.agents.detects();
+    let info = core.fleet_info(&core.fleet_settings().await).await;
+    assert_eq!(f.agents.detects(), detected, "cached, not detected again");
+    let ids: Vec<&str> = info.agents.iter().map(|a| a.id.as_str()).collect();
+    assert_eq!(ids, ["codex", "claude"], "the default first, gemini off");
+    let claude = &info.agents[1];
+    assert_eq!(
+        claude
+            .models
+            .iter()
+            .map(|m| m.id.as_str())
+            .collect::<Vec<_>>(),
+        ["opus", "opus-old"],
+        "current models first"
+    );
+    assert_eq!(
+        (
+            claude.default_model.as_deref(),
+            claude.default_effort.as_deref()
+        ),
+        (Some("opus"), Some("high"))
+    );
+    assert_eq!(info.agents[0].default_effort.as_deref(), Some("medium"));
+
+    // Turning an agent off is announced (a synced setting).
+    let tx = theodore_contract::Transaction {
+        id: "off".into(),
+        ops: vec![theodore_contract::MutationOp::Create {
+            model: models::SETTING.into(),
+            id: "user:agents.codex.enabled".into(),
+            data: json!({ "key": "agents.codex.enabled", "scope": "user", "value": false }),
+        }],
+    };
+    assert!(matches!(
+        core.transact(tx).await,
+        theodore_contract::TransactionResult::Ok { .. }
+    ));
+    wait_until("announced without codex", || {
+        commands(&f, 0).iter().any(|c| {
+            matches!(c, FakeFleetCommand::Update { info, .. }
+                if info.agents.iter().map(|a| a.id.as_str()).eq(["claude"]))
+        })
+    })
+    .await;
+    // Not accepting: nothing listed.
+    core.fleet_set_settings(settings(false)).await.unwrap();
+    assert!(
+        core.fleet_info(&core.fleet_settings().await)
+            .await
+            .agents
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn remote_picks_are_checked_against_what_the_host_lists_then_applied() {
+    let f = fixtures();
+    agents_listed(&f);
+    let (_core, _recv, project, origin) = target(&f).await;
+    let start = |agent: Option<&str>, model: Option<&str>, effort: Option<&str>, space: &str| {
+        RemoteOp::StartSpace {
+            space: space.into(),
+            project_id: project.id.clone(),
+            goal: "Fix it".into(),
+            mode: FleetMode::Edit,
+            agent: agent.map(str::to_string),
+            model: model.map(str::to_string),
+            effort: effort.map(str::to_string),
+            parent: None,
+            depth: 0,
+        }
+    };
+    for (agent, model, effort, why) in [
+        (Some("gemini"), None, None, "turned off"),
+        (Some("nope"), None, None, "unknown agent"),
+        (Some("codex"), Some("opus"), None, "another agent's model"),
+        (
+            Some("codex"),
+            Some("gpt-5.5"),
+            Some("max"),
+            "an effort it doesn't take",
+        ),
+        (
+            None,
+            None,
+            Some("max"),
+            "the default's model doesn't take it",
+        ),
+    ] {
+        let (id, env) = sealed(&f, &origin, start(agent, model, effort, "rs_x"), now(&f));
+        deliver(&f, env);
+        assert_eq!(refusal(&f, &id).await, codes::AGENT_UNAVAILABLE, "{why}");
+        assert!(!claimed(&f, &id), "refused before the claim: {why}");
+    }
+
+    // Listed: the space runs it.
+    f.agents.push_script(done("one"));
+    let ok = run(
+        &f,
+        &origin,
+        start(Some("codex"), Some("gpt-5.5"), Some("high"), "rs_1"),
+    )
+    .await;
+    assert!(matches!(ok, ReplyOutcome::Ok { .. }), "{ok:?}");
+    let local = local_of(&f, "rs_1");
+    let row = space(&f, &local);
+    assert_eq!(
+        (row.agent, row.model.as_deref(), row.effort.as_deref()),
+        (
+            theodore_domain::AgentId::Codex,
+            Some("gpt-5.5"),
+            Some("high")
+        )
+    );
+    wait_until("idle", || space(&f, &local).status == SpaceStatus::Idle).await;
+
+    let send = |agent: Option<&str>, model: Option<&str>, effort: Option<&str>| RemoteOp::Send {
+        space: "rs_1".into(),
+        text: "next".into(),
+        mode: None,
+        agent: agent.map(str::to_string),
+        model: model.map(str::to_string),
+        effort: effort.map(str::to_string),
+    };
+    // The space's agent keeps its model: codex's gpt-5.5 takes no "max".
+    let (id, env) = sealed(&f, &origin, send(None, None, Some("max")), now(&f));
+    deliver(&f, env);
+    assert_eq!(refusal(&f, &id).await, codes::AGENT_UNAVAILABLE);
+    let (id, env) = sealed(
+        &f,
+        &origin,
+        send(Some("claude"), Some("gpt-5.5"), None),
+        now(&f),
+    );
+    deliver(&f, env);
+    assert_eq!(refusal(&f, &id).await, codes::AGENT_UNAVAILABLE);
+
+    // A switch for this turn on, as a local send's.
+    f.agents.push_script(done("two"));
+    let sent = run(&f, &origin, send(Some("claude"), Some("opus"), Some("low"))).await;
+    assert!(matches!(sent, ReplyOutcome::Ok { .. }), "{sent:?}");
+    wait_until("turn 2 ran", || {
+        f.agents.requests().iter().any(|r| {
+            r.agent == theodore_domain::AgentId::Claude
+                && r.model.as_deref() == Some("opus")
+                && r.effort.as_deref() == Some("low")
+        })
+    })
+    .await;
+    let row = space(&f, &local);
+    assert_eq!(
+        (row.agent, row.model.as_deref(), row.effort.as_deref()),
+        (theodore_domain::AgentId::Claude, Some("opus"), Some("low"))
+    );
+}
+
+#[tokio::test]
+async fn a_start_from_here_carries_the_picks_under_the_signature() {
+    let f = fixtures();
+    let (core, _recv) = start(&f);
+    let other = DeviceKey::generate().unwrap();
+    let app = ProjectRef {
+        id: "local:app".into(),
+        name: "app".into(),
+    };
+    connect(
+        &f,
+        &core,
+        false,
+        vec![summary(TARGET, &other, "mac1", vec![app])],
+    )
+    .await;
+    trust(&core, TARGET).await;
+    core.fleet_start_space(FleetStartRequest {
+        device_id: TARGET.into(),
+        project_id: "local:app".into(),
+        goal: "Port it".into(),
+        mode: SpaceMode::Edit,
+        agent: Some(theodore_domain::AgentId::Codex),
+        model: Some("gpt-5.5".into()),
+        effort: Some("high".into()),
+    })
+    .await
+    .unwrap();
+    let req = requests(&f)
+        .remove(0)
+        .open(&f.fleet.connect(0).public_key)
+        .expect("signed by this device");
+    assert!(matches!(
+        req.op,
+        RemoteOp::StartSpace { agent: Some(a), model: Some(m), effort: Some(e), .. }
+            if a == "codex" && m == "gpt-5.5" && e == "high"
+    ));
+}
+
+#[test]
+fn another_devices_agents_reach_the_ui_known_ones_only() {
+    use theodore_fleet_protocol::{FleetAgentInfo, FleetModelInfo};
+    let listed = vec![
+        FleetAgentInfo {
+            id: "claude".into(),
+            label: "Claude".into(),
+            default_model: Some("opus".into()),
+            default_effort: Some("high".into()),
+            models: vec![FleetModelInfo {
+                id: "opus".into(),
+                label: "Opus".into(),
+                efforts: vec!["low".into(), "high".into()],
+                default_effort: None,
+            }],
+        },
+        FleetAgentInfo {
+            id: "future-agent".into(),
+            label: "Future".into(),
+            default_model: None,
+            default_effort: None,
+            models: vec![],
+        },
+    ];
+    let ui = crate::usecases::fleet_agents::ui_agents(&listed);
+    assert_eq!(ui.len(), 1);
+    assert_eq!(ui[0].id, theodore_domain::AgentId::Claude);
+    assert_eq!(ui[0].models[0].efforts, ["low", "high"]);
+    assert_eq!(ui[0].default_effort.as_deref(), Some("high"));
 }
 
 #[path = "fleet_follow_tests.rs"]

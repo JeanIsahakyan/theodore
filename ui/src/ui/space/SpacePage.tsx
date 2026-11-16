@@ -140,6 +140,7 @@ import {
   toggleDrawer,
   sendModel,
   sendEffort,
+  remoteStartPicks,
   spaceOwnEffort,
   spaceOwnModel,
   type Drawer,
@@ -1128,13 +1129,14 @@ const SpaceComposer = observer(function SpaceComposer({
   const files = useAttachments();
   const input = useRef<HTMLTextAreaElement>(null);
   const run = space.status === 'running' ? space.run : null;
-  // On another device: text and mode go to its host, nothing else (no
-  // files, agent or model of this device's), and only between turns —
-  // a host never queues a remote send (docs/fleet.md).
+  // On another device: text, mode and an agent, model or effort from the
+  // host's own list go to its host, nothing else (no files), and only
+  // between turns — a host never queues a remote send (docs/fleet.md).
   const remote = remoteOf(space);
-  const hostMax = remote
-    ? store.fleet.device(remote.host_device)?.max_mode
-    : undefined;
+  const host = remote ? store.fleet.device(remote.host_device) : undefined;
+  const hostMax = host?.max_mode;
+  // None from a host too old to list them: the chip stays hidden.
+  const hostAgents = host?.agents ?? [];
   const modes = hostMax
     ? MODES.filter((m) => modesUpTo(hostMax).includes(m.id))
     : MODES;
@@ -1245,13 +1247,14 @@ const SpaceComposer = observer(function SpaceComposer({
         {
           space: space.id,
           text: t,
-          agent: null,
-          model: null,
-          effort: null,
+          // Picks from the host's own list (the chip); it checks them.
+          agent: agent === space.agent ? null : agent,
+          model: sendModel(space, agent, picked, null),
+          effort: sendEffort(agent, pickedEffort),
           mode: mode === space.mode ? null : mode,
           attachments: null,
         },
-        { now: false, agent: space.agent, attachments: [] },
+        { now: false, agent, attachments: [] },
       ).catch(() => setText(t));
       return;
     }
@@ -1346,26 +1349,25 @@ const SpaceComposer = observer(function SpaceComposer({
           attachments={remote ? undefined : files}
           chips={
             <>
-              {!remote && (
-                <AgentChip
-                  value={agent}
-                  onChange={(a) => {
-                    setAgent(a);
-                    own({ agent: a });
-                  }}
-                  isDisabled={locked}
-                  modelOf={(a) => spaceOwnModel(space, a, picked)}
-                  onPickModel={(a, model) => {
-                    setPicked({ agent: a, model });
-                    own({ agent: a, model });
-                  }}
-                  effortOf={(a) => spaceOwnEffort(space, a, pickedEffort)}
-                  onPickEffort={(a, effort) => {
-                    setPickedEffort({ agent: a, effort });
-                    own({ agent: a, effort });
-                  }}
-                />
-              )}
+              <AgentChip
+                host={remote ? hostAgents : undefined}
+                value={agent}
+                onChange={(a) => {
+                  setAgent(a);
+                  own({ agent: a });
+                }}
+                isDisabled={locked}
+                modelOf={(a) => spaceOwnModel(space, a, picked)}
+                onPickModel={(a, model) => {
+                  setPicked({ agent: a, model });
+                  own({ agent: a, model });
+                }}
+                effortOf={(a) => spaceOwnEffort(space, a, pickedEffort)}
+                onPickEffort={(a, effort) => {
+                  setPickedEffort({ agent: a, effort });
+                  own({ agent: a, effort });
+                }}
+              />
               <ChipMenu
                 ariaLabel="Mode"
                 label={MODES.find((m) => m.id === mode)?.label ?? mode}
@@ -1620,6 +1622,14 @@ export const NewSpaceModal = observer(function NewSpaceModal() {
     pickedModel?.agent === a ? pickedModel.model : null;
   const effortOf = (a: AgentId) =>
     pickedEffort?.agent === a ? pickedEffort.effort : null;
+  // On another device: only what was picked from its list goes; the rest
+  // is its own defaults (an older host lists nothing: nothing goes).
+  const remotePicks = remoteStartPicks(
+    target?.agents ?? [],
+    agent,
+    modelOf,
+    effortOf,
+  );
   const startElsewhere = async () => {
     const typed = goal.trim();
     if (!target || !remoteProject || !typed || busy) return;
@@ -1630,6 +1640,7 @@ export const NewSpaceModal = observer(function NewSpaceModal() {
         project_id: remoteProject.id,
         goal: typed,
         mode: shownMode,
+        ...remotePicks,
       });
       ui.closeModal();
       // Its mirrored row comes from the host; the page waits for it.
@@ -1775,24 +1786,27 @@ export const NewSpaceModal = observer(function NewSpaceModal() {
                     onSelect={(id) => {
                       setRunOn(id);
                       setRemoteProjectId(null);
+                      // Another device lists its own agents and models.
+                      setAgent(null);
+                      setPickedModel(null);
+                      setPickedEffort(null);
                     }}
                   />
                 )}
-                {!target && (
-                  <AgentChip
-                    value={agent}
-                    onChange={setAgent}
-                    repo={repo}
-                    modelOf={modelOf}
-                    onPickModel={(a, model) =>
-                      setPickedModel({ agent: a, model })
-                    }
-                    effortOf={effortOf}
-                    onPickEffort={(a, effort) =>
-                      setPickedEffort({ agent: a, effort })
-                    }
-                  />
-                )}
+                <AgentChip
+                  host={target ? (target.agents ?? []) : undefined}
+                  value={agent}
+                  onChange={setAgent}
+                  repo={repo}
+                  modelOf={modelOf}
+                  onPickModel={(a, model) =>
+                    setPickedModel({ agent: a, model })
+                  }
+                  effortOf={effortOf}
+                  onPickEffort={(a, effort) =>
+                    setPickedEffort({ agent: a, effort })
+                  }
+                />
                 <ChipMenu
                   ariaLabel="Mode"
                   label={

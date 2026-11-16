@@ -17,11 +17,23 @@
  * Controls are the native kit (docs/mobile.md "Native UI"):
  *
  * ```text
- * [ Ask | Plan | Edit ]                      Segmented
+ * (Opus 4.1 · High ⌄) [ Ask | Plan | Edit ] AgentMenu (Menu: the host's
+ *                                            agents; hidden if it lists
+ *                                            none) · Segmented
  * ( Ask the agent to change something… )    ChatField (focus() on Revise)
  * [Send]                                     Button
  * [Stop] ─▶ confirm() ─▶ stopSpace           while a turn runs
  * plan reply: [Approve] [Revise]             SpaceChat's PlanActions
+ * ```
+ *
+ * The composer per platform:
+ *
+ * ```text
+ * iOS 26+    floats over the chat, which scrolls under it: notes on a glass
+ *            panel, glass Segmented, glass field, .glassProminent Send
+ * iOS < 26   a bar under the chat (surface, hairline), bordered controls
+ * Android    a bar under the chat (Material You surface), M3 controls
+ * web        a bar under the chat
  * ```
  */
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
@@ -36,15 +48,29 @@ import {
 import { Stack, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useServices } from '../../../src/services';
+import { useGlassHeaderInset } from '../../../src/shell/glassHeader';
 import { useFleetState } from '../../../src/state/fleet';
 import type { ChatMessage } from '../../../src/fleet/contract';
 import { mirrored } from '../../../src/fleet/mirror';
 import type { SpaceLine, SpaceView } from '../../../src/fleet/types';
 import type { FleetMode } from '../../../src/gen/fleet';
+import { AgentMenu } from '../../../src/ui/AgentMenu';
+import {
+  NO_PICK,
+  sendPicks,
+  spaceOwn,
+  type Pick,
+} from '../../../src/ui/agents';
 import { ChatField } from '../../../src/ui/ChatField';
 import type { ChatFieldHandle } from '../../../src/ui/chatFieldTypes';
 import { Badge, Empty, Notice } from '../../../src/ui/kit';
-import { Button, Segmented, confirm } from '../../../src/ui/native';
+import {
+  Button,
+  Glass,
+  Segmented,
+  confirm,
+  liquidGlass,
+} from '../../../src/ui/native';
 import { QuestionCard } from '../../../src/ui/QuestionCard';
 import { bottomPad } from '../../../src/ui/keyboard';
 import {
@@ -84,6 +110,9 @@ import {
 import { mono, usePalette } from '../../../src/ui/theme';
 
 const EMPTY_LINES: SpaceLine[] = [];
+/** iOS 26+: the composer floats on Liquid Glass over the chat. */
+const floating = liquidGlass;
+const android = process.env.EXPO_OS === 'android';
 
 function Line({ line }: { line: SpaceLine }) {
   const p = usePalette();
@@ -254,11 +283,16 @@ export default function SpaceScreen() {
   const ownMode = space?.mode ?? 'edit';
   const [mode, setMode] = useState<FleetMode>(ownMode);
   const [modeOf, setModeOf] = useState<FleetMode>(ownMode);
+  // An agent, model or effort from the host's list: from the next message
+  // on, kept until changed; nothing picked keeps the space's own.
+  const [agentPick, setAgentPick] = useState<Pick>(NO_PICK);
   const input = useRef<ChatFieldHandle>(null);
   const chatList = useRef<FlatList<ChatTurn>>(null);
   const lineList = useRef<FlatList<SpaceLine>>(null);
   const atEnd = useRef(true);
+  const [composerHeight, setComposerHeight] = useState(0);
   const insets = useSafeAreaInsets();
+  const top = useGlassHeaderInset();
   const keyboardUp = useKeyboardUp();
 
   // Sticky per space: the next turn starts in the space's last mode.
@@ -289,13 +323,13 @@ export default function SpaceScreen() {
 
   if (!space) {
     return (
-      <>
+      <View style={{ paddingTop: top }}>
         <Stack.Screen options={{ title: 'Space' }} />
         <Empty
           title="This space isn't in your fleet any more"
           hint="It was removed, or you no longer follow it."
         />
-      </>
+      </View>
     );
   }
 
@@ -308,6 +342,10 @@ export default function SpaceScreen() {
   const modes = composerModes(host?.maxMode ?? null);
   const picked = modes.includes(mode) ? mode : (modes.at(-1) ?? 'ask');
   const build = mirror?.space ? buildMode(mirror.space) : 'edit';
+  // None from a host too old to list them: no chip, nothing sent.
+  const hostAgents = host?.agents ?? [];
+  const ownAgent = spaceOwn(mirror?.space);
+  const picks = sendPicks(hostAgents, agentPick, ownAgent);
 
   const send = () => {
     const t = text.trim();
@@ -316,7 +354,7 @@ export default function SpaceScreen() {
     setError(null);
     atEnd.current = true;
     fleet
-      .send(id, t, sendMode(picked, space.mode))
+      .send(id, t, sendMode(picked, space.mode), picks)
       .then(() => {
         setText('');
         setRevising(false);
@@ -350,7 +388,7 @@ export default function SpaceScreen() {
       setError(null);
       atEnd.current = true;
       fleet
-        .send(id, APPROVED_TEXT, build)
+        .send(id, APPROVED_TEXT, build, picks)
         .catch((e: unknown) => setError(errorText(e)))
         .finally(() => setApproving(false));
     },
@@ -412,122 +450,169 @@ export default function SpaceScreen() {
   );
 
   const lastTurn = chat?.turns.at(-1)?.key;
+  // A floating composer covers the end of the list: room to scroll past it.
+  const content = floating
+    ? [styles.content, { paddingBottom: 16 + composerHeight }]
+    : styles.content;
+  const indicator = floating ? { bottom: composerHeight } : undefined;
+
+  const notes = [
+    chat?.error ? (
+      <Text
+        key="chat-error"
+        numberOfLines={3}
+        selectable
+        style={[styles.small, { color: p.danger }]}
+      >
+        {chat.error}
+      </Text>
+    ) : null,
+    chat?.progress ? (
+      <ProgressCard key="progress" progress={chat.progress} />
+    ) : null,
+    error ? (
+      <Notice key="error" tone="danger">
+        {error}
+      </Notice>
+    ) : null,
+    picked === 'run' && space.mode !== 'run' ? (
+      <Text key="run" style={[styles.small, { color: p.warning }]}>
+        {RUN_WARNING}
+      </Text>
+    ) : null,
+  ].filter((n) => n !== null);
 
   return (
     <KeyboardScreen>
       <Stack.Screen options={{ title: spaceTitle(space) }} />
-      {chat ? (
-        <FlatList
-          ref={chatList}
-          style={styles.flex}
-          data={chat.turns}
-          keyExtractor={(t) => t.key}
-          renderItem={({ item }) => (
-            <TurnRow
-              turn={item}
-              chat={chat}
-              live={item.key === lastTurn}
-              plan={plan}
-            />
-          )}
-          onScroll={onScroll}
-          scrollEventThrottle={64}
-          onContentSizeChange={follow}
-          onLayout={follow}
-          contentInsetAdjustmentBehavior="automatic"
-          contentContainerStyle={styles.content}
-          keyboardShouldPersistTaps="handled"
-          keyboardDismissMode={keyboardDismissMode}
-          ListHeaderComponent={<Header space={space} />}
-          ListEmptyComponent={chat.live ? undefined : empty}
-          ListFooterComponent={footer}
-        />
-      ) : (
-        <FlatList
-          ref={lineList}
-          style={styles.flex}
-          data={lines}
-          keyExtractor={(l) => String(l.seq)}
-          renderItem={({ item }) => <Line line={item} />}
-          onScroll={onScroll}
-          scrollEventThrottle={64}
-          onContentSizeChange={follow}
-          onLayout={follow}
-          contentInsetAdjustmentBehavior="automatic"
-          contentContainerStyle={styles.content}
-          keyboardShouldPersistTaps="handled"
-          keyboardDismissMode={keyboardDismissMode}
-          ListHeaderComponent={<Header space={space} />}
-          ListEmptyComponent={empty}
-          ListFooterComponent={footer}
-        />
-      )}
-      <View
-        style={[
-          styles.composer,
-          {
-            backgroundColor: p.surface,
-            borderColor: p.border,
-            paddingBottom: bottomPad(12, insets.bottom, keyboardUp),
-          },
-        ]}
-      >
-        {chat?.error ? (
-          <Text
-            numberOfLines={3}
-            selectable
-            style={[styles.small, { color: p.danger }]}
-          >
-            {chat.error}
-          </Text>
-        ) : null}
-        {chat?.progress ? <ProgressCard progress={chat.progress} /> : null}
-        {error ? <Notice tone="danger">{error}</Notice> : null}
-        <Segmented
-          label="Mode"
-          choices={modes.map((m) => ({
-            value: m,
-            label: MODE_LABEL[m],
-            accessibilityLabel: `Mode ${MODE_LABEL[m]}: ${MODE_HINT[m]}`,
-          }))}
-          value={picked}
-          onChange={setMode}
-          disabled={sending}
-        />
-        {picked === 'run' && space.mode !== 'run' ? (
-          <Text style={[styles.small, { color: p.warning }]}>
-            {RUN_WARNING}
-          </Text>
-        ) : null}
-        <View style={styles.composerRow}>
-          <ChatField
-            ref={input}
-            accessibilityLabel="Message to the space"
-            multiline
-            minLines={1}
-            maxLines={6}
-            disabled={!sendable || sending}
-            value={text}
-            onChangeText={setText}
-            placeholder={composerNote(space, revising, hosted)}
+      <View style={styles.flex}>
+        {chat ? (
+          <FlatList
+            ref={chatList}
             style={styles.flex}
+            data={chat.turns}
+            keyExtractor={(t) => t.key}
+            renderItem={({ item }) => (
+              <TurnRow
+                turn={item}
+                chat={chat}
+                live={item.key === lastTurn}
+                plan={plan}
+              />
+            )}
+            onScroll={onScroll}
+            scrollEventThrottle={64}
+            onContentSizeChange={follow}
+            onLayout={follow}
+            contentInsetAdjustmentBehavior="automatic"
+            contentContainerStyle={content}
+            scrollIndicatorInsets={indicator}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode={keyboardDismissMode}
+            ListHeaderComponent={<Header space={space} />}
+            ListEmptyComponent={chat.live ? undefined : empty}
+            ListFooterComponent={footer}
           />
-          {canStop(space.status) ? (
-            <Button
-              label="Stop"
-              variant="destructive"
-              loading={stopping}
-              onPress={() => void stop()}
-            />
+        ) : (
+          <FlatList
+            ref={lineList}
+            style={styles.flex}
+            data={lines}
+            keyExtractor={(l) => String(l.seq)}
+            renderItem={({ item }) => <Line line={item} />}
+            onScroll={onScroll}
+            scrollEventThrottle={64}
+            onContentSizeChange={follow}
+            onLayout={follow}
+            contentInsetAdjustmentBehavior="automatic"
+            contentContainerStyle={content}
+            scrollIndicatorInsets={indicator}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode={keyboardDismissMode}
+            ListHeaderComponent={<Header space={space} />}
+            ListEmptyComponent={empty}
+            ListFooterComponent={footer}
+          />
+        )}
+        <View
+          onLayout={
+            floating
+              ? (e) => setComposerHeight(e.nativeEvent.layout.height)
+              : undefined
+          }
+          style={[
+            styles.composer,
+            floating
+              ? styles.floating
+              : {
+                  backgroundColor: p.surface,
+                  borderColor: p.border,
+                  // Material bars have no divider.
+                  borderTopWidth: android ? 0 : StyleSheet.hairlineWidth,
+                },
+            { paddingBottom: bottomPad(12, insets.bottom, keyboardUp) },
+          ]}
+        >
+          {floating && notes.length > 0 ? (
+            <Glass radius={18} style={styles.notes}>
+              {notes}
+            </Glass>
           ) : (
-            <Button
-              label="Send"
-              variant="primary"
-              disabled={!sendable || text.trim() === ''}
-              loading={sending}
-              onPress={send}
-            />
+            notes
           )}
+          <View style={styles.controls}>
+            <AgentMenu
+              agents={hostAgents}
+              pick={agentPick}
+              current={ownAgent}
+              onPick={setAgentPick}
+              disabled={sending}
+            />
+            <Segmented
+              label="Mode"
+              choices={modes.map((m) => ({
+                value: m,
+                label: MODE_LABEL[m],
+                accessibilityLabel: `Mode ${MODE_LABEL[m]}: ${MODE_HINT[m]}`,
+              }))}
+              value={picked}
+              onChange={setMode}
+              disabled={sending}
+              glass
+              style={styles.flex}
+            />
+          </View>
+          <View style={styles.composerRow}>
+            <ChatField
+              ref={input}
+              accessibilityLabel="Message to the space"
+              multiline
+              minLines={1}
+              maxLines={6}
+              disabled={!sendable || sending}
+              value={text}
+              onChangeText={setText}
+              placeholder={composerNote(space, revising, hosted)}
+              glass
+              style={styles.flex}
+            />
+            {canStop(space.status) ? (
+              <Button
+                label="Stop"
+                variant="destructive"
+                loading={stopping}
+                onPress={() => void stop()}
+              />
+            ) : (
+              <Button
+                label="Send"
+                variant="glassProminent"
+                disabled={!sendable || text.trim() === ''}
+                loading={sending}
+                onPress={send}
+              />
+            )}
+          </View>
         </View>
       </View>
     </KeyboardScreen>
@@ -576,10 +661,9 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     alignItems: 'center',
   },
-  composer: {
-    gap: 8,
-    padding: 12,
-    borderTopWidth: StyleSheet.hairlineWidth,
-  },
+  composer: { gap: 8, padding: 12 },
+  floating: { position: 'absolute', left: 0, right: 0, bottom: 0 },
+  notes: { gap: 8, padding: 12 },
   composerRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 8 },
+  controls: { flexDirection: 'row', alignItems: 'center', gap: 8 },
 });

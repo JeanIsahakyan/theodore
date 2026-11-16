@@ -97,6 +97,7 @@ function opInOrder(op: RemoteOp): RemoteOp {
         mode: op.mode,
         agent: op.agent ?? null,
         model: op.model ?? null,
+        effort: op.effort ?? null,
         parent: op.parent ?? null,
         depth: op.depth,
       };
@@ -106,6 +107,9 @@ function opInOrder(op: RemoteOp): RemoteOp {
         space: op.space,
         text: op.text,
         mode: op.mode ?? null,
+        agent: op.agent ?? null,
+        model: op.model ?? null,
+        effort: op.effort ?? null,
       };
     case 'stop':
       return { op: 'stop', space: op.space };

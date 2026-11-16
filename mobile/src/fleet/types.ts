@@ -9,6 +9,40 @@ import type { SpaceMirror } from './mirror';
 
 export type ConnectionState = 'off' | 'connecting' | 'connected' | 'error';
 
+/** A model a host lists for an agent (`FleetModelInfo`, shape-checked). */
+export interface FleetModelView {
+  id: string;
+  label: string;
+  /** Levels `effort` may name with this model; empty: none. */
+  efforts: string[];
+  defaultEffort: string | null;
+}
+
+/**
+ * An agent a host runs for remote spaces (`FleetAgentInfo`, docs/fleet.md
+ * "Agent, model and effort"): what a start or send may pick there.
+ */
+export interface FleetAgentView {
+  id: string;
+  label: string;
+  /** What runs when a request names no model; `null`: the CLI's own. */
+  defaultModel: string | null;
+  /** What runs when a request names no effort. */
+  defaultEffort: string | null;
+  models: FleetModelView[];
+}
+
+/**
+ * An agent, model or effort picked for a start or a send, from what the
+ * host lists. `null` / absent: not picked (a start: the host's default; a
+ * send: the space's own).
+ */
+export interface AgentPicks {
+  agent?: string | null;
+  model?: string | null;
+  effort?: string | null;
+}
+
 export interface FleetDeviceView {
   deviceId: string;
   name: string;
@@ -19,6 +53,9 @@ export interface FleetDeviceView {
   acceptsRemote: boolean;
   maxMode: FleetMode;
   projects: { id: string; name: string }[];
+  /** Agents a start or send may pick, its default first; empty from a host
+   *  older than the field (then none is offered or sent). */
+  agents: FleetAgentView[];
   publicKey: string;
   /** 8 groups of 4 hex, as the desktop shows it. */
   fingerprint: string;
@@ -89,14 +126,24 @@ export interface FleetClient {
   /** Connects (or reconnects) with the current session; idempotent. */
   start(): Promise<void>;
   stop(): void;
-  startSpace(req: {
-    deviceId: string;
-    projectId: string;
-    goal: string;
-    mode: FleetMode;
-  }): Promise<SpaceView>;
-  /** `mode`: the turn's, when it isn't the space's own. */
-  send(space: string, text: string, mode?: FleetMode | null): Promise<void>;
+  /** `agent` / `model` / `effort`: only what was picked; the host's
+   *  defaults run for the rest. */
+  startSpace(
+    req: {
+      deviceId: string;
+      projectId: string;
+      goal: string;
+      mode: FleetMode;
+    } & AgentPicks,
+  ): Promise<SpaceView>;
+  /** `mode`: the turn's, when it isn't the space's own; `picks`: an agent,
+   *  model or effort from this turn on (none: the space's own). */
+  send(
+    space: string,
+    text: string,
+    mode?: FleetMode | null,
+    picks?: AgentPicks,
+  ): Promise<void>;
   stopSpace(space: string): Promise<void>;
   /** One entry per question: chosen options, or one free text. */
   answer(space: string, askId: string, answers: string[][]): Promise<void>;

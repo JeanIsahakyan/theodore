@@ -34,6 +34,7 @@ fn info(name: &str) -> DeviceInfo {
         }],
         accepts_remote: true,
         max_mode: FleetMode::Edit,
+        agents: vec![],
     }
 }
 
@@ -140,6 +141,7 @@ async fn two_devices_through_the_real_hub() {
             mode: FleetMode::Edit,
             agent: None,
             model: None,
+            effort: None,
             parent: None,
             depth: 0,
         },

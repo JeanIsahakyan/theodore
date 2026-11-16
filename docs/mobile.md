@@ -191,19 +191,73 @@ import { Button, Form, Row, Section, Switch, confirm } from '../../src/ui/native
 | Kit | iOS (SwiftUI) | Android (Compose, Material 3) | Web (React Native) |
 | --- | --- | --- | --- |
 | `Button` primary / secondary / plain / destructive, `loading`, `disabled`, `fullWidth` | `Button` `.borderedProminent` / `.bordered` / `.borderless` / role destructive | `Button` / `FilledTonalButton` / `TextButton` / filled in danger | `Pressable` |
+| `Button` glassProminent / glass (floating over content) | 26+: `.glassProminent` / `.glass`; before: `.borderedProminent` / `.bordered` | `Button` / `FilledTonalButton` | as primary / secondary |
 | `Segmented` (Ask/Plan/Edit, short sets) | `Picker` `.segmented` | `SingleChoiceSegmentedButtonRow` | joined segments |
 | `Select` (device, project: longer lists) | `Picker` `.menu` | `ExposedDropdownMenuBox` | row that unfolds the choices |
+| `glass` on `Segmented`, `Select`, `TextField` (standalone) | 26+: `glassEffect` capsule / rounded behind it; before: as without | ignored | ignored |
+| `Glass` (RN content on a surface: banner, panel; `shape`, `radius`, `tint`, `fallback`) | 26+: `GlassView` (`expo-glass-effect`); before: the `fallback` | `View`, `fallback` in Material You colors | `View`, `fallback` |
+| `TopBar` (pushed screen: `title`, `onBack`, `action`) | before 26: "‹ Back", title, action (26+: the native glass bar instead) | Material 3 `TopAppBar` (back arrow, `titleLarge`) | "‹ Back", title, action |
 | `Switch` (label, `detail`) | `Toggle` | `ListItem` + `Switch`, row `toggleable` | row + RN `Switch` |
 | `TextField` (single / `multiline`, `placeholder`, `onSubmit`, `submitLabel`) | `TextField` (vertical axis, `lineLimit`) | `OutlinedTextField` (ime action) | `TextInput` |
-| `Progress` circular / linear, `value` 0…1 or none | `ProgressView` | `Circular`/`LinearProgressIndicator` | `ActivityIndicator` / bar |
+| `Progress` circular / linear, `value` 0…1 or none | `ProgressView` | `CircularProgressIndicator` (a value) / Expressive `LoadingIndicator` (none) / `LinearProgressIndicator` | `ActivityIndicator` / bar |
 | `Form` › `Section` (`title`, `footer`) › `Row` (`label`, `value`, `detail`, `chevron`, `selected`, `destructive`, `loading`, `onPress`) | `Form` (inset grouped, scrolls) › `Section` › row `Button` | scrolling `Column` › titled `Card` › `ListItem` (no chevron) | `ScrollView` › card › rows |
 | `FormSlot` (any RN view inside a `Form`) | `RNHostView` | `RNHostView` | `View` |
+| `Menu` (`label`, `groups` of choices with a check on the current one; agent · model · effort in the composer) | `Menu` with a `Picker` submenu per group (glass button on iOS 26) | `AssistChip` + `DropdownMenu`, a heading per group | pill + sheet |
 | `confirm()` / `notify()` (promise) | `UIAlertController` (RN `Alert`) | `AlertDialog` (RN `Alert`) | `window.confirm` / `alert` |
 
 ```
 standalone control ─▶ its own Host (sized to it, or to the given width: fields, fullWidth)
 inside a Form      ─▶ the bare native element: a Settings row / list item
+inside a TopBar    ─▶ the bare control (InHost: already in the bar's Compose Host)
 ```
+
+#### Liquid Glass (iOS 26+) and Material 3 (Android)
+
+```text
+liquidGlass = isLiquidGlassAvailable()   (expo-glass-effect; read once)
+  true   iOS 26+ built with Xcode 26, the app not opted out
+  false  iOS < 26 (the iOS 17 simulator), Android, web ─▶ the pre-26 look
+
+Android: isDynamicColorAvailable (Android 12+)
+  true   Host has no seed ─▶ Material You (wallpaper); usePalette() maps to its roles
+  false  Host seeded with the accent #2F74C8 (primary exact); usePalette() = the app's
+```
+
+| Where | iOS 26+ | iOS < 26 | Android |
+| --- | --- | --- | --- |
+| Tabs' header | native glass bar, transparent, content under it | opaque native header | native header |
+| Pushed screens' header | native glass bar, "‹" back (minimal), Start = prominent glass bar item | `TopBar` ("‹ Back") | `TopBar`: Material 3 top app bar |
+| Tab bar | system glass (nothing opaque behind it) | system | Material 3 navigation bar |
+| Space composer | floats over the chat: notes on a `Glass` panel, glass `Segmented`, glass field, `glassProminent` Send | bar under the chat | bar under the chat, no divider |
+| Option chips | `.glassProminent` / `.glass` capsules | `.borderedProminent` / `.bordered` | `FilterChip` |
+| Questions banner (over the tabs) | `Glass` cards tinted with the warning color | cards | cards in Material You surface |
+| Connection banner | `Glass` capsule | muted pill | muted pill |
+| Start a space | "+" glass bar item | "+" bar item | extended FAB, `primaryContainer` |
+
+Rules:
+
+- Glass is for what floats over content (bars, the composer, banners);
+  content itself (rows, cards in a list, a form) stays plain, as in Apple's
+  apps. Use `Button` `glass` / `glassProminent` and the `glass` prop, never
+  `buttonStyle('glass')` or `GlassView` directly: below iOS 26 SwiftUI's
+  own fallback is `.automatic` (a bare label) and `glassEffect` draws
+  nothing, so the kit picks the bordered look instead.
+- Never paint a background behind a glass bar: no `headerStyle`
+  background on iOS 26 (expo-router then uses the system glass bar), no
+  opaque view under the tab bar. A screen under a glass header starts at
+  the window's top: scroll views use `contentInsetAdjustmentBehavior=
+  "automatic"`, a SwiftUI `Form` follows the safe area itself, any other
+  view at the top takes `useGlassHeaderInset()` (`src/shell/glassHeader.ts`),
+  and `KeyboardScreen` subtracts no header.
+- A standalone control's `Host` ignores the container safe area (iOS):
+  scrolled under a glass bar it would otherwise shift by the bar's height.
+- Android colors come from `usePalette()` (Material You roles on 12+), never
+  hard-coded hex, so React Native text matches the Compose controls. Let
+  Material components keep their own role colors (FAB, chips) unless a
+  role is wrong.
+- Material 3 Expressive in `@expo/ui` 58 is limited to `LoadingIndicator`
+  (used by `Progress`), `ToggleButton`, `SplitButtonLayout` and the
+  floating toolbar; shapes and motion follow the Compose defaults.
 
 Rules for screens:
 
@@ -216,8 +270,9 @@ Rules for screens:
 - Labels stay what tests and Maestro tap: the visible `label` is the text and
   the accessibility name; pass `accessibilityLabel` when the visible text is
   not enough ("Switch to Acme" on a row reading "Acme"), `testID` for ids.
-- Colors come from `usePalette()` (accent `#2F74C8` light / `#6AA7EC` dark);
-  each `Host` follows the system scheme and is tinted with the accent.
+- Colors come from `usePalette()` (accent `#2F74C8` light / `#6AA7EC` dark;
+  Material You's roles on Android 12+); each `Host` follows the system
+  scheme and is tinted with the accent (Android 12+: the wallpaper's).
 - Every component needs its web `X.tsx`; `pnpm -C mobile build:web` and
   `npx expo export --platform ios --platform android` both must bundle.
 - Settings (`app/(app)/(tabs)/settings.tsx`) is the reference screen.
@@ -232,14 +287,15 @@ Rules for screens:
     focus, so nothing can be typed. Dragging dismisses the keyboard.
   - Maestro on Android taps Compose fields poorly (it hits the first
     dropdown); a real tap (`adb shell input tap`) works.
-- `@expo/ui` and `expo-symbols` are native modules: a dev build made before
-  them must be rebuilt (`npx expo prebuild --clean`, then `pnpm ios` /
+- `@expo/ui`, `expo-symbols` and `expo-glass-effect` (also a dependency of
+  `expo-router`, so already in builds that have the router) are native
+  modules: a dev build made before them must be rebuilt (`npx expo prebuild --clean`, then `pnpm ios` /
   `pnpm android`); Expo Go can't show the kit.
 
 Tabs are native (`expo-router/native-tabs`: `UITabBarController` with SF
 Symbols, Material 3 navigation bar with Material Symbols); they draw no
-header, so the stack around them shows the focused tab's title. The web
-keeps the JS tabs.
+header, so the stack around them shows the focused tab's title (on iOS 26+
+a glass bar the tabs' content scrolls under). The web keeps the JS tabs.
 
 ### Connection banner
 

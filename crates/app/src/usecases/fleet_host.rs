@@ -35,7 +35,7 @@ use theodore_contract::{
     FleetSpaceStatus, FleetTrustNeeded, Space, SpaceAnswerItem, SpaceAnswerRequest, SpaceMode,
     SpaceQuestionItem, SpaceSendRequest, SpaceStatus, SyncFrame, TurnStep, models,
 };
-use theodore_domain::{AgentId, Author};
+use theodore_domain::Author;
 use theodore_fleet_protocol::{
     ClientMessage, DEVICE_JOURNAL, Domain, FleetMode, MAX_CHILDREN, MAX_DEPTH, RemoteAsk, RemoteOp,
     RemoteQuestion, RemoteRequest, RemoteSpaceEvent, RemoteSpaceStatus, ReplyBody, ReplyOutcome,
@@ -49,6 +49,7 @@ use crate::error::AppError;
 use crate::usecases::fleet::{
     Claimed, FleetSettings, Hosted, Reserved, Seen, fleet_mode, mode_str, space_mode,
 };
+use crate::usecases::fleet_agents::{agent_of, check_pick};
 use crate::usecases::fleet_mirror::Mirror;
 use crate::usecases::fleet_origin::{line_of, truncate};
 use crate::usecases::spaces::space_chat_key;
@@ -185,6 +186,29 @@ fn busy() -> Refusal {
         codes::BUSY,
         "the space is still working: wait until it settles, then send",
     )
+}
+
+/// A synced change to what `DeviceInfo` lists: a project, or an agent
+/// setting (`agents.<…>`: on or off, model, effort, `agents.chat`).
+fn offer_changed(a: &theodore_contract::WireAction) -> bool {
+    if a.model == models::PROJECT {
+        return true;
+    }
+    if a.model != models::SETTING {
+        return false;
+    }
+    // Its key, else the id (`<scope>:<key>`, or the key) of a deletion.
+    let key = a
+        .data
+        .as_ref()
+        .and_then(|d| d.get("key"))
+        .and_then(|k| k.as_str())
+        .unwrap_or_else(|| {
+            a.model_id
+                .split_once(':')
+                .map_or(a.model_id.as_str(), |(_, k)| k)
+        });
+    key.starts_with("agents.")
 }
 
 fn app_refusal(e: AppError) -> Refusal {
@@ -452,13 +476,29 @@ impl Core {
                 project_id,
                 goal,
                 mode,
+                agent,
+                model,
+                effort,
                 parent,
                 depth,
-                ..
             } => {
                 if *mode > s.max_mode {
                     return Err(above(*mode));
                 }
+                // A model or effort without an agent is the default's
+                // (the first listed), which then runs by name.
+                let agents = self.fleet_agents().await;
+                if agent.is_none() && (model.is_some() || effort.is_some()) {
+                    *agent = agents.first().map(|a| a.id.clone());
+                }
+                check_pick(
+                    &agents,
+                    agent.as_deref(),
+                    model.as_deref(),
+                    effort.as_deref(),
+                    None,
+                    None,
+                )?;
                 if !self
                     .fleet_projects()
                     .await
@@ -517,7 +557,14 @@ impl Core {
                 );
                 Ok(())
             }
-            RemoteOp::Send { space, text, mode } => {
+            RemoteOp::Send {
+                space,
+                text,
+                mode,
+                agent,
+                model,
+                effort,
+            } => {
                 let local = self.fleet_hosted_local(space).ok_or_else(unknown)?;
                 if text.trim().is_empty() {
                     return Err(refuse(codes::INVALID, "empty message"));
@@ -529,6 +576,15 @@ impl Core {
                 if row.status == SpaceStatus::Running {
                     return Err(busy());
                 }
+                // Picks apply to the space's agent unless one is named.
+                check_pick(
+                    &self.fleet_agents().await,
+                    agent.as_deref(),
+                    model.as_deref(),
+                    effort.as_deref(),
+                    Some(row.agent),
+                    row.model.as_deref(),
+                )?;
                 let m = match mode {
                     Some(m) => *m,
                     None => fleet_mode(row.mode),
@@ -670,39 +726,43 @@ impl Core {
     /// under the space's queue lock so it can't start running in between
     /// and the message wait in its queue (docs/fleet.md "Sends never
     /// queue").
-    async fn fleet_host_send(
-        &self,
-        local: String,
-        text: String,
-        mode: Option<FleetMode>,
-    ) -> Result<serde_json::Value, Refusal> {
-        let _queue = self.space_queue_lock(&local).await;
-        let row = self.space_row(&local).await.map_err(app_refusal)?;
+    async fn fleet_host_send(&self, req: SpaceSendRequest) -> Result<serde_json::Value, Refusal> {
+        let _queue = self.space_queue_lock(&req.space).await;
+        let row = self.space_row(&req.space).await.map_err(app_refusal)?;
         if row.status == SpaceStatus::Running {
             return Err(busy());
         }
-        self.space_send_as(
-            SpaceSendRequest {
-                space: local,
-                text,
-                agent: None,
-                model: None,
-                mode: mode.map(space_mode),
-                attachments: None,
-                effort: None,
-            },
-            None,
-        )
-        .await
-        .map(|id| serde_json::json!({ "message": id }))
-        .map_err(app_refusal)
+        self.space_send_as(req, None)
+            .await
+            .map(|id| serde_json::json!({ "message": id }))
+            .map_err(app_refusal)
     }
 
     async fn fleet_run_op(&self, req: &RemoteRequest) -> Result<serde_json::Value, Refusal> {
         match req.op.clone() {
             RemoteOp::StartSpace { .. } => self.fleet_host_start(req).await,
-            RemoteOp::Send { space, text, mode } => match self.fleet_hosted_local(&space) {
-                Some(local) => self.fleet_host_send(local, text, mode).await,
+            RemoteOp::Send {
+                space,
+                text,
+                mode,
+                agent,
+                model,
+                effort,
+            } => match self.fleet_hosted_local(&space) {
+                // The picks passed the gate: as a local send's, from
+                // this turn on.
+                Some(local) => {
+                    self.fleet_host_send(SpaceSendRequest {
+                        space: local,
+                        text,
+                        agent: agent.as_deref().and_then(agent_of),
+                        model,
+                        mode: mode.map(space_mode),
+                        attachments: None,
+                        effort,
+                    })
+                    .await
+                }
                 None => Err(refuse(codes::UNKNOWN_SPACE, "no such space on this device")),
             },
             RemoteOp::Stop { space } => match self.fleet_hosted_local(&space) {
@@ -759,13 +819,15 @@ impl Core {
             mode,
             agent,
             model,
+            effort,
             parent,
             depth,
         } = req.op.clone()
         else {
             return Err(refuse(codes::INTERNAL, "not a start"));
         };
-        let agent = agent.and_then(|a| AgentId::ALL.into_iter().find(|x| x.as_str() == a));
+        // Checked at the gate (`check_pick`): one this device lists.
+        let agent = agent.as_deref().and_then(agent_of);
         // Marked hosted before its first turn starts: that turn's tools
         // must already be a hosted space's.
         let core = self.clone();
@@ -783,7 +845,7 @@ impl Core {
                     agent,
                     model,
                     start_from: None,
-                    effort: None,
+                    effort,
                     mode: Some(space_mode(mode)),
                 },
                 Some(mark),
@@ -999,9 +1061,10 @@ impl Core {
     }
 
     async fn fleet_observe_frame(&self, frame: &SyncFrame) {
-        // A project added, removed or made ready changes what this device
+        // A project added, removed or made ready, or an agent turned on or
+        // off or its model or effort changed, changes what this device
         // offers: tell the cloud (a no-op unless remote requests are on).
-        if self.fleet().link.is_some() && frame.actions.iter().any(|a| a.model == models::PROJECT) {
+        if self.fleet().link.is_some() && frame.actions.iter().any(offer_changed) {
             let core = self.clone();
             tokio::spawn(async move { core.fleet_announce().await });
         }

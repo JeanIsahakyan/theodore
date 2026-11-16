@@ -1,6 +1,7 @@
 /** Colors for light and dark, following the system scheme. */
 import { Platform, useColorScheme } from 'react-native';
 import type { Tone } from './logic';
+import { platformPalette } from './materialPalette';
 
 export interface Palette {
   background: string;
@@ -45,8 +46,13 @@ export const dark: Palette = {
   danger: '#FF6B61',
 };
 
+/**
+ * The palette for the system scheme. On Android 12+ its roles come from
+ * Material You (`materialPalette.android.ts`); elsewhere they are the above.
+ */
 export function usePalette(): Palette {
-  return useColorScheme() === 'dark' ? dark : light;
+  const scheme = useColorScheme() === 'dark' ? 'dark' : 'light';
+  return platformPalette(scheme === 'dark' ? dark : light, scheme);
 }
 
 /** The color a tone draws in. */

@@ -1,7 +1,8 @@
 /**
  * iOS: the kit's SwiftUI `TextField` with a ref (`focus()`) and `onFocus`
  * (see `chatFieldTypes.ts`). Filled with the screen's background, so it
- * reads on the composer bar and on a card. The text lives in native state;
+ * reads on the composer bar and on a card; `glass`: on Liquid Glass (iOS
+ * 26+), the floating composer's field. The text lives in native state;
  * `value` is pushed in only when it differs from what the field last
  * reported (cleared after sending).
  */
@@ -25,7 +26,8 @@ import {
 } from '@expo/ui/swift-ui/modifiers';
 import { useEffect, useImperativeHandle, useRef } from 'react';
 import type { ChatFieldProps } from './chatFieldTypes';
-import { ControlHost } from './native/host.ios';
+import { ControlHost, glassBehind } from './native/host.ios';
+import { liquidGlass } from './native/liquidGlass';
 import { usePalette } from './theme';
 
 const caps = { none: 'never', sentences: 'sentences', words: 'words' } as const;
@@ -46,6 +48,7 @@ export function ChatField({
   maxLength,
   autoCapitalize,
   autoCorrect,
+  glass,
   accessibilityLabel,
   testID,
   style,
@@ -76,11 +79,12 @@ export function ChatField({
   if (disabled) mods.push(disabledMod(true));
   const a11y = accessibilityLabel ?? placeholder;
   if (a11y) mods.push(a11yLabel(a11y));
-  mods.push(
-    padding({ horizontal: 14, vertical: 10 }),
-    background(p.background),
-    cornerRadius(20),
-  );
+  mods.push(padding({ horizontal: 14, vertical: 10 }));
+  if (glass && liquidGlass) {
+    mods.push(...glassBehind('rounded', { radius: 20, interactive: true }));
+  } else {
+    mods.push(background(p.background), cornerRadius(20));
+  }
   return (
     <ControlHost style={style} width="fill">
       <STextField

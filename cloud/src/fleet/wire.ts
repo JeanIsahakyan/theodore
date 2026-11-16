@@ -9,6 +9,8 @@ import type {
   ClientMessage,
   Delegation,
   DeviceInfo,
+  FleetAgentInfo,
+  FleetModelInfo,
   RemoteAsk,
   RemoteQuestion,
   RemoteSpaceEvent,
@@ -19,7 +21,14 @@ import type {
 } from '../gen/fleet';
 import {
   codes,
+  MAX_AGENT_ID_CHARS,
+  MAX_AGENT_LABEL_CHARS,
+  MAX_AGENT_MODELS,
+  MAX_AGENTS,
+  MAX_EFFORT_CHARS,
   MAX_EVENT_BYTES,
+  MAX_MODEL_EFFORTS,
+  MAX_MODEL_ID_CHARS,
   MAX_FRAME_BYTES,
   MAX_INFO_BYTES,
   MAX_MIRROR_ID_CHARS,
@@ -104,6 +113,44 @@ export const hosts = (kind: DeviceInfo['kind']) => HOST_KINDS.includes(kind);
 const kindsFor = (protocol: number): readonly DeviceInfo['kind'][] =>
   protocol >= 4 ? [...HOST_KINDS, 'mobile', 'web'] : HOST_KINDS;
 
+/** A `string[]` of at most `max` items, each a non-empty string ≤ `chars`. */
+function strs(o: Obj, k: string, max: number, chars: number): string[] {
+  return arr(o, k, max).map((x) => {
+    if (typeof x !== 'string' || x === '' || x.length > chars) {
+      throw bad(`${k} must hold strings of 1 to ${chars} chars`);
+    }
+    return x;
+  });
+}
+
+function modelInfo(v: unknown): FleetModelInfo {
+  const o = obj(v, 'model');
+  return {
+    id: str(o, 'id', MAX_MODEL_ID_CHARS),
+    label: str(o, 'label', MAX_AGENT_LABEL_CHARS, true),
+    efforts:
+      o.efforts === undefined
+        ? []
+        : strs(o, 'efforts', MAX_MODEL_EFFORTS, MAX_EFFORT_CHARS),
+    default_effort: optStr(o, 'default_effort', MAX_EFFORT_CHARS),
+  };
+}
+
+/** One agent a host lists (`FleetAgentInfo`): every field bounded. */
+function agentInfo(v: unknown): FleetAgentInfo {
+  const o = obj(v, 'agent');
+  return {
+    id: str(o, 'id', MAX_AGENT_ID_CHARS),
+    label: str(o, 'label', MAX_AGENT_LABEL_CHARS, true),
+    default_model: optStr(o, 'default_model', MAX_MODEL_ID_CHARS),
+    default_effort: optStr(o, 'default_effort', MAX_EFFORT_CHARS),
+    models:
+      o.models === undefined
+        ? []
+        : arr(o, 'models', MAX_AGENT_MODELS).map(modelInfo),
+  };
+}
+
 function deviceInfo(v: unknown, protocol: number): DeviceInfo {
   const o = obj(v, 'info');
   const info: DeviceInfo = {
@@ -117,6 +164,11 @@ function deviceInfo(v: unknown, protocol: number): DeviceInfo {
     }),
     accepts_remote: bool(o, 'accepts_remote'),
     max_mode: oneOf(o, 'max_mode', MODES),
+    // A host older than the field sends none.
+    agents:
+      o.agents === undefined || o.agents === null
+        ? []
+        : arr(o, 'agents', MAX_AGENTS).map(agentInfo),
   };
   if (JSON.stringify(info).length > MAX_INFO_BYTES) {
     throw new BadMessage(codes.TOO_LARGE, 'device info too large');
@@ -360,6 +412,13 @@ export function peekRequest(body: string): Routing {
   const o = parseBody(body, 'request body');
   const op = obj(o.op, 'op');
   const kind = oneOf(op, 'op', ['start_space', 'send', 'stop', 'answer']);
+  // Not read for routing, only bounded: the target checks them against
+  // what it lists.
+  if (kind === 'start_space' || kind === 'send') {
+    optStr(op, 'agent', MAX_AGENT_ID_CHARS);
+    optStr(op, 'model', MAX_MODEL_ID_CHARS);
+    optStr(op, 'effort', MAX_EFFORT_CHARS);
+  }
   return {
     req_id: str(o, 'req_id'),
     origin_device: str(o, 'origin_device', 64),

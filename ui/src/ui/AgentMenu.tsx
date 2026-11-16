@@ -13,7 +13,7 @@ import { useEffect, useMemo, useRef } from 'react';
 import { Check, ChevronDown, Gear } from '@gravity-ui/icons';
 import { Button, Dropdown, Header, Separator } from '@heroui/react';
 import { observer } from 'mobx-react-lite';
-import type { AgentId, AgentModel } from '../gen/contract';
+import type { AgentId, AgentModel, FleetAgent } from '../gen/contract';
 import { useRootStore, useUi } from '../stores/context';
 import type { RootStore } from '../stores/RootStore';
 import {
@@ -48,19 +48,27 @@ function rawEffort(store: RootStore, agent: AgentId): string | null {
   return typeof v === 'string' && v.trim() ? v.trim() : null;
 }
 
+/** What another device runs when nothing is picked (`FleetAgent`): stands
+ *  in for this device's settings. */
+export type HostDefaults = {
+  model: string | null;
+  effort: string | null;
+};
+
 /** The concrete model and effort `agent` runs with, given its catalog:
  *  `boxModel` when this box has one, else the setting (as typed when the
  *  catalog lacks it), else the catalog's first current model; `boxEffort`,
  *  else the effort set, when that model takes it, else the model's own
- *  default. */
+ *  default. `host`: another device's defaults instead of the settings. */
 export function running(
   store: RootStore,
   agent: AgentId,
   catalog: AgentModel[] | undefined,
   boxModel?: string | null,
   boxEffort?: string | null,
+  host?: HostDefaults,
 ): Running {
-  const id = boxModel ?? agentModel(store, agent);
+  const id = boxModel ?? (host ? host.model : agentModel(store, agent));
   const list = catalog ?? [];
   const typed: AgentModel | null = id
     ? {
@@ -81,7 +89,7 @@ export function running(
       : (list.find((m) => !m.older) ?? list[0]));
   const model = listedModel ?? typed ?? null;
   const efforts = takesEffort(agent) ? (model?.efforts ?? []) : [];
-  const set = boxEffort ?? rawEffort(store, agent);
+  const set = boxEffort ?? (host ? host.effort : rawEffort(store, agent));
   // Picked in a space, kept everywhere (it runs at max outside spaces).
   if (agent === 'claude' && set === ULTRACODE && efforts.length) {
     return { model, listed: !!listedModel, efforts, effort: set };
@@ -135,9 +143,14 @@ export const AgentMenu = observer(function AgentMenu({
   onPickModel,
   effortOf,
   onPickEffort,
+  host,
 }: {
   /** Offered: installed and enabled. */
   agents: AgentId[];
+  /** Another device's agents (a remote space's box, New space on another
+   *  device): their models, levels and defaults stand in for this device's
+   *  catalog and settings, and no setting is written or offered. */
+  host?: FleetAgent[];
   /** The agent this box talks to (the first offered when null). */
   selected: AgentId | null;
   onSelect: (next: AgentId) => void;
@@ -156,11 +169,27 @@ export const AgentMenu = observer(function AgentMenu({
   const store = useRootStore();
   const ui = useUi();
   const chip = useRef<HTMLSpanElement>(null);
-  const catalog = useAgentModels(agents);
+  const local = useAgentModels(host ? [] : agents);
+  const catalog: Partial<Record<AgentId, AgentModel[]>> = host
+    ? Object.fromEntries(host.map((a) => [a.id, a.models]))
+    : local;
+  const defaults = (a: AgentId): HostDefaults | undefined => {
+    const h = host?.find((x) => x.id === a);
+    return host
+      ? { model: h?.default_model ?? null, effort: h?.default_effort ?? null }
+      : undefined;
+  };
   const primary = selected ?? agents[0] ?? null;
   const now: Partial<Record<AgentId, Running>> = {};
   for (const a of agents) {
-    now[a] = running(store, a, catalog[a], modelOf?.(a), effortOf?.(a));
+    now[a] = running(
+      store,
+      a,
+      catalog[a],
+      modelOf?.(a),
+      effortOf?.(a),
+      defaults(a),
+    );
   }
   const cur = primary ? now[primary] : undefined;
   const levels = useMemo(
@@ -177,16 +206,17 @@ export const AgentMenu = observer(function AgentMenu({
   // a pick for one agent reruns this for them all. The setting's own, not a
   // box's: a box with its own effort (a space's, New space's) writes no
   // setting.
-  const fill = onPickEffort
-    ? ''
-    : agents
-        .map((a) => {
-          const r = running(store, a, catalog[a]);
-          return r.listed && r.model
-            ? `${a}|${r.model.id}|${r.effort ?? ''}`
-            : '';
-        })
-        .join(',');
+  const fill =
+    onPickEffort || host
+      ? ''
+      : agents
+          .map((a) => {
+            const r = running(store, a, catalog[a]);
+            return r.listed && r.model
+              ? `${a}|${r.model.id}|${r.effort ?? ''}`
+              : '';
+          })
+          .join(',');
   useEffect(() => {
     for (const part of fill.split(',')) {
       const [a, id, effort] = part.split('|') as [AgentId, string, string];
@@ -199,8 +229,10 @@ export const AgentMenu = observer(function AgentMenu({
   }, [fill, store]);
 
   // The latest closures, for the key below.
-  const box = useRef({ effortOf, onPickEffort });
-  box.current = { effortOf, onPickEffort };
+  // Another device's shown effort stands in for this one's setting.
+  const shown = host ? (cur?.effort ?? null) : undefined;
+  const box = useRef({ effortOf, onPickEffort, shown });
+  box.current = { effortOf, onPickEffort, shown };
 
   // ⌘⇧/ in the box this chip sits in: the next effort.
   useEffect(() => {
@@ -214,10 +246,14 @@ export const AgentMenu = observer(function AgentMenu({
         if (scope.contains(active)) {
           e.preventDefault();
           const own = box.current;
-          const at = own.effortOf?.(primary) ?? rawEffort(store, primary);
+          const at =
+            own.effortOf?.(primary) ??
+            (own.shown !== undefined ? own.shown : rawEffort(store, primary));
           const next = nextEffort(at, levels);
           if (own.onPickEffort && next) own.onPickEffort(primary, next);
-          else setAgentEffort(store, primary, next);
+          else if (own.shown === undefined) {
+            setAgentEffort(store, primary, next);
+          }
           return;
         }
       }
@@ -239,10 +275,17 @@ export const AgentMenu = observer(function AgentMenu({
       // A level of its own the new model doesn't take: its default instead.
       const own = effortOf?.(agent);
       if (own && onPickEffort) {
-        const next = running(store, agent, catalog[agent], id, own).effort;
+        const next = running(
+          store,
+          agent,
+          catalog[agent],
+          id,
+          own,
+          defaults(agent),
+        ).effort;
         if (next && next !== own) onPickEffort(agent, next);
       }
-    } else {
+    } else if (!host) {
       setAgentModel(store, agent, id);
       // A level the new model doesn't take: its own default instead.
       setAgentEffort(
@@ -409,16 +452,19 @@ export const AgentMenu = observer(function AgentMenu({
                 </Dropdown.Popover>
               </Dropdown.SubmenuTrigger>
             ) : null}
-            <Separator className="my-1" />
-            <Dropdown.Item id="settings" textValue="Edit" className="gap-2">
-              <Gear className="size-3.5 text-muted" />
-              <span className="flex-1 text-muted">Edit</span>
-              {levels.length > 0 && (
-                <span className="flex items-center gap-1.5 text-xs text-muted">
-                  <K>⌘⇧/</K> Cycle effort
-                </span>
-              )}
-            </Dropdown.Item>
+            {/* Another device's agents: its settings aren't this one's. */}
+            {host ? null : <Separator className="my-1" />}
+            {host ? null : (
+              <Dropdown.Item id="settings" textValue="Edit" className="gap-2">
+                <Gear className="size-3.5 text-muted" />
+                <span className="flex-1 text-muted">Edit</span>
+                {levels.length > 0 && (
+                  <span className="flex items-center gap-1.5 text-xs text-muted">
+                    <K>⌘⇧/</K> Cycle effort
+                  </span>
+                )}
+              </Dropdown.Item>
+            )}
           </Dropdown.Menu>
         </Dropdown.Popover>
       </Dropdown>

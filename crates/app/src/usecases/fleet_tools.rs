@@ -30,7 +30,7 @@ use theodore_ports::{
 use crate::core::Core;
 use crate::error::AppError;
 use crate::usecases::fleet::{FleetMem, FleetSettings, TrustedDevice, mode_str};
-use crate::usecases::fleet_origin::{FleetFail, agent_error, settled};
+use crate::usecases::fleet_origin::{FleetFail, RemotePick, agent_error, settled};
 
 /// How long `fleet_start_space` waits for the other device to say yes.
 const START_WAIT: Duration = Duration::from_secs(20);
@@ -314,6 +314,7 @@ impl Core {
                 &project_id,
                 goal,
                 mode,
+                RemotePick::default(),
                 Some(parent),
                 1,
                 Some(caller.to_string()),
@@ -376,6 +377,9 @@ impl Core {
             space: space.to_string(),
             text: text.to_string(),
             mode: Some(mode),
+            agent: None,
+            model: None,
+            effort: None,
         })
         .await
         .map_err(|e| unavailable(e.for_agent()))?;
