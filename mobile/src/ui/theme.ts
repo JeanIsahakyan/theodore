@@ -23,7 +23,8 @@ export const light: Palette = {
   border: '#D8D8DE',
   text: '#111114',
   muted: '#6B6B76',
-  accent: '#3D5AFE',
+  // The logo's blue (assets/src), dark enough for white text (4.7:1).
+  accent: '#2F74C8',
   onAccent: '#FFFFFF',
   success: '#1F9D55',
   warning: '#B7791F',
@@ -37,7 +38,7 @@ export const dark: Palette = {
   border: '#38383A',
   text: '#F5F5F7',
   muted: '#9A9AA5',
-  accent: '#7C93FF',
+  accent: '#6AA7EC',
   onAccent: '#0B0B0F',
   success: '#4CC38A',
   warning: '#F0B54A',
