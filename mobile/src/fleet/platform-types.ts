@@ -20,11 +20,7 @@ export interface FleetSocket {
 
 export interface FleetPlatform {
   kind: 'mobile' | 'web';
-  /**
-   * The protocol knows `macos` and `linux` only: iOS (and a browser on a
-   * Mac) say `macos`, Android and other browsers `linux`. `kind` is what
-   * tells a phone apart.
-   */
+  /** The OS it runs on (a browser: the OS the browser runs on). */
   os: DeviceOs;
   /** How other devices list this one (sanitized by them when pinned). */
   name: string;

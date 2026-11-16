@@ -244,6 +244,17 @@ export const KIND_LABEL: Record<string, string> = {
 
 export const kindLabel = (kind: string): string => KIND_LABEL[kind] ?? kind;
 
+export const OS_LABEL: Record<string, string> = {
+  macos: 'macOS',
+  linux: 'Linux',
+  windows: 'Windows',
+  ios: 'iOS',
+  android: 'Android',
+};
+
+/** "ios" → "iOS"; an OS this build doesn't know, as "other". */
+export const osLabel = (os: string): string => OS_LABEL[os] ?? 'other OS';
+
 /** A glyph per device kind (no icon font, so it also renders on web). */
 export const KIND_GLYPH: Record<string, string> = {
   desktop: '\u{1F5A5}',

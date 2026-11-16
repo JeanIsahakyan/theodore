@@ -1216,7 +1216,7 @@ export type FleetDevice = {
 
 export type FleetLineKind = "started" | "status" | "turn" | "tool" | "reply" | "ended" | "question" | "gap";
 
-export type FleetOs = "macos" | "linux";
+export type FleetOs = "macos" | "linux" | "windows" | "ios" | "android" | "other";
 
 export type FleetPresenceRequest = {
 	focused: boolean,

@@ -112,6 +112,28 @@ describe('protocol versions', () => {
     expect(names(phone)).toEqual(['iPhone', 'mac', 'old']);
   });
 
+  it("gives protocol 3 only the OSes it reads", async () => {
+    const h = new Harness();
+    const old = await h.device('user_1', 'old');
+    old.protocol = 3;
+    const win = await h.device('user_1', 'win');
+    win.infoOver = { os: 'windows' };
+    const phone = await h.phone();
+    phone.infoOver = { ...phone.infoOver, os: 'ios' };
+    await old.connect();
+    await win.connect();
+    await phone.connect();
+    const oses = (d: Device) =>
+      Object.fromEntries(
+        d
+          .take('devices')
+          .at(-1)!
+          .devices.map((x) => [x.info.name, x.info.os]),
+      );
+    expect(oses(old)).toEqual({ old: 'macos', win: 'linux' });
+    expect(oses(win)).toEqual({ iPhone: 'ios', old: 'macos', win: 'windows' });
+  });
+
   it('sends delegations after welcome to protocol 4 only', async () => {
     const h = new Harness();
     const old = await h.device('user_1', 'old');

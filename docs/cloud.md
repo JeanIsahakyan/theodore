@@ -250,8 +250,9 @@ hello's protocol is kept per connection:
 | `delegations` | never sent | after welcome and on change |
 | `mirror` space events | never sent, live or history | sent |
 
-`DeviceInfo.os` is still `macos` / `linux` in both: a phone or browser
-sends one of those until the protocol gains its own values.
+`DeviceInfo.os` is `macos`, `linux`, `windows`, `ios` or `android` (a
+browser: the OS it runs on). A protocol-3 device gets `linux` for any but
+`macos` / `linux`; a device reads an OS it doesn't know as `other`.
 
 - **Hibernation API**: an idle socket bills nothing. Per-socket state is its
   attachment (user, org, token expiry, device, generation, presence); the

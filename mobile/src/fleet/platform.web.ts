@@ -6,13 +6,15 @@
  */
 import Constants from 'expo-constants';
 import { createSecureStorage } from '../keys/storage';
+import type { DeviceOs } from '../gen/fleet';
 import type { FleetPlatform, FleetSocket } from './platform-types';
 
-function browserOs(): { os: 'macos' | 'linux'; label: string } {
+function browserOs(): { os: DeviceOs; label: string } {
   const ua = typeof navigator === 'undefined' ? '' : navigator.userAgent;
-  if (/Mac|iPhone|iPad/.test(ua)) return { os: 'macos', label: 'Mac' };
-  if (/Windows/.test(ua)) return { os: 'linux', label: 'Windows' };
-  if (/Android/.test(ua)) return { os: 'linux', label: 'Android' };
+  if (/iPhone|iPad/.test(ua)) return { os: 'ios', label: 'iPhone' };
+  if (/Mac/.test(ua)) return { os: 'macos', label: 'Mac' };
+  if (/Windows/.test(ua)) return { os: 'windows', label: 'Windows' };
+  if (/Android/.test(ua)) return { os: 'android', label: 'Android' };
   return { os: 'linux', label: 'Linux' };
 }
 

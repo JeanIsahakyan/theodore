@@ -25,6 +25,10 @@ pub struct FleetProject {
 pub enum FleetOs {
     Macos,
     Linux,
+    Windows,
+    Ios,
+    Android,
+    Other,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]

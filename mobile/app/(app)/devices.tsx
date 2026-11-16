@@ -24,6 +24,7 @@ import {
   errorText,
   kindGlyph,
   kindLabel,
+  osLabel,
   sortDevices,
 } from '../../src/ui/logic';
 import { TrustConfirm } from '../../src/ui/TrustConfirm';
@@ -62,7 +63,7 @@ function DeviceRow({ device }: { device: FleetDeviceView }) {
             />
           </View>
           <Text style={[styles.meta, { color: p.muted }]}>
-            {kindLabel(device.kind)} · {device.os} ·{' '}
+            {kindLabel(device.kind)} · {osLabel(device.os)} ·{' '}
             {device.online ? 'online' : 'offline'}
             {device.acceptsRemote
               ? ` · runs spaces up to ${MODE_LABEL[device.maxMode]}`

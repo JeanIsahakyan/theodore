@@ -17,7 +17,7 @@ export function defaultPlatform(): FleetPlatform {
   const ios = Platform.OS === 'ios';
   return {
     kind: 'mobile',
-    os: ios ? 'macos' : 'linux',
+    os: ios ? 'ios' : 'android',
     name: Device.deviceName ?? Device.modelName ?? (ios ? 'iPhone' : 'Android'),
     appVersion: Constants.expoConfig?.version ?? '0.0.0',
     closeInBackground: ios,
