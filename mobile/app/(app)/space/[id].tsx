@@ -13,17 +13,25 @@
  * The composer rides on the keyboard (iOS and Android); focusing an answer
  * in the question card keeps the card in view; dragging the list closes the
  * keyboard.
+ *
+ * Controls are the native kit (docs/mobile.md "Native UI"):
+ *
+ * ```text
+ * [ Ask | Plan | Edit ]                      Segmented
+ * ( Ask the agent to change something… )    ChatField (focus() on Revise)
+ * [Send]                                     Button
+ * [Stop] ─▶ confirm() ─▶ stopSpace           while a turn runs
+ * plan reply: [Approve] [Revise]             SpaceChat's PlanActions
+ * ```
  */
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import {
   FlatList,
   StyleSheet,
   Text,
-  TextInput,
   View,
   type NativeScrollEvent,
   type NativeSyntheticEvent,
-  type TextInputInstance,
 } from 'react-native';
 import { Stack, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -33,15 +41,10 @@ import type { ChatMessage } from '../../../src/fleet/contract';
 import { mirrored } from '../../../src/fleet/mirror';
 import type { SpaceLine, SpaceView } from '../../../src/fleet/types';
 import type { FleetMode } from '../../../src/gen/fleet';
-import {
-  Badge,
-  Button,
-  Card,
-  Chip,
-  Confirm,
-  Empty,
-  Notice,
-} from '../../../src/ui/kit';
+import { ChatField } from '../../../src/ui/ChatField';
+import type { ChatFieldHandle } from '../../../src/ui/chatFieldTypes';
+import { Badge, Empty, Notice } from '../../../src/ui/kit';
+import { Button, Segmented, confirm } from '../../../src/ui/native';
 import { QuestionCard } from '../../../src/ui/QuestionCard';
 import { bottomPad } from '../../../src/ui/keyboard';
 import {
@@ -145,26 +148,34 @@ function Line({ line }: { line: SpaceLine }) {
   }
 }
 
+/** The whole title (the bar's is cut with "…"), the status, where it runs. */
 function Header({ space }: { space: SpaceView }) {
   const p = usePalette();
   return (
-    <Card>
-      <View style={styles.headerTop}>
-        <Text numberOfLines={2} style={[styles.headerTitle, { color: p.text }]}>
-          {spaceTitle(space)}
-        </Text>
+    <View style={styles.header}>
+      <Text
+        selectable
+        numberOfLines={3}
+        style={[styles.headerTitle, { color: p.text }]}
+      >
+        {spaceTitle(space)}
+      </Text>
+      <View style={styles.headerMeta}>
         <Badge
           label={STATUS_LABEL[space.status]}
           tone={STATUS_TONE[space.status]}
         />
+        <Text
+          selectable
+          style={[styles.small, styles.shrink, { color: p.muted }]}
+        >
+          Runs on {space.hostName}
+          {space.projectName ? ` · ${space.projectName}` : ''}
+          {space.branch ? ` · ${space.branch}` : ''} · {MODE_LABEL[space.mode]}
+        </Text>
       </View>
-      <Text selectable style={[styles.small, { color: p.muted }]}>
-        Runs on {space.hostName}
-        {space.projectName ? ` · ${space.projectName}` : ''}
-        {space.branch ? ` · ${space.branch}` : ''} · {MODE_LABEL[space.mode]}
-      </Text>
       {space.error ? <Notice tone="danger">{space.error}</Notice> : null}
-    </Card>
+    </View>
   );
 }
 
@@ -238,12 +249,12 @@ export default function SpaceScreen() {
   const [sending, setSending] = useState(false);
   const [approving, setApproving] = useState(false);
   const [reviseAsked, setRevising] = useState(false);
-  const [stopping, setStopping] = useState<'ask' | 'busy' | null>(null);
+  const [stopping, setStopping] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const ownMode = space?.mode ?? 'edit';
   const [mode, setMode] = useState<FleetMode>(ownMode);
   const [modeOf, setModeOf] = useState<FleetMode>(ownMode);
-  const input = useRef<TextInputInstance>(null);
+  const input = useRef<ChatFieldHandle>(null);
   const chatList = useRef<FlatList<ChatTurn>>(null);
   const lineList = useRef<FlatList<SpaceLine>>(null);
   const atEnd = useRef(true);
@@ -314,16 +325,21 @@ export default function SpaceScreen() {
       .finally(() => setSending(false));
   };
 
-  const stop = () => {
-    setStopping('busy');
+  const stop = async () => {
+    if (stopping) return;
+    const sure = await confirm({
+      title: 'Stop this space?',
+      message: 'The agent stops after its current step.',
+      confirmLabel: 'Stop',
+      destructive: true,
+    });
+    if (!sure) return;
+    setStopping(true);
     setError(null);
     fleet
       .stopSpace(id)
-      .then(() => setStopping(null))
-      .catch((e: unknown) => {
-        setError(errorText(e));
-        setStopping(null);
-      });
+      .catch((e: unknown) => setError(errorText(e)))
+      .finally(() => setStopping(false));
   };
 
   const plan: PlanProps = {
@@ -467,65 +483,48 @@ export default function SpaceScreen() {
         ) : null}
         {chat?.progress ? <ProgressCard progress={chat.progress} /> : null}
         {error ? <Notice tone="danger">{error}</Notice> : null}
-        {stopping ? (
-          <Confirm
-            title="Stop this space? The agent stops after its current step."
-            confirmLabel="Stop"
-            danger
-            busy={stopping === 'busy'}
-            onConfirm={stop}
-            onCancel={() => setStopping(null)}
-          />
-        ) : null}
-        <View style={styles.modes} accessibilityLabel="Mode">
-          {modes.map((m) => (
-            <Chip
-              key={m}
-              label={MODE_LABEL[m]}
-              accessibilityLabel={`Mode ${MODE_LABEL[m]}: ${MODE_HINT[m]}`}
-              selected={m === picked}
-              disabled={sending}
-              onPress={() => setMode(m)}
-            />
-          ))}
-        </View>
+        <Segmented
+          label="Mode"
+          choices={modes.map((m) => ({
+            value: m,
+            label: MODE_LABEL[m],
+            accessibilityLabel: `Mode ${MODE_LABEL[m]}: ${MODE_HINT[m]}`,
+          }))}
+          value={picked}
+          onChange={setMode}
+          disabled={sending}
+        />
         {picked === 'run' && space.mode !== 'run' ? (
           <Text style={[styles.small, { color: p.warning }]}>
             {RUN_WARNING}
           </Text>
         ) : null}
         <View style={styles.composerRow}>
-          <TextInput
+          <ChatField
             ref={input}
             accessibilityLabel="Message to the space"
             multiline
-            editable={sendable && !sending}
+            minLines={1}
+            maxLines={6}
+            disabled={!sendable || sending}
             value={text}
             onChangeText={setText}
             placeholder={composerNote(space, revising, hosted)}
-            placeholderTextColor={p.muted}
-            style={[
-              styles.input,
-              {
-                backgroundColor: p.background,
-                borderColor: p.border,
-                color: p.text,
-              },
-            ]}
+            style={styles.flex}
           />
           {canStop(space.status) ? (
             <Button
               label="Stop"
-              kind="danger"
-              disabled={stopping !== null}
-              onPress={() => setStopping('ask')}
+              variant="destructive"
+              loading={stopping}
+              onPress={() => void stop()}
             />
           ) : (
             <Button
               label="Send"
-              kind="primary"
+              variant="primary"
               disabled={!sendable || text.trim() === ''}
-              busy={sending}
+              loading={sending}
               onPress={send}
             />
           )}
@@ -540,8 +539,15 @@ const styles = StyleSheet.create({
   content: { padding: 16, gap: 18 },
   turnRow: { gap: 14 },
   tail: { gap: 14 },
-  headerTop: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  headerTitle: { flex: 1, fontSize: 18, fontWeight: '700' },
+  header: { gap: 8 },
+  headerMeta: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: 8,
+  },
+  headerTitle: { fontSize: 22, fontWeight: '700', lineHeight: 28 },
+  shrink: { flexShrink: 1 },
   body: { fontSize: 16, lineHeight: 22 },
   small: { fontSize: 13 },
   center: { textAlign: 'center' },
@@ -575,17 +581,5 @@ const styles = StyleSheet.create({
     padding: 12,
     borderTopWidth: StyleSheet.hairlineWidth,
   },
-  modes: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
   composerRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 8 },
-  input: {
-    flex: 1,
-    minHeight: 44,
-    maxHeight: 140,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderRadius: 12,
-    borderCurve: 'continuous',
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    fontSize: 16,
-  },
 });

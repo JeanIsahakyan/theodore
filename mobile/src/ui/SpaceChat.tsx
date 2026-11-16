@@ -5,10 +5,11 @@
  * turn, queued messages and the question. The rules are `chat.ts`.
  */
 import { memo, useEffect, useState } from 'react';
-import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 import type { ChatMessage, SpaceProgress } from '../fleet/contract';
-import { Button } from './kit';
 import { Markdown } from './Markdown';
+import { Button } from './native';
+import { Spinner } from './Spinner';
 import { TimelineRows } from './Timeline';
 import {
   STOPPED,
@@ -93,10 +94,15 @@ export function PlanActions({ build, busy, onApprove, onRevise }: PlanProps) {
   const p = usePalette();
   return (
     <View style={styles.planActions}>
-      <Button label="Approve" kind="primary" busy={busy} onPress={onApprove} />
+      <Button
+        label="Approve"
+        variant="primary"
+        loading={busy}
+        onPress={onApprove}
+      />
       <Button
         label="Revise"
-        kind="secondary"
+        variant="secondary"
         disabled={busy}
         onPress={onRevise}
       />
@@ -265,7 +271,7 @@ export function LiveReply({ live }: { live: LiveTurn }) {
         <TimelineRows steps={live.steps} running keptAs={live.run} />
       ) : null}
       <View style={styles.status}>
-        <ActivityIndicator size="small" color={p.accent} />
+        <Spinner color={p.accent} />
         <LiveTimer since={live.since} />
       </View>
     </View>
@@ -287,7 +293,7 @@ export function ProgressCard({ progress }: { progress: SpaceProgress }) {
         <View key={i} style={styles.progressRow}>
           <View style={styles.mark}>
             {s.state === 'active' ? (
-              <ActivityIndicator size="small" color={p.accent} />
+              <Spinner color={p.accent} />
             ) : (
               <Text
                 style={[
@@ -370,7 +376,12 @@ const styles = StyleSheet.create({
     paddingVertical: 2,
     maxWidth: 220,
   },
-  status: { flexDirection: 'row', alignItems: 'center', gap: 8, height: 22 },
+  status: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    minHeight: 22,
+  },
   progress: {
     borderWidth: StyleSheet.hairlineWidth,
     borderRadius: 10,
