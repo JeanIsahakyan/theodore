@@ -202,6 +202,7 @@ import { Button, Form, Row, Section, Switch, confirm } from '../../src/ui/native
 | `Progress` circular / linear, `value` 0…1 or none | `ProgressView` | `CircularProgressIndicator` (a value) / Expressive `LoadingIndicator` (none) / `LinearProgressIndicator` | `ActivityIndicator` / bar |
 | `Form` › `Section` (`title`, `footer`) › `Row` (`label`, `value`, `detail`, `chevron`, `selected`, `destructive`, `loading`, `onPress`) | `Form` (inset grouped, scrolls) › `Section` › row `Button` | scrolling `Column` › titled `Card` › `ListItem` (no chevron) | `ScrollView` › card › rows |
 | `FormSlot` (any RN view inside a `Form`) | `RNHostView` | `RNHostView` | `View` |
+| `Menu` (`label`, `groups` of choices with a check on the current one; agent · model · effort in the composer) | `Menu` with a `Picker` submenu per group (glass button on iOS 26) | `AssistChip` + `DropdownMenu`, a heading per group | pill + sheet |
 | `confirm()` / `notify()` (promise) | `UIAlertController` (RN `Alert`) | `AlertDialog` (RN `Alert`) | `window.confirm` / `alert` |
 
 ```
