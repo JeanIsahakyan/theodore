@@ -19,7 +19,14 @@ import {
 } from './logic';
 import { usePalette } from './theme';
 
-export function QuestionCard({ question }: { question: QuestionView }) {
+export function QuestionCard({
+  question,
+  onFocusAnswer,
+}: {
+  question: QuestionView;
+  /** The "Other…" field took focus: the host keeps the card in view. */
+  onFocusAnswer?: () => void;
+}) {
   const { fleet } = useServices();
   const p = usePalette();
   const [drafts, setDrafts] = useState<Draft[]>(() =>
@@ -70,6 +77,7 @@ export function QuestionCard({ question }: { question: QuestionView }) {
               value={d.other}
               editable={!busy}
               onChangeText={(t) => set(i, typeOther(q, d, t))}
+              onFocus={onFocusAnswer}
               onSubmitEditing={send}
               returnKeyType="send"
             />

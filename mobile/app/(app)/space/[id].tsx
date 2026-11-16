@@ -9,11 +9,14 @@
  * mirror for this space ─▶ chatView(mirror) ─▶ turns ─ live ─ queued ─ question
  * none                  ─▶ lines (started, turn, tool, reply, …)
  * ```
+ *
+ * The composer rides on the keyboard (iOS and Android); focusing an answer
+ * in the question card keeps the card in view; dragging the list closes the
+ * keyboard.
  */
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import {
   FlatList,
-  KeyboardAvoidingView,
   StyleSheet,
   Text,
   TextInput,
@@ -23,6 +26,7 @@ import {
   type TextInputInstance,
 } from 'react-native';
 import { Stack, useLocalSearchParams } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useServices } from '../../../src/services';
 import { useFleetState } from '../../../src/state/fleet';
 import type { ChatMessage } from '../../../src/fleet/contract';
@@ -39,6 +43,12 @@ import {
   Notice,
 } from '../../../src/ui/kit';
 import { QuestionCard } from '../../../src/ui/QuestionCard';
+import { bottomPad } from '../../../src/ui/keyboard';
+import {
+  KeyboardScreen,
+  keyboardDismissMode,
+  useKeyboardUp,
+} from '../../../src/ui/KeyboardSafe';
 import {
   LiveReply,
   MessageRow,
@@ -237,6 +247,8 @@ export default function SpaceScreen() {
   const chatList = useRef<FlatList<ChatTurn>>(null);
   const lineList = useRef<FlatList<SpaceLine>>(null);
   const atEnd = useRef(true);
+  const insets = useSafeAreaInsets();
+  const keyboardUp = useKeyboardUp();
 
   // Sticky per space: the next turn starts in the space's last mode.
   if (modeOf !== ownMode) {
@@ -343,6 +355,12 @@ export default function SpaceScreen() {
     chatList.current?.scrollToEnd({ animated: false });
     lineList.current?.scrollToEnd({ animated: false });
   };
+  // The card is the list's last row: stick to the end, so the list
+  // shrinking for the keyboard keeps the field and Send answer in view.
+  const answering = () => {
+    atEnd.current = true;
+    follow();
+  };
 
   const footer = chat ? (
     <View style={styles.tail}>
@@ -353,11 +371,19 @@ export default function SpaceScreen() {
         <QueuedRow key={m.id} m={m} />
       ))}
       {question ? (
-        <QuestionCard key={question.askId} question={question} />
+        <QuestionCard
+          key={question.askId}
+          question={question}
+          onFocusAnswer={answering}
+        />
       ) : null}
     </View>
   ) : question ? (
-    <QuestionCard key={question.askId} question={question} />
+    <QuestionCard
+      key={question.askId}
+      question={question}
+      onFocusAnswer={answering}
+    />
   ) : undefined;
 
   const empty = (
@@ -372,10 +398,7 @@ export default function SpaceScreen() {
   const lastTurn = chat?.turns.at(-1)?.key;
 
   return (
-    <KeyboardAvoidingView
-      style={styles.flex}
-      behavior={process.env.EXPO_OS === 'ios' ? 'padding' : undefined}
-    >
+    <KeyboardScreen>
       <Stack.Screen options={{ title: spaceTitle(space) }} />
       {chat ? (
         <FlatList
@@ -394,9 +417,11 @@ export default function SpaceScreen() {
           onScroll={onScroll}
           scrollEventThrottle={64}
           onContentSizeChange={follow}
+          onLayout={follow}
           contentInsetAdjustmentBehavior="automatic"
           contentContainerStyle={styles.content}
           keyboardShouldPersistTaps="handled"
+          keyboardDismissMode={keyboardDismissMode}
           ListHeaderComponent={<Header space={space} />}
           ListEmptyComponent={chat.live ? undefined : empty}
           ListFooterComponent={footer}
@@ -411,9 +436,11 @@ export default function SpaceScreen() {
           onScroll={onScroll}
           scrollEventThrottle={64}
           onContentSizeChange={follow}
+          onLayout={follow}
           contentInsetAdjustmentBehavior="automatic"
           contentContainerStyle={styles.content}
           keyboardShouldPersistTaps="handled"
+          keyboardDismissMode={keyboardDismissMode}
           ListHeaderComponent={<Header space={space} />}
           ListEmptyComponent={empty}
           ListFooterComponent={footer}
@@ -422,7 +449,11 @@ export default function SpaceScreen() {
       <View
         style={[
           styles.composer,
-          { backgroundColor: p.surface, borderColor: p.border },
+          {
+            backgroundColor: p.surface,
+            borderColor: p.border,
+            paddingBottom: bottomPad(12, insets.bottom, keyboardUp),
+          },
         ]}
       >
         {chat?.error ? (
@@ -500,7 +531,7 @@ export default function SpaceScreen() {
           )}
         </View>
       </View>
-    </KeyboardAvoidingView>
+    </KeyboardScreen>
   );
 }
 
