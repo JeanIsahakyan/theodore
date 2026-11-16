@@ -67,8 +67,22 @@ jobs:
   # Ubuntu, and their apt packages.
   rust-test-linux:
     runs-on: ubuntu-22.04
+    # Fails with its logs instead of losing the runner (twice it ran ~50 min
+    # and died with no log, a full disk).
+    timeout-minutes: 75
+    # Debug info off: the workspace's test binaries with full debug info
+    # outgrow a hosted runner's disk.
+    env:
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_TEST_DEBUG: 0
     steps:
       - uses: actions/checkout@v4
+
+      - name: free disk space
+        # The hosted image ships ~30 GB of SDKs this job never uses.
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
 
       - name: apt packages (webkit2gtk, tauri build deps)
         run: |
@@ -92,6 +106,10 @@ jobs:
 
       - name: test
         run: cargo test --workspace
+
+      - name: disk left
+        if: always()
+        run: df -h /
 
   ui:
     runs-on: ubuntu-latest
