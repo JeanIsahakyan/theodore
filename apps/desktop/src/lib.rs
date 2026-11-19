@@ -178,6 +178,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             commands::fleet_presence,
             commands::fleet_confirms,
             commands::fleet_confirm,
+            commands::fleet_set_auto,
             commands::focus_window,
             commands::take_pending_space,
             commands::notify_space,

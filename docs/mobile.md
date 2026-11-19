@@ -25,13 +25,17 @@ iPhone / Android / browser                     Theodore cloud            your co
 | Drawer | Fleet spaces you started from here or follow, newest activity first by day (Today, Yesterday, Previous 7 days, Older), a status dot, search; Devices, Settings, the account and organization |
 | Home (new space) | The goal in the composer; chips for the computer · project (a sheet), agent · model · effort (the model sheet), the mode up to its cap; last picks remembered; recent projects one tap away (below, "New space") |
 | Space | Its history (lines), send a message when it's idle or waiting, Stop while it runs, answer its question |
-| Devices | This device's fingerprint (large, copy) to show on the computer; a card per device, computers first (kind, online, OS · mode cap · agents, fingerprint), trust / untrust with the fingerprint confirm |
+| Devices | This device's fingerprint (large, copy) to show on the computer; a card per device, computers first (kind, online, OS · mode cap · agents, fingerprint), trust / untrust with the fingerprint confirm; on a computer, its auto mode per Claude via cloud device (Off / Auto Edit / Full auto, for 1 hour, until end of day or until turned off) |
 | Settings | Account card; Organization (switch), Devices, This device (fingerprint, copy), Appearance (Light / Dark / System), Notifications, About (version, server); sign out |
 | Space | Its chat (or history lines), send a message when it's idle or waiting, Stop while it runs, Approve / Revise a plan, answer its question |
 
 Questions and "space finished" arrive as push notifications; a question's
 options are notification buttons (one tap answers it, signed on the phone,
 sent over HTTPS). The web build has no push in v1: it shows them while open.
+A request from Claude via cloud waiting on one of your computers (when it
+sends its spaces' questions here) shows on Home as a card and arrives as a
+push with Deny / Allow buttons (docs/fleet.md "Requests from Claude via the
+cloud").
 
 ## Trust, the same model
 
@@ -109,6 +113,15 @@ sign-out ─▶ the set is removed     org switch ─▶ kept (sets are per org)
 | `ClientMessage::Delegate{envelope}` | body `Delegation{origin_device, delegate_device, issued_at_ms, expires_at_ms, revoke}`, `Domain::Delegate`, signed by the origin |
 | `ServerMessage::Delegations{list}` | the delegations naming this device (as origin or delegate) |
 | `POST /v1/fleet/request` | Bearer JWT + `{device_id, envelope}`: a one-shot signed request (a notification action, no socket). Answers `{accepted}` or `refused{code}`; the reply comes later as push or over the socket |
+
+The app speaks protocol 6. Since v4 it also reads:
+
+| Addition | What the app does |
+| --- | --- |
+| `DeviceKind::Mcp` (v5) | listed as "Claude via cloud"; never a target |
+| `DeviceInfo.mcp_auto` (v6) | a computer's auto mode per `mcp` device it pins, on its Devices card; changed with a signed `RemoteOp::SetMcpAuto` to that computer (trusted here) |
+| `ServerMessage::Confirm{envelope}` (v6) | `RemoteConfirm`, `Domain::Confirm`, opened with the host's pin, signer = `host_device`; kept until `confirm_dismissed`, its expiry, an answer, or the next welcome (the cloud sends the waiting ones again) |
+| `RemoteOp::Confirm{confirm_id, allow}` (v6) | the card's or the push's Allow / Deny, to the host; a late one (`fleet.invalid`) just drops the card |
 
 ## Cloud (cloud/)
 

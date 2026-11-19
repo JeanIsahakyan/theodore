@@ -16,27 +16,35 @@ export const MAX_OPTION_BUTTONS = 3;
 export const ACTION_REPLY = 'reply';
 export const ACTION_OPEN = 'open';
 export const optionAction = (i: number) => `opt${i}`;
+/** A confirm's buttons (category `confirm`). */
+export const ACTION_ALLOW = 'allow';
+export const ACTION_DENY = 'deny';
 
 /**
  * Category ids (no `:` or `-`, Expo warns they misbehave):
  *  - `ask_opt2`: buttons "1" "2" + Reply
  *  - `ask_opt3`: buttons "1" "2" "3"
  *  - `ask_text`: Reply + Open (free text, or options that don't fit as buttons)
+ *  - `confirm`: Deny + Allow (Claude via cloud waits on a computer)
  */
 export const CATEGORY_TEXT = 'ask_text';
+export const CATEGORY_CONFIRM = 'confirm';
 export const optionCategory = (n: number) => `ask_opt${n}`;
 
-export type PushKind = 'ask' | 'finished';
+export type PushKind = 'ask' | 'finished' | 'confirm';
 
 /** `data` of every push the cloud sends. */
 export interface PushData {
   kind: PushKind;
   /** Only for `kind: "ask"`. */
   ask_id: string;
+  /** "" for `kind: "confirm"`. */
   space: string;
   host_device: string;
   /** The first question's options, at most 4; empty for a free-text question. */
   options: string[];
+  /** Only for `kind: "confirm"`. */
+  confirm_id: string;
 }
 
 function str(v: unknown): string | null {
@@ -48,6 +56,19 @@ export function parsePushData(raw: unknown): PushData | null {
   if (typeof raw !== 'object' || raw === null) return null;
   const d = raw as Record<string, unknown>;
   const kind = d.kind;
+  if (kind === 'confirm') {
+    const confirmId = str(d.confirm_id);
+    const host = str(d.host_device);
+    if (!confirmId || !host) return null;
+    return {
+      kind,
+      ask_id: '',
+      space: '',
+      host_device: host,
+      options: [],
+      confirm_id: confirmId,
+    };
+  }
   if (kind !== 'ask' && kind !== 'finished') return null;
   const space = str(d.space);
   const hostDevice = str(d.host_device);
@@ -65,6 +86,7 @@ export function parsePushData(raw: unknown): PushData | null {
     space,
     host_device: hostDevice,
     options,
+    confirm_id: '',
   };
 }
 
@@ -117,6 +139,9 @@ export type ResponseAction =
       answers: string[][];
     }
   | { type: 'open'; space: string }
+  | { type: 'confirm'; hostDevice: string; confirmId: string; allow: boolean }
+  /** Home, where waiting confirms show. */
+  | { type: 'home' }
   | { type: 'ignore' };
 
 /** Longest free-text reply we send. */
@@ -139,6 +164,16 @@ export function classifyResponse(input: {
 }): ResponseAction {
   const data = parsePushData(input.data);
   if (!data) return { type: 'ignore' };
+  if (data.kind === 'confirm') {
+    const id = input.actionIdentifier;
+    if (id !== ACTION_ALLOW && id !== ACTION_DENY) return { type: 'home' };
+    return {
+      type: 'confirm',
+      hostDevice: data.host_device,
+      confirmId: data.confirm_id,
+      allow: id === ACTION_ALLOW,
+    };
+  }
   const open: ResponseAction = { type: 'open', space: data.space };
   if (data.kind !== 'ask') return open;
 
@@ -163,6 +198,9 @@ export function classifyResponse(input: {
   return open;
 }
 
+/** Home: where a confirm's tap lands. */
+export const HOME_PATH = '/';
+
 /** Route a tap opens. */
 export function spacePath(space: string): string {
   return `/space/${encodeURIComponent(space)}`;
@@ -182,5 +220,10 @@ export function showInForeground(
   activeSpace: string | null,
 ): boolean {
   const d = parsePushData(data);
-  return !(d && activeSpace !== null && d.space === activeSpace);
+  return !(
+    d &&
+    d.kind !== 'confirm' &&
+    activeSpace !== null &&
+    d.space === activeSpace
+  );
 }

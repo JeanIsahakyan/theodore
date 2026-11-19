@@ -2,9 +2,17 @@
  * What may be shown, and how, mirroring the desktop core
  * (`crates/app/src/usecases/fleet.rs`, `fleet_origin.rs`).
  */
-import type { FleetMode, RemoteQuestion, RemoteSpaceEvent } from '../gen/fleet';
 import type {
+  ConfirmAction,
+  FleetMode,
+  McpAuto,
+  RemoteQuestion,
+  RemoteSpaceEvent,
+} from '../gen/fleet';
+import type {
+  ConfirmView,
   FleetAgentView,
+  McpAutoView,
   FleetModelView,
   LineKind,
   SpaceLine,
@@ -137,6 +145,90 @@ export function uiAgents(v: unknown): FleetAgentView[] {
     });
   }
   return out;
+}
+
+const AUTOS: readonly McpAuto[] = ['off', 'edit', 'full'];
+export const isMcpAuto = (v: unknown): v is McpAuto =>
+  (AUTOS as readonly unknown[]).includes(v);
+
+/** Most `mcp_auto` entries taken from one host's (unsigned) listing. */
+const MCP_AUTO_MAX = 8;
+export const MCP_NAME = 'Claude via cloud';
+
+/**
+ * A host's `mcp_auto` as the device screen shows it, shape-checked (the
+ * listing is unsigned; the host decides). An entry whose `until_ms` has
+ * passed reads `off`. `nameOf`: the `mcp` device's listed name, if any.
+ */
+export function uiMcpAuto(
+  v: unknown,
+  now: number,
+  nameOf: (deviceId: string) => string | null,
+): McpAutoView[] {
+  if (!Array.isArray(v)) return [];
+  const out: McpAutoView[] = [];
+  for (const e of v) {
+    if (out.length >= MCP_AUTO_MAX) break;
+    if (typeof e !== 'object' || e === null) continue;
+    const x = e as Record<string, unknown>;
+    if (!validDeviceId(x.device_id) || !isMcpAuto(x.auto)) continue;
+    if (out.some((o) => o.deviceId === x.device_id)) continue;
+    const until =
+      typeof x.until_ms === 'number' && Number.isFinite(x.until_ms)
+        ? x.until_ms
+        : null;
+    const over = until !== null && until <= now;
+    out.push({
+      deviceId: x.device_id,
+      name: nameOf(x.device_id) || MCP_NAME,
+      auto: over ? 'off' : x.auto,
+      untilMs: over || x.auto === 'off' ? null : until,
+    });
+  }
+  return out;
+}
+
+const CONFIRM_ACTIONS: readonly ConfirmAction[] = [
+  'start',
+  'send',
+  'approve_plan',
+];
+/** `CONFIRM_TEXT_MAX` in Rust. */
+export const CONFIRM_TEXT_MAX = 500;
+const CONFIRM_ID_MAX = 200;
+
+/**
+ * A verified `RemoteConfirm` body as the card shows it, shape-checked;
+ * `null` if it isn't one or it has expired by `now`.
+ */
+export function confirmOf(
+  body: unknown,
+  hostName: string,
+  now: number,
+): ConfirmView | null {
+  if (typeof body !== 'object' || body === null) return null;
+  const b = body as Record<string, unknown>;
+  const id = b.confirm_id;
+  if (typeof id !== 'string' || !id || id.length > CONFIRM_ID_MAX) return null;
+  if (!validDeviceId(b.host_device) || !validDeviceId(b.mcp_device))
+    return null;
+  if (!(CONFIRM_ACTIONS as readonly unknown[]).includes(b.action)) return null;
+  if (!isMode(b.mode)) return null;
+  const exp = b.expires_at_ms;
+  if (typeof exp !== 'number' || !Number.isFinite(exp) || exp <= now)
+    return null;
+  return {
+    confirmId: id,
+    hostDevice: b.host_device,
+    hostName,
+    mcpDevice: b.mcp_device,
+    action: b.action as ConfirmAction,
+    mode: b.mode,
+    projectName: str(b.project_name, NAME_MAX),
+    spaceName: str(b.space_name, NAME_MAX),
+    text: str(b.text, CONFIRM_TEXT_MAX),
+    expiresAtMs: exp,
+  };
 }
 
 /** Only desktops and daemons host spaces; phones and browsers never do. */

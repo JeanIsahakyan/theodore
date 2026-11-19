@@ -258,6 +258,7 @@ fn info_with(agents: Vec<FleetAgentInfo>) -> DeviceInfo {
         accepts_remote: true,
         max_mode: FleetMode::Edit,
         agents,
+        mcp_auto: vec![],
     }
 }
 
@@ -385,4 +386,72 @@ fn fit_agents_caps_counts_lengths_and_the_info_size() {
     assert!(big.agents[0].models.len() < 12);
     assert!(big.agents[0].models[0].id.ends_with("00"), "the first stay");
     assert_eq!(big.agents[1].models.len(), 1);
+}
+
+#[test]
+fn auto_covers_edit_or_everything() {
+    assert!(!McpAuto::Off.covers(FleetMode::Edit));
+    assert!(McpAuto::Edit.covers(FleetMode::Edit));
+    assert!(!McpAuto::Edit.covers(FleetMode::Run));
+    assert!(McpAuto::Full.covers(FleetMode::Run));
+    assert_eq!(McpAuto::default(), McpAuto::Off);
+}
+
+#[test]
+fn confirm_and_auto_ops_are_tagged_and_on_no_space() {
+    let op = RemoteOp::Confirm {
+        confirm_id: "r1".into(),
+        allow: true,
+    };
+    assert_eq!(op.space(), "");
+    assert_eq!(
+        serde_json::to_value(&op).unwrap(),
+        serde_json::json!({"op": "confirm", "confirm_id": "r1", "allow": true})
+    );
+    let op: RemoteOp = serde_json::from_value(serde_json::json!({
+        "op": "set_mcp_auto", "mcp_device": "dev_m", "auto": "full"
+    }))
+    .unwrap();
+    assert_eq!(
+        op,
+        RemoteOp::SetMcpAuto {
+            mcp_device: "dev_m".into(),
+            auto: McpAuto::Full,
+            until_ms: None
+        }
+    );
+    // An older host's info has no auto list.
+    let info: DeviceInfo = serde_json::from_value(serde_json::json!({
+        "name": "mac", "os": "macos", "kind": "desktop", "app_version": "1",
+        "projects": [], "accepts_remote": false, "max_mode": "edit"
+    }))
+    .unwrap();
+    assert!(info.mcp_auto.is_empty());
+}
+
+#[test]
+fn a_confirm_is_signed_by_its_host_for_its_own_domain() {
+    let key = DeviceKey::generate().unwrap();
+    let c = RemoteConfirm {
+        confirm_id: "r1".into(),
+        host_device: "dev_h".into(),
+        mcp_device: "dev_m".into(),
+        action: ConfirmAction::ApprovePlan,
+        mode: FleetMode::Edit,
+        project_name: None,
+        space_name: Some("fix".into()),
+        text: "Plan approved".into(),
+        expires_at_ms: 9,
+    };
+    let env = SignedEnvelope::seal_as(&c, &key, Domain::Confirm);
+    assert_eq!(env.device_id, "dev_h");
+    assert_eq!(
+        env.open_as::<RemoteConfirm>(&key.public_key(), Domain::Confirm)
+            .unwrap(),
+        c
+    );
+    assert_eq!(
+        env.open_as::<RemoteConfirm>(&key.public_key(), Domain::Ask),
+        Err(EnvelopeError::BadSignature)
+    );
 }

@@ -332,5 +332,8 @@ async fn an_mcp_device_is_listed_trusted_and_never_followed() {
         .unwrap();
     assert_eq!((d.kind.as_str(), d.trusted), ("mcp", true));
     let e = core.fleet_delegate(ORIGIN, true).await.unwrap_err();
-    assert!(e.to_string().contains("phone or the web app"), "{e}");
+    assert!(
+        e.to_string().contains("phone, the web app or a computer"),
+        "{e}"
+    );
 }

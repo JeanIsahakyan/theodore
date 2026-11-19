@@ -130,7 +130,7 @@ describe('connect', () => {
       device(ME, myKey, { kind: 'mobile' }),
     ]);
     const hello = sock.of('hello')[0]!;
-    expect(hello.protocol).toBe(4);
+    expect(hello.protocol).toBe(6);
     expect(hello.device_id).toBeNull();
     expect(hello.public_key).toBe(myKey.publicKey);
     expect(hello.spaces).toEqual([]);
@@ -1660,6 +1660,279 @@ describe('answer over HTTP', () => {
       .answerOverHttp('rs_1', 'a', [['x']], HOST)
       .catch((e: Error) => e)) as Error;
     expect(err.message).toBe('refused by the cloud: fleet.offline');
+  });
+});
+
+const MCP = 'dev_00000000-0000-4000-8000-0000000000d4';
+
+const confirmBody = (over: object = {}) => ({
+  confirm_id: 'req_c1',
+  host_device: HOST,
+  mcp_device: MCP,
+  action: 'start',
+  mode: 'edit',
+  project_name: 'theodore',
+  space_name: null,
+  text: 'Fix the login test',
+  expires_at_ms: Date.now() + 60_000,
+  ...over,
+});
+
+describe('confirms (Claude via cloud)', () => {
+  it('keeps a confirm only when it verifies against the host pin', async () => {
+    const { sock } = await connectedWithHost();
+    const body = confirmBody();
+    // Bad signature, wrong domain, signer not the host, expired.
+    sock.deliver({
+      type: 'confirm',
+      envelope: await sealAs(body, HOST, strangerKey, 'confirm'),
+    });
+    sock.deliver({
+      type: 'confirm',
+      envelope: await sealAs(body, HOST, hostKey, 'ask'),
+    });
+    sock.deliver({
+      type: 'confirm',
+      envelope: await sealAs(
+        confirmBody({ host_device: OTHER }),
+        HOST,
+        hostKey,
+        'confirm',
+      ),
+    });
+    sock.deliver({
+      type: 'confirm',
+      envelope: await sealAs(
+        confirmBody({ expires_at_ms: Date.now() - 1 }),
+        HOST,
+        hostKey,
+        'confirm',
+      ),
+    });
+    // A type this build doesn't know: ignored.
+    sock.deliver({ type: 'something_new', x: 1 });
+    await sleep(10);
+    expect(state().confirms).toEqual([]);
+
+    sock.deliver({
+      type: 'confirm',
+      envelope: await sealAs(body, HOST, hostKey, 'confirm'),
+    });
+    await waitFor(() => state().confirms.length === 1, 'confirm');
+    expect(state().confirms[0]).toEqual({
+      confirmId: 'req_c1',
+      hostDevice: HOST,
+      hostName: 'Mac bStudiob',
+      mcpDevice: MCP,
+      action: 'start',
+      mode: 'edit',
+      projectName: 'theodore',
+      spaceName: '',
+      text: 'Fix the login test',
+      expiresAtMs: body.expires_at_ms,
+    });
+    sock.deliver({ type: 'confirm_dismissed', confirm_id: 'req_c1' });
+    await waitFor(() => state().confirms.length === 0, 'dismissed');
+  });
+
+  it('drops a confirm from a host that is not trusted here', async () => {
+    const t = setup();
+    await t.client.start();
+    const sock = await handshake(t.hub, [device(HOST, hostKey)]);
+    await waitFor(() => state().devices.length === 1, 'devices');
+    sock.deliver({
+      type: 'confirm',
+      envelope: await sealAs(confirmBody(), HOST, hostKey, 'confirm'),
+    });
+    await sleep(10);
+    expect(state().confirms).toEqual([]);
+  });
+
+  it('drops a confirm once it expires', async () => {
+    const { sock } = await connectedWithHost();
+    sock.deliver({
+      type: 'confirm',
+      envelope: await sealAs(
+        confirmBody({ expires_at_ms: Date.now() + 40 }),
+        HOST,
+        hostKey,
+        'confirm',
+      ),
+    });
+    await waitFor(() => state().confirms.length === 1, 'confirm');
+    await waitFor(() => state().confirms.length === 0, 'expired');
+  });
+
+  it('answers with a signed confirm request; a late one goes quietly', async () => {
+    const { client, sock } = await connectedWithHost();
+    sock.deliver({
+      type: 'confirm',
+      envelope: await sealAs(confirmBody(), HOST, hostKey, 'confirm'),
+    });
+    await waitFor(() => state().confirms.length === 1, 'confirm');
+    const sent = client.confirm(HOST, 'req_c1', true);
+    await waitFor(() => sock.of('request').length === 1, 'request');
+    const req = lastRequest(sock);
+    expect(req).toMatchObject({
+      origin_device: ME,
+      target_device: HOST,
+      target_key: hostKey.publicKey,
+      op: { op: 'confirm', confirm_id: 'req_c1', allow: true },
+    });
+    expect(sock.of('request')[0]!.envelope.body).toContain(
+      '"op":{"op":"confirm","confirm_id":"req_c1","allow":true}',
+    );
+    // Sent: the card is gone already.
+    expect(state().confirms).toEqual([]);
+    sock.deliver({
+      type: 'reply',
+      envelope: await reply(req, {
+        outcome: 'err',
+        code: 'fleet.invalid',
+        message: 'already answered',
+      }),
+    });
+    await sent;
+
+    const denied = client.confirm(HOST, 'req_c2', false);
+    await waitFor(() => sock.of('request').length === 2, 'second');
+    const req2 = lastRequest(sock);
+    expect(req2.op).toEqual({
+      op: 'confirm',
+      confirm_id: 'req_c2',
+      allow: false,
+    });
+    sock.deliver({
+      type: 'reply',
+      envelope: await reply(req2, {
+        outcome: 'err',
+        code: 'fleet.offline',
+        message: '',
+      }),
+    });
+    await expect(denied).rejects.toThrow('fleet.offline');
+  });
+
+  it('a new welcome clears confirms (the cloud sends the waiting ones again)', async () => {
+    const { sock, hub } = await connectedWithHost();
+    sock.deliver({
+      type: 'confirm',
+      envelope: await sealAs(confirmBody(), HOST, hostKey, 'confirm'),
+    });
+    await waitFor(() => state().confirms.length === 1, 'confirm');
+    sock.drop(1006);
+    await handshake(hub, [device(HOST, hostKey)], 2);
+    await waitFor(() => state().confirms.length === 0, 'cleared');
+  });
+
+  it('confirms over HTTP with a signed request', async () => {
+    const calls: { url: string; init: RequestInit }[] = [];
+    const fetchFn = (async (url: string, init: RequestInit) => {
+      calls.push({ url, init });
+      return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+    }) as unknown as typeof fetch;
+    const { client, hub } = setup({ fetch: fetchFn });
+    await client.start();
+    const sock = await handshake(hub, [device(HOST, hostKey)]);
+    await waitFor(() => state().devices.length === 1, 'devices');
+    await client.trust(HOST, hostKey.publicKey);
+    sock.deliver({
+      type: 'confirm',
+      envelope: await sealAs(confirmBody(), HOST, hostKey, 'confirm'),
+    });
+    await waitFor(() => state().confirms.length === 1, 'confirm');
+
+    await client.confirmOverHttp(HOST, 'req_c1', false);
+    expect(calls[0]!.url).toBe('https://cloud.test/v1/fleet/request');
+    const sent = JSON.parse(calls[0]!.init.body as string) as {
+      envelope: SignedEnvelope;
+    };
+    expect(open(sent.envelope, myKey.publicKey, 'request')).toMatchObject({
+      origin_device: ME,
+      target_device: HOST,
+      target_key: hostKey.publicKey,
+      op: { op: 'confirm', confirm_id: 'req_c1', allow: false },
+    });
+    expect(state().confirms).toEqual([]);
+  });
+});
+
+describe('auto mode (Claude via cloud)', () => {
+  it("lists a computer's mcp_auto, shape-checked, named from the listing", async () => {
+    const t = setup();
+    await t.client.start();
+    const later = Date.now() + 3_600_000;
+    await handshake(t.hub, [
+      device(HOST, hostKey, {
+        mcp_auto: [
+          { device_id: MCP, auto: 'edit', until_ms: later },
+          { device_id: OTHER, auto: 'full', until_ms: Date.now() - 1 },
+          { device_id: 'dev_bad', auto: 'full', until_ms: null },
+          { device_id: MCP, auto: 'full', until_ms: null },
+          // @ts-expect-error: an auto this build doesn't know
+          { device_id: OTHER, auto: 'all', until_ms: null },
+        ],
+      }),
+      device(MCP, strangerKey, {
+        kind: 'mcp',
+        name: 'Claude (cloud)',
+        accepts_remote: false,
+        mcp_auto: [{ device_id: OTHER, auto: 'full', until_ms: null }],
+      }),
+    ]);
+    await waitFor(() => state().devices.length === 2, 'devices');
+    const host = state().devices.find((d) => d.deviceId === HOST)!;
+    expect(host.mcpAuto).toEqual([
+      { deviceId: MCP, name: 'Claude (cloud)', auto: 'edit', untilMs: later },
+      { deviceId: OTHER, name: 'Claude via cloud', auto: 'off', untilMs: null },
+    ]);
+    // Never on a non-computer.
+    expect(state().devices.find((d) => d.deviceId === MCP)!.mcpAuto).toEqual(
+      [],
+    );
+  });
+
+  it('sets it with a signed set_mcp_auto request to the computer', async () => {
+    const { client, sock } = await connectedWithHost();
+    const until = Date.now() + 3_600_000;
+    const done = client.setMcpAuto(HOST, MCP, 'full', until);
+    await waitFor(() => sock.of('request').length === 1, 'request');
+    const req = lastRequest(sock);
+    expect(req.target_device).toBe(HOST);
+    expect(req.op).toEqual({
+      op: 'set_mcp_auto',
+      mcp_device: MCP,
+      auto: 'full',
+      until_ms: until,
+    });
+    sock.deliver({
+      type: 'reply',
+      envelope: await reply(req, { outcome: 'ok', value: null }),
+    });
+    await done;
+
+    // Off never carries an end.
+    const off = client.setMcpAuto(HOST, MCP, 'off', until);
+    await waitFor(() => sock.of('request').length === 2, 'off');
+    const req2 = lastRequest(sock);
+    expect(sock.of('request')[1]!.envelope.body).toContain(
+      `"op":{"op":"set_mcp_auto","mcp_device":"${MCP}","auto":"off","until_ms":null}`,
+    );
+    sock.deliver({
+      type: 'reply',
+      envelope: await reply(req2, { outcome: 'ok', value: null }),
+    });
+    await off;
+  });
+
+  it('refuses a computer that is not trusted here', async () => {
+    const t = setup();
+    await t.client.start();
+    await handshake(t.hub, [device(HOST, hostKey)]);
+    await waitFor(() => state().devices.length === 1, 'devices');
+    await expect(t.client.setMcpAuto(HOST, MCP, 'edit', null)).rejects.toThrow(
+      /isn't trusted/,
+    );
   });
 });
 

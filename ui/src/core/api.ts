@@ -30,6 +30,7 @@ import type {
   FileRequest,
   FindSymbolRequest,
   FleetAnswerRequest,
+  FleetAutoRequest,
   FleetConfirm,
   FleetConfirmAnswer,
   FleetPresenceRequest,
@@ -511,6 +512,10 @@ export const api = {
   /** Allow or Deny one of them. */
   fleetConfirm: (req: FleetConfirmAnswer) =>
     call<null>('fleet_confirm', { req }),
+  /** Auto mode for Claude via cloud, here or (`host_device`) on another
+   *  computer you trust. */
+  fleetSetAuto: (req: FleetAutoRequest) =>
+    call<FleetStatus>('fleet_set_auto', { req }),
   fleetSpaces: () => call<FleetRemoteSpace[]>('fleet_spaces', undefined, true),
   /** Where you are, for routing questions: never toasted. */
   fleetPresence: (req: FleetPresenceRequest): Promise<null> =>

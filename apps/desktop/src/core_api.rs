@@ -733,6 +733,14 @@ pub trait CoreApi: Send + Sync {
     ) -> Result<(), CommandError> {
         Err(not_ready())
     }
+    /// Auto mode for a Claude via cloud device, here or on another
+    /// computer.
+    async fn fleet_set_auto(
+        &self,
+        _req: theodore_contract::FleetAutoRequest,
+    ) -> Result<theodore_contract::FleetStatus, CommandError> {
+        Err(not_ready())
+    }
 }
 
 fn not_sandbox() -> CommandError {

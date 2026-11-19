@@ -30,7 +30,7 @@ export const INSTRUCTIONS =
   'Theodore runs coding agents ("spaces") on the user’s own computers. Start with theodore_status. ' +
   'A computer takes requests from Claude only after the user trusts "Claude (MCP)" on it (Theodore → Devices, comparing the fingerprint from theodore_status), ' +
   'and Claude reaches only computers trusted with device_trust, using the fingerprint the user reads on that computer. ' +
-  'Ask and Plan run directly; Edit and Run, and approving a plan, wait for a person’s yes on the computer (no or no answer: fleet.denied). ' +
+  'Ask and Plan run directly; Edit and Run, and approving a plan, wait for a person’s yes on the computer (or on a phone or computer it sends its approvals to), unless the user turned on auto mode there (no or no answer: fleet.denied). ' +
   'Then: projects_list ─▶ space_start ─▶ space_wait ─▶ space_read ─▶ space_send / ask_answer / plan_approve.';
 
 export interface RpcDeps {

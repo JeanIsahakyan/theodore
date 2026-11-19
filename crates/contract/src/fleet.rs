@@ -6,7 +6,7 @@
 //! Commands: `fleet_status`, `fleet_set_settings`, `fleet_trust_device`,
 //! `fleet_remove_device`, `fleet_delegate`, `fleet_start_space`, `fleet_send`, `fleet_stop`, `fleet_answer`,
 //! `fleet_spaces`, `fleet_space_lines`, `fleet_presence`, `fleet_confirms`,
-//! `fleet_confirm`.
+//! `fleet_confirm`, `fleet_set_auto`.
 //! Ephemerals: `fleet_status`, `fleet_space`, `fleet_space_line`,
 //! `fleet_ask`, `fleet_ask_dismissed`, `fleet_trust_needed`,
 //! `fleet_confirm`, `fleet_confirm_done`.
@@ -73,6 +73,70 @@ pub struct FleetDevice {
     /// picked and its own defaults run.
     #[serde(default)]
     pub agents: Vec<FleetAgent>,
+    /// `mcp` devices pinned here: this computer's auto mode for it
+    /// (docs/fleet.md "Auto mode"); `off` for every other device, and when
+    /// `auto_until_ms` has passed.
+    #[serde(default)]
+    pub auto: FleetAuto,
+    /// Unix ms the auto mode ends; `None`: until turned off (or off).
+    #[serde(default)]
+    pub auto_until_ms: Option<u64>,
+    /// Another computer: its auto mode for each Claude via cloud device it
+    /// pins, as it lists it (empty for others, and for older computers).
+    /// Changed with `fleet_set_auto { host_device }`.
+    #[serde(default)]
+    pub mcp_auto: Vec<FleetMcpAuto>,
+}
+
+/// Whether this computer lets Claude via cloud (an `mcp` device) edit or
+/// run without your yes. It never lifts `max_mode`; it only skips the
+/// prompt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum FleetAuto {
+    /// Every Edit or Run waits for your yes.
+    #[default]
+    Off,
+    /// Edit (a plan's approval into Edit too) goes through; Run waits.
+    Edit,
+    /// Edit and Run go through, plan approvals too.
+    Full,
+}
+
+/// A computer's auto mode for one Claude via cloud device, as it lists it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+pub struct FleetMcpAuto {
+    /// The `mcp` device.
+    pub device_id: String,
+    /// Its name as the cloud lists it ("Claude (MCP)"), or its id.
+    pub name: String,
+    pub auto: FleetAuto,
+    pub until_ms: Option<u64>,
+}
+
+/// An auto mode on now on this computer: the notice that stays while it
+/// lasts.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+pub struct FleetAutoOn {
+    pub device_id: String,
+    /// The name pinned here.
+    pub device_name: String,
+    pub auto: FleetAuto,
+    pub until_ms: Option<u64>,
+}
+
+/// `fleet_set_auto`: the auto mode for `mcp` device `device_id`, on this
+/// computer (`host_device` none) or on another one you trust (sent there as
+/// a signed request; it applies it if it trusts this device).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+pub struct FleetAutoRequest {
+    pub device_id: String,
+    pub auto: FleetAuto,
+    /// Unix ms it ends; `None`: until turned off. Ignored for `off`.
+    #[serde(default)]
+    pub until_ms: Option<u64>,
+    #[serde(default)]
+    pub host_device: Option<String>,
 }
 
 /// An agent another device runs, with its models (`description` none,
@@ -108,6 +172,9 @@ pub struct FleetStatus {
     pub devices: Vec<FleetDevice>,
     /// Why it isn't connected, when enabled and not connected.
     pub error: Option<String>,
+    /// Auto modes on now on this computer (docs/fleet.md "Auto mode").
+    #[serde(default)]
+    pub autos: Vec<FleetAutoOn>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
@@ -303,6 +370,13 @@ pub struct FleetConfirm {
     pub text: String,
     /// Unix ms: refused unless answered before.
     pub expires_at_ms: u64,
+    /// Waiting on another computer, which sends its approvals here
+    /// (`None`: on this one). Allow or Deny goes there as a signed request.
+    #[serde(default)]
+    pub host_device: Option<String>,
+    /// That computer's name as pinned here.
+    #[serde(default)]
+    pub host_name: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]

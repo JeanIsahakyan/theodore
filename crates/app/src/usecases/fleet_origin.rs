@@ -251,7 +251,7 @@ impl Core {
     /// Only to a target pinned here: the request names the pinned key
     /// (`target_key`), and only a reply signed by it counts. Never to a
     /// phone or the web app: they run no spaces.
-    async fn fleet_request(
+    pub(crate) async fn fleet_request(
         &self,
         target: &str,
         op: RemoteOp,

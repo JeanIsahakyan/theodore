@@ -82,6 +82,7 @@ fn vectors_json() -> String {
             "ask": String::from_utf8_lossy(Domain::Ask.tag()),
             "reply": String::from_utf8_lossy(Domain::Reply.tag()),
             "delegate": String::from_utf8_lossy(Domain::Delegate.tag()),
+            "confirm": String::from_utf8_lossy(Domain::Confirm.tag()),
         },
     });
     serde_json::to_string_pretty(&v).expect("vectors serialize") + "\n"

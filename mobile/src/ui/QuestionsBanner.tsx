@@ -1,11 +1,16 @@
 /**
  * Questions routed to this device that nobody answered yet, answerable
- * inline. Home mounts it under its header; it renders nothing
- * when there is none. Shows the oldest first and a toggle for the rest.
+ * inline, and Claude via cloud's requests waiting on a computer for Allow /
+ * Deny (`ConfirmCard`, all of them, first: they expire). Home mounts it
+ * under its header; it renders nothing when there is none. Shows the
+ * oldest question first and a toggle for the rest.
  *
  * ```text
  * WAITING FOR YOU · 3          a grouped-list section title (iOS, web) /
- * ┌ question card ─────────┐   a Material label in the accent (Android)
+ * ┌ confirm card ──────────┐   a Material label in the accent (Android)
+ * └────────────────────────┘
+ * <a confirm's refusal>  Dismiss
+ * ┌ question card ─────────┐
  * └────────────────────────┘
  * 2 more waiting               native plain button; "Show fewer" once open
  * ```
@@ -17,6 +22,9 @@
 import { useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { useFleetState } from '../state/fleet';
+import { ConfirmCard } from './ConfirmCard';
+import { Notice } from './kit';
+import { errorText } from './logic';
 import { Button } from './native';
 import { QuestionCard } from './QuestionCard';
 import { usePalette } from './theme';
@@ -32,10 +40,14 @@ export function QuestionsBanner({
 }) {
   const p = usePalette();
   const questions = useFleetState((s) => s.questions);
+  const confirms = useFleetState((s) => s.confirms);
   const [all, setAll] = useState(false);
-  if (questions.length === 0) return null;
+  const [confirmError, setConfirmError] = useState<string | null>(null);
+  if (questions.length === 0 && confirms.length === 0 && !confirmError)
+    return null;
   const shown = all ? questions : questions.slice(0, 1);
   const more = questions.length - shown.length;
+  const count = questions.length + confirms.length;
   const title = android ? 'Waiting for you' : 'WAITING FOR YOU';
   return (
     <View
@@ -53,8 +65,26 @@ export function QuestionsBanner({
           { color: android ? p.accent : p.muted },
         ]}
       >
-        {questions.length > 1 ? `${title} · ${questions.length}` : title}
+        {count > 1 ? `${title} · ${count}` : title}
       </Text>
+      {confirms.map((c) => (
+        <ConfirmCard
+          key={c.confirmId}
+          confirm={c}
+          glass={glass}
+          onError={(e) => setConfirmError(errorText(e))}
+        />
+      ))}
+      {confirmError ? (
+        <View style={styles.error}>
+          <Notice tone="danger">{confirmError}</Notice>
+          <Button
+            variant="plain"
+            label="Dismiss"
+            onPress={() => setConfirmError(null)}
+          />
+        </View>
+      ) : null}
       {shown.map((q) => (
         <QuestionCard key={q.askId} question={q} glass={glass} />
       ))}
@@ -84,4 +114,5 @@ const styles = StyleSheet.create({
   titleIos: { fontSize: 13, letterSpacing: 0.2, paddingHorizontal: 4 },
   titleAndroid: { fontSize: 14, fontWeight: '500', paddingHorizontal: 4 },
   actions: { flexDirection: 'row', justifyContent: 'center' },
+  error: { gap: 4, alignItems: 'center' },
 });

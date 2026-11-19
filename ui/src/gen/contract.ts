@@ -1064,6 +1064,44 @@ export type FleetAnswerRequest = {
 };
 
 /**
+ *  Whether this computer lets Claude via cloud (an `mcp` device) edit or
+ *  run without your yes. It never lifts `max_mode`; it only skips the
+ *  prompt.
+ */
+export type FleetAuto =
+/**  Every Edit or Run waits for your yes. */
+"off" |
+/**  Edit (a plan's approval into Edit too) goes through; Run waits. */
+"edit" |
+/**  Edit and Run go through, plan approvals too. */
+"full";
+
+/**
+ *  An auto mode on now on this computer: the notice that stays while it
+ *  lasts.
+ */
+export type FleetAutoOn = {
+	device_id: string,
+	/**  The name pinned here. */
+	device_name: string,
+	auto: FleetAuto,
+	until_ms: number | null,
+};
+
+/**
+ *  `fleet_set_auto`: the auto mode for `mcp` device `device_id`, on this
+ *  computer (`host_device` none) or on another one you trust (sent there as
+ *  a signed request; it applies it if it trusts this device).
+ */
+export type FleetAutoRequest = {
+	device_id: string,
+	auto: FleetAuto,
+	/**  Unix ms it ends; `None`: until turned off. Ignored for `off`. */
+	until_ms?: number | null,
+	host_device?: string | null,
+};
+
+/**
  *  A request from a device whose key the cloud holds (kind `mcp`: Claude
  *  via the cloud) that would edit or run here: it waits for a person on
  *  this device (docs/fleet.md "Trust"). Allow runs it; Deny, or no answer
@@ -1087,6 +1125,13 @@ export type FleetConfirm = {
 	text: string,
 	/**  Unix ms: refused unless answered before. */
 	expires_at_ms: number,
+	/**
+	 *  Waiting on another computer, which sends its approvals here
+	 *  (`None`: on this one). Allow or Deny goes there as a signed request.
+	 */
+	host_device?: string | null,
+	/**  That computer's name as pinned here. */
+	host_name?: string | null,
 };
 
 /**  What a request waiting for a person here would do. */
@@ -1151,9 +1196,33 @@ export type FleetDevice = {
 	 *  picked and its own defaults run.
 	 */
 	agents?: FleetAgent[],
+	/**
+	 *  `mcp` devices pinned here: this computer's auto mode for it
+	 *  (docs/fleet.md "Auto mode"); `off` for every other device, and when
+	 *  `auto_until_ms` has passed.
+	 */
+	auto?: FleetAuto,
+	/**  Unix ms the auto mode ends; `None`: until turned off (or off). */
+	auto_until_ms?: number | null,
+	/**
+	 *  Another computer: its auto mode for each Claude via cloud device it
+	 *  pins, as it lists it (empty for others, and for older computers).
+	 *  Changed with `fleet_set_auto { host_device }`.
+	 */
+	mcp_auto?: FleetMcpAuto[],
 };
 
 export type FleetLineKind = "started" | "status" | "turn" | "tool" | "reply" | "ended" | "question" | "gap";
+
+/**  A computer's auto mode for one Claude via cloud device, as it lists it. */
+export type FleetMcpAuto = {
+	/**  The `mcp` device. */
+	device_id: string,
+	/**  Its name as the cloud lists it ("Claude (MCP)"), or its id. */
+	name: string,
+	auto: FleetAuto,
+	until_ms: number | null,
+};
 
 export type FleetOs = "macos" | "linux" | "windows" | "ios" | "android" | "other";
 
@@ -1268,6 +1337,8 @@ export type FleetStatus = {
 	devices: FleetDevice[],
 	/**  Why it isn't connected, when enabled and not connected. */
 	error: string | null,
+	/**  Auto modes on now on this computer (docs/fleet.md "Auto mode"). */
+	autos?: FleetAutoOn[],
 };
 
 /**  A request from `device_id` was refused because it isn't trusted here. */

@@ -6,10 +6,11 @@
 //! ```text
 //! device ─▶ cloud   ClientMessage   hello, reauth, presence, announce, request,
 //!                                   claim, reply, space_event, ask, ask_resolved,
-//!                                   subscribe, unsubscribe
+//!                                   subscribe, unsubscribe, confirm,
+//!                                   confirm_resolved
 //! cloud  ─▶ device  ServerMessage   challenge, welcome, devices, request,
 //!                                   claim_result, reply, space_event, ask,
-//!                                   dismiss, error
+//!                                   dismiss, error, confirm, confirm_dismissed
 //! ```
 //!
 //! Requests are signed by the origin device ([`SignedEnvelope`]); the cloud
@@ -28,10 +29,11 @@ pub use keys::{DeviceKey, KeyError, fingerprint, verify};
 
 /// Protocol version sent in `hello`; the cloud refuses others with
 /// `fleet.version`.
-pub const PROTOCOL_VERSION: u32 = 5;
+pub const PROTOCOL_VERSION: u32 = 6;
 /// The oldest protocol the cloud still accepts (it hides `mobile` / `web`
 /// devices from protocol-3 connections and `mcp` ones from protocol < 5,
-/// whose `DeviceKind` can't read them).
+/// whose `DeviceKind` can't read them; `confirm` / `confirm_dismissed` and
+/// the `confirm` / `set_mcp_auto` ops need protocol 6).
 pub const MIN_PROTOCOL_VERSION: u32 = 3;
 /// A signed request older or newer than this is refused (`fleet.stale_request`).
 pub const REQUEST_WINDOW_MS: u64 = 5 * 60 * 1000;
@@ -149,6 +151,49 @@ pub struct DeviceInfo {
     /// Kept within [`MAX_INFO_BYTES`] by [`DeviceInfo::fit_agents`].
     #[serde(default)]
     pub agents: Vec<FleetAgentInfo>,
+    /// A host's auto mode for each Claude via the cloud (`mcp`) device it
+    /// pins (docs/fleet.md "Auto mode"), so another of the user's devices
+    /// can show it and change it (`RemoteOp::SetMcpAuto`). Empty on other
+    /// kinds and on hosts older than this field.
+    #[serde(default)]
+    pub mcp_auto: Vec<McpAutoState>,
+}
+
+/// Whether a host lets Claude via the cloud (`DeviceKind::Mcp`) edit or run
+/// without a person's yes (docs/fleet.md "Auto mode"). It never lifts the
+/// host's `max_mode`; it only skips the prompt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum McpAuto {
+    /// Every Edit or Run waits for a person (the default).
+    #[default]
+    Off,
+    /// Edit starts and sends (a plan's approval into Edit too) run at once;
+    /// Run still waits.
+    Edit,
+    /// Edit and Run run at once, a plan's approval too.
+    Full,
+}
+
+impl McpAuto {
+    /// Whether a request in `mode` runs without a person under this auto.
+    pub fn covers(self, mode: FleetMode) -> bool {
+        match self {
+            McpAuto::Off => false,
+            McpAuto::Edit => mode <= FleetMode::Edit,
+            McpAuto::Full => true,
+        }
+    }
+}
+
+/// A host's auto mode for one `mcp` device it pins.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct McpAutoState {
+    pub device_id: DeviceId,
+    pub auto: McpAuto,
+    /// Unix ms it ends; `None`: until turned off.
+    #[serde(default)]
+    pub until_ms: Option<u64>,
 }
 
 /// One agent a host runs for remote spaces (docs/fleet.md "Agent, model
@@ -357,15 +402,34 @@ pub enum RemoteOp {
         ask_id: String,
         answers: Vec<Vec<String>>,
     },
+    /// A person's Allow or Deny, on a device the target delegates to, of a
+    /// request from Claude via the cloud waiting on the target
+    /// ([`RemoteConfirm::confirm_id`]). Never taken from an `mcp` device.
+    Confirm {
+        confirm_id: String,
+        allow: bool,
+    },
+    /// Sets the target's auto mode for an `mcp` device it pins
+    /// (docs/fleet.md "Auto mode"). Never taken from an `mcp` device.
+    SetMcpAuto {
+        mcp_device: DeviceId,
+        auto: McpAuto,
+        /// Unix ms it ends; `None`: until turned off.
+        #[serde(default)]
+        until_ms: Option<u64>,
+    },
 }
 
 impl RemoteOp {
+    /// The space it acts on; empty for an op on no space (`confirm`,
+    /// `set_mcp_auto`).
     pub fn space(&self) -> &str {
         match self {
             RemoteOp::StartSpace { space, .. }
             | RemoteOp::Send { space, .. }
             | RemoteOp::Stop { space }
             | RemoteOp::Answer { space, .. } => space,
+            RemoteOp::Confirm { .. } | RemoteOp::SetMcpAuto { .. } => "",
         }
     }
 }
@@ -397,6 +461,8 @@ pub enum Domain {
     Reply,
     /// A [`Delegation`] from the origin device.
     Delegate,
+    /// A [`RemoteConfirm`] from the host the request waits on.
+    Confirm,
 }
 
 impl Domain {
@@ -408,6 +474,7 @@ impl Domain {
             Domain::Ask => b"theodore-fleet-ask-v3\0",
             Domain::Reply => b"theodore-fleet-reply-v3\0",
             Domain::Delegate => b"theodore-fleet-delegate-v3\0",
+            Domain::Confirm => b"theodore-fleet-confirm-v3\0",
         }
     }
 
@@ -464,6 +531,12 @@ impl Signer for ReplyBody {
 }
 
 impl Signer for RemoteAsk {
+    fn signer(&self) -> &str {
+        &self.host_device
+    }
+}
+
+impl Signer for RemoteConfirm {
     fn signer(&self) -> &str {
         &self.host_device
     }
@@ -804,6 +877,46 @@ pub enum AskVia {
     Moved,
 }
 
+/// What a request waiting for a person would do (`RemoteConfirm::action`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum ConfirmAction {
+    /// Start a space in `project_name`.
+    Start,
+    /// Send a message to `space_name`, as its next turn.
+    Send,
+    /// Approve the plan in `space_name` (its next turn edits).
+    ApprovePlan,
+}
+
+/// A request from Claude via the cloud (`DeviceKind::Mcp`) waiting on its
+/// host for a person's yes, as the host shows it to the devices it
+/// delegates to, signed by the host ([`Domain::Confirm`]). They answer with
+/// a signed [`RemoteOp::Confirm`] to the host; the first answer wins.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct RemoteConfirm {
+    /// The waiting request's `req_id`.
+    pub confirm_id: String,
+    pub host_device: DeviceId,
+    /// The `mcp` device that asked.
+    pub mcp_device: DeviceId,
+    pub action: ConfirmAction,
+    pub mode: FleetMode,
+    /// `start`: the project it starts in, as the host names it.
+    #[serde(default)]
+    pub project_name: Option<String>,
+    /// `send` / `approve_plan`: the space, as the host names it.
+    #[serde(default)]
+    pub space_name: Option<String>,
+    /// The goal or the message, at most [`CONFIRM_TEXT_MAX`] characters.
+    pub text: String,
+    /// Unix ms: refused on the host unless answered before.
+    pub expires_at_ms: u64,
+}
+
+/// Most characters of a [`RemoteConfirm`]'s text.
+pub const CONFIRM_TEXT_MAX: usize = 500;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "snake_case")]
 pub enum DismissReason {
@@ -889,6 +1002,15 @@ pub enum ClientMessage {
     Delegate {
         envelope: SignedEnvelope,
     },
+    /// A [`RemoteConfirm`] signed by this device as its host: shown on the
+    /// devices it delegates to (protocol 6).
+    Confirm {
+        envelope: SignedEnvelope,
+    },
+    /// The confirm was answered (here or elsewhere) or ran out of time.
+    ConfirmResolved {
+        confirm_id: String,
+    },
 }
 
 /// Device ⇄ cloud, cloud side.
@@ -964,6 +1086,16 @@ pub enum ServerMessage {
     Delegations {
         list: Vec<SignedEnvelope>,
     },
+    /// A host's signed [`RemoteConfirm`], forwarded unchanged to the
+    /// devices it delegates to (protocol 6), again after their welcome
+    /// while it waits.
+    Confirm {
+        envelope: SignedEnvelope,
+    },
+    /// The confirm is no longer waiting on its host.
+    ConfirmDismissed {
+        confirm_id: String,
+    },
 }
 
 /// Every type the Worker needs, for the TS export.
@@ -976,6 +1108,7 @@ pub fn types() -> specta::Types {
         .register::<ReplyBody>()
         .register::<Delegation>()
         .register::<RemoteAsk>()
+        .register::<RemoteConfirm>()
         .register::<StartedSpace>();
     // JS numbers: seqs, generations and unix-ms timestamps stay far below
     // 2^53 (same call as the contract crate).

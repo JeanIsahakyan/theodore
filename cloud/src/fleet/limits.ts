@@ -4,11 +4,13 @@
  * carries types only); the rest are the cloud's own (docs/cloud.md "Fleet").
  */
 
-export const PROTOCOL_VERSION = 5;
+export const PROTOCOL_VERSION = 6;
 /**
  * The oldest protocol still accepted. Protocol-3 connections never see
  * `mobile` / `web` devices (their `DeviceKind` can't read them) nor
- * `delegations`; protocol 3 and 4 never see the cloud's own `mcp` device.
+ * `delegations`; protocol 3 and 4 never see the cloud's own `mcp` device;
+ * below 6, no `confirm` / `confirm_dismissed` frames nor the `confirm` /
+ * `set_mcp_auto` ops.
  */
 export const MIN_PROTOCOL_VERSION = 3;
 /** A signed request or delegation older or newer than this is stale. */
@@ -27,6 +29,10 @@ export const MAX_AGENT_ID_CHARS = 32;
 export const MAX_MODEL_ID_CHARS = 64;
 export const MAX_AGENT_LABEL_CHARS = 64;
 export const MAX_EFFORT_CHARS = 16;
+/** `DeviceInfo.mcp_auto`: one per `mcp` device a host pins. */
+export const MAX_MCP_AUTO = 8;
+/** Characters of a `RemoteConfirm`'s text (`CONFIRM_TEXT_MAX`). */
+export const CONFIRM_TEXT_MAX = 500;
 
 /** A request to an offline target waits this long for it to come back. */
 export const GRACE_MS = 10_000;
@@ -49,6 +55,8 @@ export const MAX_PENDING_PER_USER = 100;
 export const MAX_SPACES_PER_USER = 200;
 export const MAX_ASKS_PER_SPACE = 20;
 export const MAX_ASKS_PER_USER = 100;
+/** Open confirms (a host's `RemoteConfirm`s) per user. */
+export const MAX_CONFIRMS_PER_USER = 20;
 /** Open sockets per user, said hello or not. */
 export const MAX_CONNS_PER_USER = 10;
 /** A space whose host has been offline this long is forgotten. */

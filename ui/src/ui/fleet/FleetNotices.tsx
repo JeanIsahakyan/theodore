@@ -1,15 +1,26 @@
 /** What the fleet puts in front of you wherever you are (docs/fleet.md):
- *  requests from Claude via the cloud waiting for your yes, questions of
+ *  auto modes on now, requests from Claude via the cloud waiting for your
+ *  yes (here, or on a computer that sends you its prompts), questions of
  *  agents on other devices, routed to this one, and devices that asked to
  *  run a space here without being trusted. */
 import { useEffect, useState } from 'react';
 import { Cloud, ShieldExclamation } from '@gravity-ui/icons';
 import { Button, Card } from '@heroui/react';
 import { observer } from 'mobx-react-lite';
-import type { FleetConfirm, FleetTrustNeeded } from '../../gen/contract';
+import type {
+  FleetAutoOn,
+  FleetConfirm,
+  FleetTrustNeeded,
+} from '../../gen/contract';
 import { notifySpace } from '../../core/native';
 import { useRootStore, useUi } from '../../stores/context';
-import { CLOUD_CLAUDE_WARNING, confirmAction } from './fleet';
+import {
+  AUTO_LABEL,
+  CLOUD_CLAUDE_WARNING,
+  autoOn,
+  confirmAction,
+  untilLabel,
+} from './fleet';
 import { FleetQuestionCard } from './FleetQuestionCard';
 import { Fingerprint, TrustConfirm } from './TrustConfirm';
 
@@ -26,7 +37,10 @@ export const ConfirmCard = observer(function ConfirmCard({
 }) {
   const fleet = useRootStore().fleet;
   const [busy, setBusy] = useState<'allow' | 'deny' | null>(null);
-  const what = confirmAction(request);
+  // Waiting on another computer that sends its prompts here: say which.
+  const what = request.host_name
+    ? `${confirmAction(request)} on ${request.host_name}`
+    : confirmAction(request);
   // Away from the window: the system says so too (a click brings it up).
   useEffect(() => {
     if (document.hasFocus()) return;
@@ -68,8 +82,11 @@ export const ConfirmCard = observer(function ConfirmCard({
             {request.text}
           </p>
           <span className="text-xs text-muted">
-            From {request.device_name}. {CLOUD_CLAUDE_WARNING} Unanswered by{' '}
-            {until}, it is refused.
+            From {request.device_name}.{' '}
+            {request.host_name
+              ? `Your answer goes to ${request.host_name}.`
+              : CLOUD_CLAUDE_WARNING}{' '}
+            Unanswered by {until}, it is refused.
           </span>
         </div>
       </div>
@@ -170,6 +187,52 @@ export const TrustNeededCard = observer(function TrustNeededCard({
   );
 });
 
+/** "Claude via cloud: full auto until 18:00 · Turn off", while it lasts. */
+export const AutoBanner = observer(function AutoBanner({
+  auto,
+}: {
+  auto: FleetAutoOn;
+}) {
+  const fleet = useRootStore().fleet;
+  const [busy, setBusy] = useState(false);
+  const label = AUTO_LABEL[auto.auto].toLowerCase();
+  return (
+    <Card
+      role="status"
+      className="fleet-auto-on flex flex-row items-center gap-2 border border-warning/40 px-3 py-2 shadow-lg"
+      data-device={auto.device_id}
+    >
+      <Cloud aria-hidden className="size-4 shrink-0 text-warning" />
+      <span className="min-w-0 flex-1 text-sm">
+        <span className="font-medium">{CLOUD_CLAUDE}</span>: {label}{' '}
+        {untilLabel(auto.until_ms, Date.now())}
+      </span>
+      <Button
+        size="sm"
+        variant="ghost"
+        className="fleet-auto-off"
+        isPending={busy}
+        onPress={() => {
+          setBusy(true);
+          void fleet
+            .setAuto({
+              device_id: auto.device_id,
+              auto: 'off',
+              until_ms: null,
+              host_device: null,
+            })
+            .catch(() => {
+              // toasted by api.ts
+            })
+            .finally(() => setBusy(false));
+        }}
+      >
+        Turn off
+      </Button>
+    </Card>
+  );
+});
+
 export const FleetNotices = observer(function FleetNotices() {
   const store = useRootStore();
   const ui = useUi();
@@ -183,11 +246,21 @@ export const FleetNotices = observer(function FleetNotices() {
   );
   const trusts = fleet.trustNeededList;
   const confirms = fleet.confirmList;
-  if (asks.length === 0 && trusts.length === 0 && confirms.length === 0) {
+  const now = Date.now();
+  const autos = fleet.autos.filter((a) => autoOn(a.auto, a.until_ms, now));
+  if (
+    asks.length === 0 &&
+    trusts.length === 0 &&
+    confirms.length === 0 &&
+    autos.length === 0
+  ) {
     return null;
   }
   return (
     <div className="fleet-notices pointer-events-none absolute right-4 top-12 z-30 flex max-h-[75vh] w-[420px] max-w-[calc(100%-2rem)] flex-col gap-2 overflow-auto [&>*]:pointer-events-auto">
+      {autos.map((a) => (
+        <AutoBanner key={a.device_id} auto={a} />
+      ))}
       {confirms.map((c) => (
         <ConfirmCard key={c.id} request={c} />
       ))}

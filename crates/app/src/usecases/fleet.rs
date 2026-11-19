@@ -21,15 +21,15 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use serde::{Deserialize, Serialize};
 use theodore_contract::{
-    Ephemeral, FleetDevice, FleetOs, FleetProject, FleetQuestion, FleetRemoteSpace,
-    FleetSettingsRequest, FleetSpaceLine, FleetStatus, FleetTrustRequest, Project, ProjectStatus,
-    SpaceMode, models,
+    Ephemeral, FleetAuto, FleetAutoOn, FleetDevice, FleetMcpAuto, FleetOs, FleetProject,
+    FleetQuestion, FleetRemoteSpace, FleetSettingsRequest, FleetSpaceLine, FleetStatus,
+    FleetTrustRequest, Project, ProjectStatus, SpaceMode, models,
 };
 use theodore_domain::HostKind;
 use theodore_fleet_protocol::{
     ClientMessage, Delegation, DeviceInfo, DeviceKey, DeviceKind, DeviceOs, DeviceSummary,
-    FleetMode, ProjectRef, REPLAY_MEMORY_MS, RemoteRequest, ServerMessage, SpaceCursor, codes,
-    fingerprint,
+    FleetMode, McpAuto, ProjectRef, REPLAY_MEMORY_MS, RemoteRequest, ServerMessage, SpaceCursor,
+    codes, fingerprint,
 };
 use theodore_ports::{FleetCommand, FleetConnect, FleetHostedRow, FleetInbound};
 use tokio::sync::{mpsc, oneshot};
@@ -96,7 +96,57 @@ pub(crate) struct TrustedDevice {
     /// kind later can't lift the cap on an `mcp` one (`fleet_origin_mcp`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kind: Option<String>,
+    /// An `mcp` device only: this computer's auto mode for it
+    /// (docs/fleet.md "Auto mode"). Read through [`TrustedDevice::auto_at`]:
+    /// past `auto_until_ms` it's off.
+    #[serde(default, skip_serializing_if = "is_off")]
+    pub auto: McpAuto,
+    /// Unix ms the auto mode ends; `None`: until turned off.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_until_ms: Option<u64>,
 }
+
+fn is_off(a: &McpAuto) -> bool {
+    *a == McpAuto::Off
+}
+
+impl TrustedDevice {
+    /// The auto mode in force at `now`: off once `auto_until_ms` passed.
+    pub(crate) fn auto_at(&self, now: u64) -> McpAuto {
+        match self.auto_until_ms {
+            Some(until) if until <= now => McpAuto::Off,
+            _ => self.auto,
+        }
+    }
+
+    /// Its end, while it's on at `now`.
+    pub(crate) fn auto_until_at(&self, now: u64) -> Option<u64> {
+        if self.auto_at(now) == McpAuto::Off {
+            None
+        } else {
+            self.auto_until_ms
+        }
+    }
+}
+
+pub(crate) fn ui_auto(a: McpAuto) -> FleetAuto {
+    match a {
+        McpAuto::Off => FleetAuto::Off,
+        McpAuto::Edit => FleetAuto::Edit,
+        McpAuto::Full => FleetAuto::Full,
+    }
+}
+
+pub(crate) fn wire_auto(a: FleetAuto) -> McpAuto {
+    match a {
+        FleetAuto::Off => McpAuto::Off,
+        FleetAuto::Edit => McpAuto::Edit,
+        FleetAuto::Full => McpAuto::Full,
+    }
+}
+
+/// Most `mcp` devices whose auto mode a computer lists.
+const MCP_AUTO_LISTED: usize = 8;
 
 /// A device kind as the UI and the pins name it.
 pub(crate) fn kind_str(k: DeviceKind) -> &'static str {
@@ -109,10 +159,15 @@ pub(crate) fn kind_str(k: DeviceKind) -> &'static str {
     }
 }
 
-/// Whether a device of kind `k` may follow this device's spaces
-/// (`fleet_delegate`): a phone or the web app, nothing else.
+/// Whether a device of kind `k` may follow this device's spaces and get
+/// its Claude via cloud prompts (`fleet_delegate`): a phone, the web app or
+/// another desktop computer; never a daemon (nobody there) or Claude via
+/// cloud itself.
 pub(crate) fn follows(k: DeviceKind) -> bool {
-    matches!(k, DeviceKind::Mobile | DeviceKind::Web)
+    matches!(
+        k,
+        DeviceKind::Mobile | DeviceKind::Web | DeviceKind::Desktop
+    )
 }
 
 fn default_max_mode() -> FleetMode {
@@ -323,6 +378,9 @@ pub(crate) struct FleetMem {
     /// Claimed requests waiting for a person here, by `req_id`. Memory
     /// only: a restart forgets them (their requests are out of time then).
     pub confirms: HashMap<String, PendingConfirm>,
+    /// Prompts waiting on another computer that sends its approvals here
+    /// (this device is its delegate), by `req_id`. Memory only.
+    pub remote_confirms: HashMap<String, theodore_contract::FleetConfirm>,
     /// Starts past the gate, not hosted yet, by remote id.
     pub reserved: HashMap<String, Reserved>,
     /// By remote id.
@@ -548,6 +606,7 @@ impl Core {
             } else {
                 Vec::new()
             },
+            mcp_auto: self.fleet_mcp_autos(s),
         };
         info.fit_agents();
         info
@@ -651,11 +710,14 @@ impl Core {
                 if theodore_fleet_protocol::unb64(compared).is_none_or(|k| k.len() != 32) {
                     return Err(AppError::Invalid("that device's key is malformed".into()));
                 }
+                // Trusted again: auto mode starts off.
                 Some(TrustedDevice {
                     device_id: listed.device_id,
                     public_key: compared.to_string(),
                     name: pin_name(&listed.info.name),
                     kind: Some(kind_str(listed.info.kind).to_string()),
+                    auto: McpAuto::Off,
+                    auto_until_ms: None,
                 })
             } else {
                 None
@@ -867,6 +929,17 @@ impl Core {
             String::new()
         };
         let name = self.fleet_name(&s).await;
+        let now = self.0.deps.clock.now().max(0) as u64;
+        // The pin of a listed `mcp` device, for its auto mode.
+        let pin_of = |d: &DeviceSummary| {
+            s.trusted_devices
+                .iter()
+                .find(|t| t.device_id == d.device_id && t.public_key == d.public_key)
+                .filter(|t| {
+                    d.info.kind == DeviceKind::Mcp
+                        || t.kind.as_deref() == Some(kind_str(DeviceKind::Mcp))
+                })
+        };
         let mem = self.fleet();
         let devices = mem
             .devices
@@ -910,6 +983,42 @@ impl Core {
                         .any(|g| g.origin_device == me && g.delegate_device == d.device_id)
                 }),
                 agents: crate::usecases::fleet_agents::ui_agents(&d.info.agents),
+                auto: pin_of(d).map_or(FleetAuto::Off, |p| ui_auto(p.auto_at(now))),
+                auto_until_ms: pin_of(d).and_then(|p| p.auto_until_at(now)),
+                mcp_auto: if d.info.kind.hosts() {
+                    d.info
+                        .mcp_auto
+                        .iter()
+                        .take(MCP_AUTO_LISTED)
+                        .map(|a| FleetMcpAuto {
+                            device_id: a.device_id.clone(),
+                            name: mem
+                                .devices
+                                .iter()
+                                .find(|x| x.device_id == a.device_id)
+                                .map_or_else(|| a.device_id.clone(), |x| pin_name(&x.info.name)),
+                            auto: if a.until_ms.is_some_and(|u| u <= now) {
+                                FleetAuto::Off
+                            } else {
+                                ui_auto(a.auto)
+                            },
+                            until_ms: a.until_ms.filter(|u| *u > now),
+                        })
+                        .collect()
+                } else {
+                    Vec::new()
+                },
+            })
+            .collect();
+        let autos = s
+            .trusted_devices
+            .iter()
+            .filter(|p| p.auto_at(now) != McpAuto::Off)
+            .map(|p| FleetAutoOn {
+                device_id: p.device_id.clone(),
+                device_name: p.name.clone(),
+                auto: ui_auto(p.auto_at(now)),
+                until_ms: p.auto_until_at(now),
             })
             .collect();
         Ok(FleetStatus {
@@ -927,6 +1036,7 @@ impl Core {
             } else {
                 None
             },
+            autos,
         })
     }
 
@@ -941,6 +1051,7 @@ impl Core {
     /// Spawned by `Core::start`: picks up hosted spaces and connects when
     /// the fleet is on.
     pub(crate) async fn fleet_resume(&self) {
+        self.fleet_auto_resume().await;
         if !self.fleet_settings().await.enabled {
             return;
         }
@@ -1241,6 +1352,10 @@ impl Core {
                 self.emit(Ephemeral::FleetAskDismissed { ask_id });
             }
             ServerMessage::Delegations { list } => self.fleet_on_delegations(list).await,
+            ServerMessage::Confirm { envelope } => self.fleet_on_remote_confirm(envelope).await,
+            ServerMessage::ConfirmDismissed { confirm_id } => {
+                self.fleet_on_confirm_dismissed(&confirm_id)
+            }
             // Challenge and welcome are the adapter's.
             ServerMessage::Challenge { .. } | ServerMessage::Welcome { .. } => {}
             ServerMessage::Error { code, message } => {
@@ -1265,6 +1380,7 @@ impl Core {
     /// After a welcome: hosted spaces replay what the cloud lacks, remote
     /// ones are subscribed again from the last seq seen here.
     fn fleet_on_connected(&self, resume: BTreeMap<String, u64>) {
+        self.fleet_clear_remote_confirms();
         let subs: Vec<(String, u64)> = {
             let mut mem = self.fleet();
             let me = mem.device_id.clone().unwrap_or_default();
@@ -1300,7 +1416,7 @@ impl Core {
 }
 
 /// Whether this device should be sending its spaces' questions to `d`:
-/// asked for here, `d` is a phone or the web app, and it's pinned with
+/// asked for here, `d` is a phone, the web app or a desktop, and it's pinned with
 /// the key the cloud lists now.
 pub(crate) fn wants_delegate(s: &FleetSettings, d: &DeviceSummary) -> bool {
     follows(d.info.kind)

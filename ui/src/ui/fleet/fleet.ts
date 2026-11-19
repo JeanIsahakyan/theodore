@@ -1,6 +1,7 @@
 /** Fleet UI rules with no React: which devices can take a space, which
  *  modes they allow, how answers go on the wire (docs/fleet.md). */
 import type {
+  FleetAuto,
   FleetConfirm,
   FleetDevice,
   FleetQuestionItem,
@@ -45,13 +46,71 @@ export const isClient = (d: Pick<FleetDevice, 'kind'>): boolean =>
 export const isCloudClaude = (d: Pick<FleetDevice, 'kind'>): boolean =>
   d.kind === 'mcp';
 
-/** A phone or the web app: what may follow this computer's spaces. */
+/** A phone, the web app or another desktop computer: what may follow this
+ *  computer's spaces and get its Claude via cloud prompts. */
 export const canFollow = (d: Pick<FleetDevice, 'kind'>): boolean =>
-  d.kind === 'mobile' || d.kind === 'web';
+  d.kind === 'mobile' || d.kind === 'web' || d.kind === 'desktop';
 
 /** The one-line warning shown wherever Claude via the cloud is trusted. */
 export const CLOUD_CLAUDE_WARNING =
-  'Its key is held by the Theodore cloud, not by a device of yours. It can ask and plan here; an Edit or Run from it waits for your yes on this computer.';
+  'Its key is held by the Theodore cloud, not by a device of yours. It can ask and plan here; an Edit or Run from it waits for your yes on this computer, unless you turn on auto mode.';
+
+/** Auto mode, least to most: what each lets Claude via cloud skip. */
+export const AUTO_ORDER: readonly FleetAuto[] = ['off', 'edit', 'full'];
+
+export const AUTO_LABEL: Record<FleetAuto, string> = {
+  off: 'Off',
+  edit: 'Auto Edit',
+  full: 'Full auto',
+};
+
+/** The warning while auto mode is on, or about to be. */
+export function autoWarning(auto: FleetAuto): string {
+  return `Its key is held by the Theodore cloud: with auto on, the cloud could make this computer edit${auto === 'full' ? ' and run commands' : ''} without you.`;
+}
+
+/** How long a new auto mode lasts. */
+export type AutoDuration = 'hour' | 'day' | 'off';
+
+export const AUTO_DURATIONS: readonly { id: AutoDuration; label: string }[] = [
+  { id: 'hour', label: '1 hour' },
+  { id: 'day', label: 'Until end of day' },
+  { id: 'off', label: 'Until I turn it off' },
+];
+
+/** `until_ms` for a duration picked at `now`: an hour, the end of today
+ *  (local), or none. */
+export function autoUntil(d: AutoDuration, now: number): number | null {
+  if (d === 'hour') return now + 60 * 60 * 1000;
+  if (d === 'day') {
+    const end = new Date(now);
+    end.setHours(23, 59, 59, 999);
+    return end.getTime();
+  }
+  return null;
+}
+
+/** "until 18:00", "until Nov 21, 09:00", "until turned off". */
+export function untilLabel(until: number | null | undefined, now: number) {
+  if (until == null) return 'until turned off';
+  const at = new Date(until);
+  const time = at.toLocaleTimeString([], {
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+  if (at.toDateString() === new Date(now).toDateString()) {
+    return `until ${time}`;
+  }
+  const day = at.toLocaleDateString([], { month: 'short', day: 'numeric' });
+  return `until ${day}, ${time}`;
+}
+
+/** An auto mode still on at `now` (its end not passed). */
+export const autoOn = (
+  auto: FleetAuto | undefined,
+  until: number | null | undefined,
+  now: number,
+): boolean => !!auto && auto !== 'off' && (until == null || until > now);
 
 const OS_LABEL: Partial<Record<FleetDevice['os'], string>> = {
   macos: 'macOS',

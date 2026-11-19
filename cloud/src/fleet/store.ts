@@ -18,6 +18,9 @@
  *          (2 min), as the frame to send
  * asks     ask_id ─ an open question (the host's envelope): where it shows,
  *          which devices were pushed about it
+ * confirms confirm_id ─ a request from Claude via the cloud waiting on its
+ *          host (the host's envelope): when it lapses, the host's delegates
+ *          it shows on, which were pushed about it
  * subs     (device, space) ─ who gets a space's live events
  * conns    conn_id ─ a deadline: hello due, or access token expiry + 60 s
  * push_tokens  device_id ─ its Expo push token, this minute's push count
@@ -25,7 +28,8 @@
  *          a revocation stays as a tombstone for the 5 min freshness window
  * meta     schema ─ SCHEMA_VERSION (7: pending.ttl_ms); on any other, every table but devices,
  *          conns, push_tokens and delegations is dropped (older rows carry
- *          older signatures)
+ *          older signatures). A new table needs no bump (`IF NOT EXISTS`):
+ *          confirms came at 7
  * ```
  */
 import { CLOUD_RING, MAX_SPACE_EVENT_BYTES } from './limits';
@@ -47,6 +51,7 @@ const RESET = [
   'pending',
   'replies',
   'asks',
+  'confirms',
   'subs',
 ];
 
@@ -130,6 +135,17 @@ const SCHEMA = [
     pushed TEXT NOT NULL DEFAULT '[]')`,
   `CREATE INDEX IF NOT EXISTS asks_user ON asks (user_id)`,
   `CREATE INDEX IF NOT EXISTS asks_space ON asks (space)`,
+  `CREATE TABLE IF NOT EXISTS confirms (
+    confirm_id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    host_device TEXT NOT NULL,
+    envelope TEXT NOT NULL,
+    expires_at_ms INTEGER NOT NULL,
+    shown_on TEXT NOT NULL DEFAULT '[]',
+    pushed TEXT NOT NULL DEFAULT '[]',
+    created_ms INTEGER NOT NULL)`,
+  `CREATE INDEX IF NOT EXISTS confirms_user ON confirms (user_id)`,
+  `CREATE INDEX IF NOT EXISTS confirms_host ON confirms (host_device)`,
   `CREATE TABLE IF NOT EXISTS subs (
     device_id TEXT NOT NULL,
     space TEXT NOT NULL,
@@ -234,6 +250,21 @@ export interface AskRow {
   pushed: string;
 }
 
+export interface ConfirmRow {
+  confirm_id: string;
+  user_id: string;
+  host_device: string;
+  /** The host's signed RemoteConfirm, as JSON of the envelope. */
+  envelope: string;
+  /** When the cloud forgets it: the host's, capped at the request window. */
+  expires_at_ms: number;
+  /** Devices it was sent to (JSON list). */
+  shown_on: string;
+  /** Devices pushed about it (JSON list): one push per device. */
+  pushed: string;
+  created_ms: number;
+}
+
 export interface PushTokenRow {
   device_id: string;
   user_id: string;
@@ -310,6 +341,13 @@ export class Store {
 
   ask(id: string): AskRow | undefined {
     return this.one<AskRow>('SELECT * FROM asks WHERE ask_id = ?', id);
+  }
+
+  confirm(id: string): ConfirmRow | undefined {
+    return this.one<ConfirmRow>(
+      'SELECT * FROM confirms WHERE confirm_id = ?',
+      id,
+    );
   }
 
   /** Event bytes a user's spaces hold (rings, mirrors, `started` copies). */

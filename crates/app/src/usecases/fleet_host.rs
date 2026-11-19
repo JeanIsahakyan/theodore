@@ -47,7 +47,8 @@ use tokio::sync::{broadcast, mpsc};
 use crate::core::Core;
 use crate::error::AppError;
 use crate::usecases::fleet::{
-    Claimed, FleetSettings, Hosted, Reserved, Seen, fleet_mode, kind_str, mode_str, space_mode,
+    Claimed, FleetSettings, Hosted, Reserved, Seen, TrustedDevice, fleet_mode, kind_str, mode_str,
+    space_mode,
 };
 use crate::usecases::fleet_agents::{agent_of, check_pick};
 use crate::usecases::fleet_confirm::needs_person;
@@ -442,7 +443,7 @@ impl Core {
                 "this device couldn't record the request",
             ));
         }
-        if let Err(refusal) = self.fleet_check_op(&mut req, &s).await {
+        if let Err(refusal) = self.fleet_check_op(&mut req, &s, pinned).await {
             // Refused either way; a store failure only costs the replay
             // memory of a request that ran nothing.
             let _ = self
@@ -453,7 +454,7 @@ impl Core {
         // Claude via the cloud (its key is the cloud's): an edit or run
         // waits for a person here, and a daemon has nobody to ask.
         let confirm = self.fleet_origin_mcp(pinned) && needs_person(&req.op);
-        if confirm && let Err(refusal) = self.fleet_confirm_gate() {
+        if confirm && let Err(refusal) = self.fleet_confirm_gate(pinned, &req.op) {
             self.fleet().release(req.op.space(), &req.req_id);
             let _ = self
                 .fleet_mark_seen(&req.req_id, issued_at, Seen::Done)
@@ -473,6 +474,7 @@ impl Core {
         &self,
         req: &mut RemoteRequest,
         s: &FleetSettings,
+        pin: &TrustedDevice,
     ) -> Result<(), Refusal> {
         let above = |m: FleetMode| {
             refuse(
@@ -630,6 +632,48 @@ impl Core {
                     None => Ok(()),
                 }
             }
+            // A person's yes, or auto mode, never from Claude via the cloud
+            // itself: its key is the cloud's.
+            RemoteOp::Confirm { confirm_id, .. } => {
+                if self.fleet_origin_mcp(pin) {
+                    return Err(refuse(
+                        codes::INVALID,
+                        "Claude via the cloud can't answer for a person",
+                    ));
+                }
+                if !s.delegates.contains(&pin.device_id) {
+                    return Err(refuse(
+                        codes::INVALID,
+                        "this device doesn't send its prompts to yours",
+                    ));
+                }
+                if !self.fleet_confirm_waiting(confirm_id) {
+                    return Err(refuse(
+                        codes::INVALID,
+                        "that request isn't waiting any more",
+                    ));
+                }
+                Ok(())
+            }
+            RemoteOp::SetMcpAuto { mcp_device, .. } => {
+                if self.fleet_origin_mcp(pin) {
+                    return Err(refuse(
+                        codes::INVALID,
+                        "Claude via the cloud can't change its own auto mode",
+                    ));
+                }
+                let target = s
+                    .trusted_devices
+                    .iter()
+                    .find(|t| &t.device_id == mcp_device);
+                if !target.is_some_and(|t| self.fleet_origin_mcp(t)) {
+                    return Err(refuse(
+                        codes::INVALID,
+                        "auto mode is only for a Claude via cloud device trusted here",
+                    ));
+                }
+                Ok(())
+            }
         }
     }
 
@@ -675,7 +719,7 @@ impl Core {
             // A person's yes first, when it needs one; waits in this task
             // only, never in front of other requests.
             if c.confirm
-                && let Err(refusal) = core.fleet_confirm_wait(&c).await
+                && let Err(refusal) = core.fleet_confirm_or_auto(&c).await
             {
                 core.fleet().release(c.req.op.space(), &c.req.req_id);
                 core.fleet_reply(c.req, Err(refusal)).await;
@@ -714,11 +758,7 @@ impl Core {
                 "the requesting device isn't trusted on this device any more",
             ));
         }
-        let mode = match &c.req.op {
-            RemoteOp::StartSpace { mode, .. } => Some(*mode),
-            RemoteOp::Send { mode, .. } => *mode,
-            RemoteOp::Stop { .. } | RemoteOp::Answer { .. } => None,
-        };
+        let mode = crate::usecases::fleet_auto::op_mode(&c.req.op);
         if let Some(m) = mode
             && m > s.max_mode
         {
@@ -817,6 +857,19 @@ impl Core {
                 }
                 None => Err(refuse(codes::UNKNOWN_SPACE, "no such space on this device")),
             },
+            RemoteOp::Confirm { confirm_id, allow } => self
+                .fleet_confirm_here(&confirm_id, allow, &req.origin_device)
+                .map(|()| serde_json::json!({}))
+                .map_err(|_| refuse(codes::INVALID, "that request isn't waiting any more")),
+            RemoteOp::SetMcpAuto {
+                mcp_device,
+                auto,
+                until_ms,
+            } => self
+                .fleet_apply_auto(&mcp_device, auto, until_ms, &req.origin_device)
+                .await
+                .map(|()| serde_json::json!({}))
+                .map_err(|e| refuse(codes::INVALID, e.to_string())),
         }
     }
 

@@ -79,14 +79,14 @@ async function setup(o: { phoneOnline?: boolean } = {}) {
 }
 
 describe('protocol versions', () => {
-  it('accepts 3 to 5, refuses others', async () => {
+  it('accepts 3 to 6, refuses others', async () => {
     const h = new Harness();
-    for (const protocol of [3, 4, 5]) {
+    for (const protocol of [3, 4, 5, 6]) {
       const d = await h.device('user_1', `ok${protocol}`);
       d.protocol = protocol;
       await d.connect();
     }
-    for (const protocol of [2, 6]) {
+    for (const protocol of [2, 7]) {
       const d = await h.device('user_1', `p${protocol}`);
       d.protocol = protocol;
       await expect(d.connect()).rejects.toThrow(/fleet.version/);

@@ -171,7 +171,8 @@ export interface SpaceView {
   error: string | null;
   /**
    * "waiting for approval on <computer>": an Edit or Run start or send the
-   * computer hasn't answered yet; a person there must Allow it (≤ 5 min).
+   * computer hasn't answered yet; unless auto mode is on there, a person
+   * must Allow it there or on a device it sends its approvals to (≤ 5 min).
    */
   waiting_for: string | null;
   updated_ms: number;
@@ -1019,13 +1020,16 @@ export class McpFleet {
     };
   }
 
-  /** Signs `op` for `pin`, sends it and waits for its outcome. */
+  /**
+   * Signs `op` for `pin`, sends it and waits for its outcome. Space ops
+   * only: `confirm` and `set_mcp_auto` are a person's, never Claude's.
+   */
   private async send(
     c: McpCaller,
     me: string,
     conn: Conn,
     pin: PinRow,
-    op: RemoteOp,
+    op: Exclude<RemoteOp, { op: 'confirm' | 'set_mcp_auto' }>,
   ): Promise<Sent> {
     const row = this.store.device(c.userId)!;
     const key = await this.signingKey(c, row);
@@ -1087,8 +1091,9 @@ export class McpFleet {
   /**
    * "waiting for approval on <computer>" while an Edit or Run start or send
    * (a plan's approval too) has no answer and is inside the request window:
-   * the computer is asking a person. A send without a mode runs in the
-   * space's, so an Edit or Run space's send counts too.
+   * the computer is asking a person (unless its auto mode covers it). A
+   * send without a mode runs in the space's, so an Edit or Run space's send
+   * counts too.
    */
   private waitingFor(user: string, space: string): string | null {
     const sp = this.store.space(user, space);

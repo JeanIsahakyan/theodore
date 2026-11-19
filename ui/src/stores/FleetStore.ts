@@ -16,6 +16,8 @@ import {
 } from 'mobx';
 import type {
   Ephemeral,
+  FleetAutoOn,
+  FleetAutoRequest,
   FleetConfirm,
   FleetDevice,
   FleetQuestion,
@@ -55,6 +57,7 @@ export class FleetStore {
       askList: computed,
       trustNeededList: computed,
       confirmList: computed,
+      autos: computed,
       handle: action,
       setConfirms: action,
       dropConfirm: action,
@@ -96,6 +99,12 @@ export class FleetStore {
     return [...this.confirms.values()].sort(
       (a, b) => a.expires_at_ms - b.expires_at_ms,
     );
+  }
+
+  /** Auto modes on now on this computer (Claude via cloud skips your
+   *  yes): the notice that stays while one lasts. */
+  get autos(): FleetAutoOn[] {
+    return this.status?.autos ?? [];
   }
 
   device(id: string): FleetDevice | undefined {
@@ -181,6 +190,12 @@ export class FleetStore {
     } finally {
       this.dropConfirm(id);
     }
+  }
+
+  /** Auto mode for Claude via cloud, here or (`host_device`) on another
+   *  computer; answered with the new status. */
+  async setAuto(req: FleetAutoRequest): Promise<void> {
+    this.setStatus(await api.fleetSetAuto(req));
   }
 
   /** `fleet_status`, then (with a fleet) `fleet_spaces`. A failure leaves

@@ -1294,6 +1294,16 @@ pub async fn fleet_confirm(
     op.run(async move { core.fleet_confirm(req).await }).await
 }
 
+#[tauri::command]
+#[specta::specta]
+pub async fn fleet_set_auto(
+    op: crate::op::Op,
+    req: theodore_contract::FleetAutoRequest,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<theodore_contract::FleetStatus, CommandError> {
+    op.run(async move { core.fleet_set_auto(req).await }).await
+}
+
 /// Brings the main window forward: the browser sign-in finishes in another
 /// app, and the user should land back in Theodore without hunting for it.
 #[tauri::command]
