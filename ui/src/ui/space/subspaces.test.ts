@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import type { Space } from '../../gen/contract';
 import {
+  childStage,
   fromLabel,
+  mergedIntoParent,
   nestSpaces,
   spaceRows,
   subSpacesOf,
@@ -113,5 +115,53 @@ describe('sub-spaces as a tree', () => {
       child('other', 'b'),
     ];
     expect(subSpacesOf('a', all).map((s) => s.id)).toEqual(['new', 'old']);
+  });
+
+  it('puts merged children after the live ones, here and in the tree', () => {
+    const merged = { how: 'merged_into_parent', head: 'h' } as Space['shipped'];
+    const all = [
+      space('a'),
+      child('m', 'a', { updated_at: 9, head_sha: 'h', shipped: merged }),
+      child('live', 'a', { updated_at: 1 }),
+    ];
+    expect(subSpacesOf('a', all).map((s) => s.id)).toEqual(['live', 'm']);
+    expect(ids(spaceRows(nestSpaces(all), new Set()))).toEqual([
+      'a',
+      '  live',
+      '  m',
+    ]);
+  });
+});
+
+describe("a sub-space's stage", () => {
+  const s = (over: Partial<Space>) =>
+    space('c', { turns: 1, head_sha: 'h', ...over });
+  const merged = { how: 'merged_into_parent', head: 'h' } as Space['shipped'];
+
+  it('starting, running, waiting for you, failed, done, merged', () => {
+    expect(childStage(s({ turns: 0 }))).toBe('starting');
+    expect(childStage(s({ status: 'running' }))).toBe('running');
+    expect(childStage(s({ status: 'running', question: {} as never }))).toBe(
+      'asking',
+    );
+    expect(childStage(s({ status: 'failed' }))).toBe('failed');
+    expect(childStage(s({}))).toBe('done');
+    expect(childStage(s({ shipped: merged }))).toBe('merged');
+    // Merged and archived since: still merged.
+    expect(childStage(s({ shipped: merged, status: 'archived' }))).toBe(
+      'merged',
+    );
+    expect(childStage(s({ status: 'archived' }))).toBe('archived');
+  });
+
+  it('a turn after the merge is work the parent has not taken', () => {
+    expect(mergedIntoParent(s({ shipped: merged, head_sha: 'h2' }))).toBe(
+      false,
+    );
+    expect(childStage(s({ shipped: merged, head_sha: 'h2' }))).toBe('done');
+    // Running again after a merge runs.
+    expect(childStage(s({ shipped: merged, status: 'running' }))).toBe(
+      'running',
+    );
   });
 });

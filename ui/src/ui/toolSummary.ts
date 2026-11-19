@@ -3,6 +3,7 @@
  *  knows the command or file), `tool result ok=<bool>` after it, and plain
  *  notes like `stalled`. A build turn makes dozens of calls, mostly the
  *  same tool back to back — this collapses them into runs and totals. */
+import { SPACE_TOOL_LABEL, spaceToolOf } from './spaceTools';
 
 /** Consecutive calls of one tool, or a note line kept as-is. */
 export type ToolGroup =
@@ -67,7 +68,7 @@ export function toolResultOk(line: string): boolean | null {
 }
 
 export type ToolKind =
-  'read' | 'edit' | 'run' | 'search' | 'agent' | 'mcp' | 'other';
+  'read' | 'edit' | 'run' | 'search' | 'agent' | 'mcp' | 'space' | 'other';
 
 /** The agents' own tools, as a timeline row reads them. */
 const TOOL_ROWS = new Map<string, { kind: ToolKind; label: string }>(
@@ -120,10 +121,13 @@ export function mcpServer(name: string): string | null {
 }
 
 /** How a tool call reads as a row: `Bash` → Run, `ship the change` → Ship the
- *  change, `mcp__server__do_thing` → Do thing. */
+ *  change, `mcp__server__do_thing` → Do thing. The local-space tools are
+ *  their own kind (`spaceTools.ts`). */
 export function toolRow(name: string): { kind: ToolKind; label: string } {
   const known = TOOL_ROWS.get(name);
   if (known) return known;
+  const space = spaceToolOf(name);
+  if (space) return { kind: 'space', label: SPACE_TOOL_LABEL[space] };
   const read = readableTool(name);
   return {
     kind: mcpServer(name)

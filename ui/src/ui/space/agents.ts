@@ -21,6 +21,7 @@ import { toolRow } from '../toolSummary';
 import { endedLabel } from './backgroundTaskRows';
 import { pairTurns } from './chatTurns';
 import { splitQueue } from './queue';
+import { mergedIntoParent } from './subspaces';
 
 export type SubagentStatus = 'running' | 'background' | 'done' | 'failed';
 
@@ -204,13 +205,15 @@ export function backgroundRows(
 const plural = (n: number, one: string) => `${n} ${one}${n === 1 ? '' : 's'}`;
 
 /** The strip's one line, from its rows:
- *  "2 agents running · 3 sub-spaces, 1 running · 1 command running". A
+ *  "2 agents running · 3 sub-spaces, 1 running, 2 of 3 merged · 1 command
+ *  running". A
  *  background subagent counts as an agent, a background command as a
  *  command. */
 export function stripHeadline(
   agents: readonly Pick<SubagentView, 'status'>[],
   background: readonly Pick<BackgroundTask, 'kind' | 'status'>[],
-  subs: readonly Pick<Space, 'status'>[],
+  subs: readonly (Pick<Space, 'status'> &
+    Partial<Pick<Space, 'shipped' | 'head_sha'>>)[],
 ): string {
   const parts: string[] = [];
   const bgAgents = background.filter((t) => t.kind === 'subagent');
@@ -222,8 +225,16 @@ export function stripHeadline(
   else if (total > 0) parts.push(plural(total, 'agent'));
   if (subs.length > 0) {
     const running = subs.filter((s) => s.status === 'running').length;
-    const n = plural(subs.length, 'sub-space');
-    parts.push(running > 0 ? `${n}, ${running} running` : n);
+    const merged = subs.filter(mergedIntoParent).length;
+    parts.push(
+      [
+        plural(subs.length, 'sub-space'),
+        running > 0 && `${running} running`,
+        merged > 0 && `${merged} of ${subs.length} merged`,
+      ]
+        .filter(Boolean)
+        .join(', '),
+    );
   }
   const commands = background.filter((t) => t.kind !== 'subagent');
   const count = (status: BackgroundTask['status']) =>

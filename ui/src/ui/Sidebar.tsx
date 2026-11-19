@@ -2,6 +2,7 @@ import {
   Archive,
   ArrowRightFromSquare,
   BranchesRight,
+  Check,
   ChevronDown,
   CircleExclamation,
   CircleFill,
@@ -61,9 +62,13 @@ import {
 } from './space/spaces';
 import { collapsedSpaces, toggleSubSpaces } from './space/collapsed';
 import {
+  CHILD_STAGE_LABEL,
+  childStage,
   nestSpaces,
+  parentId,
   spaceRows,
   subtreeLabel,
+  type ChildStage,
   type SubtreeStats,
 } from './space/subspaces';
 
@@ -93,6 +98,8 @@ interface NavItem {
   from?: string | null;
   /** A space with sub-spaces: their count, and the hide/show toggle. */
   sub?: { stats: SubtreeStats; collapsed: boolean; onToggle: () => void };
+  /** A sub-space's stage: a mark after its name, a merged one muted. */
+  child?: ChildStage;
 }
 
 /** Archive from the sidebar: the space page's own `archive`, which steps
@@ -219,6 +226,33 @@ function SubCount({
       <ChevronRight
         className={`size-3 transition-transform ${collapsed ? '' : 'rotate-90'}`}
       />
+    </span>
+  );
+}
+
+/** After a sub-space's name: running, waiting for you, done or merged.
+ *  Failed says it with the row's own mark; one not started yet, nothing. */
+export function ChildMark({ stage }: { stage: ChildStage }) {
+  const label = CHILD_STAGE_LABEL[stage];
+  const mark =
+    stage === 'running' ? (
+      <span className="inline-flex size-3 items-center justify-center">
+        <Spinner />
+      </span>
+    ) : stage === 'asking' ? (
+      <span className="size-1.5 rounded-full bg-accent" />
+    ) : stage === 'done' || stage === 'merged' ? (
+      <Check className="size-3" />
+    ) : null;
+  if (!mark) return null;
+  return (
+    <span
+      data-stage={stage}
+      className="space-child-stage inline-flex shrink-0 items-center text-muted"
+      title={label}
+      aria-label={label}
+    >
+      {mark}
     </span>
   );
 }
@@ -420,6 +454,7 @@ export const Sidebar = observer(function Sidebar() {
                   archiveDisabled: s.status === 'running',
                   depth: row.depth,
                   from: row.from,
+                  child: parentId(s) ? childStage(s) : undefined,
                   sub: row.stats
                     ? {
                         stats: row.stats,
@@ -514,7 +549,14 @@ export const Sidebar = observer(function Sidebar() {
                   <span className="grid size-4 shrink-0 place-items-center text-muted [&>svg]:size-4">
                     {i.icon}
                   </span>
-                  <span className="min-w-0 flex-1 truncate" title={i.label}>
+                  <span
+                    className={`min-w-0 flex-1 truncate ${i.child === 'merged' ? 'text-muted' : ''}`}
+                    title={
+                      i.child
+                        ? `${i.label} · ${CHILD_STAGE_LABEL[i.child]}`
+                        : i.label
+                    }
+                  >
                     {i.label}
                   </span>
                   {i.pinned && (
@@ -532,6 +574,7 @@ export const Sidebar = observer(function Sidebar() {
                       {i.from}
                     </span>
                   )}
+                  {i.child && <ChildMark stage={i.child} />}
                   {i.sub && (
                     <SubCount stats={i.sub.stats} collapsed={i.sub.collapsed} />
                   )}

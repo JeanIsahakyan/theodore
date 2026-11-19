@@ -13,11 +13,16 @@
  *   Background
  *   ⌘ pnpm dev                                                 4m 2s  [Stop]
  *   Sub-spaces
- *   ◌ Fix the flaky test   ?   claude · Edit · 3 turns  → opens it
+ *   ◌ Fix the flaky test   ?   claude · Edit · 3 turns  waiting for you → opens it
+ *   ✓ Update the docs          claude · Edit · 2 turns  merged   (muted, last)
  * ```
+ *
+ * A sub-space's own page has `SubSpaceBanner` under its header: "Sub-space
+ * of <parent> · started by its agent · merged back ✓" or "not merged yet".
  */
 import { useEffect, useState, type RefObject } from 'react';
 import {
+  Check,
   ChevronDown,
   CircleQuestion,
   CircleXmark,
@@ -48,7 +53,15 @@ import {
   type SubagentView,
 } from './agents';
 import { remoteOf, spaceChatKey, spaceTitle } from './spaces';
-import { asking, fromLabel, parentId, subSpacesOf } from './subspaces';
+import {
+  CHILD_STAGE_LABEL,
+  childStage,
+  everMerged,
+  mergedIntoParent,
+  parentId,
+  subSpacesOf,
+  type StageFields,
+} from './subspaces';
 import type { VirtualChatControl } from './VirtualChat';
 
 const MODE_LABEL: Record<Space['mode'], string> = {
@@ -66,14 +79,10 @@ export function subSpaceMeta(
   return `${s.agent} · ${MODE_LABEL[s.mode]} · ${turns}`;
 }
 
-/** The word for where a sub-space stands, `null` while idle. */
-export function subSpaceState(
-  s: Pick<Space, 'status' | 'question'>,
-): string | null {
-  if (asking(s)) return 'waiting for you';
-  if (s.status === 'running') return 'running';
-  if (s.status === 'failed') return 'failed';
-  return null;
+/** The word for where a sub-space stands: running → done → merged, or
+ *  waiting for you, failed. */
+export function subSpaceState(s: StageFields): string {
+  return CHILD_STAGE_LABEL[childStage(s)];
 }
 
 // ── a subagent's model: from its call's payload, fetched once it shows ─────
@@ -208,10 +217,15 @@ export const SubSpaceLine = observer(function SubSpaceLine({
   depth?: number;
   onOpen: () => void;
 }) {
-  const state = subSpaceState(space);
-  const ask = asking(space);
+  const stage = childStage(space);
+  const ask = stage === 'asking';
+  const merged = stage === 'merged';
   return (
-    <li data-status={space.status} className="space-subspace min-w-0">
+    <li
+      data-status={space.status}
+      data-stage={stage}
+      className="space-subspace min-w-0"
+    >
       <button
         type="button"
         className={LINE}
@@ -228,13 +242,19 @@ export const SubSpaceLine = observer(function SubSpaceLine({
             fallback={
               space.status === 'failed' ? (
                 <CircleXmark className="text-danger" />
+              ) : stage === 'done' || merged ? (
+                <Check />
               ) : (
                 <Pencil />
               )
             }
           />
         </span>
-        <span className="min-w-0 flex-1 truncate">{spaceTitle(space)}</span>
+        <span
+          className={`min-w-0 flex-1 truncate ${merged ? 'text-muted' : ''}`}
+        >
+          {spaceTitle(space)}
+        </span>
         {ask && (
           <CircleQuestion
             className="size-3 shrink-0 text-accent"
@@ -244,13 +264,11 @@ export const SubSpaceLine = observer(function SubSpaceLine({
         <span className="shrink-0 truncate text-muted">
           {subSpaceMeta(space)}
         </span>
-        {state && (
-          <span
-            className={`shrink-0 ${space.status === 'failed' ? 'text-danger' : ask ? 'text-accent' : 'text-muted'}`}
-          >
-            {state}
-          </span>
-        )}
+        <span
+          className={`space-subspace-stage shrink-0 ${stage === 'failed' ? 'text-danger' : ask ? 'text-accent' : 'text-muted'}`}
+        >
+          {CHILD_STAGE_LABEL[stage]}
+        </span>
       </button>
     </li>
   );
@@ -406,9 +424,11 @@ export const SpaceAgents = observer(function SpaceAgents({
   );
 });
 
-/** "from <parent>" beside a sub-space's name: opens the space that started
- *  it; plain text when that one is gone. */
-export const ParentLink = observer(function ParentLink({
+/** Where a sub-space stands with its parent, in a slim strip under the
+ *  header: "Sub-space of <parent> · started by its agent · merged back ✓"
+ *  (or "not merged yet"). The parent's name opens it. A mirrored space's
+ *  parent is its host's: no strip. */
+export const SubSpaceBanner = observer(function SubSpaceBanner({
   space,
 }: {
   space: Space;
@@ -418,23 +438,38 @@ export const ParentLink = observer(function ParentLink({
   const up = parentId(space);
   if (!up) return null;
   const parent = store.models.spaces.get(up);
-  const label = fromLabel(space, parent ? [parent] : []);
-  if (!label) return null;
-  if (!parent) {
-    return (
-      <span className="space-parent shrink-0 truncate text-xs text-muted">
-        {label}
-      </span>
-    );
-  }
+  if (!parent && space.remote) return null;
+  const merged = mergedIntoParent(space);
+  const since = !merged && everMerged(space);
   return (
-    <button
-      type="button"
-      className="space-parent min-w-0 max-w-[40%] shrink truncate text-xs text-muted hover:text-foreground hover:underline"
-      title={`Started by the agent of ${spaceTitle(parent)}`}
-      onClick={() => ui.go({ name: 'space', id: parent.id })}
+    <div
+      className="space-subspace-banner flex min-w-0 shrink-0 items-center gap-1.5 border-b border-separator px-6 py-1 text-xs text-muted"
+      data-merged={merged || undefined}
     >
-      {label}
-    </button>
+      <span className="shrink-0">Sub-space of</span>{' '}
+      {parent ? (
+        <button
+          type="button"
+          className="space-parent min-w-0 truncate text-foreground hover:underline"
+          title={`Open ${spaceTitle(parent)}`}
+          onClick={() => ui.go({ name: 'space', id: parent.id })}
+        >
+          {spaceTitle(parent)}
+        </button>
+      ) : (
+        <span className="space-parent min-w-0 truncate">a removed space</span>
+      )}{' '}
+      <span className="shrink-0">· started by its agent ·</span>{' '}
+      {merged ? (
+        <span className="space-merged inline-flex shrink-0 items-center gap-1">
+          merged back
+          <Check className="size-3" aria-hidden="true" />
+        </span>
+      ) : (
+        <span className="space-merged shrink-0">
+          {since ? 'changed since its last merge' : 'not merged yet'}
+        </span>
+      )}
+    </div>
   );
 });

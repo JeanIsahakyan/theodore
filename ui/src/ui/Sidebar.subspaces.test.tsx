@@ -7,7 +7,7 @@ import { setTransport } from '../core/transport';
 import { RootStore } from '../stores/RootStore';
 import { RootStoreProvider } from '../stores/context';
 import { FakeTransport } from '../test/fakeTransport';
-import { click, mount, type Mounted } from '../test/dom';
+import { click, mount, settle, type Mounted } from '../test/dom';
 import { collapsedSpaces, toggleSubSpaces } from './space/collapsed';
 import { Sidebar } from './Sidebar';
 
@@ -114,5 +114,71 @@ describe('sub-spaces in the sidebar', () => {
     expect(shut.querySelector(spinner)).not.toBeNull();
     await click(shut.querySelector('[aria-label="Show sub-spaces"]'));
     expect(spaceRows()).toContain('>kid');
+  });
+
+  it("marks each child's stage; a merged one goes last, muted", async () => {
+    const put = (s: Space) => store.sync.pool.put('space', s.id, s);
+    const stageOf = (name: string) =>
+      rows()
+        .find((r) => label(r) === name)
+        ?.querySelector('.space-child-stage')
+        ?.getAttribute('data-stage') ?? null;
+    // A running one spins; one not started yet says nothing.
+    expect(stageOf('kid')).toBe('running');
+    expect(stageOf('grandkid')).toBeNull();
+    expect(stageOf('parent')).toBeNull();
+    put(
+      space({
+        id: 'asks',
+        updated_at: 8,
+        status: 'running',
+        question: {} as never,
+        parent: { space: 'parent', depth: 1 },
+      }),
+    );
+    put(
+      space({
+        id: 'merged',
+        updated_at: 9,
+        turns: 2,
+        head_sha: 'h',
+        shipped: {
+          how: 'merged_into_parent',
+          branch: 'theo/parent',
+          sha: 'h',
+          head: 'h',
+          pushes: 0,
+          at: 1,
+        },
+        parent: { space: 'parent', depth: 1 },
+      }),
+    );
+    put(
+      space({
+        id: 'finished',
+        updated_at: 2,
+        turns: 1,
+        parent: { space: 'parent', depth: 1 },
+      }),
+    );
+    await settle();
+    expect(stageOf('asks')).toBe('asking');
+    expect(stageOf('finished')).toBe('done');
+    expect(stageOf('merged')).toBe('merged');
+    // Newest first, but the merged one after its live siblings.
+    expect(spaceRows()).toEqual([
+      'top',
+      'parent',
+      '>asks',
+      '>kid',
+      '>>grandkid',
+      '>finished',
+      '>merged',
+      'orphan',
+    ]);
+    const merged = rows().find((r) => label(r) === 'merged')!;
+    expect(merged.querySelector('.truncate')!.className).toContain(
+      'text-muted',
+    );
   });
 });

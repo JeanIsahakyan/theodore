@@ -16,7 +16,7 @@ import { click, mount, settle, type Mounted } from '../../test/dom';
 import { pendingReveal, revealCall } from '../rowState';
 import { TurnActivity } from '../TurnTimeline';
 import { resetAgentModels } from '../useAgentModels';
-import { ParentLink, SpaceAgents } from './SpaceAgents';
+import { SpaceAgents, SubSpaceBanner } from './SpaceAgents';
 import { spaceChatKey } from './spaces';
 
 Element.prototype.scrollIntoView ??= function () {};
@@ -180,7 +180,7 @@ describe('the strip', () => {
     );
     expect(subs).toEqual([
       'Goal cclaude · Edit · 3 turnsrunning',
-      'Goal dclaude · Plan · 1 turn',
+      'Goal dclaude · Plan · 1 turndone',
     ]);
 
     // It ends: the line says so, without a reload.
@@ -284,27 +284,52 @@ describe('the strip', () => {
   });
 });
 
-describe('"from <parent>"', () => {
-  it('links to the space that started it', async () => {
+describe("a sub-space's strip", () => {
+  it('names its parent, opens it, and says it is not merged yet', async () => {
     put(space('p', { title: 'Parent work' }));
     const c = space('c', { parent: { space: 'p', depth: 1 } });
     put(c);
-    await render(<ParentLink space={c} />);
-    const link = m!.host.querySelector<HTMLButtonElement>('.space-parent')!;
-    expect(link.textContent).toBe('from Parent work');
-    await click(link);
+    await render(<SubSpaceBanner space={c} />);
+    const strip = m!.host.querySelector('.space-subspace-banner')!;
+    expect(strip.textContent).toBe(
+      'Sub-space of Parent work · started by its agent · not merged yet',
+    );
+    await click(strip.querySelector('.space-parent'));
     expect(store.ui.route).toEqual({ name: 'space', id: 'p' });
   });
 
-  it('says so when that one is gone, and nothing for a top-level space', async () => {
+  it('merged back, then changed since; nothing for a top-level space', async () => {
+    const shipped = (head: string) => ({
+      how: 'merged_into_parent' as const,
+      branch: 'theo/p',
+      sha: head,
+      head,
+      pushes: 0,
+      at: 1,
+    });
+    put(space('p', { title: 'Parent work' }));
+    const merged = space('c', {
+      parent: { space: 'p', depth: 1 },
+      head_sha: 'h1',
+      shipped: shipped('h1'),
+    });
+    await render(<SubSpaceBanner space={merged} />);
+    expect(m!.host.textContent).toContain('merged back');
+    expect(
+      m!.host.querySelector('[data-merged]')?.getAttribute('data-merged'),
+    ).toBe('true');
+    m!.unmount();
+    await render(<SubSpaceBanner space={{ ...merged, head_sha: 'h2' }} />);
+    expect(m!.host.textContent).toContain('changed since its last merge');
+    m!.unmount();
+    await render(<SubSpaceBanner space={space('top')} />);
+    expect(m!.host.textContent).toBe('');
+  });
+
+  it('says so when the parent is gone', async () => {
     const c = space('c', { parent: { space: 'gone', depth: 1 } });
-    await render(
-      <>
-        <ParentLink space={c} />
-        <ParentLink space={space('top')} />
-      </>,
-    );
-    expect(m!.host.textContent).toBe('from a removed space');
+    await render(<SubSpaceBanner space={c} />);
+    expect(m!.host.textContent).toContain('Sub-space of a removed space');
     expect(m!.host.querySelector('button')).toBeNull();
   });
 });
