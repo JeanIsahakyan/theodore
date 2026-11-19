@@ -177,6 +177,7 @@ impl SpaceToolsBackend for FakeSpaces {
                 selected: vec![q.options[0].clone()],
                 question: q.question,
                 other: None,
+                answered_by: None,
             })
             .collect())
     }

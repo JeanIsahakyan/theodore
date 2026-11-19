@@ -164,6 +164,7 @@ mod tests {
             // `true`: so `FakeAgent::last_request` (reserved for turn-like
             // calls, not one-shot utility ones) sees it.
             stream_text: true,
+            fork_session: false,
         }
     }
 

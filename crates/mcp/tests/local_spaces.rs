@@ -23,8 +23,8 @@ use theodore_mcp::{
     SpaceToolsBackend, TerminalTail, ToolSet, TurnMode,
 };
 use theodore_ports::{
-    LocalAnswer, LocalMergedFile, LocalSpaceItem, LocalSpaceList, LocalSpaceMerge, LocalSpaceRead,
-    LocalSpaceStart, LocalSpaceWait, OTHER_SPACE_NOTE,
+    LocalAnswer, LocalMergedFile, LocalSpaceAsk, LocalSpaceItem, LocalSpaceList, LocalSpaceMerge,
+    LocalSpaceRead, LocalSpaceStart, LocalSpaceWait, OTHER_SPACE_NOTE,
 };
 
 struct EmptyReview;
@@ -152,6 +152,22 @@ impl SpaceToolsBackend for FakeLocal {
             question: None,
             diff: None,
             error: None,
+        })
+    }
+    async fn local_ask(
+        &self,
+        space: &str,
+        target: &str,
+        question: &str,
+    ) -> Result<LocalSpaceAsk, SpaceToolError> {
+        self.log(format!("ask {space} {target} {question}"));
+        Ok(LocalSpaceAsk {
+            note: OTHER_SPACE_NOTE,
+            space: item(target, "running"),
+            answer: "SQLite.".into(),
+            agent: "claude".into(),
+            model: Some("opus".into()),
+            how: "fork",
         })
     }
     async fn local_start(
@@ -463,5 +479,69 @@ async fn local_space_tools_follow_the_turn_the_setting_and_the_host() {
         before,
         "nothing refused reached the backend"
     );
+    handle.shutdown().await;
+}
+
+/// `space_ask` only reads: every turn of a space of this device's own
+/// gets it, whatever its mode and `spaces.sub_spaces`; a hosted space and
+/// a review run don't.
+#[tokio::test]
+async fn space_ask_is_for_every_turn_of_a_space_of_this_devices_own() {
+    let local = Arc::new(FakeLocal {
+        on: AtomicBool::new(false),
+        calls: Mutex::new(Vec::new()),
+    });
+    let handle = McpServer::start_with_spaces(Arc::new(EmptyReview), local.clone())
+        .await
+        .unwrap();
+    for mode in [TurnMode::Ask, TurnMode::Plan, TurnMode::Edit, TurnMode::Run] {
+        let ep = handle.register_run(turn(ToolSet::Space, mode, FleetTools::Steer));
+        let client = connect(&ep.url, &ep.token).await;
+        assert!(
+            local_names(&client)
+                .await
+                .contains(&"space_ask".to_string()),
+            "{mode:?}"
+        );
+        drop(client);
+    }
+    let ep = handle.register_run(turn(ToolSet::Space, TurnMode::Ask, FleetTools::Steer));
+    let client = connect(&ep.url, &ep.token).await;
+    let answer = call(
+        &client,
+        "space_ask",
+        json!({"space": "s2", "question": "Which store?"}),
+    )
+    .await;
+    assert_eq!(answer["answer"], json!("SQLite."));
+    assert_eq!(answer["note"], json!(OTHER_SPACE_NOTE));
+    assert_eq!(
+        (&answer["agent"], &answer["model"], &answer["how"]),
+        (&json!("claude"), &json!("opus"), &json!("fork"))
+    );
+    assert_eq!(answer["space"]["space"], json!("s2"));
+    drop(client);
+    assert_eq!(*local.calls.lock().unwrap(), ["ask s1 s2 Which store?"]);
+
+    for ctx in [
+        turn(ToolSet::Space, TurnMode::Run, FleetTools::Hosted),
+        turn(ToolSet::Review, TurnMode::Run, FleetTools::Steer),
+    ] {
+        let ep = handle.register_run(ctx.clone());
+        let client = connect(&ep.url, &ep.token).await;
+        let refused = client
+            .call_tool(
+                CallToolRequestParams::new("space_ask").with_arguments(
+                    json!({"space": "s2", "question": "?"})
+                        .as_object()
+                        .unwrap()
+                        .clone(),
+                ),
+            )
+            .await;
+        assert!(refused.is_err(), "{ctx:?}: {refused:?}");
+        drop(client);
+    }
+    assert_eq!(local.calls.lock().unwrap().len(), 1);
     handle.shutdown().await;
 }

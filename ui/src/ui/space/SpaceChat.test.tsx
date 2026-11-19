@@ -217,6 +217,34 @@ describe('the space chat', () => {
     expect(agent.querySelector('.message-actions')).not.toBeNull();
   });
 
+  it("another space's message says where it came from and opens that space", async () => {
+    const store = await render(space());
+    act(() => {
+      store.sync.pool.put(
+        'space',
+        's2',
+        space({ id: 's2', name: 's2', title: 'Split the work' }),
+      );
+      store.sync.pool.merge('chat_message', 'u1', {
+        from_space: { space: 's2', title: 'Old title' },
+      });
+    });
+    await settle();
+    const user = m!.host.querySelector('.chat-message[data-msg="u1"]')!;
+    const from = user.querySelector<HTMLButtonElement>('button.space-from')!;
+    expect(from.textContent).toBe('From Split the work');
+    act(() => from.click());
+    expect(store.ui.route).toEqual({ name: 'space', id: 's2' });
+
+    // Gone: its name as sent, as plain text.
+    act(() => store.sync.pool.remove('space', 's2'));
+    await settle();
+    expect(user.querySelector('button.space-from')).toBeNull();
+    expect(user.querySelector('.space-from')?.textContent).toBe(
+      'From Old title',
+    );
+  });
+
   it('names no agent while every reply is one agent, whichever it is', async () => {
     const store = await render(space({ agent: 'codex' }));
     act(() =>

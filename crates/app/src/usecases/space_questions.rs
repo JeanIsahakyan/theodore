@@ -5,6 +5,7 @@
 //! agent ─▶ ask_user ─▶ Space::question set ─▶ card + "<space>: question"
 //!                       │
 //!   you answer ─────────┼─▶ the answers ─▶ tool result, turn goes on
+//!   space_answer ───────┤   (another space's agent: `answered_by` says so)
 //!   Stop ───────────────┼─▶ "stopped"
 //!   30 min, no answer ──┴─▶ "go on with your best judgment"
 //!   (each way: Space::question cleared)
@@ -16,7 +17,8 @@
 use std::time::Duration;
 
 use theodore_contract::{
-    SpaceAnswerItem, SpaceAnswerRequest, SpaceQuestion, SpaceQuestionItem, SpaceStatus, models,
+    FromSpace, SpaceAnswerItem, SpaceAnswerRequest, SpaceQuestion, SpaceQuestionItem, SpaceStatus,
+    models,
 };
 use theodore_ports::{
     ASK_USER_TIMEOUT_MS, NewAction, SpaceToolError, SyncActionCode, UserAnswer, UserQuestion,
@@ -32,12 +34,15 @@ pub(crate) struct PendingQuestion {
     space: String,
     run: String,
     questions: Vec<SpaceQuestionItem>,
-    tx: oneshot::Sender<Vec<SpaceAnswerItem>>,
+    tx: oneshot::Sender<Answers>,
 }
+
+/// The answers, and the space whose agent gave them when it wasn't you.
+type Answers = (Vec<SpaceAnswerItem>, Option<FromSpace>);
 
 /// How a wait for your answer ended.
 enum Waited {
-    Answered(Vec<SpaceAnswerItem>),
+    Answered(Answers),
     Stopped,
     TimedOut,
     /// The turn ended while it waited (`end_space_questions`).
@@ -146,15 +151,19 @@ impl Core {
             let _ = self.patch_question(space, None).await;
         }
         match waited {
-            Waited::Answered(answers) => Ok(items
-                .into_iter()
-                .zip(answers)
-                .map(|(q, a)| UserAnswer {
-                    question: q.question,
-                    selected: a.selected,
-                    other: a.other.filter(|o| !o.trim().is_empty()),
-                })
-                .collect()),
+            Waited::Answered((answers, from)) => {
+                let by = from.map(|f| answered_by(&f));
+                Ok(items
+                    .into_iter()
+                    .zip(answers)
+                    .map(|(q, a)| UserAnswer {
+                        question: q.question,
+                        selected: a.selected,
+                        other: a.other.filter(|o| !o.trim().is_empty()),
+                        answered_by: by.clone(),
+                    })
+                    .collect())
+            }
             Waited::Stopped => Err(unavailable("the user stopped the turn")),
             Waited::TimedOut => Err(SpaceToolError::Unavailable(format!(
                 "no answer within {} minutes; go on with your best judgment and say what you assumed",
@@ -171,6 +180,17 @@ impl Core {
         if let Some(r) = self.space_remote_of(&req.space).await {
             return self.remote_space_answer(&r, req).await;
         }
+        self.answer_space_question_from(req, None).await
+    }
+
+    /// [`answer_space_question`](Self::answer_space_question) from `from`'s
+    /// agent (`space_answer`) when set: the asking agent is told so. A
+    /// local space only.
+    pub(crate) async fn answer_space_question_from(
+        &self,
+        req: SpaceAnswerRequest,
+        from: Option<FromSpace>,
+    ) -> AppResult<()> {
         let mut pending = self.questions();
         let p = pending
             .get(&req.question)
@@ -181,7 +201,7 @@ impl Core {
         }
         let p = pending.remove(&req.question).expect("found above");
         drop(pending);
-        p.tx.send(req.answers)
+        p.tx.send((req.answers, from))
             .map_err(|_| AppError::NotFound("this question is no longer waiting".into()))
     }
 
@@ -228,6 +248,14 @@ impl Core {
         .await?;
         Ok(())
     }
+}
+
+/// What the asking agent reads when another space's agent answered.
+fn answered_by(from: &FromSpace) -> String {
+    format!(
+        "the agent of another space on this computer, \"{}\" ({}), not the user",
+        from.title, from.space
+    )
 }
 
 /// Why `answers` don't answer `questions`, `None` when they do.

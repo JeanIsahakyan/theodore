@@ -102,6 +102,14 @@ pub struct AgentRequest {
     /// resume and ignores it.
     #[serde(default)]
     pub resume: Option<String>,
+    /// With `resume`: continue a copy of that session under a new id, so
+    /// the original stays exactly as it was (`space_ask`, docs/spaces.md
+    /// "Sub-spaces"). Claude Code: `--fork-session`, and the copy isn't
+    /// saved (`--no-session-persistence`). The other CLIs can't fork:
+    /// they ignore `resume` when this is set, rather than continue the
+    /// original.
+    #[serde(default)]
+    pub fork_session: bool,
     /// Also report the answer's text as it is generated
     /// ([`AgentEvent::TextDelta`]), not only per finished message. Claude
     /// Code: `--include-partial-messages`; a CLI that can't ignores it. On

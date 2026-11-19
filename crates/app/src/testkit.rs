@@ -2192,7 +2192,8 @@ impl HostAdapter for FakeHost {
 // ── agents ────────────────────────────────────────────────────────────────
 
 /// A `push_tagged` entry: matched against a request, then spent.
-type TaggedScript = (Box<dyn Fn(&AgentRequest) -> bool + Send>, Vec<AgentEvent>);
+type RequestMatch = Box<dyn Fn(&AgentRequest) -> bool + Send>;
+type TaggedScript = (RequestMatch, Vec<AgentEvent>);
 
 #[derive(Default)]
 pub struct FakeAgent {
@@ -2202,6 +2203,9 @@ pub struct FakeAgent {
     /// test wants to control without racing a turn's own queued script
     /// (`stream_text: true`, never matched here).
     tagged: Mutex<Vec<TaggedScript>>,
+    /// Checked first: the next call whose request matches hangs until it
+    /// is cancelled, whatever kind it is (a `space_ask` held open).
+    hang_matching: Mutex<Vec<RequestMatch>>,
     hang_next: Mutex<bool>,
     /// The next one-shot utility call (`stream_text: false`) hangs likewise.
     hang_next_utility: Mutex<bool>,
@@ -2283,6 +2287,11 @@ impl FakeAgent {
             .lock()
             .unwrap()
             .push((Box::new(matches), events));
+    }
+    /// The next call whose request matches `matches` never emits anything
+    /// and only closes once cancelled.
+    pub fn hang_matching(&self, matches: impl Fn(&AgentRequest) -> bool + Send + 'static) {
+        self.hang_matching.lock().unwrap().push(Box::new(matches));
     }
     /// The next turn / skill / ask `run()` (`stream_text: true`) never
     /// emits anything and only closes once cancelled, as a real agent's
@@ -2369,7 +2378,16 @@ impl AgentPort for FakeAgent {
     }
     async fn run(&self, req: AgentRequest) -> Result<AgentRun, AgentError> {
         let stream_text = req.stream_text;
-        let tagged = {
+        let held = {
+            let mut held = self.hang_matching.lock().unwrap();
+            held.iter()
+                .position(|matches| matches(&req))
+                .map(|i| held.remove(i))
+                .is_some()
+        };
+        let tagged = if held {
+            None
+        } else {
             let mut tagged = self.tagged.lock().unwrap();
             tagged
                 .iter()
@@ -2384,7 +2402,9 @@ impl AgentPort for FakeAgent {
         let (tx, rx) = tokio::sync::mpsc::channel(64);
         // Only a turn / skill / ask hangs: a background one-shot call
         // (naming, handoff) must not take the hang meant for it.
-        let hang = if stream_text {
+        let hang = if held {
+            true
+        } else if stream_text {
             std::mem::take(&mut *self.hang_next.lock().unwrap())
         } else {
             std::mem::take(&mut *self.hang_next_utility.lock().unwrap())

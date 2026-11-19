@@ -1169,8 +1169,9 @@ configured commands, never a shell of the agent's choosing.
 | `report_problem` | drafts a problem report about Theodore from this turn (title, description, scope, logs) and opens the report window on it; you review and send it, never the agent (docs/telemetry.md "Report from a chat") |
 | `fleet_devices`, `fleet_wait`, `fleet_read` | spaces on your other devices trusted here: list the devices, wait for and read the spaces this space started. Only while the fleet is on and connected (docs/fleet.md "Agents use it too") |
 | `fleet_start_space`, `fleet_send`, `fleet_stop` | start one (this space is its parent, mode at most the turn's), message it (at most the turn's mode), stop it — only spaces this space started. Only in an Edit or Run turn, and never in a space hosted here for another device |
-| `spaces_list`, `space_read` | the other spaces on this computer, read only (below, "Sub-spaces"). Never in a space hosted here for another device |
-| `space_start`, `space_send`, `space_wait`, `space_stop`, `space_answer`, `space_merge` | sub-spaces of this one: start, message, wait for, stop, answer, bring their work back (below). While `spaces.sub_spaces` is on |
+| `spaces_list`, `space_read`, `space_ask` | the other spaces on this computer: list, read, ask a question its own agent answers, read only (below, "Sub-spaces"). Never in a space hosted here for another device |
+| `space_send`, `space_answer` | any other space here: a message, an answer to its question, marked as from this space (below). While `spaces.sub_spaces` is on |
+| `space_start`, `space_wait`, `space_stop`, `space_merge` | sub-spaces of this one: start, wait for, stop, bring their work back (below). While `spaces.sub_spaces` is on |
 
 ```
 turn ─▶ token for this space ─▶ agent ─▶ run_check ─▶ check ─▶ result ─▶ agent fixes ─▶ …
@@ -1207,11 +1208,37 @@ turn ─▶ token for this space ─▶ agent ─▶ run_check ─▶ check ─�
 
 Details, limits and errors: `docs/config.md` §7.
 
-### Sub-spaces
+### Sub-spaces, and asking other spaces
 
-A space's agent sees the other spaces on this computer, and may split
-clearly independent work into sub-spaces: normal spaces, each with its own
-branch and worktree, `Space::parent` naming the space that started it.
+A space's agent sees the other spaces on this computer, asks them, messages
+and answers them, and may split clearly independent work into sub-spaces:
+normal spaces, each with its own branch and worktree, `Space::parent`
+naming the space that started it.
+
+```
+A's turn (any mode) ─▶ space_ask {B, question}        B: no message, no turn,
+   B has a Claude session in its worktree?               no checkpoint, same session
+   ├─ yes ─▶ claude -p <question> --resume <B's session> --fork-session
+   │           --no-session-persistence, read only, no MCP, cwd = B's worktree
+   │           └─ fails ─┐
+   └─ no (none, Codex, Gemini) ─┴─▶ B's agent, fresh: read only, no MCP, in B's worktree,
+                                    told B's goal, last 12 messages (≤ 1500 chars each),
+                                    diff stat, then the question
+   ─▶ {answer, agent, model, how: fork | fresh, note}  (the answer is data)
+
+A's turn (Edit/Run) ─▶ space_send {B, message}  ─▶ B's chat: "From <A>" (links to A)
+                                                   B's prompt: "from the agent of another
+                                                   space <A> (id), not from the user"
+                   ─▶ space_answer {B, ask, …}  ─▶ B's ask_user result: answered_by <A>
+```
+
+- B mid-turn is fine: the fork starts from B's last saved session; a
+  message waits in B's queue as yours would, and keeps its sender.
+- The fork is a copy under a new id that isn't saved; B's next turn
+  resumes B's own session. Codex can't fork: it is never resumed for an
+  ask.
+- Neither space's chat shows the ask while it runs (`stream_text` off);
+  A's timeline has its `space_ask` row ("Ask a space").
 
 ```
 parent turn (Edit/Run) ─▶ space_start {goal} ─▶ create_space (the usual path)
@@ -1251,30 +1278,38 @@ space_merge {child}   (own child · settled · same project · not shipped on it
 | Tool | Does | Who gets it |
 | --- | --- | --- |
 | `spaces_list {project?, include_done?}` | spaces here, not archived (and not shipped or merged unless `include_done`), newest first, ≤ 50: id, name, title, project, status, mode, agent, turns, parent, `self` / `child` / `parent`, a mirror flagged `remote` | every turn of a space of this device's own |
-| `space_read {space, messages?}` | any space here: goal, status, mode, progress steps, last messages (10, ≤ 50, each ≤ 4000 characters), the running turn's text so far, a waiting question (`ask` id), diff stat | same |
+| `space_read {space, messages?}` | any space here: goal, status, mode, progress steps, last messages (10, ≤ 50, each ≤ 4000 characters; `from` is `user`, the agent, or `space:<id>` for another space's message), the running turn's text so far, a waiting question (`ask` id), diff stat | same |
+| `space_ask {space, question}` | another space's answer, from its own agent's context (above): `answer`, `agent`, `model`, `how` (`fork` / `fresh`), `note`. ≤ 2 at once per asking space; gives up after `spaces.ask_timeout_secs` (default 180) | same, any mode, whatever `spaces.sub_spaces` says |
 | `space_start {goal, project?, mode?, agent?, model?, effort?, name?}` | a child: project default the caller's, mode default Edit | an Edit or Run turn, `spaces.sub_spaces` on |
-| `space_send {space, message, mode?}` | a message to a child, queued like yours while it runs | same |
+| `space_send {space, message, mode?}` | a message to any other space here (a child or not), queued like yours while it runs, shown and told as from this space | same |
 | `space_wait {spaces, timeout_ms?}` | until one of the children settles, ≤ 10 min | every turn, `spaces.sub_spaces` on |
-| `space_stop {space}` / `space_answer {space, ask, answer}` | stop a child's turn / answer its waiting question | an Edit or Run turn, `spaces.sub_spaces` on |
+| `space_stop {space}` | stop a child's turn | an Edit or Run turn, `spaces.sub_spaces` on |
+| `space_answer {space, ask, answer}` | answer the question waiting in any other space here; its agent reads `answered_by` | same |
 | `space_merge {space}` | a child's change into this worktree as uncommitted edits, three-way: `from`, `to`, files changed (+/−), `conflicts`, a `note`; the child is then merged into this space | same |
 
 | Rule | Refused with |
 | --- | --- |
 | start, send, stop, answer, merge only from an Edit or Run turn | `sub_spaces.mode` |
-| a child's mode ≤ the turn's; a send's ≤ the turn's and ≤ the child's | `sub_spaces.mode` |
+| a child's mode ≤ the turn's; a send's ≤ the turn's and ≤ the target's | `sub_spaces.mode` |
 | never from a space hosted here for another device (no tool at all) | `sub_spaces.hosted` |
+| ask, send, answer: not to a space hosted here for another device | `sub_spaces.hosted` |
+| ask, send, answer: not to a mirror of a space on another device (its agent is there) | `sub_spaces.remote` |
+| ask, send, answer: not to this space itself, nor an archived one | `sub_spaces.self` / `sub_spaces.archived` |
+| ask: ≤ 2 running per asking space | `sub_spaces.asks` |
+| ask: an answer within `spaces.ask_timeout_secs` | `sub_spaces.timeout` |
 | depth ≤ `spaces.max_depth` (default 2; a top-level space is 0) | `sub_spaces.depth` |
 | live (not archived, not done) children per space < `spaces.max_children` (default 5), counted under one lock | `sub_spaces.children` |
-| send, wait, stop, answer, merge: own children only, not grandchildren | `sub_spaces.not_child` |
+| wait, stop, merge: own children only, not grandchildren | `sub_spaces.not_child` |
 | merge: not while the child's turn or setup runs | `sub_spaces.running` |
 | merge: not mid update from base in the child, nor with a rebase, merge or unmerged files in this worktree | `sub_spaces.busy` |
 | merge: the child works on this space's project, here (not a mirror) | `sub_spaces.project` |
 | merge: the child wasn't shipped on its own (a PR, Merge locally, Keep as branch) | `sub_spaces.shipped` |
 | merge: the child has changes, or new turns since the last merge | `sub_spaces.nothing_new` |
-| `spaces.sub_spaces` off (default on): the six tools unlisted | `sub_spaces.off` |
+| `spaces.sub_spaces` off (default on): the six tools unlisted (`space_ask` stays) | `sub_spaces.off` |
 
-- Another space's words are data: `spaces_list` and `space_read` say so in
-  their `note`, and the system prompt does too.
+- Another space's words are data: `spaces_list`, `space_read` and
+  `space_ask` say so in their `note`, and the system prompt does too: read
+  or ask another space when you need what it knows.
 - The system prompt names the tools for a space of this device's own, and
   says to split only clearly independent work (each part's goal says all
   it needs), then wait and read, `space_merge` each child worth keeping,

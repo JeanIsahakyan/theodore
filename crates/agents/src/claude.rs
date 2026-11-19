@@ -178,6 +178,12 @@ fn args_with(
     if let Some(session) = &req.resume {
         args.push("--resume".to_string());
         args.push(session.clone());
+        // A copy under a new id, not saved: the session itself stays as it
+        // was, and its next turn continues it (`space_ask`).
+        if req.fork_session {
+            args.push("--fork-session".to_string());
+            args.push("--no-session-persistence".to_string());
+        }
     }
     if let Some(system) = &req.system {
         args.push("--append-system-prompt".to_string());
@@ -1293,6 +1299,7 @@ mod read_only_tests {
             attachments: vec![],
             resume: None,
             stream_text: false,
+            fork_session: false,
         };
         let args = build_args(&req, &Default::default(), None);
         let i = args
@@ -1328,6 +1335,7 @@ mod mcp_config_tests {
             attachments: vec![],
             resume: None,
             stream_text: false,
+            fork_session: false,
         }
     }
 
@@ -1518,6 +1526,7 @@ mod run_mode_tests {
             attachments: vec![],
             resume: None,
             stream_text: false,
+            fork_session: false,
         };
         let args = build_args(&req, &Default::default(), None);
         assert!(
@@ -1545,6 +1554,7 @@ mod run_mode_tests {
             attachments: vec![],
             resume: None,
             stream_text: false,
+            fork_session: false,
         };
         let args = build_args(&req, &Default::default(), None);
         assert!(!args.iter().any(|a| a == "--strict-mcp-config"));
@@ -1579,6 +1589,7 @@ mod run_mode_tests {
             }],
             resume: None,
             stream_text: false,
+            fork_session: false,
         };
         let exe = Path::new("/Applications/Theodore.app/Contents/MacOS/theodore");
 
@@ -1659,6 +1670,7 @@ mod model_and_effort_tests {
             attachments: vec![],
             resume: None,
             stream_text: false,
+            fork_session: false,
         }
     }
 
@@ -2176,9 +2188,37 @@ mod model_and_effort_tests {
         assert_eq!(flag(&args, "--model").as_deref(), Some("opus"));
         assert!(args.iter().any(|a| a == "--disallowedTools"));
 
+        assert!(!args.iter().any(|a| a == "--fork-session"));
+
         r.resume = None;
         let args = build_args(&r, &Default::default(), None);
         assert!(!args.iter().any(|a| a == "--resume"));
+    }
+
+    /// `space_ask`: a copy of the session, read only, under a new id that
+    /// isn't saved; no MCP server at all (no space-tools).
+    #[test]
+    fn a_forked_read_resumes_a_copy_of_the_session() {
+        let mut r = req(None, None);
+        r.resume = Some("8f1c".into());
+        r.fork_session = true;
+        r.mode = AgentMode::ReadOnly;
+        let args = build_args(&r, &Default::default(), None);
+        assert_eq!(flag(&args, "--resume").as_deref(), Some("8f1c"));
+        assert!(args.iter().any(|a| a == "--fork-session"));
+        assert!(args.iter().any(|a| a == "--no-session-persistence"));
+        assert!(args.iter().any(|a| a == "--strict-mcp-config"));
+        assert!(!args.iter().any(|a| a == "--mcp-config"));
+        let denied = flag(&args, "--disallowedTools").unwrap();
+        assert!(
+            denied.contains("Bash") && denied.contains("Edit"),
+            "{denied}"
+        );
+
+        // Without a session to resume there is nothing to fork.
+        r.resume = None;
+        let args = build_args(&r, &Default::default(), None);
+        assert!(!args.iter().any(|a| a == "--fork-session"));
     }
 
     #[test]

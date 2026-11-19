@@ -38,6 +38,9 @@ use crate::process::LineParser;
 /// thread with them there; `resume`'s own `-i` takes one value).
 pub fn build_args(req: &AgentRequest, cfg: &AgentBinaryConfig) -> Vec<String> {
     let mut args = vec!["exec".to_string(), "--json".to_string()];
+    // Codex can't fork a thread: a fork asked for starts a new one, never
+    // a turn in the original.
+    let resume = req.resume.as_ref().filter(|_| !req.fork_session);
     // Images go to the model with the prompt; other attachments are only
     // listed in it (the sandbox reads outside the workspace). Before `-C`:
     // `-i` takes several values, so a flag must follow it, never the prompt.
@@ -49,7 +52,7 @@ pub fn build_args(req: &AgentRequest, cfg: &AgentBinaryConfig) -> Vec<String> {
         .filter(|(a, path)| a.mime.starts_with("image/") && !path.contains(','))
         .map(|(_, path)| path)
         .collect();
-    if req.resume.is_none() {
+    if resume.is_none() {
         for path in &images {
             args.push("-i".to_string());
             args.push(path.clone());
@@ -105,7 +108,7 @@ pub fn build_args(req: &AgentRequest, cfg: &AgentBinaryConfig) -> Vec<String> {
         None => {}
     }
     args.extend(cfg.extra_args.iter().cloned());
-    if let Some(thread) = &req.resume {
+    if let Some(thread) = resume {
         // The thread already opens with the system prompt (folded into its
         // first turn, below): only the new turn goes in. Except in Plan mode:
         // a thread opened in another one never heard the Plan rules.
@@ -515,6 +518,7 @@ mod run_mode_tests {
             attachments: vec![],
             resume: None,
             stream_text: false,
+            fork_session: false,
         };
         let args = build_args(&req, &Default::default());
         assert!(args.windows(2).any(|w| w == ["-s", "workspace-write"]));
@@ -545,6 +549,7 @@ mod model_tests {
             attachments: vec![],
             resume: None,
             stream_text: false,
+            fork_session: false,
         }
     }
 
@@ -611,6 +616,20 @@ mod model_tests {
                 "{bad}: {args:?}"
             );
         }
+    }
+
+    /// A fork asked of Codex starts a new thread: never a turn in the one
+    /// it names.
+    #[test]
+    fn a_fork_never_resumes_the_thread() {
+        let mut r = req(None, None);
+        r.resume = Some("thread-1".into());
+        r.fork_session = true;
+        let args = build_args(&r, &Default::default());
+        assert!(
+            !args.iter().any(|a| a == "resume" || a == "thread-1"),
+            "{args:?}"
+        );
     }
 
     /// `exec resume <thread> <prompt>` after `exec`'s own flags; images on

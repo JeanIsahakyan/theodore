@@ -76,6 +76,7 @@ impl Core {
         req: &SpaceSendRequest,
         text: String,
         attachments: Vec<theodore_contract::Attachment>,
+        from: Option<theodore_contract::FromSpace>,
     ) -> AppResult<String> {
         let queue = self.queued_messages(&space.id).await?;
         let seq = queue
@@ -115,6 +116,7 @@ impl Core {
             vote: None,
             effort: None,
             mode: None,
+            from_space: from,
         };
         self.apply(vec![NewAction {
             model: models::CHAT_MESSAGE.into(),
@@ -448,6 +450,7 @@ impl Core {
             vote: None,
             effort: None,
             mode: None,
+            from_space: None,
         };
         self.apply(vec![NewAction {
             model: models::CHAT_MESSAGE.into(),
