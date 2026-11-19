@@ -1,18 +1,22 @@
 //! Sub-spaces (docs/spaces.md "Sub-spaces") against `Core` and the
 //! testkit fakes: a space's agent lists and reads the spaces here, starts
 //! children through the normal creation path within the limits (mode,
-//! depth, children, setting, hosted), and steers, waits for and answers
-//! only its own.
+//! depth, children, setting, hosted), and steers, waits for, answers and
+//! merges only its own.
 
 use std::time::Duration;
 
-use theodore_contract::{Setting, Space, SpaceMode, SpaceSendRequest, SpaceStatus, models};
+use theodore_contract::{
+    Setting, ShipKind, Space, SpaceMode, SpaceSendRequest, SpaceStatus, models,
+};
+use theodore_domain::Sha;
 use theodore_ports::{
-    LocalAnswer, LocalSpaceStart, NewAction, OTHER_SPACE_NOTE, SpaceToolError, Store,
-    SyncActionCode, UserQuestion,
+    FileStat, GitError, LocalAnswer, LocalSpaceStart, NewAction, OTHER_SPACE_NOTE, SpaceApply,
+    SpaceToolError, Store, SyncActionCode, UserQuestion, WorktreeBusy,
 };
 
 use crate::space_commands_tests::{Env, done, start_env, wait_until};
+use crate::testkit::ApplyCall;
 
 fn put_setting(e: &Env, key: &str, value: serde_json::Value) {
     let setting = Setting {
@@ -476,4 +480,282 @@ async fn read_shows_the_running_turns_text_so_far() {
         .await;
     let read = e.core.sub_space_read(&p.id, &c.space, 5).await.unwrap();
     assert_eq!(read.live, None, "gone with the turn");
+}
+
+// ── space_merge ─────────────────────────────────────────────────────────
+
+/// A child of `p` whose first turn checkpointed at `head`.
+async fn child_at(e: &Env, p: &Space, head: &str) -> Space {
+    e.f.git.push_checkpoint(Sha::new(head));
+    let c = e
+        .core
+        .sub_space_start(&p.id, SpaceMode::Edit, goal("Port the parser"))
+        .await
+        .unwrap();
+    let row = settle(e, &c.space).await;
+    assert_eq!(row.head_sha, Sha::new(head));
+    row
+}
+
+fn mark_shipped(e: &Env, id: &str, how: ShipKind) {
+    let shipped = theodore_contract::SpaceShipped {
+        how,
+        branch: "b".into(),
+        sha: Sha::new("squash1"),
+        head: Sha::new("child1"),
+        pushes: 1,
+        at: 1,
+    };
+    e.f.store
+        .apply(vec![NewAction {
+            model: models::SPACE.into(),
+            model_id: id.into(),
+            action: SyncActionCode::C,
+            data: Some(serde_json::json!({ "shipped": shipped })),
+        }])
+        .unwrap();
+}
+
+#[tokio::test]
+async fn a_merge_applies_the_childs_change_into_the_parent_and_marks_it_merged() {
+    let e = start_env(true).await;
+    let p = parent(&e).await;
+    let c = child_at(&e, &p, "child1").await;
+
+    let merged = e
+        .core
+        .sub_space_merge(&p.id, SpaceMode::Edit, &c.id)
+        .await
+        .unwrap();
+
+    let calls = e.f.git.apply_calls.lock().unwrap().clone();
+    assert_eq!(
+        calls,
+        [ApplyCall {
+            worktree: p.worktree.clone().into(),
+            from: c.base_sha.clone(),
+            to: Sha::new("child1"),
+            ours: "this space".into(),
+            theirs: format!("sub-space {}", c.name),
+        }]
+    );
+    assert_eq!(merged.from, c.base_sha.0);
+    assert_eq!(merged.to, "child1");
+    assert_eq!(merged.files.len(), 1);
+    assert_eq!(merged.files[0].path, "merged.txt");
+    assert_eq!((merged.additions, merged.deletions), (1, 0));
+    assert!(merged.conflicts.is_empty());
+    assert!(merged.space.done);
+    assert!(merged.note.contains("run_check"), "{}", merged.note);
+
+    let row = e.space(&c.id);
+    let shipped = row.shipped.clone().unwrap();
+    assert_eq!(shipped.how, ShipKind::MergedIntoParent);
+    assert_eq!(shipped.head, Sha::new("child1"));
+    assert_eq!(shipped.branch, p.branch);
+    assert_eq!(shipped.pushes, 1);
+    assert!(row.done_at.is_some(), "done: auto-archive counts from here");
+    // Done: out of the default list, and nothing of the parent moved.
+    let list = e.core.sub_space_list(&p.id, None, false).await.unwrap();
+    assert!(list.spaces.iter().all(|s| s.space != c.id));
+    assert_eq!(e.space(&p.id).head_sha, p.head_sha);
+}
+
+#[tokio::test]
+async fn conflicts_come_back_listed_and_the_child_is_still_merged() {
+    let e = start_env(true).await;
+    let p = parent(&e).await;
+    let c = child_at(&e, &p, "child1").await;
+    e.f.git.push_apply_result(Ok(SpaceApply {
+        files: vec![FileStat {
+            path: "a.txt".into(),
+            additions: 5,
+            deletions: 1,
+        }],
+        conflicts: vec!["a.txt".into()],
+    }));
+
+    let merged = e
+        .core
+        .sub_space_merge(&p.id, SpaceMode::Run, &c.id)
+        .await
+        .unwrap();
+
+    assert_eq!(merged.conflicts, ["a.txt"]);
+    assert!(merged.note.contains("conflict markers"), "{}", merged.note);
+    assert!(
+        merged
+            .note
+            .contains(&format!(">>>>>>> sub-space {}", c.name)),
+        "{}",
+        merged.note
+    );
+    assert_eq!(
+        e.space(&c.id).shipped.unwrap().how,
+        ShipKind::MergedIntoParent
+    );
+}
+
+#[tokio::test]
+async fn a_second_merge_brings_only_the_turns_since() {
+    let e = start_env(true).await;
+    let p = parent(&e).await;
+    let c = child_at(&e, &p, "child1").await;
+    e.core
+        .sub_space_merge(&p.id, SpaceMode::Edit, &c.id)
+        .await
+        .unwrap();
+    // Nothing new yet.
+    let again = e.core.sub_space_merge(&p.id, SpaceMode::Edit, &c.id).await;
+    assert_eq!(code(again), "sub_spaces.nothing_new");
+
+    e.f.git.push_checkpoint(Sha::new("child2"));
+    e.f.agents.push_script(done("more"));
+    e.core
+        .sub_space_send(&p.id, SpaceMode::Edit, &c.id, "And the lexer", None)
+        .await
+        .unwrap();
+    e.until(&c.id, |s| s.turns == 2 && s.run.is_none()).await;
+    let merged = e
+        .core
+        .sub_space_merge(&p.id, SpaceMode::Edit, &c.id)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        (merged.from.as_str(), merged.to.as_str()),
+        ("child1", "child2")
+    );
+    let last = e.f.git.apply_calls.lock().unwrap().last().cloned().unwrap();
+    assert_eq!(
+        (last.from, last.to),
+        (Sha::new("child1"), Sha::new("child2"))
+    );
+    let shipped = e.space(&c.id).shipped.unwrap();
+    assert_eq!((shipped.head, shipped.pushes), (Sha::new("child2"), 2));
+}
+
+#[tokio::test]
+async fn a_running_child_is_not_merged() {
+    let e = start_env(true).await;
+    let p = parent(&e).await;
+    e.f.agents.hang_next_run();
+    let c = e
+        .core
+        .sub_space_start(&p.id, SpaceMode::Edit, goal("Port it"))
+        .await
+        .unwrap();
+    let r = e
+        .core
+        .sub_space_merge(&p.id, SpaceMode::Edit, &c.space)
+        .await;
+    assert_eq!(code(r), "sub_spaces.running");
+    assert!(e.f.git.apply_calls.lock().unwrap().is_empty());
+    assert!(e.space(&c.space).shipped.is_none());
+    e.core
+        .sub_space_stop(&p.id, SpaceMode::Edit, &c.space)
+        .await
+        .unwrap();
+    e.until(&c.space, |s| s.status != SpaceStatus::Running)
+        .await;
+}
+
+#[tokio::test]
+async fn only_an_own_child_merges_from_an_edit_or_run_turn() {
+    let e = start_env(true).await;
+    let p = parent(&e).await;
+    e.f.agents.push_script(done("ok"));
+    let other = e.create("Someone else's").await;
+    settle(&e, &other.id).await;
+    let r = e
+        .core
+        .sub_space_merge(&p.id, SpaceMode::Edit, &other.id)
+        .await;
+    assert_eq!(code(r), "sub_spaces.not_child");
+
+    let c = child_at(&e, &p, "child1").await;
+    for turn in [SpaceMode::Ask, SpaceMode::Plan] {
+        let r = e.core.sub_space_merge(&p.id, turn, &c.id).await;
+        assert_eq!(code(r), "sub_spaces.mode", "{turn:?}");
+    }
+    // A grandchild merges into its own parent, not the grandparent.
+    let g = child_at(&e, &c, "grand1").await;
+    let r = e.core.sub_space_merge(&p.id, SpaceMode::Edit, &g.id).await;
+    assert_eq!(code(r), "sub_spaces.not_child");
+
+    put_setting(&e, "spaces.sub_spaces", serde_json::json!(false));
+    let r = e.core.sub_space_merge(&p.id, SpaceMode::Edit, &c.id).await;
+    assert_eq!(code(r), "sub_spaces.off");
+    assert!(e.f.git.apply_calls.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn a_child_without_changes_or_shipped_on_its_own_is_refused() {
+    let e = start_env(true).await;
+    let p = parent(&e).await;
+    // No checkpoint queued: its turn leaves it at its base.
+    let c = e
+        .core
+        .sub_space_start(&p.id, SpaceMode::Edit, goal("Look around"))
+        .await
+        .unwrap();
+    settle(&e, &c.space).await;
+    let r = e
+        .core
+        .sub_space_merge(&p.id, SpaceMode::Edit, &c.space)
+        .await;
+    assert_eq!(code(r), "sub_spaces.nothing_new");
+
+    let kept = child_at(&e, &p, "child1").await;
+    mark_shipped(&e, &kept.id, ShipKind::Branch);
+    let r = e
+        .core
+        .sub_space_merge(&p.id, SpaceMode::Edit, &kept.id)
+        .await;
+    assert_eq!(code(r), "sub_spaces.shipped");
+    assert!(e.f.git.apply_calls.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn an_unfinished_operation_in_the_parent_refuses_and_marks_nothing() {
+    let e = start_env(true).await;
+    let p = parent(&e).await;
+    let c = child_at(&e, &p, "child1").await;
+    e.f.git
+        .push_apply_result(Err(GitError::Busy(WorktreeBusy::Merge)));
+    let r = e.core.sub_space_merge(&p.id, SpaceMode::Edit, &c.id).await;
+    assert_eq!(code(r), "sub_spaces.busy");
+    let row = e.space(&c.id);
+    assert!(row.shipped.is_none());
+    assert!(row.done_at.is_none());
+}
+
+#[tokio::test]
+async fn a_merged_child_no_longer_counts_against_the_limit() {
+    let e = start_env(true).await;
+    put_setting(&e, "spaces.max_children", serde_json::json!(1));
+    let p = parent(&e).await;
+    let c = child_at(&e, &p, "child1").await;
+    let full = e
+        .core
+        .sub_space_start(&p.id, SpaceMode::Edit, goal("B"))
+        .await;
+    assert_eq!(code(full), "sub_spaces.children");
+    e.core
+        .sub_space_merge(&p.id, SpaceMode::Edit, &c.id)
+        .await
+        .unwrap();
+    e.core
+        .sub_space_start(&p.id, SpaceMode::Edit, goal("B"))
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn the_prompt_says_to_merge_what_to_keep() {
+    let e = start_env(true).await;
+    let _p = parent(&e).await;
+    let system = e.f.agents.last_request().unwrap().system.unwrap();
+    assert!(system.contains("space_merge"), "{system}");
+    assert!(system.contains("conflict markers"), "{system}");
 }

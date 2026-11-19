@@ -506,6 +506,17 @@ pub type MirrorEditedCall = (PathBuf, String, Sha, Vec<String>);
 /// `(folder, from, paths)`.
 pub type MirrorRestoreCall = (PathBuf, Sha, Vec<String>);
 
+/// One `space_apply`: into which worktree, the change `from..to`, and the
+/// sides' labels.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ApplyCall {
+    pub worktree: PathBuf,
+    pub from: Sha,
+    pub to: Sha,
+    pub ours: String,
+    pub theirs: String,
+}
+
 pub struct FakeGit {
     pub repo_path: PathBuf,
     /// What `grep` returns for any pattern; `None`: `Unsupported`, like
@@ -576,6 +587,11 @@ pub struct FakeGit {
     /// `abort` with the checkpoint.
     merge_results: Mutex<VecDeque<theodore_ports::SpaceMerge>>,
     pub merge_calls: Mutex<Vec<(&'static str, String, Sha)>>,
+    /// `space_merge` (a sub-space into its parent): what the next
+    /// `space_apply` calls return, in order (empty: one file `merged.txt`,
+    /// +1 −0, no conflicts), and every call.
+    apply_results: Mutex<VecDeque<GitResult<theodore_ports::SpaceApply>>>,
+    pub apply_calls: Mutex<Vec<ApplyCall>>,
     /// The `HEAD` every `space_reset` moved the worktree to.
     pub reset_heads: Mutex<Vec<Sha>>,
     /// A space worktree's own `HEAD` (`SpaceCheckpoint::head`); unset: the
@@ -716,6 +732,8 @@ impl FakeGit {
             resets: Mutex::new(Vec::new()),
             merge_results: Mutex::new(VecDeque::new()),
             merge_calls: Mutex::new(Vec::new()),
+            apply_results: Mutex::new(VecDeque::new()),
+            apply_calls: Mutex::new(Vec::new()),
             reset_heads: Mutex::new(Vec::new()),
             space_heads: Mutex::new(HashMap::new()),
             restored: Mutex::new(Vec::new()),
@@ -929,6 +947,11 @@ impl FakeGit {
     /// The next `space_merge` / `space_merge_finish` returns `r`.
     pub fn push_merge_result(&self, r: theodore_ports::SpaceMerge) {
         self.merge_results.lock().unwrap().push_back(r);
+    }
+
+    /// The next `space_apply` returns `r`.
+    pub fn push_apply_result(&self, r: GitResult<theodore_ports::SpaceApply>) {
+        self.apply_results.lock().unwrap().push_back(r);
     }
 
     fn merge_call(&self, call: &'static str, space: &str, sha: &Sha) -> theodore_ports::SpaceMerge {
@@ -1402,6 +1425,37 @@ impl GitPort for FakeGit {
         _message: &str,
     ) -> GitResult<theodore_ports::SpaceMerge> {
         Ok(self.merge_call("finish", space, tip))
+    }
+
+    async fn space_apply(
+        &self,
+        worktree: &Path,
+        from: &Sha,
+        to: &Sha,
+        ours: &str,
+        theirs: &str,
+    ) -> GitResult<theodore_ports::SpaceApply> {
+        self.apply_calls.lock().unwrap().push(ApplyCall {
+            worktree: worktree.to_path_buf(),
+            from: from.clone(),
+            to: to.clone(),
+            ours: ours.to_string(),
+            theirs: theirs.to_string(),
+        });
+        self.apply_results
+            .lock()
+            .unwrap()
+            .pop_front()
+            .unwrap_or_else(|| {
+                Ok(theodore_ports::SpaceApply {
+                    files: vec![theodore_ports::FileStat {
+                        path: "merged.txt".into(),
+                        additions: 1,
+                        deletions: 0,
+                    }],
+                    conflicts: Vec::new(),
+                })
+            })
     }
 
     async fn space_merge_abort(&self, _worktree: &Path, space: &str, to: &Sha) -> GitResult<()> {

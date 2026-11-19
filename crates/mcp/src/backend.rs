@@ -8,10 +8,10 @@ use theodore_domain::{AgentId, Commit, FileStatus, FindingId, Group, Hunk, PrId,
 pub use theodore_ports::{
     Answer, AppStatus, BaseChange, CheckOutcome, CodeHit, CodeSymbol, CodeSymbolKind, Diagnostic,
     FleetToolDevice, FleetToolRead, FleetToolSpace, FleetToolWait, LanguageStatus, LocalAnswer,
-    LocalSpaceItem, LocalSpaceList, LocalSpaceRead, LocalSpaceStart, LocalSpaceWait, LogTail,
-    NewReviewComment, Position, ProgressStep, ProgressStepState, ReviewItem, ShipOutcome,
-    ShipToolAction, SpaceCommandName, SpaceDiff, SpaceInfo, SpaceToolError, TerminalTail,
-    UserAnswer, UserQuestion,
+    LocalSpaceItem, LocalSpaceList, LocalSpaceMerge, LocalSpaceRead, LocalSpaceStart,
+    LocalSpaceWait, LogTail, NewReviewComment, Position, ProgressStep, ProgressStepState,
+    ReviewItem, ShipOutcome, ShipToolAction, SpaceCommandName, SpaceDiff, SpaceInfo,
+    SpaceToolError, TerminalTail, UserAnswer, UserQuestion,
 };
 
 /// Which server a run talks to, and so which tools it sees.
@@ -85,12 +85,18 @@ pub const SUB_SPACE_TOOL_NAMES: &[&str] = &[
     "space_wait",
     "space_stop",
     "space_answer",
+    "space_merge",
 ];
 
 /// The sub-space tools that change something: a turn in Edit or Run only
 /// ([`RunContext::sub_space_steers`]). `space_wait` only waits.
-pub const SUB_SPACE_STEER_TOOL_NAMES: &[&str] =
-    &["space_start", "space_send", "space_stop", "space_answer"];
+pub const SUB_SPACE_STEER_TOOL_NAMES: &[&str] = &[
+    "space_start",
+    "space_send",
+    "space_stop",
+    "space_answer",
+    "space_merge",
+];
 
 /// Drafts a problem report about the run's chat (docs/telemetry.md
 /// "Report from a chat"): a space turn's, or an AI panel question's —
@@ -703,6 +709,17 @@ pub trait SpaceToolsBackend: Send + Sync {
         answers: Vec<LocalAnswer>,
     ) -> Result<LocalSpaceItem, SpaceToolError> {
         let _ = (space, turn, target, ask, answers);
+        Err(no_local())
+    }
+    /// Brings `target`'s change (a sub-space of `space`) into `space`'s
+    /// worktree, three-way; `target` is then merged into its parent.
+    async fn local_merge(
+        &self,
+        space: &str,
+        turn: TurnMode,
+        target: &str,
+    ) -> Result<LocalSpaceMerge, SpaceToolError> {
+        let _ = (space, turn, target);
         Err(no_local())
     }
 }

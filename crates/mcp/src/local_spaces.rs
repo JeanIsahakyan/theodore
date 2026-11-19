@@ -1,7 +1,8 @@
 //! The local-space tools of `space-tools` (docs/spaces.md "Sub-spaces"):
 //! `spaces_list` and `space_read` see the other spaces on this computer;
-//! `space_start`, `space_send`, `space_wait`, `space_stop` and
-//! `space_answer` start and steer sub-spaces of the calling space. Never
+//! `space_start`, `space_send`, `space_wait`, `space_stop`,
+//! `space_answer` and `space_merge` start, steer and bring back
+//! sub-spaces of the calling space. Never
 //! for a space hosted here for another device; the steering ones only in
 //! an Edit or Run turn, and the sub-space ones only while
 //! `spaces.sub_spaces` is on. The calling space is always the run's own.
@@ -246,5 +247,18 @@ impl ReviewToolsServer {
                 .local_answer(&space, turn, &p.space, &p.ask, answers)
                 .await,
         )
+    }
+
+    #[tool(
+        description = "Bring the work of a sub-space this space started into this space: its change since it forked (or since the last space_merge of it) is merged three-way into this worktree as uncommitted edits of this turn, keeping your own edits. Files both sides changed get conflict markers (<<<<<<< this space / >>>>>>> sub-space <name>) and are listed: resolve them, then check the result. Returns the files changed with their line counts. The sub-space must not be running; it is then marked merged into this space."
+    )]
+    async fn space_merge(
+        &self,
+        Extension(parts): Extension<http::request::Parts>,
+        Parameters(p): Parameters<SpaceTargetParam>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let (run, space) = run_space(&parts)?;
+        let turn = turn_mode(&run)?;
+        space_result(self.spaces.local_merge(&space, turn, &p.space).await)
     }
 }

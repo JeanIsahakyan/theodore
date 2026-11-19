@@ -286,7 +286,13 @@ export function autoArchiveDays(
  *  branch is pushed and the PR is being opened (or the attempt failed —
  *  Open PR again is safe, it never opens a second one). */
 export type SpaceStage =
-  'drafting' | 'opening' | 'in_review' | 'merged_locally' | 'branch' | 'done';
+  | 'drafting'
+  | 'opening'
+  | 'in_review'
+  | 'merged_locally'
+  | 'branch'
+  | 'merged_into_parent'
+  | 'done';
 
 export function spaceStage(
   s: Pick<Space, 'pr' | 'shipped' | 'done_at'>,
@@ -294,6 +300,7 @@ export function spaceStage(
 ): SpaceStage {
   if (s.shipped?.how === 'merged_locally') return 'merged_locally';
   if (s.shipped?.how === 'branch') return 'branch';
+  if (s.shipped?.how === 'merged_into_parent') return 'merged_into_parent';
   if (s.pr) return prState === 'merged' || s.done_at ? 'done' : 'in_review';
   if (s.shipped?.how === 'pr') return 'opening';
   return 'drafting';
@@ -305,8 +312,16 @@ export const STAGE_LABEL: Record<SpaceStage, string> = {
   in_review: 'In review',
   merged_locally: 'Merged locally',
   branch: 'Kept as branch',
+  merged_into_parent: 'Merged into its parent',
   done: 'Merged',
 };
+
+/** The stage chip's text: a sub-space merged by its parent's agent
+ *  (`space_merge`) names that parent when it's known here. */
+export function stageLabel(stage: SpaceStage, parent?: string | null): string {
+  if (stage === 'merged_into_parent' && parent) return `Merged into ${parent}`;
+  return STAGE_LABEL[stage];
+}
 
 /** Turns since the last ship that a Push would send. */
 export function unshipped(
@@ -580,7 +595,9 @@ function rewindReason(s: RewindFields, i: number): string | null {
           ? 'Already pushed'
           : shipped.how === 'merged_locally'
             ? 'Already merged'
-            : 'Already written as a branch';
+            : shipped.how === 'merged_into_parent'
+              ? 'Already merged into the parent space'
+              : 'Already written as a branch';
       return `${what} — ask the agent to revert it instead`;
     }
   }

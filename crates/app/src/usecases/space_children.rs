@@ -14,24 +14,32 @@
 //!                (send: mode ≤ turn and ≤ the child's; queued while it runs)
 //! space_wait ─▶ until one of them settles: turn ended or failed, a
 //!               question waits ─ or the timeout
+//! space_merge ─▶ own child, settled, same project, not shipped elsewhere
+//!             ─▶ its change from its fork point (or the last merge) to its
+//!                last checkpoint, three-way into the caller's worktree as
+//!                uncommitted edits (conflicts: markers, files listed)
+//!             ─▶ child shipped = merged_into_parent at that checkpoint, done
 //! ```
 //!
 //! A child's questions reach the user as any space's do; the parent may
 //! answer them too. Refusals are one line, `sub_spaces.<code>: <why>`.
 
 use std::collections::HashMap;
+use std::path::Path;
 use std::time::Duration;
 
 use theodore_contract::{
-    CreateSpaceRequest, SetupStatus, Space, SpaceAnswerItem, SpaceAnswerRequest, SpaceMode,
-    SpaceParent, SpaceProgressState, SpaceSendRequest, SpaceStatus,
+    CreateSpaceRequest, SetupStatus, ShipKind, Space, SpaceAnswerItem, SpaceAnswerRequest,
+    SpaceMode, SpaceParent, SpaceProgressState, SpaceSendRequest, SpaceShipped, SpaceStatus,
+    models,
 };
 use theodore_domain::Author;
 use theodore_ports::{
-    LocalAnswer, LocalDiffStat, LocalProgressStep, LocalQuestionItem, LocalSpaceItem,
-    LocalSpaceList, LocalSpaceMessage, LocalSpaceParent, LocalSpaceQuestion, LocalSpaceRead,
-    LocalSpaceStart, LocalSpaceWait, OTHER_SPACE_NOTE, SPACE_READ_MESSAGES_MAX, SPACE_WAIT_MAX_MS,
-    SPACES_LIST_MAX, SpaceToolError,
+    GitError, LocalAnswer, LocalDiffStat, LocalMergedFile, LocalProgressStep, LocalQuestionItem,
+    LocalSpaceItem, LocalSpaceList, LocalSpaceMerge, LocalSpaceMessage, LocalSpaceParent,
+    LocalSpaceQuestion, LocalSpaceRead, LocalSpaceStart, LocalSpaceWait, NewAction,
+    OTHER_SPACE_NOTE, SPACE_READ_MESSAGES_MAX, SPACE_WAIT_MAX_MS, SPACES_LIST_MAX, SpaceToolError,
+    SyncActionCode,
 };
 use tokio::sync::broadcast::error::RecvError;
 
@@ -43,7 +51,7 @@ pub const SUB_SPACES_KEY: &str = "spaces.sub_spaces";
 /// `spaces.max_depth`: how deep sub-spaces nest (a top-level space is 0).
 pub const MAX_DEPTH_KEY: &str = "spaces.max_depth";
 pub const DEFAULT_MAX_DEPTH: u32 = 2;
-/// `spaces.max_children`: live (not archived) sub-spaces per space.
+/// `spaces.max_children`: live (not archived, not done) sub-spaces per space.
 pub const MAX_CHILDREN_KEY: &str = "spaces.max_children";
 pub const DEFAULT_MAX_CHILDREN: u32 = 5;
 
@@ -67,15 +75,21 @@ pub(crate) const LOCAL_SPACES_PROMPT: &str = "Other spaces on this computer: spa
 pub(crate) const SUB_SPACES_PROMPT: &str = "When the work splits into clearly independent \
      parts (separate modules, separate fixes), you may start sub-spaces with space_start: \
      each gets its own branch and worktree and a goal that must say everything it needs \
-     (it doesn't see this conversation). Then space_wait for them, space_read their \
-     results and integrate; space_send, space_answer and space_stop steer them. Don't \
-     split small or tightly coupled tasks: do them yourself.";
+     (it doesn't see this conversation). Then space_wait for them and space_read their \
+     results. Each sub-space's work stays on its own branch until you space_merge it: \
+     merge each one you want to keep (its change lands here as uncommitted edits), \
+     resolve the conflict markers in any files it lists, and check the result. \
+     space_send, space_answer and space_stop steer them. Don't split small or tightly \
+     coupled tasks: do them yourself.";
 
-/// In memory: the running turns' text so far, and the lock that keeps two
-/// starts from both passing the children limit.
+/// In memory: the running turns' text so far, the lock that keeps two
+/// starts from both passing the children limit, and the one for merges.
 #[derive(Default)]
 pub(crate) struct SubSpaceState {
     start_lock: tokio::sync::Mutex<()>,
+    /// One `space_merge` at a time: two of the same child would both
+    /// apply its change.
+    merge_lock: tokio::sync::Mutex<()>,
     live: std::sync::Mutex<HashMap<String, String>>,
 }
 
@@ -502,7 +516,8 @@ impl Core {
             .await
             .map_err(failed)?
             .iter()
-            .filter(|s| s.status != SpaceStatus::Archived)
+            // A merged (done) child no longer counts, like an archived one.
+            .filter(|s| s.status != SpaceStatus::Archived && s.done_at.is_none())
             .filter(|s| s.parent.as_ref().is_some_and(|p| p.space == me.id))
             .count();
         if children >= max_children as usize {
@@ -510,7 +525,7 @@ impl Core {
                 "children",
                 format!(
                     "a space has at most {max_children} live sub-spaces; wait for one and \
-                     archive it, or do the work here"
+                     space_merge it (or have it archived), or do the work here"
                 ),
             ));
         }
@@ -640,6 +655,137 @@ impl Core {
         .map_err(|e| refuse("answer", e.user_message()))?;
         let row = self.space_row(&child.id).await.map_err(failed)?;
         Ok(item(&row, Some(&me)))
+    }
+
+    /// `space_merge`: the child's change, from its fork point (or the last
+    /// merge) to its last checkpoint, three-way into the caller's worktree
+    /// as uncommitted edits of the running turn; conflicts stay as markers
+    /// for the agent. The child is then done, merged into its parent, at
+    /// that checkpoint.
+    pub async fn sub_space_merge(
+        &self,
+        caller: &str,
+        turn: SpaceMode,
+        target: &str,
+    ) -> Result<LocalSpaceMerge, SpaceToolError> {
+        let me = self.sub_space_steer(caller, turn).await?;
+        let _merge = self.0.sub_spaces.merge_lock.lock().await;
+        let child = self.own_child(caller, target).await?;
+        let setting_up = child
+            .setup
+            .as_ref()
+            .is_some_and(|s| matches!(s.status, SetupStatus::Running | SetupStatus::Waiting));
+        if child.status == SpaceStatus::Running || child.run.is_some() || setting_up {
+            return Err(refuse(
+                "running",
+                format!("{target} is still running; space_wait for it, then merge"),
+            ));
+        }
+        if child.updating.is_some() {
+            return Err(refuse(
+                "busy",
+                format!("an update from base is unfinished in {target}"),
+            ));
+        }
+        if child.remote.is_some() || child.project != me.project {
+            return Err(refuse(
+                "project",
+                format!("{target} works on another repository: it can't merge here"),
+            ));
+        }
+        let merged_before = child
+            .shipped
+            .as_ref()
+            .filter(|s| s.how == ShipKind::MergedIntoParent);
+        if child.pr.is_some() || (child.shipped.is_some() && merged_before.is_none()) {
+            return Err(refuse(
+                "shipped",
+                format!("{target} was already shipped on its own (a PR or a local merge)"),
+            ));
+        }
+        let from = merged_before.map_or_else(|| child.base_sha.clone(), |s| s.head.clone());
+        let to = child.head_sha.clone();
+        if from == to {
+            return Err(refuse(
+                "nothing_new",
+                match merged_before {
+                    Some(_) => format!("nothing new in {target} since the last merge"),
+                    None => format!("{target} has no changes to merge"),
+                },
+            ));
+        }
+        let theirs = format!("sub-space {}", child.name);
+        let applied = self
+            .0
+            .deps
+            .git
+            .space_apply(Path::new(&me.worktree), &from, &to, "this space", &theirs)
+            .await
+            .map_err(|e| match e {
+                GitError::Busy(busy) => refuse(
+                    "busy",
+                    format!("{busy} in this space's worktree; finish or abort it first"),
+                ),
+                e => failed(e.into()),
+            })?;
+        let now = self.0.deps.clock.now();
+        let shipped = SpaceShipped {
+            how: ShipKind::MergedIntoParent,
+            branch: me.branch.clone(),
+            sha: to.clone(),
+            head: to.clone(),
+            pushes: merged_before.map_or(0, |s| s.pushes) + 1,
+            at: now,
+        };
+        self.apply(vec![NewAction {
+            model: models::SPACE.into(),
+            model_id: child.id.clone(),
+            action: SyncActionCode::C,
+            data: Some(serde_json::json!({ "shipped": shipped, "done_at": now })),
+        }])
+        .await
+        .map_err(|e| failed(e.into()))?;
+        tracing::info!(
+            space = %child.id,
+            parent = %me.id,
+            files = applied.files.len(),
+            conflicts = applied.conflicts.len(),
+            "merged a sub-space into its parent"
+        );
+        let row = self.space_row(&child.id).await.map_err(failed)?;
+        let note = if applied.conflicts.is_empty() {
+            format!(
+                "Applied to this space's worktree as uncommitted edits of this turn. Check the \
+                 result (run_check). {target} is now marked merged into this space."
+            )
+        } else {
+            format!(
+                "Applied to this space's worktree as uncommitted edits of this turn, but {} \
+                 file(s) changed on both sides and have conflict markers (<<<<<<< this space \
+                 … ======= … >>>>>>> {theirs}). Resolve them keeping what both sides meant, \
+                 then check the result (run_check). {target} is now marked merged into this \
+                 space.",
+                applied.conflicts.len()
+            )
+        };
+        Ok(LocalSpaceMerge {
+            space: item(&row, Some(&me)),
+            from: from.0,
+            to: to.0,
+            additions: applied.files.iter().map(|f| f.additions).sum(),
+            deletions: applied.files.iter().map(|f| f.deletions).sum(),
+            files: applied
+                .files
+                .into_iter()
+                .map(|f| LocalMergedFile {
+                    path: f.path,
+                    additions: f.additions,
+                    deletions: f.deletions,
+                })
+                .collect(),
+            conflicts: applied.conflicts,
+            note,
+        })
     }
 
     /// `space_wait`: until one of `targets` (children of `caller`)

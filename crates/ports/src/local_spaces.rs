@@ -157,3 +157,31 @@ pub struct LocalSpaceWait {
     pub settled: Vec<String>,
     pub spaces: Vec<LocalSpaceItem>,
 }
+
+/// One file `space_merge` changed in the caller's worktree.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct LocalMergedFile {
+    pub path: String,
+    pub additions: u32,
+    pub deletions: u32,
+}
+
+/// `space_merge`: the sub-space's change, applied to the caller's worktree
+/// as uncommitted edits of its turn.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct LocalSpaceMerge {
+    /// The sub-space, now done: merged into this space.
+    pub space: LocalSpaceItem,
+    /// Its checkpoints the change ran between: its fork point (or the
+    /// last merge) and its last checkpoint.
+    pub from: String,
+    pub to: String,
+    /// What changed here, per file (conflict markers count as lines).
+    pub files: Vec<LocalMergedFile>,
+    pub additions: u32,
+    pub deletions: u32,
+    /// Files both sides changed, left with conflict markers to resolve.
+    pub conflicts: Vec<String>,
+    /// What to do next.
+    pub note: String,
+}

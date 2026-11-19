@@ -359,6 +359,10 @@ pub(crate) fn rewindable(space: &Space, from: Option<usize>) -> Result<usize, St
                 ShipKind::Branch => {
                     "this turn is already written as a branch; ask the agent to revert it instead"
                 }
+                ShipKind::MergedIntoParent => {
+                    "this turn is already merged into the parent space; ask the agent to revert \
+                     it instead"
+                }
             }
             .into());
         }

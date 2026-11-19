@@ -120,7 +120,7 @@ import {
   AUTO_ARCHIVE_KEY,
   BUILD_MODE_KEY,
   NOTIFY_KEY,
-  STAGE_LABEL,
+  stageLabel,
   autoArchiveDays,
   shipTitle,
   diffStat,
@@ -583,6 +583,11 @@ const SpaceHeader = observer(function SpaceHeader({
   const pr =
     space.pr && !remote ? store.models.prSummaries.get(space.pr) : undefined;
   const stage = spaceStage(space, pr?.state);
+  // A sub-space merged by its parent's agent names that parent.
+  const mergedInto =
+    stage === 'merged_into_parent' && space.parent
+      ? store.models.spaces.get(space.parent.space)
+      : undefined;
   const days = autoArchiveDays(store.models.settings.all());
   return (
     // Just what you act on: the name, and the stage only once it says
@@ -612,7 +617,7 @@ const SpaceHeader = observer(function SpaceHeader({
                 : undefined
             }
           >
-            {STAGE_LABEL[stage]}
+            {stageLabel(stage, mergedInto ? spaceTitle(mergedInto) : null)}
             {pr ? ` · #${pr.pr.number}` : ''}
           </span>
         )}

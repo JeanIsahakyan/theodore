@@ -53,7 +53,7 @@ async fn is_ancestor(repo: &Path, askpass: &Path, ancestor: &Sha, of: &Sha) -> G
     }
 }
 
-fn stderr_of(out: &RawOutput) -> String {
+pub(crate) fn stderr_of(out: &RawOutput) -> String {
     String::from_utf8_lossy(&out.stderr).trim().to_string()
 }
 
@@ -117,7 +117,7 @@ pub(crate) fn folder_refusal(state: &WorkingState) -> Option<String> {
 
 /// `merge-tree --write-tree --name-only --no-messages` stdout: the tree
 /// oid, then one conflicted path per line.
-fn conflicted_paths(stdout: &[u8]) -> Vec<String> {
+pub(crate) fn conflicted_paths(stdout: &[u8]) -> Vec<String> {
     let text = String::from_utf8_lossy(stdout);
     let mut paths: Vec<String> = text
         .lines()
