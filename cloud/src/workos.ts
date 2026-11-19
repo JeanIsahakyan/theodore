@@ -62,6 +62,22 @@ export interface Workos {
     pendingAuthenticationToken: string;
     organizationId: string;
   }): Promise<Authentication>;
+  /**
+   * AuthKit's code, after the browser came back to the cloud's own
+   * callback (MCP sign-in): the cloud is the confidential client here. A
+   * user in 2+ orgs gets `403 organization_selection_required`
+   * (`WorkosError.body` carries the pending token and the orgs).
+   */
+  authenticateWithCode(o: {
+    clientId: string;
+    code: string;
+  }): Promise<Authentication>;
+  /** A refresh, optionally into `organizationId` (MCP token refresh). */
+  refreshSession(o: {
+    clientId: string;
+    refreshToken: string;
+    organizationId?: string;
+  }): Promise<Authentication>;
 }
 
 /** A WorkOS answer other than 2xx. `status` decides what the caller does. */
@@ -70,6 +86,8 @@ export class WorkosError extends Error {
     readonly status: number,
     readonly code: string | undefined,
     message: string,
+    /** The answer's JSON, when it had one (never logged: it may hold a token). */
+    readonly body?: Record<string, unknown>,
   ) {
     super(message);
     this.name = 'WorkosError';
@@ -114,8 +132,10 @@ export class WorkosClient implements Workos {
     if (!res.ok) {
       let code: string | undefined;
       let message = `WorkOS ${method} ${path.split('?')[0]} failed (${res.status})`;
+      let body: Record<string, unknown> | undefined;
       try {
         const e = JSON.parse(text) as Record<string, unknown>;
+        body = e;
         // `authenticate` answers OAuth-style (`error`, `error_description`),
         // the rest of the API with `code`, `message`.
         const c = e.code ?? e.error;
@@ -125,7 +145,7 @@ export class WorkosClient implements Workos {
       } catch {
         // not JSON: keep the status line only
       }
-      throw new WorkosError(res.status, code, message);
+      throw new WorkosError(res.status, code, message, body);
     }
     return JSON.parse(text) as T;
   }
@@ -203,6 +223,47 @@ export class WorkosClient implements Workos {
       organization_id: o.organizationId,
     });
   }
+
+  authenticateWithCode(o: {
+    clientId: string;
+    code: string;
+  }): Promise<Authentication> {
+    return this.call('POST', '/user_management/authenticate', undefined, {
+      grant_type: 'authorization_code',
+      client_id: o.clientId,
+      client_secret: this.apiKey,
+      code: o.code,
+    });
+  }
+
+  refreshSession(o: {
+    clientId: string;
+    refreshToken: string;
+    organizationId?: string;
+  }): Promise<Authentication> {
+    return this.call('POST', '/user_management/authenticate', undefined, {
+      grant_type: 'refresh_token',
+      client_id: o.clientId,
+      client_secret: this.apiKey,
+      refresh_token: o.refreshToken,
+      ...(o.organizationId ? { organization_id: o.organizationId } : {}),
+    });
+  }
+}
+
+/** AuthKit's hosted sign-in, back to `redirectUri` with a code. */
+export function authkitAuthorizeUrl(
+  apiBase: string,
+  o: { clientId: string; redirectUri: string; state: string },
+): string {
+  const q = new URLSearchParams({
+    client_id: o.clientId,
+    redirect_uri: o.redirectUri,
+    response_type: 'code',
+    provider: 'authkit',
+    state: o.state,
+  });
+  return `${apiBase.replace(/\/+$/, '')}/user_management/authorize?${q}`;
 }
 
 /** A WorkOS failure as the cloud's own answer. */

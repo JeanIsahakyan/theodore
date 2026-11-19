@@ -4,7 +4,8 @@
 #   wrangler secret put WORKOS_API_KEY --env production
 # Local `wrangler dev` reads WORKOS_API_KEY from .dev.vars (gitignored).
 # Optional: EXPO_ACCESS_TOKEN (secret), only if the Expo project turns on
-# "enhanced push security". WEB_ORIGINS: the web app's origins (CORS and
+# "enhanced push security". MCP: MCP_KEY_WRAP (secret, ≥ 32 chars) and the
+# OAUTH_KV binding below. WEB_ORIGINS: the web app's origins (CORS and
 # browser sockets), comma-separated, per environment below.
 name = "theodore-cloud"
 main = "src/index.ts"
@@ -50,4 +51,19 @@ durable_objects.bindings = [{ name = "ORG_HUB", class_name = "OrgHub" }]
 ratelimits = [
   { name = "RL_PUBLIC", namespace_id = "1201", simple = { limit = 30, period = 60 } },
   { name = "RL_USER", namespace_id = "1202", simple = { limit = 120, period = 60 } },
+]
+
+# Local only, never deployed: `pnpm dev:mcp` (wrangler dev --env local) runs
+# the Worker with MCP on (docs/cloud.md "MCP"): the OAuth provider's KV
+# namespace, simulated by wrangler; MCP_KEY_WRAP and WORKOS_API_KEY come
+# from .dev.vars. Staging and production have no OAUTH_KV yet, so MCP stays
+# off (404) there until the checklist in docs/cloud.md "MCP" is done.
+[env.local]
+name = "theodore-cloud-local"
+vars = { WORKOS_CLIENT_ID = "client_01M5RM1W36AHHEGBE37QD3PS6K", WORKOS_API_BASE = "https://api.workos.com" }
+durable_objects.bindings = [{ name = "ORG_HUB", class_name = "OrgHub" }]
+kv_namespaces = [{ binding = "OAUTH_KV", id = "local-oauth-kv" }]
+ratelimits = [
+  { name = "RL_PUBLIC", namespace_id = "1901", simple = { limit = 30, period = 60 } },
+  { name = "RL_USER", namespace_id = "1902", simple = { limit = 120, period = 60 } },
 ]

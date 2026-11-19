@@ -108,6 +108,38 @@ export class FakeWorkos implements Workos {
     };
   }
 
+  /** AuthKit codes: code ─▶ what authenticate answers (or throws). */
+  codes = new Map<string, Authentication | WorkosError>();
+  /** Refresh tokens: token ─▶ what a refresh into `org` answers. */
+  refreshes = new Map<
+    string,
+    (org: string | undefined) => Authentication | WorkosError
+  >();
+
+  async authenticateWithCode(o: { clientId: string; code: string }) {
+    this.calls.push('authenticateWithCode');
+    this.check();
+    const a = this.codes.get(o.code);
+    this.codes.delete(o.code);
+    if (!a) throw new WorkosError(400, 'invalid_grant', 'bad code');
+    if (a instanceof WorkosError) throw a;
+    return a;
+  }
+
+  async refreshSession(o: {
+    clientId: string;
+    refreshToken: string;
+    organizationId?: string;
+  }) {
+    this.calls.push(`refreshSession ${o.organizationId ?? ''}`);
+    this.check();
+    const f = this.refreshes.get(o.refreshToken);
+    if (!f) throw new WorkosError(400, 'invalid_grant', 'bad refresh token');
+    const a = f(o.organizationId);
+    if (a instanceof WorkosError) throw a;
+    return a;
+  }
+
   addMembership(
     userId: string,
     organizationId: string,

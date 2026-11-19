@@ -13,6 +13,7 @@
  * | POST /v1/auth/select-organization | finishes a sign-in that needs an org picked (needs the secret) |
  * | GET  /v1/fleet/ws | WebSocket to the org's fleet hub (src/fleet/, docs/fleet.md) |
  * | POST /v1/fleet/request | a one-shot signed fleet request, no socket (a push action) |
+ * | POST /mcp, /oauth/*, /.well-known/oauth-* | MCP for Claude, with OAuth (src/mcp/oauth.ts) |
  *
  * Rate limits (Cloudflare's rate-limiting bindings; 429 `cloud.rate_limited`):
  * the unauthenticated routes (org selection, the fleet upgrade) per client
@@ -38,10 +39,11 @@ import {
   requestCaller,
   type HubFor,
 } from './fleet/route';
+import { isMcpPath, mcpFetch, type McpBindings } from './mcp/oauth';
 import { ensurePersonalOrganization, listOrganizations } from './orgs';
 import { upstream, WorkosClient, WorkosError, type Workos } from './workos';
 
-export interface Env {
+export interface Env extends McpBindings {
   WORKOS_API_KEY: string;
   WORKOS_CLIENT_ID: string;
   WORKOS_API_BASE?: string;
@@ -61,6 +63,8 @@ export { OrgHub } from './fleet/org-hub';
 export interface Deps {
   workos: Workos;
   clientId: string;
+  /** WorkOS's API (AuthKit's sign-in page for MCP). */
+  apiBase?: string;
   verify: (token: string) => Promise<Caller>;
   /** The org's fleet hub; absent: the fleet route answers cloud.config. */
   hub?: HubFor;
@@ -130,6 +134,7 @@ export function depsFor(env: Env): Deps {
   return {
     workos: new WorkosClient(env.WORKOS_API_KEY, apiBase),
     clientId: env.WORKOS_CLIENT_ID,
+    apiBase,
     verify: verifierFor(apiBase, env.WORKOS_CLIENT_ID),
     hub: ns ? (orgId) => ns.get(ns.idFromName(orgId)) : undefined,
     limit: async (bucket, key) => {
@@ -261,6 +266,8 @@ async function dispatch(
 }
 
 export default {
-  fetch: (request, env) =>
-    handle(request, () => depsFor(env), parseOrigins(env.WEB_ORIGINS)),
+  fetch: (request, env, ctx) =>
+    isMcpPath(new URL(request.url).pathname)
+      ? mcpFetch(request, env, ctx, () => depsFor(env))
+      : handle(request, () => depsFor(env), parseOrigins(env.WEB_ORIGINS)),
 } satisfies ExportedHandler<Env>;

@@ -4,11 +4,11 @@
  * carries types only); the rest are the cloud's own (docs/cloud.md "Fleet").
  */
 
-export const PROTOCOL_VERSION = 4;
+export const PROTOCOL_VERSION = 5;
 /**
  * The oldest protocol still accepted. Protocol-3 connections never see
  * `mobile` / `web` devices (their `DeviceKind` can't read them) nor
- * `delegations`.
+ * `delegations`; protocol 3 and 4 never see the cloud's own `mcp` device.
  */
 export const MIN_PROTOCOL_VERSION = 3;
 /** A signed request or delegation older or newer than this is stale. */
@@ -30,7 +30,10 @@ export const MAX_EFFORT_CHARS = 16;
 
 /** A request to an offline target waits this long for it to come back. */
 export const GRACE_MS = 10_000;
-/** A pending request (or a reply held for an offline origin) lives this long. */
+/**
+ * A pending request (or a reply held for an offline origin) lives this long;
+ * one from the MCP device, REQUEST_WINDOW_MS (the host may ask a person).
+ */
 export const PENDING_TTL_MS = 2 * 60_000;
 /** An unanswered question goes to every device after this. */
 export const ESCALATE_MS = 20_000;
@@ -93,6 +96,8 @@ export const codes = {
   OFFLINE: 'fleet.offline',
   BUSY: 'fleet.busy',
   INTERNAL: 'fleet.internal',
+  /** An mcp device's edit or run the person on the host denied (or let lapse). */
+  DENIED: 'fleet.denied',
   UNAUTHORIZED: 'fleet.unauthorized',
   NO_ORG: 'fleet.no_org',
   VERSION: 'fleet.version',

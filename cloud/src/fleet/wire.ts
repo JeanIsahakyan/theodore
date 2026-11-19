@@ -109,9 +109,31 @@ export const HOST_KINDS: readonly DeviceInfo['kind'][] = ['desktop', 'daemon'];
 /** Whether a device of this kind runs spaces (and so may be a target). */
 export const hosts = (kind: DeviceInfo['kind']) => HOST_KINDS.includes(kind);
 
-/** Kinds a connection of `protocol` may say it is: 3 knows only hosts. */
-const kindsFor = (protocol: number): readonly DeviceInfo['kind'][] =>
-  protocol >= 4 ? [...HOST_KINDS, 'mobile', 'web'] : HOST_KINDS;
+/**
+ * Kinds a connection of `protocol` may say it is: 3 knows only hosts. `mcp`
+ * is the cloud's own device (src/mcp/): only its in-process connection
+ * (`internal`) says it, and it says nothing else; a socket never may.
+ */
+const kindsFor = (
+  protocol: number,
+  internal: boolean,
+): readonly DeviceInfo['kind'][] => {
+  if (internal) return ['mcp'];
+  return protocol >= 4 ? [...HOST_KINDS, 'mobile', 'web'] : HOST_KINDS;
+};
+
+/** The protocol a connection needs to read a device of `kind` in a list. */
+export function protocolToSee(kind: DeviceInfo['kind']): number {
+  switch (kind) {
+    case 'mobile':
+    case 'web':
+      return 4;
+    case 'mcp':
+      return 5;
+    default:
+      return 3;
+  }
+}
 
 /** A `string[]` of at most `max` items, each a non-empty string ≤ `chars`. */
 function strs(o: Obj, k: string, max: number, chars: number): string[] {
@@ -151,12 +173,16 @@ function agentInfo(v: unknown): FleetAgentInfo {
   };
 }
 
-function deviceInfo(v: unknown, protocol: number): DeviceInfo {
+function deviceInfo(
+  v: unknown,
+  protocol: number,
+  internal: boolean,
+): DeviceInfo {
   const o = obj(v, 'info');
   const info: DeviceInfo = {
     name: str(o, 'name', 100),
     os: oneOf(o, 'os', ['macos', 'linux', 'windows', 'ios', 'android']),
-    kind: oneOf(o, 'kind', kindsFor(protocol)),
+    kind: oneOf(o, 'kind', kindsFor(protocol, internal)),
     app_version: str(o, 'app_version', 64),
     projects: arr(o, 'projects', 200).map((p) => {
       const po = obj(p, 'project');
@@ -270,11 +296,13 @@ function pushToken(o: Obj): string {
 /**
  * One frame from a device, checked. `protocol`: the connection's, once its
  * hello was accepted (it decides which device kinds an `announce` may say).
+ * `internal`: the cloud's own MCP device, in process (kind `mcp` only).
  * Throws [`BadMessage`].
  */
 export function parseClient(
   raw: string,
   protocol = PROTOCOL_VERSION,
+  internal = false,
 ): ClientMessage {
   let v: unknown;
   try {
@@ -304,7 +332,7 @@ export function parseClient(
         device_id: optStr(o, 'device_id', 64),
         public_key: str(o, 'public_key', 64),
         signature: str(o, 'signature', 128),
-        info: deviceInfo(o.info, v),
+        info: deviceInfo(o.info, v, internal),
         spaces: arr(o, 'spaces', 10_000).map(cursor),
       };
     }
@@ -318,7 +346,10 @@ export function parseClient(
         idle_ms: uint(o, 'idle_ms'),
       };
     case 'announce':
-      return { type: 'announce', info: deviceInfo(o.info, protocol) };
+      return {
+        type: 'announce',
+        info: deviceInfo(o.info, protocol, internal),
+      };
     case 'request':
       return { type: 'request', envelope: envelope(o.envelope) };
     case 'claim':

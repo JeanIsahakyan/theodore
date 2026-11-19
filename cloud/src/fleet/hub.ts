@@ -102,6 +102,7 @@ import {
   peekEvent,
   peekReply,
   peekRequest,
+  protocolToSee,
   unb64,
   verifyEnvelope,
   verifyHello,
@@ -135,6 +136,11 @@ export interface ConnState {
   generation?: number;
   /** The hello's protocol; absent on attachments older than v4 (= 3). */
   protocol?: number;
+  /**
+   * The cloud's own MCP device (src/mcp/), connected in process: the only
+   * connection whose hello may say kind `mcp`. Never set for a socket.
+   */
+  internal?: boolean;
   presence?: Presence;
   /**
    * The last reauth couldn't be checked (signing keys unreachable): when
@@ -215,7 +221,11 @@ export class Hub {
 
   // ── entry points ───────────────────────────────────────────────────────
 
-  open(conn: Conn, caller: FleetCaller): Promise<void> {
+  /**
+   * A new connection: one challenge. `internal`: the cloud's own MCP
+   * device's in-process connection (src/mcp/fleet.ts), never a socket.
+   */
+  open(conn: Conn, caller: FleetCaller, internal = false): Promise<void> {
     return this.run(() => {
       // One challenge per connection: a device signs one nonce per socket.
       if (stateOf(conn)) return;
@@ -231,6 +241,7 @@ export class Hub {
         expMs: caller.expMs,
         phase: 'challenged',
         nonce: b64(nonce),
+        ...(internal ? { internal: true } : {}),
       };
       if (others.length >= MAX_CONNS_PER_USER) {
         conn.save({ ...state, nonce: undefined });
@@ -270,6 +281,7 @@ export class Hub {
         msg = parseClient(
           data,
           s.phase === 'challenged' ? PROTOCOL_VERSION : protocolOf(s),
+          s.internal === true,
         );
       } catch (e) {
         if (!(e instanceof BadMessage)) throw e;
@@ -335,6 +347,44 @@ export class Hub {
     });
   }
 
+  /**
+   * The MCP device's in-process connection stays up until `expMs` (+ the
+   * usual leeway): it is online while an MCP client keeps using it. Sockets
+   * extend theirs only with a verified `reauth`.
+   */
+  extend(conn: Conn, expMs: number): Promise<void> {
+    return this.run(() => {
+      if (!conn.open) return;
+      const s = conn.state();
+      if (!s?.internal || s.phase !== 'ready') return;
+      s.expMs = expMs;
+      conn.save(s);
+      this.store.setDeadline(s.id, s.user, expMs + REAUTH_LEEWAY_MS);
+      this.store.run(
+        'UPDATE devices SET last_seen_ms = ? WHERE device_id = ?',
+        this.env.now(),
+        s.device ?? null,
+      );
+    });
+  }
+
+  /** `user`'s devices as `devices` lists them (every kind, protocol 5). */
+  listDevices(user: string): DeviceSummary[] {
+    const online = new Set(this.ready(user).map((c) => c.state.device));
+    return this.store
+      .rows<DeviceRow>(
+        'SELECT * FROM devices WHERE user_id = ? ORDER BY device_id',
+        user,
+      )
+      .map((d) => ({
+        device_id: d.device_id,
+        info: JSON.parse(d.info) as DeviceInfo,
+        online: online.has(d.device_id),
+        last_seen_ms: d.last_seen_ms,
+        public_key: d.public_key,
+      }));
+  }
+
   /** A device's current connection ended: offline, subs dropped. */
   private gone(s: ConnState) {
     if (!s.device) return;
@@ -383,9 +433,9 @@ export class Hub {
       }
       for (const p of this.store.rows<PendingRow>(
         `SELECT * FROM pending
-         WHERE (claimed = 0 AND grace_until <= ?) OR created_ms <= ?`,
+         WHERE (claimed = 0 AND grace_until <= ?) OR created_ms + ttl_ms <= ?`,
         now,
-        now - PENDING_TTL_MS,
+        now,
       )) {
         this.store.run('DELETE FROM pending WHERE req_id = ?', p.req_id);
         this.deliver(p.user_id, p.origin_device, p.req_id, {
@@ -633,8 +683,9 @@ export class Hub {
     };
     return this.run(() => {
       const dev = this.store.device(deviceId);
+      // The MCP device's key lives in the cloud: it sends only in process.
       const r: RouteOutcome =
-        !dev || dev.user_id !== caller.userId
+        !dev || dev.user_id !== caller.userId || infoOf(dev).kind === 'mcp'
           ? { kind: 'error', code: codes.NOT_YOURS, message: 'no such device' }
           : this.route(caller.userId, deviceId, envelope);
       out =
@@ -682,20 +733,19 @@ export class Hub {
     if (!hosts(infoOf(target).kind)) {
       return refuse(codes.INVALID, 'that device runs no spaces');
     }
-    // A phone's or the web app's request to a computer on protocol 3: that
-    // computer never lists them, so it can't trust them and would only show
-    // a dead-end prompt. Say so instead.
+    // A phone's or the web app's request to a computer on protocol 3 (the
+    // MCP device's to one below 5): that computer never lists the origin,
+    // so it can't trust it and would only show a dead-end prompt. Say so.
     const origin = this.store.device(sender);
     const targetConn = this.readyDevice(user, route.target_device);
     if (
       origin &&
-      !hosts(infoOf(origin).kind) &&
       targetConn &&
-      protocolOf(targetConn.state) < V4
+      protocolOf(targetConn.state) < protocolToSee(infoOf(origin).kind)
     ) {
       return refuse(
         codes.UPGRADE_REQUIRED,
-        'that computer runs an older Theodore: update it to take requests from a phone or the web',
+        'that computer runs an older Theodore: update it to take requests from a phone, the web or Claude',
       );
     }
     // The target checks this too: a key the cloud doesn't pin for that id
@@ -758,8 +808,8 @@ export class Hub {
     this.store.run(
       `INSERT INTO pending (req_id, user_id, origin_device, target_device,
          generation, claimed, created_ms, grace_until, envelope, op, space,
-         parent, depth, ask_id)
-       VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         parent, depth, ask_id, ttl_ms)
+       VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       route.req_id,
       user,
       route.origin_device,
@@ -773,6 +823,11 @@ export class Hub {
       route.parent,
       route.depth,
       route.ask_id,
+      // The MCP device's edits and runs wait on the host for a person's
+      // yes, up to the request window: its requests live that long here.
+      origin && infoOf(origin).kind === 'mcp'
+        ? REQUEST_WINDOW_MS
+        : PENDING_TTL_MS,
     );
     if (to) {
       this.send(to.conn, {
@@ -1858,7 +1913,7 @@ export class Hub {
     const due = [
       s.num('SELECT MIN(deadline_ms) FROM conns'),
       s.num('SELECT MIN(grace_until) FROM pending WHERE claimed = 0'),
-      s.num('SELECT MIN(created_ms) FROM pending'),
+      s.num('SELECT MIN(created_ms + ttl_ms) FROM pending'),
       s.num('SELECT MIN(created_ms) FROM replies'),
       s.num('SELECT MIN(created_ms) FROM asks WHERE escalated = 0'),
       s.num(
@@ -1866,7 +1921,7 @@ export class Hub {
          WHERE revoked = 0 AND expires_at_ms > 0`,
       ),
     ];
-    const ttl = [0, 0, PENDING_TTL_MS, PENDING_TTL_MS, ESCALATE_MS, 0];
+    const ttl = [0, 0, 0, PENDING_TTL_MS, ESCALATE_MS, 0];
     const at = due
       .map((v, i) => (v === null ? null : v + ttl[i]!))
       .filter((v): v is number => v !== null);
@@ -1932,32 +1987,30 @@ export class Hub {
   private pushDevices(user: string, except?: string) {
     const conns = this.ready(user, except);
     const online = new Set(conns.map((c) => c.state.device));
-    const devices: DeviceSummary[] = this.store
-      .rows<DeviceRow>(
-        'SELECT * FROM devices WHERE user_id = ? ORDER BY device_id',
-        user,
-      )
-      .map((d) => ({
-        device_id: d.device_id,
-        info: JSON.parse(d.info),
-        online: online.has(d.device_id),
-        last_seen_ms: d.last_seen_ms,
-        public_key: d.public_key,
-      }));
-    // Protocol 3 can't read a `mobile` / `web` kind (it never sees them)
-    // nor an OS past `macos` / `linux` (a Windows computer reads as Linux).
-    const hostsOnly = devices
-      .filter((d) => hosts(d.info.kind))
-      .map((d) =>
-        d.info.os === 'macos' || d.info.os === 'linux'
-          ? d
-          : { ...d, info: { ...d.info, os: 'linux' as const } },
-      );
+    const devices = this.listDevices(user).map((d) => ({
+      ...d,
+      online: online.has(d.device_id),
+    }));
+    // A connection sees only the kinds its protocol can read: protocol 3
+    // computers only (and no OS past `macos` / `linux`: a Windows computer
+    // reads as Linux), protocol 4 no `mcp`.
+    const seen = (p: number) =>
+      devices
+        .filter((d) => protocolToSee(d.info.kind) <= p)
+        .map((d) =>
+          p >= V4 || d.info.os === 'macos' || d.info.os === 'linux'
+            ? d
+            : { ...d, info: { ...d.info, os: 'linux' as const } },
+        );
+    const byProtocol = new Map<number, DeviceSummary[]>();
     for (const c of conns) {
-      this.send(c.conn, {
-        type: 'devices',
-        devices: protocolOf(c.state) >= V4 ? devices : hostsOnly,
-      });
+      const p = protocolOf(c.state);
+      let list = byProtocol.get(p);
+      if (!list) {
+        list = seen(p);
+        byProtocol.set(p, list);
+      }
+      this.send(c.conn, { type: 'devices', devices: list });
     }
   }
 
