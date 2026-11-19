@@ -4312,3 +4312,6 @@ fn another_devices_agents_reach_the_ui_known_ones_only() {
 
 #[path = "fleet_follow_tests.rs"]
 mod follow;
+
+#[path = "fleet_confirm_tests.rs"]
+mod confirm;

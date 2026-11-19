@@ -1,5 +1,15 @@
 use super::*;
 
+#[test]
+fn every_code_is_listed_once_and_looks_like_one() {
+    let mut seen = std::collections::HashSet::new();
+    for (name, code) in codes::ALL {
+        assert!(seen.insert(*code), "{code} listed twice");
+        assert!(code.starts_with("fleet."), "{name}: {code}");
+    }
+    assert!(seen.contains(codes::DENIED));
+}
+
 fn req(origin: &str) -> RemoteRequest {
     RemoteRequest {
         req_id: "r1".into(),

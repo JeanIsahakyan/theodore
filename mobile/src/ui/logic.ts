@@ -253,6 +253,7 @@ export const KIND_LABEL: Record<string, string> = {
   daemon: 'Server',
   mobile: 'Phone',
   web: 'Browser',
+  mcp: 'Claude via cloud (MCP)',
 };
 
 export const kindLabel = (kind: string): string => KIND_LABEL[kind] ?? kind;

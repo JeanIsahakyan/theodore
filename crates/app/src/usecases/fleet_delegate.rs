@@ -23,7 +23,7 @@ use theodore_fleet_protocol::{ClientMessage, Delegation, Domain, SignedEnvelope}
 
 use crate::core::Core;
 use crate::error::{AppError, AppResult};
-use crate::usecases::fleet::wants_delegate;
+use crate::usecases::fleet::{follows, wants_delegate};
 
 impl Core {
     /// Sends this device's spaces' questions to `device_id` (a phone or
@@ -42,9 +42,14 @@ impl Core {
                         "device {device_id} isn't in this organization's fleet"
                     ))
                 })?;
-            if listed.info.kind.hosts() {
+            if !follows(listed.info.kind) {
+                let what = if listed.info.kind.hosts() {
+                    "is a computer"
+                } else {
+                    "isn't a phone or the web app"
+                };
                 return Err(AppError::Invalid(format!(
-                    "{} is a computer: only a phone or the web app follows this device's spaces",
+                    "{} {what}: only a phone or the web app follows this device's spaces",
                     listed.info.name
                 )));
             }

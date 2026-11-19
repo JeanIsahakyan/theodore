@@ -1,5 +1,6 @@
 /** Fleet fixtures for tests. */
 import type {
+  FleetConfirm,
   FleetDevice,
   FleetQuestion,
   FleetRemoteSpace,
@@ -101,5 +102,23 @@ export const trustNeeded = (
   device_name: 'Studio Mac',
   fingerprint: 'a1b2 c3d4 e5f6 0718 9abc def0 1234 5678',
   public_key: 'pk-studio-mac-asked',
+  kind: 'desktop',
+  ...over,
+});
+
+/** Claude via the cloud wants to start an Edit space in app. */
+export const confirmRequest = (
+  over: Partial<FleetConfirm> = {},
+): FleetConfirm => ({
+  id: 'req1',
+  device_id: 'dm',
+  device_name: 'Claude',
+  action: 'start',
+  mode: 'edit',
+  project_name: 'app',
+  space_name: null,
+  local_space: null,
+  text: 'Fix the login bug',
+  expires_at_ms: 1_700_000_300_000,
   ...over,
 });

@@ -84,12 +84,35 @@ pub(crate) fn pin_name(name: &str) -> String {
 }
 
 /// A pinned device (`fleet.trusted_devices`): the key the user compared
-/// when trust was given here, and its name as `pin_name` left it.
+/// when trust was given here, its name as `pin_name` left it, and its kind
+/// as listed then.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct TrustedDevice {
     pub device_id: String,
     pub public_key: String,
     pub name: String,
+    /// `kind_str` of the device when it was pinned (`None`: pinned before
+    /// kinds were kept). Kept so a cloud listing the same key under another
+    /// kind later can't lift the cap on an `mcp` one (`fleet_origin_mcp`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+}
+
+/// A device kind as the UI and the pins name it.
+pub(crate) fn kind_str(k: DeviceKind) -> &'static str {
+    match k {
+        DeviceKind::Desktop => "desktop",
+        DeviceKind::Daemon => "daemon",
+        DeviceKind::Mobile => "mobile",
+        DeviceKind::Web => "web",
+        DeviceKind::Mcp => "mcp",
+    }
+}
+
+/// Whether a device of kind `k` may follow this device's spaces
+/// (`fleet_delegate`): a phone or the web app, nothing else.
+pub(crate) fn follows(k: DeviceKind) -> bool {
+    matches!(k, DeviceKind::Mobile | DeviceKind::Web)
 }
 
 fn default_max_mode() -> FleetMode {
@@ -242,6 +265,15 @@ pub(crate) struct Hosted {
 pub(crate) struct Claimed {
     pub req: RemoteRequest,
     pub key: String,
+    /// From an `mcp` device, and it edits or runs: a person here says yes
+    /// before it runs (`fleet_confirm_wait`).
+    pub confirm: bool,
+}
+
+/// A request waiting for a person here (`FleetMem::confirms`).
+pub(crate) struct PendingConfirm {
+    pub view: theodore_contract::FleetConfirm,
+    pub tx: Option<oneshot::Sender<bool>>,
 }
 
 /// A space on another device, started from here (or by an agent here).
@@ -288,6 +320,9 @@ pub(crate) struct FleetMem {
     pub seen: HashMap<String, (i64, Seen)>,
     /// Verified requests waiting for their claim result.
     pub claims: HashMap<String, Claimed>,
+    /// Claimed requests waiting for a person here, by `req_id`. Memory
+    /// only: a restart forgets them (their requests are out of time then).
+    pub confirms: HashMap<String, PendingConfirm>,
     /// Starts past the gate, not hosted yet, by remote id.
     pub reserved: HashMap<String, Reserved>,
     /// By remote id.
@@ -350,6 +385,8 @@ pub struct FleetState {
     pub(crate) changed: tokio::sync::Notify,
     /// Enabled and connected: the agent's fleet tools are listed.
     pub(crate) tools_on: AtomicBool,
+    /// `theodore daemon`: nobody sits at this device (`DeviceKind::Daemon`).
+    daemon: AtomicBool,
     next_link: AtomicU64,
 }
 
@@ -364,6 +401,22 @@ struct Wanted {
 impl Core {
     pub(crate) fn fleet(&self) -> std::sync::MutexGuard<'_, FleetMem> {
         self.0.fleet.mem.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    /// Runs this core as `theodore daemon` (`DeviceKind::Daemon`): nobody
+    /// sits here, so a request that needs a person's yes is refused
+    /// outright (`fleet.denied`). Set before the fleet connects.
+    pub fn set_fleet_daemon(&self, daemon: bool) {
+        self.0.fleet.daemon.store(daemon, Ordering::SeqCst);
+    }
+
+    /// What this device is to the fleet.
+    pub(crate) fn fleet_kind(&self) -> DeviceKind {
+        if self.0.fleet.daemon.load(Ordering::SeqCst) {
+            DeviceKind::Daemon
+        } else {
+            DeviceKind::Desktop
+        }
     }
 
     // ── settings ────────────────────────────────────────────────────────
@@ -481,7 +534,7 @@ impl Core {
             } else {
                 DeviceOs::Linux
             },
-            kind: DeviceKind::Desktop,
+            kind: self.fleet_kind(),
             app_version: env!("CARGO_PKG_VERSION").to_string(),
             projects: if s.accept_remote {
                 self.fleet_projects().await
@@ -602,6 +655,7 @@ impl Core {
                     device_id: listed.device_id,
                     public_key: compared.to_string(),
                     name: pin_name(&listed.info.name),
+                    kind: Some(kind_str(listed.info.kind).to_string()),
                 })
             } else {
                 None
@@ -828,13 +882,7 @@ impl Core {
                     DeviceOs::Android => FleetOs::Android,
                     DeviceOs::Other => FleetOs::Other,
                 },
-                kind: match d.info.kind {
-                    DeviceKind::Desktop => "desktop".into(),
-                    DeviceKind::Daemon => "daemon".into(),
-                    DeviceKind::Mobile => "mobile".into(),
-                    DeviceKind::Web => "web".into(),
-                    DeviceKind::Mcp => "mcp".into(),
-                },
+                kind: kind_str(d.info.kind).into(),
                 online: d.online,
                 last_seen_ms: d.last_seen_ms,
                 projects: d
@@ -1252,10 +1300,10 @@ impl Core {
 }
 
 /// Whether this device should be sending its spaces' questions to `d`:
-/// asked for here, `d` is a client (phone, web app), and it's pinned with
+/// asked for here, `d` is a phone or the web app, and it's pinned with
 /// the key the cloud lists now.
 pub(crate) fn wants_delegate(s: &FleetSettings, d: &DeviceSummary) -> bool {
-    !d.info.kind.hosts()
+    follows(d.info.kind)
         && s.delegates.contains(&d.device_id)
         && s.trusted_devices
             .iter()

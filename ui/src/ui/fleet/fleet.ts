@@ -1,6 +1,7 @@
 /** Fleet UI rules with no React: which devices can take a space, which
  *  modes they allow, how answers go on the wire (docs/fleet.md). */
 import type {
+  FleetConfirm,
   FleetDevice,
   FleetQuestionItem,
   SpaceMode,
@@ -33,10 +34,24 @@ export function capMode(mode: SpaceMode, max: SpaceMode): SpaceMode {
   return modesUpTo(max).includes(mode) ? mode : max;
 }
 
-/** A phone or the web app (docs/mobile.md): a client only. It starts,
- *  follows and answers spaces on your computers, and never runs one. */
+/** A phone, the web app (docs/mobile.md) or Claude via the cloud: a
+ *  client only. It starts, steers and answers spaces on your computers, and
+ *  never runs one. */
 export const isClient = (d: Pick<FleetDevice, 'kind'>): boolean =>
+  d.kind === 'mobile' || d.kind === 'web' || d.kind === 'mcp';
+
+/** Claude via the cloud (MCP): its key is held by the Theodore cloud, so
+ *  an Edit or Run from it waits for your yes on the computer. */
+export const isCloudClaude = (d: Pick<FleetDevice, 'kind'>): boolean =>
+  d.kind === 'mcp';
+
+/** A phone or the web app: what may follow this computer's spaces. */
+export const canFollow = (d: Pick<FleetDevice, 'kind'>): boolean =>
   d.kind === 'mobile' || d.kind === 'web';
+
+/** The one-line warning shown wherever Claude via the cloud is trusted. */
+export const CLOUD_CLAUDE_WARNING =
+  'Its key is held by the Theodore cloud, not by a device of yours. It can ask and plan here; an Edit or Run from it waits for your yes on this computer.';
 
 const OS_LABEL: Partial<Record<FleetDevice['os'], string>> = {
   macos: 'macOS',
@@ -44,10 +59,12 @@ const OS_LABEL: Partial<Record<FleetDevice['os'], string>> = {
   windows: 'Windows',
 };
 
-/** What a device is, for people: "Phone", "Web app", else its OS. */
+/** What a device is, for people: "Phone", "Web app", "Claude via cloud
+ *  (MCP)", else its OS. */
 export function kindLabel(d: Pick<FleetDevice, 'kind' | 'os'>): string {
   if (d.kind === 'mobile') return 'Phone';
   if (d.kind === 'web') return 'Web app';
+  if (d.kind === 'mcp') return 'Claude via cloud (MCP)';
   const os = OS_LABEL[d.os] ?? 'Computer';
   return d.kind === 'daemon' ? `${os} server` : os;
 }
@@ -126,4 +143,20 @@ export function toWireAnswers(drafts: readonly Draft[]): string[][] {
     const other = d.other.trim();
     return other ? [...d.selected, other] : [...d.selected];
   });
+}
+
+/** What a request waiting for your yes would do, after "Claude via cloud
+ *  wants to": "start an Edit space in app", "send to Fix login in Run",
+ *  "approve the plan in Fix login (Edit)". */
+export function confirmAction(c: FleetConfirm): string {
+  const mode = MODE_LABEL[c.mode];
+  const space = c.space_name ?? 'a space';
+  switch (c.action) {
+    case 'start':
+      return `start ${/^[AEIOU]/.test(mode) ? 'an' : 'a'} ${mode} space in ${c.project_name ?? 'a project'}`;
+    case 'approve_plan':
+      return `approve the plan in ${space} (${mode})`;
+    case 'send':
+      return `send to ${space} in ${mode}`;
+  }
 }

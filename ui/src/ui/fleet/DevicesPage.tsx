@@ -14,7 +14,7 @@ import {
   ToggleButtonGroup,
   Typography,
 } from '@heroui/react';
-import { Display, Globe, Server, Smartphone } from '@gravity-ui/icons';
+import { Cloud, Display, Globe, Server, Smartphone } from '@gravity-ui/icons';
 import { observer } from 'mobx-react-lite';
 import type { FleetDevice, SpaceMode } from '../../gen/contract';
 import { useRootStore, useUi } from '../../stores/context';
@@ -22,7 +22,10 @@ import {
   MODE_HINT,
   MODE_LABEL,
   MODE_ORDER,
+  CLOUD_CLAUDE_WARNING,
+  canFollow,
   isClient,
+  isCloudClaude,
   kindLabel,
   lastSeenLabel,
   startableDevices,
@@ -186,16 +189,18 @@ const ThisDevice = observer(function ThisDevice() {
   );
 });
 
-/** A phone, a browser, a server or a computer. */
+/** A phone, a browser, Claude via the cloud, a server or a computer. */
 function KindIcon({ device }: { device: FleetDevice }) {
   const Icon =
     device.kind === 'mobile'
       ? Smartphone
       : device.kind === 'web'
         ? Globe
-        : device.kind === 'daemon'
-          ? Server
-          : Display;
+        : device.kind === 'mcp'
+          ? Cloud
+          : device.kind === 'daemon'
+            ? Server
+            : Display;
   return (
     <Icon
       aria-hidden
@@ -257,6 +262,9 @@ const DelegateRow = observer(function DelegateRow({
 
 /** What a device does for the fleet, in a few words. */
 function roleLabel(device: FleetDevice): string {
+  if (isCloudClaude(device)) {
+    return 'asks and plans; Edit and Run wait for your yes';
+  }
   if (isClient(device)) return 'starts and answers spaces, runs none';
   return device.accepts_remote
     ? `runs spaces up to ${MODE_LABEL[device.max_mode]}`
@@ -308,6 +316,14 @@ const DeviceRow = observer(function DeviceRow({
           <span className="text-xs text-muted">
             <Fingerprint value={device.fingerprint} />
           </span>
+          {isCloudClaude(device) && !device.this_device && (
+            <span
+              role="note"
+              className="fleet-mcp-warning text-xs text-warning"
+            >
+              {CLOUD_CLAUDE_WARNING}
+            </span>
+          )}
         </div>
         {!device.this_device && (
           <div className="flex shrink-0 gap-1">
@@ -349,7 +365,7 @@ const DeviceRow = observer(function DeviceRow({
           </div>
         )}
       </div>
-      {!device.this_device && isClient(device) && device.trusted && (
+      {!device.this_device && canFollow(device) && device.trusted && (
         <DelegateRow device={device} />
       )}
       {!device.this_device && device.online && (
@@ -367,6 +383,7 @@ const DeviceRow = observer(function DeviceRow({
           name={device.name}
           fingerprint={device.fingerprint}
           publicKey={device.public_key}
+          kind={device.kind}
           onCancel={() => setConfirm(null)}
           onTrusted={() => setConfirm(null)}
         />
