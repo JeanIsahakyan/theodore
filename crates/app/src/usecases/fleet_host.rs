@@ -47,9 +47,10 @@ use tokio::sync::{broadcast, mpsc};
 use crate::core::Core;
 use crate::error::AppError;
 use crate::usecases::fleet::{
-    Claimed, FleetSettings, Hosted, Reserved, Seen, fleet_mode, mode_str, space_mode,
+    Claimed, FleetSettings, Hosted, Reserved, Seen, fleet_mode, kind_str, mode_str, space_mode,
 };
 use crate::usecases::fleet_agents::{agent_of, check_pick};
+use crate::usecases::fleet_confirm::needs_person;
 use crate::usecases::fleet_mirror::Mirror;
 use crate::usecases::fleet_origin::{line_of, truncate};
 use crate::usecases::spaces::space_chat_key;
@@ -303,7 +304,7 @@ impl Core {
         self.fleet_send_reply(req_id, origin, outcome).await;
     }
 
-    fn fleet_hosted_local(&self, remote: &str) -> Option<String> {
+    pub(super) fn fleet_hosted_local(&self, remote: &str) -> Option<String> {
         self.fleet()
             .hosted
             .get(remote)
@@ -386,6 +387,10 @@ impl Core {
                         .as_ref()
                         .map(|d| d.public_key.clone())
                         .unwrap_or_default(),
+                    kind: listed
+                        .as_ref()
+                        .map(|d| kind_str(d.info.kind).to_string())
+                        .unwrap_or_default(),
                 },
             });
             // Static words: nothing read before `open` goes into a reply
@@ -445,9 +450,20 @@ impl Core {
                 .await;
             return Err(refusal);
         }
+        // Claude via the cloud (its key is the cloud's): an edit or run
+        // waits for a person here, and a daemon has nobody to ask.
+        let confirm = self.fleet_origin_mcp(pinned) && needs_person(&req.op);
+        if confirm && let Err(refusal) = self.fleet_confirm_gate() {
+            self.fleet().release(req.op.space(), &req.req_id);
+            let _ = self
+                .fleet_mark_seen(&req.req_id, issued_at, Seen::Done)
+                .await;
+            return Err(refusal);
+        }
         Ok(Claimed {
             req,
             key: pinned.public_key.clone(),
+            confirm,
         })
     }
 
@@ -653,6 +669,15 @@ impl Core {
                     codes::INTERNAL,
                     "this device couldn't record the request, so it didn't run it",
                 );
+                core.fleet_reply(c.req, Err(refusal)).await;
+                return;
+            }
+            // A person's yes first, when it needs one; waits in this task
+            // only, never in front of other requests.
+            if c.confirm
+                && let Err(refusal) = core.fleet_confirm_wait(&c).await
+            {
+                core.fleet().release(c.req.op.space(), &c.req.req_id);
                 core.fleet_reply(c.req, Err(refusal)).await;
                 return;
             }

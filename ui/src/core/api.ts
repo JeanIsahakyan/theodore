@@ -30,6 +30,8 @@ import type {
   FileRequest,
   FindSymbolRequest,
   FleetAnswerRequest,
+  FleetConfirm,
+  FleetConfirmAnswer,
   FleetPresenceRequest,
   FleetRemoteSpace,
   FleetSettingsRequest,
@@ -503,6 +505,12 @@ export const api = {
   fleetStartSpace: (req: FleetStartRequest) =>
     call<FleetRemoteSpace>('fleet_start_space', { req }),
   fleetAnswer: (req: FleetAnswerRequest) => call<null>('fleet_answer', { req }),
+  /** Requests from Claude via the cloud waiting for your yes here: quiet,
+   *  with no fleet there are none. */
+  fleetConfirms: () => call<FleetConfirm[]>('fleet_confirms', undefined, true),
+  /** Allow or Deny one of them. */
+  fleetConfirm: (req: FleetConfirmAnswer) =>
+    call<null>('fleet_confirm', { req }),
   fleetSpaces: () => call<FleetRemoteSpace[]>('fleet_spaces', undefined, true),
   /** Where you are, for routing questions: never toasted. */
   fleetPresence: (req: FleetPresenceRequest): Promise<null> =>

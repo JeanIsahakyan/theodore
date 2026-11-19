@@ -607,6 +607,10 @@ pub mod codes {
     pub const OFFLINE: &str = "fleet.offline";
     pub const BUSY: &str = "fleet.busy";
     pub const INTERNAL: &str = "fleet.internal";
+    /// A request from a device whose key the cloud holds (`DeviceKind::Mcp`)
+    /// that needs a person on the target: denied there, not answered within
+    /// the request window, or refused outright by a daemon (nobody there).
+    pub const DENIED: &str = "fleet.denied";
     // the cloud's own
     pub const UNAUTHORIZED: &str = "fleet.unauthorized";
     pub const NO_ORG: &str = "fleet.no_org";
@@ -631,6 +635,40 @@ pub mod codes {
     // the device adapter's own
     pub const BAD_URL: &str = "fleet.bad_url";
     pub const TLS: &str = "fleet.tls";
+
+    /// Every code by its name here, for the generated TS (`FLEET_CODES`).
+    pub const ALL: &[(&str, &str)] = &[
+        ("REMOTE_OFF", REMOTE_OFF),
+        ("UNTRUSTED_DEVICE", UNTRUSTED_DEVICE),
+        ("BAD_SIGNATURE", BAD_SIGNATURE),
+        ("STALE_REQUEST", STALE_REQUEST),
+        ("MODE_NOT_ALLOWED", MODE_NOT_ALLOWED),
+        ("UNKNOWN_PROJECT", UNKNOWN_PROJECT),
+        ("UNKNOWN_SPACE", UNKNOWN_SPACE),
+        ("DEPTH", DEPTH),
+        ("INVALID", INVALID),
+        ("AGENT_UNAVAILABLE", AGENT_UNAVAILABLE),
+        ("OFFLINE", OFFLINE),
+        ("BUSY", BUSY),
+        ("INTERNAL", INTERNAL),
+        ("DENIED", DENIED),
+        ("UNAUTHORIZED", UNAUTHORIZED),
+        ("NO_ORG", NO_ORG),
+        ("VERSION", VERSION),
+        ("KEY_MISMATCH", KEY_MISMATCH),
+        ("TOO_LARGE", TOO_LARGE),
+        ("RATE_LIMITED", RATE_LIMITED),
+        ("NOT_YOURS", NOT_YOURS),
+        ("BAD_MESSAGE", BAD_MESSAGE),
+        ("TOO_MANY_DEVICES", TOO_MANY_DEVICES),
+        ("REMOVED", REMOVED),
+        ("TOO_MANY_SPACES", TOO_MANY_SPACES),
+        ("TOO_MANY_CONNECTIONS", TOO_MANY_CONNECTIONS),
+        ("UPGRADE_REQUIRED", UPGRADE_REQUIRED),
+        ("UNAVAILABLE", UNAVAILABLE),
+        ("BAD_URL", BAD_URL),
+        ("TLS", TLS),
+    ];
 }
 
 // ── space events ────────────────────────────────────────────────────────────

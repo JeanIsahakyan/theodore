@@ -31,7 +31,7 @@ import { SymbolImage, type SymbolName } from '../symbol-image';
 
 const android = process.env.EXPO_OS === 'android';
 
-/** A device kind's symbol (desktop | daemon | mobile | web). */
+/** A device kind's symbol (desktop | daemon | mobile | web | mcp). */
 export function kindSymbol(kind: string): SymbolName {
   switch (kind) {
     case 'daemon':
@@ -39,6 +39,7 @@ export function kindSymbol(kind: string): SymbolName {
     case 'mobile':
       return 'phone';
     case 'web':
+    case 'mcp':
       return 'globe';
     default:
       return 'computer';

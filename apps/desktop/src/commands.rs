@@ -1275,6 +1275,25 @@ pub async fn fleet_presence(
     op.run(async move { core.fleet_presence(req).await }).await
 }
 
+#[tauri::command]
+#[specta::specta]
+pub async fn fleet_confirms(
+    op: crate::op::Op,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<Vec<theodore_contract::FleetConfirm>, CommandError> {
+    op.run(async move { core.fleet_confirms().await }).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn fleet_confirm(
+    op: crate::op::Op,
+    req: theodore_contract::FleetConfirmAnswer,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<(), CommandError> {
+    op.run(async move { core.fleet_confirm(req).await }).await
+}
+
 /// Brings the main window forward: the browser sign-in finishes in another
 /// app, and the user should land back in Theodore without hunting for it.
 #[tauri::command]

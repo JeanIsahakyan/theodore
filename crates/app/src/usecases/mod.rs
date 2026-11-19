@@ -8,6 +8,7 @@ pub mod config_editor;
 pub mod file_preview;
 pub mod fleet;
 pub(crate) mod fleet_agents;
+mod fleet_confirm;
 mod fleet_delegate;
 mod fleet_follow;
 pub(crate) mod fleet_host;

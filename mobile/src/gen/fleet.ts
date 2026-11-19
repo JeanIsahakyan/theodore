@@ -351,3 +351,37 @@ export type StartedSpace = {
 };
 
 export type TurnOutcome = "done" | "stopped" | "failed";
+
+/** Refusal codes (docs/fleet.md), by their Rust name. */
+export const FLEET_CODES = {
+	REMOTE_OFF: "fleet.remote_off",
+	UNTRUSTED_DEVICE: "fleet.untrusted_device",
+	BAD_SIGNATURE: "fleet.bad_signature",
+	STALE_REQUEST: "fleet.stale_request",
+	MODE_NOT_ALLOWED: "fleet.mode_not_allowed",
+	UNKNOWN_PROJECT: "fleet.unknown_project",
+	UNKNOWN_SPACE: "fleet.unknown_space",
+	DEPTH: "fleet.depth",
+	INVALID: "fleet.invalid",
+	AGENT_UNAVAILABLE: "fleet.agent_unavailable",
+	OFFLINE: "fleet.offline",
+	BUSY: "fleet.busy",
+	INTERNAL: "fleet.internal",
+	DENIED: "fleet.denied",
+	UNAUTHORIZED: "fleet.unauthorized",
+	NO_ORG: "fleet.no_org",
+	VERSION: "fleet.version",
+	KEY_MISMATCH: "fleet.key_mismatch",
+	TOO_LARGE: "fleet.too_large",
+	RATE_LIMITED: "fleet.rate_limited",
+	NOT_YOURS: "fleet.not_yours",
+	BAD_MESSAGE: "fleet.bad_message",
+	TOO_MANY_DEVICES: "fleet.too_many_devices",
+	REMOVED: "fleet.removed",
+	TOO_MANY_SPACES: "fleet.too_many_spaces",
+	TOO_MANY_CONNECTIONS: "fleet.too_many_connections",
+	UPGRADE_REQUIRED: "fleet.upgrade_required",
+	UNAVAILABLE: "fleet.unavailable",
+	BAD_URL: "fleet.bad_url",
+	TLS: "fleet.tls",
+} as const;

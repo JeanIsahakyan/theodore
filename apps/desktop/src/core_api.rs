@@ -722,6 +722,17 @@ pub trait CoreApi: Send + Sync {
     ) -> Result<(), CommandError> {
         Err(not_ready())
     }
+    /// Requests from Claude via the cloud waiting for Allow / Deny here.
+    async fn fleet_confirms(&self) -> Result<Vec<theodore_contract::FleetConfirm>, CommandError> {
+        Err(not_ready())
+    }
+    /// Allow or Deny a waiting request.
+    async fn fleet_confirm(
+        &self,
+        _req: theodore_contract::FleetConfirmAnswer,
+    ) -> Result<(), CommandError> {
+        Err(not_ready())
+    }
 }
 
 fn not_sandbox() -> CommandError {
