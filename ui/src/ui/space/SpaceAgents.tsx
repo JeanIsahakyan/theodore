@@ -1,14 +1,17 @@
 /**
- * What a space has set going (docs/spaces.md "Seeing sub-spaces and agents"):
- * above the composer, a compact line that opens to the subagents of the
- * current or last turn and the sub-spaces its agent started. The same rows
- * make up the Agents view (`AgentsPage`).
+ * Everything a space set going, in one strip above the composer
+ * (docs/spaces.md "Seeing sub-spaces and agents", "Background tasks"): the
+ * subagents of the current or last turn, its background tasks, and the
+ * sub-spaces its agent started. Each thing is one row: a background subagent
+ * of that turn is its turn row, with its task's status and Stop.
  *
  * ```text
- * ◌ 1 agent running · 2 sub-spaces, 1 running ▾
+ * ◌ 2 agents running · 1 sub-space · 1 command running ▾
  *   This turn
- *   ◌ Explore the auth flow      sonnet  running   32s   → its timeline row
- *   ⚙ Review the tests           haiku   done    1m 4s
+ *   ◌ Explore the auth flow   Sonnet 5  running in background  32s  [Stop] → its row
+ *   ⚙ Review the tests        Haiku 5   done                  1m 4s
+ *   Background
+ *   ⌘ pnpm dev                                                 4m 2s  [Stop]
  *   Sub-spaces
  *   ◌ Fix the flaky test   ?   claude · Edit · 3 turns  → opens it
  * ```
@@ -22,20 +25,25 @@ import {
   Pencil,
 } from '@gravity-ui/icons';
 import { observer } from 'mobx-react-lite';
-import type { Space, ToolPayload } from '../../gen/contract';
+import type { AgentModel, Space, ToolPayload } from '../../gen/contract';
 import { api } from '../../core/api';
 import { useRootStore, useUi } from '../../stores/context';
+import { modelName } from '../agentModel';
 import { SpaceMark } from '../AgentMark';
 import { Spinner } from '../bits';
 import { pendingReveal, revealCall } from '../rowState';
 import { formatDuration } from '../turnRows';
-import { useNow } from './BackgroundTasks';
+import { useAgentModels } from '../useAgentModels';
+import { BackgroundTaskRow, StopTask, useNow } from './BackgroundTasks';
+import { runningTasks, shownTasks } from './backgroundTaskRows';
 import {
-  agentsHeadline,
-  SUBAGENT_STATUS,
+  backgroundRows,
+  stripHeadline,
   subagentElapsed,
   subagentLive,
+  subagentStatusLabel,
   subagentsOf,
+  subagentTrouble,
   turnSource,
   type SubagentView,
 } from './agents';
@@ -122,27 +130,37 @@ const LINE =
 
 export function SubagentLine({
   agent,
+  space,
   run,
   now,
-  fetchModel,
+  remote,
+  models,
   onOpen,
 }: {
   agent: SubagentView;
+  space: string;
   run: string | null;
   now: number;
-  /** A remote space's payloads are its host's: none read here. */
-  fetchModel: boolean;
+  /** A remote space's payloads and tasks are its host's: no model read
+   *  here, no Stop. */
+  remote: boolean;
+  /** The space's agent's catalog: what names a model id. */
+  models: readonly AgentModel[] | undefined;
   onOpen: () => void;
 }) {
   const live = subagentLive(agent);
-  const model = useSubagentModel(fetchModel ? run : null, agent.call, live);
+  const model = useSubagentModel(remote ? null : run, agent.call, live);
   const elapsed = subagentElapsed(agent, now);
+  const task = agent.task;
   return (
-    <li data-status={agent.status} className="space-subagent min-w-0">
+    <li
+      data-status={agent.status}
+      className="space-subagent flex min-w-0 items-center gap-2"
+    >
       <button
         type="button"
         className={LINE}
-        title={agent.description}
+        title={task?.note ?? agent.description}
         onClick={onOpen}
       >
         <span className="grid size-3.5 shrink-0 place-items-center text-muted">
@@ -156,14 +174,17 @@ export function SubagentLine({
         </span>
         <span className="min-w-0 flex-1 truncate">{agent.description}</span>
         {model && (
-          <span className="space-subagent-model max-w-[30%] shrink-0 truncate font-mono text-[11px] text-muted">
-            {model}
+          <span
+            className="space-subagent-model max-w-[30%] shrink-0 truncate text-muted"
+            title={model}
+          >
+            {modelName(models, model)}
           </span>
         )}
         <span
-          className={`shrink-0 ${agent.status === 'failed' ? 'text-danger' : 'text-muted'}`}
+          className={`shrink-0 ${subagentTrouble(agent) ? 'text-danger' : 'text-muted'}`}
         >
-          {SUBAGENT_STATUS[agent.status]}
+          {subagentStatusLabel(agent)}
         </span>
         {elapsed != null && (
           <span className="shrink-0 font-mono text-[11px] tabular-nums text-muted">
@@ -171,6 +192,9 @@ export function SubagentLine({
           </span>
         )}
       </button>
+      {task?.status === 'running' && !remote && (
+        <StopTask space={space} task={task} />
+      )}
     </li>
   );
 }
@@ -232,10 +256,14 @@ export const SubSpaceLine = observer(function SubSpaceLine({
   );
 });
 
-// ── the panel above the composer ────────────────────────────────────────────
+// ── the strip above the composer ────────────────────────────────────────────
 
 /** Open or closed, per space, for as long as the window lives. */
 const opened = new Map<string, boolean>();
+
+function Section({ title }: { title: string }) {
+  return <span className="px-1 pt-0.5 text-[11px] text-muted">{title}</span>;
+}
 
 export const SpaceAgents = observer(function SpaceAgents({
   space,
@@ -252,6 +280,7 @@ export const SpaceAgents = observer(function SpaceAgents({
     opened.set(space.id, v);
     setOpenState(v);
   };
+  const remote = !!remoteOf(space);
   const messages = store.models.chatMessages.byPr(spaceChatKey(space.id));
   const source = turnSource(
     space,
@@ -269,8 +298,15 @@ export const SpaceAgents = observer(function SpaceAgents({
     : [];
   const subs = subSpacesOf(space.id, store.models.spaces.all());
   const busy =
-    agents.some(subagentLive) || subs.some((s) => s.status === 'running');
-  const now = useNow(open && busy);
+    agents.some(subagentLive) ||
+    subs.some((s) => s.status === 'running') ||
+    runningTasks(space).length > 0;
+  // Tasks tick even closed: an ended one goes a few seconds after it ends.
+  const now = useNow(
+    (space.background_tasks?.length ?? 0) > 0 || (open && busy),
+  );
+  const background = backgroundRows(shownTasks(space, now), agents);
+  const catalog = useAgentModels(agents.length && !remote ? [space.agent] : []);
   // Opened from the Agents view on one of these: its turn comes into view.
   useEffect(() => {
     const r = pendingReveal();
@@ -281,7 +317,7 @@ export const SpaceAgents = observer(function SpaceAgents({
     );
     return () => cancelAnimationFrame(frame);
   }, [space.id, log]);
-  if (!agents.length && !subs.length) return null;
+  if (!agents.length && !background.length && !subs.length) return null;
   const reveal = (a: SubagentView) => {
     const turn = source?.turn ?? null;
     if (turn) log?.current?.scrollToKey(turn, 'start');
@@ -295,6 +331,7 @@ export const SpaceAgents = observer(function SpaceAgents({
       <button
         type="button"
         aria-expanded={open}
+        data-busy={busy}
         className="flex min-w-0 items-center gap-2 text-left text-muted"
         onClick={() => setOpen(!open)}
       >
@@ -305,7 +342,9 @@ export const SpaceAgents = observer(function SpaceAgents({
         ) : (
           <Cpu className="size-3 shrink-0" />
         )}
-        <span className="min-w-0 truncate">{agentsHeadline(agents, subs)}</span>
+        <span className="min-w-0 truncate">
+          {stripHeadline(agents, background, subs)}
+        </span>
         <ChevronDown
           className={`ml-auto size-3 shrink-0 transition-transform ${open ? 'rotate-180' : ''}`}
         />
@@ -314,18 +353,34 @@ export const SpaceAgents = observer(function SpaceAgents({
         <div className="flex flex-col gap-1 pb-0.5">
           {agents.length > 0 && (
             <>
-              <span className="px-1 pt-0.5 text-[11px] text-muted">
-                {source?.running ? 'This turn' : 'Last turn'}
-              </span>
+              <Section title={source?.running ? 'This turn' : 'Last turn'} />
               <ul className="flex flex-col">
                 {agents.map((a) => (
                   <SubagentLine
                     key={a.call}
                     agent={a}
+                    space={space.id}
                     run={run}
                     now={now}
-                    fetchModel={!remoteOf(space)}
+                    remote={remote}
+                    models={catalog[space.agent]}
                     onOpen={() => reveal(a)}
+                  />
+                ))}
+              </ul>
+            </>
+          )}
+          {background.length > 0 && (
+            <>
+              <Section title="Background" />
+              <ul className="flex flex-col">
+                {background.map((t) => (
+                  <BackgroundTaskRow
+                    key={t.id}
+                    space={space.id}
+                    task={t}
+                    now={now}
+                    canStop={!remote}
                   />
                 ))}
               </ul>
@@ -333,9 +388,7 @@ export const SpaceAgents = observer(function SpaceAgents({
           )}
           {subs.length > 0 && (
             <>
-              <span className="px-1 pt-0.5 text-[11px] text-muted">
-                Sub-spaces
-              </span>
+              <Section title="Sub-spaces" />
               <ul className="flex flex-col">
                 {subs.map((s) => (
                   <SubSpaceLine

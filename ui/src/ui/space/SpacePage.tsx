@@ -98,7 +98,6 @@ import {
 import { setTerminalOpenFor, terminalOpenFor } from './terminalOpen';
 import { runControl, settingUp } from './commands';
 import { GlobalConfigSection, SpaceSetupAssistHint } from './ConfigSection';
-import { BackgroundTasks } from './BackgroundTasks';
 import { ParentLink, SpaceAgents } from './SpaceAgents';
 import { SpaceProgress } from './SpaceProgress';
 import { BaseMoved, UpdatingBanner } from './BaseUpdate';
@@ -1323,7 +1322,6 @@ const SpaceComposer = observer(function SpaceComposer({
           </span>
         )}
         <SpaceProgress space={space} />
-        <BackgroundTasks space={space} />
         <SpaceAgents space={space} log={log} />
         <Composer
           inputRef={input}

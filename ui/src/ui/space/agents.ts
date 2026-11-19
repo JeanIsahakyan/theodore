@@ -1,11 +1,14 @@
 /**
  * What a space has set going (docs/spaces.md "Seeing sub-spaces and agents"):
- * the subagents of its current or last turn. Pure: the panel only draws these.
+ * the subagents of its current or last turn, its background tasks, and one
+ * line for them all. Pure: the strip above the composer only draws these.
  *
  * ```text
  * turn running ──▶ its live steps (runSteps)        subagents, running ones spin
  * turn ended   ──▶ the last reply's stored steps    subagents, done / failed
  *                  a background one still going ──▶ running (its task says so)
+ * background tasks ──▶ commands, and subagents not in that turn's list
+ *                      (one in it is its row there, with the task's status)
  * ```
  */
 import type {
@@ -15,6 +18,7 @@ import type {
   TurnStep,
 } from '../../gen/contract';
 import { toolRow } from '../toolSummary';
+import { endedLabel } from './backgroundTaskRows';
 import { pairTurns } from './chatTurns';
 import { splitQueue } from './queue';
 
@@ -30,6 +34,9 @@ export interface SubagentView {
    *  its background task). */
   startedAt: number | null;
   endedAt: number | null;
+  /** Its background task, when it runs (or ran) in the background: the
+   *  row's status word and Stop are the task's. */
+  task: BackgroundTask | null;
 }
 
 /** When a call started and ended, as this window saw it. */
@@ -75,6 +82,7 @@ export function subagentsOf(
       status,
       startedAt: task?.started_at ?? seen?.start ?? null,
       endedAt: live ? null : (task?.ended_at ?? seen?.end ?? null),
+      task: task ?? null,
     });
   }
   return out;
@@ -91,6 +99,21 @@ export const SUBAGENT_STATUS: Record<SubagentStatus, string> = {
   failed: 'failed',
 };
 
+/** The word a subagent row ends on: its background task's once that ended
+ *  (`stopped`, `cut off`, `lost`), else where its call stands. */
+export function subagentStatusLabel(
+  a: Pick<SubagentView, 'status' | 'task'>,
+): string {
+  if (a.task && a.task.status !== 'running' && a.status !== 'failed') {
+    return endedLabel(a.task.status);
+  }
+  return SUBAGENT_STATUS[a.status];
+}
+
+/** A subagent row's word reads as trouble. */
+export const subagentTrouble = (a: Pick<SubagentView, 'status' | 'task'>) =>
+  a.status === 'failed' || a.task?.status === 'lost';
+
 /** How long it ran (or has run, at `now`); `null` when not known. */
 export function subagentElapsed(
   a: Pick<SubagentView, 'startedAt' | 'endedAt' | 'status'>,
@@ -101,8 +124,8 @@ export function subagentElapsed(
   return end == null ? null : Math.max(0, end - a.startedAt);
 }
 
-/** The turn the Agents panel reads: the running one's live steps, else the
- *  last reply that has any. `turn` is the chat row it's in (a key
+/** The turn the strip reads: the running one's live steps, else the last
+ *  reply that has any. `turn` is the chat row it's in (a key
  *  `VirtualChat.scrollToKey` takes). */
 export interface TurnSource {
   run: string | null;
@@ -166,21 +189,53 @@ function findReply(
   return null;
 }
 
-/** The panel's one line: "2 agents running · 3 sub-spaces, 1 running". */
-export function agentsHeadline(
+/** The strip's "Background" rows: the tasks shown, less the subagents
+ *  already listed as the turn's (each thing is one row). */
+export function backgroundRows(
+  shown: readonly BackgroundTask[],
+  agents: readonly Pick<SubagentView, 'call'>[],
+): BackgroundTask[] {
+  const listed = new Set(agents.map((a) => a.call));
+  return shown.filter(
+    (t) => t.kind !== 'subagent' || !t.call || !listed.has(t.call),
+  );
+}
+
+const plural = (n: number, one: string) => `${n} ${one}${n === 1 ? '' : 's'}`;
+
+/** The strip's one line, from its rows:
+ *  "2 agents running · 3 sub-spaces, 1 running · 1 command running". A
+ *  background subagent counts as an agent, a background command as a
+ *  command. */
+export function stripHeadline(
   agents: readonly Pick<SubagentView, 'status'>[],
+  background: readonly Pick<BackgroundTask, 'kind' | 'status'>[],
   subs: readonly Pick<Space, 'status'>[],
 ): string {
   const parts: string[] = [];
-  const live = agents.filter(subagentLive).length;
-  if (live > 0) parts.push(`${live} agent${live === 1 ? '' : 's'} running`);
-  else if (agents.length > 0) {
-    parts.push(`${agents.length} agent${agents.length === 1 ? '' : 's'}`);
-  }
+  const bgAgents = background.filter((t) => t.kind === 'subagent');
+  const total = agents.length + bgAgents.length;
+  const live =
+    agents.filter(subagentLive).length +
+    bgAgents.filter((t) => t.status === 'running').length;
+  if (live > 0) parts.push(`${plural(live, 'agent')} running`);
+  else if (total > 0) parts.push(plural(total, 'agent'));
   if (subs.length > 0) {
     const running = subs.filter((s) => s.status === 'running').length;
-    const n = `${subs.length} sub-space${subs.length === 1 ? '' : 's'}`;
+    const n = plural(subs.length, 'sub-space');
     parts.push(running > 0 ? `${n}, ${running} running` : n);
+  }
+  const commands = background.filter((t) => t.kind !== 'subagent');
+  const count = (status: BackgroundTask['status']) =>
+    commands.filter((t) => t.status === status).length;
+  const running = count('running');
+  const lost = count('lost');
+  const cut = count('cut');
+  if (running > 0) parts.push(`${plural(running, 'command')} running`);
+  else if (lost > 0) parts.push(`${plural(lost, 'command')} lost`);
+  else if (cut > 0) parts.push(`${plural(cut, 'command')} cut off`);
+  else if (commands.length > 0) {
+    parts.push(`${plural(commands.length, 'command')} ended`);
   }
   return parts.join(' · ');
 }

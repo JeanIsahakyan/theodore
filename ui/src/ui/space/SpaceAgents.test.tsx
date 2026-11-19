@@ -1,7 +1,13 @@
-/** The space page's Agents panel and "from <parent>" link, and a subagent's timeline row answering a reveal. */
+/** The strip above a space's composer (agents, background tasks, sub-spaces) and "from <parent>" link, and a subagent's timeline row answering a reveal. */
 import { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ChatMessage, Space, TurnStep } from '../../gen/contract';
+import type {
+  AgentModel,
+  BackgroundTask,
+  ChatMessage,
+  Space,
+  TurnStep,
+} from '../../gen/contract';
 import { setTransport } from '../../core/transport';
 import { RootStore } from '../../stores/RootStore';
 import { RootStoreProvider } from '../../stores/context';
@@ -9,6 +15,7 @@ import { FakeTransport } from '../../test/fakeTransport';
 import { click, mount, settle, type Mounted } from '../../test/dom';
 import { pendingReveal, revealCall } from '../rowState';
 import { TurnActivity } from '../TurnTimeline';
+import { resetAgentModels } from '../useAgentModels';
 import { ParentLink, SpaceAgents } from './SpaceAgents';
 import { spaceChatKey } from './spaces';
 
@@ -60,6 +67,32 @@ const msg = (id: string, over: Partial<ChatMessage>): ChatMessage => ({
   ...over,
 });
 
+const model = (id: string, label: string): AgentModel => ({
+  id,
+  label,
+  description: null,
+  efforts: [],
+  default_effort: null,
+  older: false,
+});
+const CATALOG = [
+  model('claude-opus-5-5', 'Opus 5.5'),
+  model('claude-sonnet-5', 'Sonnet 5'),
+];
+
+const task = (over: Partial<BackgroundTask>): BackgroundTask => ({
+  id: 't',
+  kind: 'subagent',
+  description: 'x',
+  started_at: Date.now() - 5000,
+  status: 'running',
+  ended_at: null,
+  note: null,
+  run: 'r1',
+  call: null,
+  ...over,
+});
+
 let m: Mounted | null = null;
 let store: RootStore;
 let transport: FakeTransport;
@@ -67,11 +100,18 @@ let transport: FakeTransport;
 beforeEach(() => {
   localStorage.clear();
   transport = new FakeTransport();
-  transport.onCall('tool_payload', (args) =>
-    args?.call === 'x1'
-      ? { input: { value: { model: 'sonnet' } }, result: null }
-      : null,
-  );
+  transport.onCall('tool_payload', (args) => {
+    // Asked for an alias; ran a listed model; ran one the catalog lacks.
+    if (args?.call === 'x1') {
+      return { input: { value: { model: 'sonnet' } }, result: null };
+    }
+    const ran = { x2: 'claude-opus-5-5', x3: 'claude-weird-1' }[
+      String(args?.call)
+    ];
+    return ran ? { input: null, result: { resolved_model: ran } } : null;
+  });
+  transport.onCall('agent_models', () => CATALOG);
+  resetAgentModels();
   setTransport(transport);
   store = new RootStore();
 });
@@ -93,7 +133,7 @@ async function openPanel() {
   if (toggle.getAttribute('aria-expanded') !== 'true') await click(toggle);
 }
 
-describe('the Agents panel', () => {
+describe('the strip', () => {
   it('shows nothing when the space started nothing', async () => {
     const a = space('a');
     put(a);
@@ -131,9 +171,9 @@ describe('the Agents panel', () => {
     const line = host.querySelector('.space-subagent')!;
     expect(line.textContent).toContain('Explore x1');
     expect(line.textContent).toContain('running');
-    // Its model, from the call's payload.
+    // Its model, from the call's payload, by the name the model chip uses.
     expect(line.querySelector('.space-subagent-model')?.textContent).toBe(
-      'sonnet',
+      'Sonnet 5',
     );
     const subs = [...host.querySelectorAll('.space-subspace')].map(
       (r) => r.textContent,
@@ -156,6 +196,64 @@ describe('the Agents panel', () => {
     expect(host.querySelector('.space-subagent')!.textContent).toContain(
       'done',
     );
+  });
+
+  it('lists each thing once: a background subagent of the turn is its row', async () => {
+    transport.onCall('space_stop_task', () => null);
+    const a = space('a', {
+      status: 'running',
+      run: 'r1',
+      background_tasks: [
+        task({ id: 't2', call: 'x2', description: 'Explore x2' }),
+        task({ id: 't3', kind: 'command', description: 'pnpm dev' }),
+        task({ id: 't4', call: 'old', description: 'Old research' }),
+      ],
+    });
+    put(a);
+    store.sync.pool.put('chat_message', 'm1', msg('m1', {}));
+    act(() => {
+      for (const step of [
+        agent('x2', { background: true }),
+        agent('x3', { ok: true }),
+      ]) {
+        store.ephemeral.handle({ type: 'run_step', run: 'r1', step });
+      }
+    });
+    await render(<SpaceAgents space={a} />);
+    const host = m!.host;
+    // x2 (its task) and t4 run; x3 is done; one command.
+    expect(host.textContent).toContain('2 agents running · 1 command running');
+    await openPanel();
+    await settle();
+    const turn = [...host.querySelectorAll('.space-subagent')];
+    expect(turn.map((r) => r.textContent?.includes('Explore x2'))).toEqual([
+      true,
+      false,
+    ]);
+    expect(turn[0]!.textContent).toContain('running in background');
+    expect(
+      [...host.querySelectorAll('.background-task')].map((r) => r.textContent),
+    ).toEqual([
+      expect.stringContaining('pnpm dev'),
+      expect.stringContaining('Old research'),
+    ]);
+    expect(host.textContent!.split('Explore x2')).toHaveLength(2);
+    expect(host.textContent).toContain('Background');
+    // Models by name; an id the catalog lacks as itself.
+    expect(
+      turn.map((r) => r.querySelector('.space-subagent-model')?.textContent),
+    ).toEqual(['Opus 5.5', 'claude-weird-1']);
+    expect(
+      turn[1]!.querySelector('.space-subagent-model')!.className,
+    ).not.toContain('font-mono');
+    // The turn row's Stop is its task's.
+    await click(turn[0]!.querySelector('.background-task-stop'));
+    await settle();
+    expect(
+      transport.calls
+        .filter((c) => c.cmd === 'space_stop_task')
+        .map((c) => c.args),
+    ).toEqual([{ space: 'a', task: 't2' }]);
   });
 
   it('a subagent asks for its timeline row; a sub-space opens', async () => {

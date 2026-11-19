@@ -1134,10 +1134,16 @@ status, ended_at, note, the turn and call it links to) is synced like the rest o
 the row, so it survives a UI reload; a restart turns running tasks `lost`. Ended
 rows are dropped when the next turn starts, or when more than 20 pile up.
 
-**The UI.** Above the composer: "2 running in background", opening to a list
-with an icon by kind, description, elapsed time, Stop, and a row's outcome for a
-few seconds after it ends (a cut or lost one stays until the next turn). Tool
-rows read `running in background` until their task ends, then the real output.
+**The UI.** Background tasks show in the one strip above the composer, with
+the turn's subagents and the sub-spaces (§ "Seeing sub-spaces and agents"). A
+command counts in its line (`1 command running`, else `lost`, `cut off`,
+`ended`) and is a row under "Background": an icon by kind, description,
+elapsed time, Stop, and its outcome for a few seconds after it ends (a cut or
+lost one stays until the next turn). A background subagent is one row too:
+under "This turn"/"Last turn" when that turn lists it, with the task's status
+and Stop; else under "Background". A remote space's tasks show without Stop.
+Tool rows read `running in background` until their task ends, then the real
+output.
 The sidebar's agent indicator counts turns only, not background tasks: a space
 waiting on a long build isn't "the agent working".
 
@@ -1776,19 +1782,33 @@ sidebar        Spaces
                  Old follow-up   from Old work      parent archived / elsewhere
 
 space page     header   Fix the flaky test   from Fix the login redirect  ─▶ parent
-               composer ◌ 1 agent running · 2 sub-spaces, 1 running ▾
-                          This turn   ◌ Explore auth   sonnet  running  32s  ─▶ its row
-                          Sub-spaces  ◌ Update docs  ?  claude · Edit · 3 turns ─▶ opens
+               composer ◌ 2 agents running · 2 sub-spaces, 1 running · 1 command running ▾
+                          This turn   ◌ Explore auth  Sonnet 5  running                32s          ─▶ its row
+                                      ◌ Review tests  Opus 5.5  running in background  1m   [Stop]  ─▶ its row
+                          Background  ⌘ pnpm dev                                       4m   [Stop]
+                          Sub-spaces  ◌ Update docs  ?  claude · Edit · 3 turns                     ─▶ opens
+```
+
+One strip, everything the space set going, each thing once:
+
+```
+turn's subagents ──────────────────────────▶ This turn / Last turn
+background tasks ─┬─ subagent in that list ─▶ (its row there: task status, Stop)
+                  ├─ other subagent ────────▶ Background
+                  └─ command ───────────────▶ Background
+sub-spaces ────────────────────────────────▶ Sub-spaces
 ```
 
 | Where | Rule |
 | --- | --- |
 | sidebar | a child goes under its parent when the parent is listed; else at the top with `from <parent>` (`from a removed space` when it's gone). A mirrored space's parent is its host's: not named. Loops never nest |
 | sidebar, collapsed | the count, a spinner while a hidden one runs, a dot while one waits for you; hide/show from the row's hover button or its right-click menu, kept per machine (`ui/space/collapsed.ts`) |
-| panel | the running turn's live steps, else the last reply with steps; top-level subagents only (a subagent's own stay in its row). Hidden with nothing to show |
-| a subagent's model | read from its call's payload once the panel shows it, quietly; none for a mirrored space |
+| strip | the running turn's live steps, else the last reply with steps; top-level subagents only (a subagent's own stay in its row); background tasks as in § "Background tasks"; sub-spaces. Hidden with nothing to show |
+| strip line | agents (background ones included), sub-spaces, commands; a spinner while any of them runs; open or closed per space for the window's life |
+| a subagent's model | read from its call's payload once the strip shows it, quietly; none for a mirrored space. Named as the model chip names it (`agent_models`: `claude-opus-5-5` → `Opus 5.5`, an alias as its newest), else the id as given |
 | a subagent's time | from when this window saw its call start and end (`EphemeralStore.stepTimes`), or its background task; a turn from before the window opened has none |
 | click a subagent | its turn's chat row comes into view, the fold holding it opens, the row glows (`revealCall`, `rowState.ts`) |
 
 Pure rules: `ui/space/subspaces.ts` (the tree), `ui/space/agents.ts` (subagents,
-the turn read).
+the turn read, de-duplication, the line), `ui/space/backgroundTaskRows.ts`
+(which tasks show).
