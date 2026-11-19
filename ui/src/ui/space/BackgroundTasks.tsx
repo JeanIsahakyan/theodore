@@ -20,7 +20,7 @@ import { endedLabel, headline, shownTasks } from './backgroundTaskRows';
 import { remoteOf } from './spaces';
 
 /** A running clock, while something on screen is timed or is about to go. */
-function useNow(active: boolean): number {
+export function useNow(active: boolean): number {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     if (!active) return;

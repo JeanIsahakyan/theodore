@@ -6,7 +6,9 @@ import {
   CircleExclamation,
   CircleFill,
   CircleXmark,
+  ChevronRight,
   CodePullRequest,
+  Cpus,
   Gear,
   LayoutSideContentLeft,
   ListCheck,
@@ -36,7 +38,7 @@ import { useRootStore, useUi } from '../stores/context';
 import { sameRoute, type Route, type UiStore } from '../stores/UiStore';
 import { api } from '../core/api';
 import { SpaceMark } from './AgentMark';
-import { Avatar, K } from './bits';
+import { Avatar, K, Spinner } from './bits';
 import { contextMenuHandler, type ContextMenuItem } from './ContextMenu';
 import { ListSearchBar } from './ListSearchBar';
 import { inInbox } from './List';
@@ -58,6 +60,14 @@ import {
   spacesIn,
   type SpaceGlyph,
 } from './space/spaces';
+import { runningSpaces } from './space/agents';
+import { collapsedSpaces, toggleSubSpaces } from './space/collapsed';
+import {
+  nestSpaces,
+  spaceRows,
+  subtreeLabel,
+  type SubtreeStats,
+} from './space/subspaces';
 
 interface NavItem {
   key: string;
@@ -79,6 +89,12 @@ interface NavItem {
    *  space page. */
   onArchive?: () => void;
   archiveDisabled?: boolean;
+  /** A sub-space's row: how many steps in under the space that started it. */
+  depth?: number;
+  /** A sub-space shown on its own: "from <parent>". */
+  from?: string | null;
+  /** A space with sub-spaces: their count, and the hide/show toggle. */
+  sub?: { stats: SubtreeStats; collapsed: boolean; onToggle: () => void };
 }
 
 /** Archive from the sidebar: the space page's own `archive`, which steps
@@ -177,6 +193,37 @@ function SpaceGlyphIcon({ g }: { g: Exclude<SpaceGlyph, 'running'> }) {
 /** `running` has no glyph: `SpaceMark` draws it. */
 const glyphIcon = (g: SpaceGlyph) =>
   g === 'running' ? null : <SpaceGlyphIcon g={g} />;
+
+/** A space with sub-spaces: how many, a spinner while one of them runs
+ *  (hidden or not), and which way the toggle points. */
+function SubCount({
+  stats,
+  collapsed,
+}: {
+  stats: SubtreeStats;
+  collapsed: boolean;
+}) {
+  return (
+    <span
+      className="space-subs inline-flex shrink-0 items-center gap-1 text-xs tabular-nums text-muted"
+      title={subtreeLabel(stats)}
+      aria-label={subtreeLabel(stats)}
+    >
+      {stats.running > 0 && collapsed && (
+        <span className="inline-flex size-3 items-center justify-center">
+          <Spinner />
+        </span>
+      )}
+      {stats.asking > 0 && collapsed && (
+        <span className="size-1.5 rounded-full bg-accent" aria-hidden="true" />
+      )}
+      {stats.total}
+      <ChevronRight
+        className={`size-3 transition-transform ${collapsed ? '' : 'rotate-90'}`}
+      />
+    </span>
+  );
+}
 
 function DeviceBadge({ label, title }: { label: string; title: string }) {
   return (
@@ -325,7 +372,21 @@ export const Sidebar = observer(function Sidebar() {
             id: 'spaces',
             title: 'Spaces',
             items: [
-              ...spaces.map((s): NavItem => {
+              {
+                key: routeKey({ name: 'agents' }),
+                icon: <Cpus />,
+                label: 'Agents',
+                n: runningSpaces(store.models.spaces.all()),
+                nTitle: 'Spaces with a turn running',
+                route: { name: 'agents' },
+              } satisfies NavItem,
+              // A sub-space sits under the space whose agent started it.
+              ...spaceRows(
+                nestSpaces(spaces),
+                collapsedSpaces,
+                store.models.spaces.all(),
+              ).map((row): NavItem => {
+                const s = row.space;
                 const g = spaceGlyph(s, spaceSeen.get(s.id));
                 // In review: `⎇ #n`, tinted by the PR's checks, unless a
                 // turn runs, failed or waits for you.
@@ -348,11 +409,34 @@ export const Sidebar = observer(function Sidebar() {
                   ),
                   label: withPrNumber(pr?.pr.number, spaceTitle(s)),
                   route: { name: 'space', id: s.id },
-                  contextMenu: () => spaceContextMenu(s, ui),
+                  contextMenu: () => [
+                    ...(row.stats
+                      ? [
+                          {
+                            id: 'toggle-subs',
+                            label: row.collapsed
+                              ? 'Show sub-spaces'
+                              : 'Hide sub-spaces',
+                            icon: <ChevronRight className="size-4" />,
+                            onAction: () => toggleSubSpaces(s.id),
+                          },
+                        ]
+                      : []),
+                    ...spaceContextMenu(s, ui),
+                  ],
                   pinned: s.pinned ?? false,
                   device: deviceBadge(s),
                   onArchive: () => archiveFromSidebar(ui, s),
                   archiveDisabled: s.status === 'running',
+                  depth: row.depth,
+                  from: row.from,
+                  sub: row.stats
+                    ? {
+                        stats: row.stats,
+                        collapsed: row.collapsed,
+                        onToggle: () => toggleSubSpaces(s.id),
+                      }
+                    : undefined,
                 };
               }),
               {
@@ -420,6 +504,12 @@ export const Sidebar = observer(function Sidebar() {
                 textValue={i.label}
                 aria-current={current?.key === i.key ? 'page' : undefined}
                 className={`nav group gap-3 px-3 text-sm ${current?.key === i.key ? 'bg-default font-medium' : ''}`}
+                data-depth={i.depth || undefined}
+                style={
+                  i.depth
+                    ? { paddingInlineStart: `${12 + i.depth * 16}px` }
+                    : undefined
+                }
               >
                 {/* `contents`: a right-click target with no layout of its
                     own, same trick as `PrRow`'s range wrapper. */}
@@ -444,6 +534,17 @@ export const Sidebar = observer(function Sidebar() {
                     />
                   )}
                   {i.device && <DeviceBadge {...i.device} />}
+                  {i.from && (
+                    <span
+                      className="space-from max-w-[45%] shrink-0 truncate text-xs text-muted"
+                      title={i.from}
+                    >
+                      {i.from}
+                    </span>
+                  )}
+                  {i.sub && (
+                    <SubCount stats={i.sub.stats} collapsed={i.sub.collapsed} />
+                  )}
                   {i.n !== undefined && i.n !== 0 && (
                     <span
                       className="shrink-0 text-xs tabular-nums text-muted"
@@ -461,6 +562,31 @@ export const Sidebar = observer(function Sidebar() {
                       className="space-archive absolute inset-y-0 end-0 flex items-center rounded-e-2xl bg-linear-to-l from-default from-70% to-transparent pe-1.5 ps-6 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 group-data-[focus-visible=true]:opacity-100"
                       onClick={(e) => e.stopPropagation()}
                     >
+                      {i.sub && (
+                        <Tooltip>
+                          <Button
+                            isIconOnly
+                            size="sm"
+                            variant="ghost"
+                            aria-label={
+                              i.sub.collapsed
+                                ? 'Show sub-spaces'
+                                : 'Hide sub-spaces'
+                            }
+                            aria-expanded={!i.sub.collapsed}
+                            className="space-subs-toggle size-6 min-w-6 rounded-xl text-muted"
+                            onPress={i.sub.onToggle}
+                          >
+                            <ChevronRight
+                              className={`size-3.5 transition-transform ${i.sub.collapsed ? '' : 'rotate-90'}`}
+                            />
+                          </Button>
+                          <Tooltip.Content>
+                            {i.sub.collapsed ? 'Show' : 'Hide'}{' '}
+                            {subtreeLabel(i.sub.stats)}
+                          </Tooltip.Content>
+                        </Tooltip>
+                      )}
                       <Tooltip>
                         <Button
                           isIconOnly

@@ -99,6 +99,7 @@ import { setTerminalOpenFor, terminalOpenFor } from './terminalOpen';
 import { runControl, settingUp } from './commands';
 import { GlobalConfigSection, SpaceSetupAssistHint } from './ConfigSection';
 import { BackgroundTasks } from './BackgroundTasks';
+import { ParentLink, SpaceAgents } from './SpaceAgents';
 import { SpaceProgress } from './SpaceProgress';
 import { BaseMoved, UpdatingBanner } from './BaseUpdate';
 import { MergedBanner, SpaceMergeButton, SpacePrPane } from './SpacePr';
@@ -602,6 +603,7 @@ const SpaceHeader = observer(function SpaceHeader({
         >
           {spaceTitle(space)}
         </Typography.Heading>
+        <ParentLink space={space} />
         {stage !== 'drafting' && (
           <span
             className="space-stage shrink-0 rounded-full bg-default px-2 py-0.5 text-xs"
@@ -1322,6 +1324,7 @@ const SpaceComposer = observer(function SpaceComposer({
         )}
         <SpaceProgress space={space} />
         <BackgroundTasks space={space} />
+        <SpaceAgents space={space} log={log} />
         <Composer
           inputRef={input}
           value={text}

@@ -76,7 +76,11 @@ export type Route =
   | { name: 'new'; id: string }
   /** A space (docs/spaces.md): chat with the agent + the live diff. Only
    *  reachable with build mode on. */
-  | { name: 'space'; id: string };
+  | { name: 'space'; id: string }
+  /** Everything running now across spaces: turns, their subagents and
+   *  background tasks, the sub-space trees (docs/spaces.md "Seeing
+   *  sub-spaces and agents"). Build mode only. */
+  | { name: 'agents' };
 
 export type ModalName =
   | 'help'

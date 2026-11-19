@@ -798,9 +798,15 @@ body.cmd .lines .src span:hover {
 .ln.ln-flash {
   animation: flash 1.6s ease-out;
 }
+/* And a subagent's row the Agents panel asked for. */
+.turn-agent.reveal-flash {
+  animation: flash 1.6s ease-out;
+  border-radius: 0.5rem;
+}
 @media (prefers-reduced-motion: reduce) {
   .ln.ln-asking,
   .ln.ln-flash,
+  .turn-agent.reveal-flash,
   .chat .ask-flash {
     animation: none;
   }

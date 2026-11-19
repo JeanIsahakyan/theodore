@@ -1760,3 +1760,40 @@ no row, or `true`, means on. The flag forces them on and locks the switch.
 | 5 | Local folder end state | **Merge locally**: a normal merge of the squashed commit into the folder's checked-out branch, instead of a PR; *Keep as branch* stays as the alternative |
 | 6 | Budget | none: budgets, and showing spend at all, were dropped by the owner on 2026-10-22. Nothing is limited, no cost is shown, and an old `budget.*` setting is ignored |
 | 7 | Archive | a setting `spaces.auto_archive_days` (default 7, `0` = never) plus an **Archive** button on the space at any time |
+
+## Seeing sub-spaces and agents
+
+What a space's agent sets going shows in three places. Subagents are Claude
+Code's `Agent`/`Task` calls (§ "A subagent"); sub-spaces are spaces another
+space's agent started on this computer (`Space::parent`, § "Sub-spaces").
+
+```
+sidebar        Spaces
+                 Agents                       1    ─▶ the Agents view (G A, ⌘K)
+                 Fix the login redirect   2 ›      a parent: count, hide/show
+                   ◌ Fix the flaky test             one step in per level
+                   ✎ Update the docs
+                 Old follow-up   from Old work      parent archived / elsewhere
+
+space page     header   Fix the flaky test   from Fix the login redirect  ─▶ parent
+               composer ◌ 1 agent running · 2 sub-spaces, 1 running ▾
+                          This turn   ◌ Explore auth   sonnet  running  32s  ─▶ its row
+                          Sub-spaces  ◌ Update docs  ?  claude · Edit · 3 turns ─▶ opens
+
+Agents view    one card per tree with something going: a turn, a background
+               task, an agent waiting on you; its subagents, its tasks, then
+               its sub-spaces the same way, one step in
+```
+
+| Where | Rule |
+| --- | --- |
+| sidebar | a child goes under its parent when the parent is listed; else at the top with `from <parent>` (`from a removed space` when it's gone). A mirrored space's parent is its host's: not named. Loops never nest |
+| sidebar, collapsed | the count, a spinner while a hidden one runs, a dot while one waits for you; hide/show from the row's hover button or its right-click menu, kept per machine (`ui/space/collapsed.ts`) |
+| panel | the running turn's live steps, else the last reply with steps; top-level subagents only (a subagent's own stay in its row). Hidden with nothing to show |
+| a subagent's model | read from its call's payload once the panel shows it, quietly; none for a mirrored space |
+| a subagent's time | from when this window saw its call start and end (`EphemeralStore.stepTimes`), or its background task; a turn from before the window opened has none |
+| click a subagent | its turn's chat row comes into view, the fold holding it opens, the row glows (`revealCall`, `rowState.ts`) |
+| Agents view count | spaces with a turn running |
+
+Pure rules: `ui/space/subspaces.ts` (the tree), `ui/space/agents.ts` (subagents,
+the turn read, what the view lists).
