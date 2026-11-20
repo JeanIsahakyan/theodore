@@ -32,6 +32,8 @@ export function confirmWhat(
       return `send to ${space} in ${mode}`;
     case 'approve_plan':
       return `approve the plan in ${space} (${mode})`;
+    case 'merge':
+      return `merge a sub-space into ${space}`;
   }
 }
 
