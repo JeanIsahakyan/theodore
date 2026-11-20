@@ -703,25 +703,27 @@ Staging WorkOS needs `http://localhost:8787/oauth/callback` as a redirect
 URI for that. Tests (`test/mcp-*.test.ts`) need none of it: fake WorkOS,
 in-memory KV, the real `OrgHub` over node:sqlite.
 
-### Production checklist (not done)
+### Production checklist
 
-Per environment (staging first), by the owner:
+Per environment (staging, production):
 
-- [ ] `pnpm -C cloud exec wrangler kv namespace create OAUTH_KV --env staging`
-      (then `--env production`), and add to that env in `wrangler.toml`:
-      `kv_namespaces = [{ binding = "OAUTH_KV", id = "<id>" }]`.
-- [ ] `wrangler secret put MCP_KEY_WRAP --env staging|production`: ≥ 32
-      random characters (`openssl rand -base64 48`). Never in git. Changing
+- [x] `OAUTH_KV`: a KV namespace per environment, bound in `wrangler.toml`
+      (`wrangler kv namespace create OAUTH_KV --env <env>`).
+- [x] `MCP_KEY_WRAP` secret per environment (`openssl rand -base64 48 |
+      wrangler secret put MCP_KEY_WRAP --env <env>`). Never in git. Changing
       it makes every MCP device key unreadable: those devices must be made
       again (and trusted again on the computers).
-- [ ] WorkOS dashboard, that environment ─▶ Redirects: add
-      `https://<worker host>/oauth/callback` (the staging and production
-      `workers.dev` hosts, and a custom domain's when one comes).
-- [ ] Nothing new for WorkOS keys: the code exchange and refresh use the
+- [x] WorkOS staging ─▶ Redirects: `https://theodore-cloud-staging.prd-instance.workers.dev/oauth/callback`
+      (added through the WorkOS API: `POST /user_management/redirect_uris`
+      with that environment's API key).
+- [ ] WorkOS production ─▶ Redirects: `https://theodore-cloud.prd-instance.workers.dev/oauth/callback`
+      (dashboard, or the same API call with the production key). Until
+      then the sign-in stops at WorkOS's "not a valid redirect URI".
+- [x] Nothing new for WorkOS keys: the code exchange and refresh use the
       `WORKOS_API_KEY` already set.
-- [ ] Ship the desktop (and phone) builds that speak protocol 5 first: a
-      computer on protocol 4 can't see the MCP device and answers
-      `fleet.upgrade_required`.
+- [ ] Computers on the protocol this build speaks (7): older ones can't
+      see the MCP device and answer `fleet.upgrade_required`. They update
+      themselves.
 - [ ] Optional: `MCP_ORIGINS` (var) for a browser-based MCP client; a
       Cron Trigger calling the library's `purgeExpiredData()` (KV TTLs
       already expire most); Client ID Metadata Documents

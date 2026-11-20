@@ -39,6 +39,7 @@ new_sqlite_classes = ["OrgHub"]
 name = "theodore-cloud-staging"
 vars = { WORKOS_CLIENT_ID = "client_01M5RM1W36AHHEGBE37QD3PS6K", WORKOS_API_BASE = "https://api.workos.com", WEB_ORIGINS = "https://theodore-web-staging.prd-instance.workers.dev" }
 durable_objects.bindings = [{ name = "ORG_HUB", class_name = "OrgHub" }]
+kv_namespaces = [{ binding = "OAUTH_KV", id = "942fd282ce274706bee69d7054122a5e" }]
 ratelimits = [
   { name = "RL_PUBLIC", namespace_id = "1101", simple = { limit = 30, period = 60 } },
   { name = "RL_USER", namespace_id = "1102", simple = { limit = 120, period = 60 } },
@@ -48,6 +49,7 @@ ratelimits = [
 name = "theodore-cloud"
 vars = { WORKOS_CLIENT_ID = "client_01M5RMBK860S2JJZNWJDDSH0BM", WORKOS_API_BASE = "https://api.workos.com", WEB_ORIGINS = "https://theodore-web.prd-instance.workers.dev" }
 durable_objects.bindings = [{ name = "ORG_HUB", class_name = "OrgHub" }]
+kv_namespaces = [{ binding = "OAUTH_KV", id = "e6b260ade48b4b3283ddd207f2a534ca" }]
 ratelimits = [
   { name = "RL_PUBLIC", namespace_id = "1201", simple = { limit = 30, period = 60 } },
   { name = "RL_USER", namespace_id = "1202", simple = { limit = 120, period = 60 } },
@@ -56,8 +58,8 @@ ratelimits = [
 # Local only, never deployed: `pnpm dev:mcp` (wrangler dev --env local) runs
 # the Worker with MCP on (docs/cloud.md "MCP"): the OAuth provider's KV
 # namespace, simulated by wrangler; MCP_KEY_WRAP and WORKOS_API_KEY come
-# from .dev.vars. Staging and production have no OAUTH_KV yet, so MCP stays
-# off (404) there until the checklist in docs/cloud.md "MCP" is done.
+# from .dev.vars. Staging and production have their own OAUTH_KV and the
+# MCP_KEY_WRAP secret (docs/cloud.md "MCP").
 [env.local]
 name = "theodore-cloud-local"
 vars = { WORKOS_CLIENT_ID = "client_01M5RM1W36AHHEGBE37QD3PS6K", WORKOS_API_BASE = "https://api.workos.com" }
