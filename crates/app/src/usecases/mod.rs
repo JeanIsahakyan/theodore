@@ -1,6 +1,7 @@
 //! Use cases (plan §2.1): each is `impl Core` in its own file.
 
 pub mod account;
+pub mod agent_accounts;
 pub mod agents;
 pub mod attachments;
 pub mod code_intel;
@@ -45,6 +46,7 @@ pub mod space_feedback;
 pub mod space_fix_ci;
 pub(crate) mod space_handoff;
 pub mod space_hooks;
+pub mod space_limits;
 pub(crate) mod space_live_diff;
 pub(crate) mod space_naming;
 pub mod space_plan;

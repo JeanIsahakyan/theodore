@@ -141,6 +141,8 @@ pub(crate) struct Inner {
     /// Sub-spaces: the running turns' text so far, the start lock
     /// (`usecases::space_children`).
     pub sub_spaces: crate::usecases::space_children::SubSpaceState,
+    /// Each agent account's latest usage limit (`usecases::agent_accounts`).
+    pub agent_limits: crate::usecases::agent_accounts::LimitBook,
 }
 
 /// Inbound streams the shell (Tauri or the CLI) forwards to the UI.
@@ -201,6 +203,7 @@ impl Core {
             report_drafts: Default::default(),
             fleet: Default::default(),
             sub_spaces: Default::default(),
+            agent_limits: Default::default(),
         });
 
         let core = Core(inner.clone());
@@ -210,6 +213,13 @@ impl Core {
                 core.fail_interrupted_runs().await;
                 core.fail_interrupted_spaces().await;
                 core.pause_resumed_mirrors().await;
+            });
+        }
+        {
+            let core = core.clone();
+            tokio::spawn(async move {
+                core.continue_due_pauses().await;
+                core.run_pause_loop().await;
             });
         }
         // Host traffic waits for the account gate (`account_hold`): the

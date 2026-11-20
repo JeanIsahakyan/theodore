@@ -15,8 +15,8 @@ use theodore_contract::{
 };
 use theodore_domain::{AgentId, Author, PrId, PrRef};
 use theodore_ports::{
-    AgentAttachment, AgentEvent, AgentMode, AgentRequest, NewAction, SPACE_REF_PREFIX,
-    SyncActionCode, space_ref,
+    AgentAttachment, AgentEvent, AgentMode, AgentRequest, DEFAULT_ACCOUNT, NewAction,
+    SPACE_REF_PREFIX, SyncActionCode, space_ref,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -250,6 +250,7 @@ impl Core {
                 start.title.clone()
             },
             blank,
+            paused: None,
             handoff_summary: None,
             progress: None,
             updating: None,
@@ -465,6 +466,7 @@ impl Core {
             effort: None,
             mode: None,
             from_space: from,
+            notice: None,
         };
         self.start_turn(space, &req, message, false, prompt).await
     }
@@ -522,9 +524,20 @@ impl Core {
             .space_worktree(&repo_path, &space.id, &space.base_sha)
             .await?;
 
+        // The account it runs on: the preferred one, else the space's own,
+        // else the next one not limited (docs/plan.md "Agent accounts and
+        // limits").
+        let session_account = space
+            .agent_session
+            .as_ref()
+            .filter(|s| s.agent == agent)
+            .map(|s| s.account.clone().unwrap_or_else(|| DEFAULT_ACCOUNT.into()));
+        let account = self.turn_account(agent, session_account.as_deref()).await;
+
         // A process kept for its background tasks takes this turn, when it
         // can; otherwise it ends first (one CLI per session).
         let cli_key = CliKey {
+            account: account.id.clone(),
             agent,
             model: crate::agent_defaults::run_model(&self.0.deps.store, agent, model.clone()).await,
             effort: crate::agent_defaults::run_effort(&self.0.deps.store, agent, effort.clone())
@@ -549,6 +562,8 @@ impl Core {
             "error": null,
             // Said once, in this turn's prompt.
             "continue_note": null,
+            // A pause for usage limits ends with any turn.
+            "paused": null,
             "updated_at": now,
         });
         if matches!(mode, SpaceMode::Edit | SpaceMode::Run) {
@@ -612,7 +627,38 @@ impl Core {
         // The same agent in the same worktree continues its session and
         // hears only the new turn; anything else starts a new session from
         // the replayed transcript.
-        let resume = resumable_session(&space, agent, &wt.path);
+        let mut resume = resumable_session(&space, agent, &wt.path);
+        // Another account than the session's: its session moves over
+        // (Claude Code's file, copied), or the transcript is replayed.
+        if let (Some(id), Some(from)) = (&resume, &session_account)
+            && *from != account.id
+        {
+            let carried = match self.agent_account(agent, from).await {
+                Some(from) => {
+                    self.0
+                        .deps
+                        .agents
+                        .carry_session(
+                            agent,
+                            id,
+                            &wt.path,
+                            &crate::usecases::agent_accounts::account_ref(&from),
+                            &crate::usecases::agent_accounts::account_ref(&account),
+                        )
+                        .await
+                }
+                None => false,
+            };
+            tracing::info!(
+                space = %space.id,
+                agent = agent.as_str(),
+                carried,
+                "the space's session moves to another account"
+            );
+            if !carried {
+                resume = None;
+            }
+        }
         // Can't resume: a cached, once-generated summary of everything
         // before the replayed window stands in for the full transcript
         // (`space_handoff`). The rarer case — a resume that turns out to
@@ -651,6 +697,7 @@ impl Core {
             String::new()
         };
         let turn = Turn {
+            account,
             live: attach,
             follow_up: false,
             from_tasks: vec![],
@@ -746,7 +793,12 @@ impl Core {
                 cancel: cancel.clone(),
             },
         );
+        let account = match self.agent_account(live.key.agent, &live.key.account).await {
+            Some(a) => a,
+            None => crate::usecases::agent_accounts::default_account(live.key.agent),
+        };
         let turn = Turn {
+            account,
             run_id,
             message: message_id,
             space: space.clone(),
@@ -1200,6 +1252,7 @@ impl Core {
             .into_iter()
             .filter_map(|r| serde_json::from_value(r.data).ok())
             .filter(|m: &ChatMessage| m.failed.is_none())
+            .filter(|m| m.notice.is_none())
             .filter(|m| !crate::usecases::space_queue::is_queued(m))
             .filter(|m| !undone.contains(&m.id.as_str()))
             .collect();
@@ -1209,6 +1262,8 @@ impl Core {
 }
 
 struct Turn {
+    /// The agent account it runs on.
+    account: theodore_contract::AgentAccount,
     /// The kept process this turn runs on, instead of spawning one.
     live: Option<LiveCli>,
     /// The CLI started it (`live` holds its first events): no message of
@@ -1279,6 +1334,8 @@ struct Streamed {
     plan: Option<String>,
     /// The turn is over and its process stays for its background tasks.
     live: Option<LiveCli>,
+    /// The last usage limit the run reported (`AgentEvent::Limit`).
+    limit: Option<theodore_domain::AgentLimit>,
 }
 
 /// What a stream starts from when its process was kept: `live`, and the
@@ -1464,8 +1521,15 @@ async fn stream_run(
                     | AgentEvent::ToolResult { .. }
                     | AgentEvent::ToolDetail { .. }
                     | AgentEvent::Stalled
-                    | AgentEvent::Limit { .. }
                     | AgentEvent::Usage { .. } => {}
+                    AgentEvent::Limit { limit } => {
+                        let account = req
+                            .account
+                            .as_ref()
+                            .map_or(DEFAULT_ACCOUNT, |a| a.id.as_str());
+                        core.note_agent_limit(agent, account, limit.clone()).await;
+                        out.limit = Some(limit);
+                    }
                     // Handled above.
                     AgentEvent::BackgroundTasks { .. }
                     | AgentEvent::TaskStarted { .. }
@@ -1487,6 +1551,10 @@ async fn stream_run(
             run,
             steer,
             key: CliKey {
+                account: req
+                    .account
+                    .as_ref()
+                    .map_or_else(|| DEFAULT_ACCOUNT.to_string(), |a| a.id.clone()),
                 agent,
                 model: req.model.clone(),
                 effort: req.effort.clone(),
@@ -1604,6 +1672,7 @@ async fn release_run(core: &Core, run_id: &str, end: TurnEnd) -> TurnEnd {
 
 async fn drive_turn(core: &Core, turn: Turn) {
     let Turn {
+        account,
         live: attach,
         follow_up,
         from_tasks,
@@ -1660,6 +1729,7 @@ async fn drive_turn(core: &Core, turn: Turn) {
     let ran_model = model.clone();
     let effort = crate::agent_defaults::run_effort(&core.0.deps.store, agent, effort).await;
     let ran_effort = effort.clone();
+    let ran_account = Some(account.id.clone());
     let mut req = AgentRequest {
         agent,
         prompt,
@@ -1681,7 +1751,7 @@ async fn drive_turn(core: &Core, turn: Turn) {
         resume,
         stream_text: true,
         fork_session: false,
-        account: None,
+        account: Some(crate::usecases::agent_accounts::account_ref(&account)),
     };
     let started = std::time::Instant::now();
     tracing::info!(
@@ -1725,6 +1795,7 @@ async fn drive_turn(core: &Core, turn: Turn) {
         mut error,
         session,
         plan,
+        limit,
         ..
     } = streamed;
     // Questions still waiting go with the run that asked them.
@@ -1748,6 +1819,7 @@ async fn drive_turn(core: &Core, turn: Turn) {
             agent,
             id,
             cwd: cwd.display().to_string(),
+            account: ran_account.clone(),
         }),
         None if resumed && !session_gone => space.agent_session.clone(),
         None => None,
@@ -1897,6 +1969,7 @@ async fn drive_turn(core: &Core, turn: Turn) {
         effort_resolved: true,
         mode: Some(mode),
         from_space: None,
+        notice: None,
     };
     let head = checkpoint.as_ref().map(|cp| cp.sha.clone());
     let changed = head.as_ref().is_some_and(|h| *h != space.head_sha);
@@ -1979,8 +2052,15 @@ async fn drive_turn(core: &Core, turn: Turn) {
     // Stopped (the checkpoint took a while: maybe just now), failed, or its
     // checkpoint skipped: whatever is queued waits for you, and the next turn
     // doesn't clear what the space says about it.
+    // Cut off by its account's usage limit: another account (or agent)
+    // takes over, or the space waits for the reset (`space_limits`).
+    let limit_hit = limit
+        .filter(|l| l.status == theodore_domain::LimitStatus::Limited)
+        .filter(|_| error.is_some() && !cancel.is_cancelled());
     let end = if cancel.is_cancelled() {
         TurnEnd::Interrupted("stopped")
+    } else if limit_hit.is_some() {
+        TurnEnd::Limited
     } else if error.is_some() {
         TurnEnd::Interrupted("failed")
     } else if skipped.is_some() {
@@ -2057,6 +2137,11 @@ async fn drive_turn(core: &Core, turn: Turn) {
             None,
         )
         .await;
+    }
+
+    if let Some(hit) = limit_hit {
+        core.after_limit_boxed(&space.id, &account, hit.resets_at)
+            .await;
     }
 }
 
@@ -2517,6 +2602,7 @@ mod tests {
             effort: None,
             mode: None,
             from_space: None,
+            notice: None,
         }
     }
 

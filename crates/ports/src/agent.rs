@@ -651,6 +651,63 @@ pub trait AgentPort: Send + Sync {
         let _ = account;
         self.models(agent).await
     }
+    /// Makes session `session` (run in `cwd` on account `from`) resumable
+    /// on account `to`: Claude Code's session file is copied between the
+    /// two config dirs. `false`: it can't (another CLI, no such file); the
+    /// caller replays the transcript instead.
+    async fn carry_session(
+        &self,
+        _agent: AgentId,
+        _session: &str,
+        _cwd: &std::path::Path,
+        _from: &AgentAccountRef,
+        _to: &AgentAccountRef,
+    ) -> bool {
+        false
+    }
+}
+
+/// The terminal command that signs an extra account in, from each CLI's
+/// own help: Claude Code and Codex read their config dir from the env
+/// (`claude auth login`, `codex login`). Gemini CLI has no config-dir
+/// switch, so its extra accounts are API keys in a file Theodore reads.
+pub fn account_sign_in_command(agent: AgentId, dir: &std::path::Path) -> String {
+    let dir = shell_quote(&dir.display().to_string());
+    match agent {
+        AgentId::Claude => format!("CLAUDE_CONFIG_DIR={dir} claude auth login"),
+        AgentId::Codex => format!("CODEX_HOME={dir} codex login"),
+        AgentId::Gemini => {
+            format!("mkdir -p {dir} && echo 'GEMINI_API_KEY=<your key>' > {dir}/.env")
+        }
+    }
+}
+
+/// Where an agent's default account keeps its files: `CLAUDE_CONFIG_DIR`
+/// else `~/.claude`, `CODEX_HOME` else `~/.codex`, `~/.gemini`.
+pub fn default_account_dir(agent: AgentId) -> Option<PathBuf> {
+    let home = || std::env::var_os("HOME").map(PathBuf::from);
+    let var = |k: &str| {
+        std::env::var_os(k)
+            .filter(|v| !v.is_empty())
+            .map(PathBuf::from)
+    };
+    match agent {
+        AgentId::Claude => var("CLAUDE_CONFIG_DIR").or_else(|| home().map(|h| h.join(".claude"))),
+        AgentId::Codex => var("CODEX_HOME").or_else(|| home().map(|h| h.join(".codex"))),
+        AgentId::Gemini => home().map(|h| h.join(".gemini")),
+    }
+}
+
+/// `s` as one shell word: as is when it's plain, else single-quoted.
+fn shell_quote(s: &str) -> String {
+    if !s.is_empty()
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || "/._-~+".contains(c))
+    {
+        s.to_string()
+    } else {
+        format!("'{}'", s.replace('\'', r"'\''"))
+    }
 }
 
 #[cfg(test)]

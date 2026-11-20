@@ -250,6 +250,7 @@ fn chat_message(pr: &str, id: &str, author: Author, at: i64, run: Option<&str>) 
         effort: Some("high".into()),
         mode: None,
         from_space: None,
+        notice: None,
     };
     NewAction {
         model: models::CHAT_MESSAGE.into(),
