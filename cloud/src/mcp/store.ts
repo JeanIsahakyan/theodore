@@ -15,9 +15,14 @@
  *               last seq, last reply, open question, plan, last refusal
  * mcp_lines     (space, seq, kind) ─ history from verified events, the
  *               newest LINES_KEPT per space
+ * mcp_sub_spaces (space, id) ─ a sub-space under a space it started, from
+ *               verified `mirror{sub_space}` events, SUB_SPACES_KEPT per space
  * meta          mcp_schema ─ MCP_SCHEMA_VERSION; on any other, the tables
  *               but mcp_devices and mcp_pins are dropped
  * ```
+ *
+ * A new table needs no version bump (`CREATE TABLE IF NOT EXISTS` runs on
+ * every start); a new column does, and drops what RESET lists.
  */
 import type { ConnState } from '../fleet/hub';
 import type { Sql, SqlValue } from '../fleet/store';
@@ -30,8 +35,16 @@ export const LINES_KEPT = 200;
 export const INBOX_KEPT = 5000;
 /** Requests remembered per user (their outcomes). */
 export const REQUESTS_KEPT = 500;
+/** Sub-spaces kept per space (new ones past it are dropped). */
+export const SUB_SPACES_KEPT = 50;
 
-const RESET = ['mcp_inbox', 'mcp_requests', 'mcp_spaces', 'mcp_lines'];
+const RESET = [
+  'mcp_inbox',
+  'mcp_requests',
+  'mcp_spaces',
+  'mcp_lines',
+  'mcp_sub_spaces',
+];
 
 const SCHEMA = [
   `CREATE TABLE IF NOT EXISTS mcp_devices (
@@ -92,6 +105,16 @@ const SCHEMA = [
     kind TEXT NOT NULL,
     text TEXT NOT NULL,
     PRIMARY KEY (space, seq, kind))`,
+  `CREATE TABLE IF NOT EXISTS mcp_sub_spaces (
+    space TEXT NOT NULL,
+    id TEXT NOT NULL,
+    parent TEXT NOT NULL,
+    title TEXT NOT NULL,
+    status TEXT NOT NULL,
+    mode TEXT NOT NULL,
+    done INTEGER NOT NULL,
+    seq INTEGER NOT NULL,
+    PRIMARY KEY (space, id))`,
 ];
 
 export interface McpDeviceRow {
@@ -157,6 +180,18 @@ export interface McpSpaceRow {
   subscribed: number;
   created_ms: number;
   updated_ms: number;
+}
+
+/** A sub-space of a space it started (`MirroredSubSpace`, checked). */
+export interface SubSpaceRow {
+  space: string;
+  id: string;
+  parent: string;
+  title: string;
+  status: string;
+  mode: string;
+  done: number;
+  seq: number;
 }
 
 export interface LineRow {
@@ -277,6 +312,13 @@ export class McpStore {
       space,
       space,
       LINES_KEPT - 1,
+    );
+  }
+
+  subSpaces(space: string): SubSpaceRow[] {
+    return this.rows(
+      'SELECT * FROM mcp_sub_spaces WHERE space = ? ORDER BY seq',
+      space,
     );
   }
 

@@ -17,6 +17,19 @@ export function validSpaceId(id: unknown): id is string {
   return typeof id === 'string' && /^rs_[0-9a-f]{32}$/.test(id);
 }
 
+/** 12 hex: a space's own id on its computer (`new_space_id`). */
+export function validLocalSpaceId(id: unknown): id is string {
+  return typeof id === 'string' && /^[0-9a-f]{12}$/.test(id);
+}
+
+/**
+ * A space a computer's own ops take (protocol 7): its local id, or an
+ * `rs_` id it hosts for this device.
+ */
+export function validComputerSpaceId(id: unknown): id is string {
+  return validLocalSpaceId(id) || validSpaceId(id);
+}
+
 /** A project id as an agent may see and name it (`fleet_tools.rs`). */
 export function validProjectId(id: unknown): id is string {
   return (
