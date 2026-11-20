@@ -54,6 +54,17 @@ export function pinName(name: string): string {
   return kept || 'device';
 }
 
+/** A project's name as shown: like `pinName`, but `owner/repo` keeps
+ *  its slash. */
+export function projectName(name: string): string {
+  const kept = [...name]
+    .filter((c) => /^[A-Za-z0-9 ._()/@-]$/.test(c))
+    .slice(0, NAME_MAX)
+    .join('')
+    .trim();
+  return kept || 'project';
+}
+
 /** A refusal code as it may be shown: `fleet.offline`-like, else `fleet.unknown`. */
 export function safeCode(code: unknown): string {
   return typeof code === 'string' && /^[a-z0-9_.]{1,64}$/.test(code)
