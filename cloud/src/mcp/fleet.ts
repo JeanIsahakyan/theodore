@@ -64,6 +64,7 @@ import {
   safeCode,
   truncate,
   uiQuestions,
+  validDeviceId,
   validProjectId,
   type QuestionView,
 } from './text';
@@ -88,6 +89,7 @@ export interface McpFleetEnv {
 /** How the MCP device lists itself. */
 export const MCP_INFO: DeviceInfo = {
   name: 'Claude (MCP)',
+  // The hub takes only a real OS in a hello; computers show the kind.
   os: 'linux',
   kind: 'mcp',
   app_version: 'cloud',
@@ -646,6 +648,32 @@ export class McpFleet {
     return this.env.hub().listDevices(user);
   }
 
+  /** `device` as an id: an id passes; a name (case aside) must be exactly
+   *  one computer's, as listed or as pinned here. Anything else passes as
+   *  is and fails as an unknown device. */
+  private resolve(user: string, device: string): string {
+    const isId: boolean = validDeviceId(device);
+    if (isId) return device;
+    const want = device.toLowerCase();
+    const ids = new Set(
+      this.listed(user)
+        .filter((d) => hosts(d.info.kind))
+        .filter(
+          (d) =>
+            pinName(d.info.name).toLowerCase() === want ||
+            this.store.pin(user, d.device_id)?.name.toLowerCase() === want,
+        )
+        .map((d) => d.device_id),
+    );
+    if (ids.size > 1) {
+      throw new McpError(
+        'mcp.invalid',
+        'more than one computer has that name: pass its device id from devices_list',
+      );
+    }
+    return [...ids][0] ?? device;
+  }
+
   async status(c: McpCaller) {
     const { me } = await this.online(c);
     const row = this.store.device(c.userId)!;
@@ -693,8 +721,9 @@ export class McpFleet {
   }
 
   /** Pins `device` if `typed` is its fingerprint (as shown on it). */
-  async trust(c: McpCaller, device: string, typed: string) {
+  async trust(c: McpCaller, named: string, typed: string) {
     await this.online(c);
+    const device = this.resolve(c.userId, named);
     const d = this.listed(c.userId).find((x) => x.device_id === device);
     if (!d) throw new McpError('mcp.unknown_device', 'no such computer');
     if (!hosts(d.info.kind)) {
@@ -726,8 +755,9 @@ export class McpFleet {
     return { device, name, trusted_here: 'yes' as const };
   }
 
-  async projects(c: McpCaller, device: string) {
+  async projects(c: McpCaller, named: string) {
     await this.online(c);
+    const device = this.resolve(c.userId, named);
     const d = this.listed(c.userId).find((x) => x.device_id === device);
     if (!d || !hosts(d.info.kind)) {
       throw new McpError('mcp.unknown_device', 'no such computer');
@@ -766,7 +796,8 @@ export class McpFleet {
   }
 
   /** A pinned computer whose listed key is still the pinned one. */
-  private target(user: string, device: string): PinRow {
+  private target(user: string, named: string): PinRow {
+    const device = this.resolve(user, named);
     const pin = this.store.pin(user, device);
     if (!pin) {
       throw new McpError(

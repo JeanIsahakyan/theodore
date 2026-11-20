@@ -128,11 +128,16 @@ describe('MCP device', () => {
     expect(JSON.stringify(listed.v)).not.toContain(
       (await fingerprint(mac.publicKey)).slice(0, 9),
     );
+    // By name too, case aside: Claude knows computers by what they're called.
     const ok = await tool(h, 'device_trust', {
-      device: mac.id,
+      device: 'MAC',
       fingerprint: (await fingerprint(mac.publicKey)).toUpperCase(),
     });
     expect(ok.v).toEqual({ device: mac.id, name: 'mac', trusted_here: 'yes' });
+    const projects = await tool(h, 'projects_list', { device: 'mac' });
+    expect(projects.v.device).toBe(mac.id);
+    const nobody = await tool(h, 'projects_list', { device: 'pc' });
+    expect(nobody.v.error.code).toBe('mcp.unknown_device');
   });
 
   it('starts a space with a request signed by its key for the pinned key', async () => {

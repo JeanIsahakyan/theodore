@@ -34,7 +34,8 @@ const APPROVAL_NOTE =
 
 const device = {
   type: 'string',
-  description: 'A computer’s device id (dev_…), from devices_list.',
+  description:
+    'A computer: its device id (dev_…) or its name, both from devices_list. A name must match exactly one computer.',
 };
 const space = {
   type: 'string',
@@ -253,12 +254,22 @@ function optStr(a: Args, k: string, max: number): string | null {
   return v;
 }
 
+/** A device id, or a computer's name (resolved by `McpFleet`). */
 function needDevice(a: Args): string {
   const v = a.device;
-  if (!validDeviceId(v)) {
-    throw new McpError('mcp.invalid', 'device must be a device id (dev_…)');
+  if (validDeviceId(v)) return v;
+  if (
+    typeof v === 'string' &&
+    !v.startsWith('dev_') &&
+    v.trim() !== '' &&
+    v.length <= 200
+  ) {
+    return v.trim();
   }
-  return v;
+  throw new McpError(
+    'mcp.invalid',
+    'device must be a device id (dev_…) or a computer’s name',
+  );
 }
 
 function needSpace(v: unknown): string {
