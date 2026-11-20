@@ -22,7 +22,7 @@
 import type { ConnState } from '../fleet/hub';
 import type { Sql, SqlValue } from '../fleet/store';
 
-export const MCP_SCHEMA_VERSION = 1;
+export const MCP_SCHEMA_VERSION = 2;
 
 /** History kept per space. */
 export const LINES_KEPT = 200;
@@ -61,6 +61,7 @@ const SCHEMA = [
     target_key TEXT NOT NULL,
     op TEXT NOT NULL,
     space TEXT NOT NULL,
+    mode TEXT,
     created_ms INTEGER NOT NULL,
     seq_at INTEGER NOT NULL DEFAULT 0,
     outcome TEXT)`,
@@ -118,6 +119,8 @@ export interface RequestRow {
   target_key: string;
   op: string;
   space: string;
+  /** A start's or send's mode (a send's may be none: the space's). */
+  mode: string | null;
   created_ms: number;
   /** The space's last seq when it was sent: a later event outdates it. */
   seq_at: number;

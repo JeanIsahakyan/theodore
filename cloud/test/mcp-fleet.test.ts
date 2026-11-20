@@ -43,8 +43,11 @@ async function nextRequest(
   return { req, body: JSON.parse(req.envelope.body) as RemoteRequest };
 }
 
-async function setup(o: { trust?: boolean } = {}) {
-  const h = new Harness(undefined, { mcp: true, replyWaitMs: 2000 });
+async function setup(o: { trust?: boolean; replyWaitMs?: number } = {}) {
+  const h = new Harness(undefined, {
+    mcp: true,
+    replyWaitMs: o.replyWaitMs ?? 2000,
+  });
   const mac = await h.device('user_1', 'mac');
   await mac.connect();
   if (o.trust !== false) {
@@ -194,7 +197,14 @@ describe('MCP device', () => {
     expect(w.v).toEqual({
       settled: true,
       spaces: [
-        { space, status: 'idle', question: false, plan: true, error: null },
+        {
+          space,
+          status: 'idle',
+          question: false,
+          plan: true,
+          waiting_for: null,
+          error: null,
+        },
       ],
     });
     const r = await tool(h, 'space_read', { space });
@@ -270,6 +280,67 @@ describe('MCP device', () => {
     await mac.reply(body.req_id, { outcome: 'ok', value: null });
     expect((await p).v.result).toBe('ok');
     expect((await tool(h, 'space_read', { space })).v.question).toBeNull();
+  });
+
+  it('shows an Edit start waiting for a person, up to 5 min', async () => {
+    const { h, mac } = await setup({ replyWaitMs: 30 });
+    const s = await tool(h, 'space_start', {
+      device: mac.id,
+      project: 'p1',
+      goal: 'edit it',
+      mode: 'edit',
+    });
+    expect(s.v.result).toBe('pending');
+    expect(s.v.waiting_for).toBe('waiting for approval on mac');
+    const space = String(s.v.space.space);
+    const w = await tool(h, 'space_wait', { spaces: [space], timeout_ms: 50 });
+    expect(w.v.settled).toBe(true);
+    expect(w.v.spaces[0].waiting_for).toBe('waiting for approval on mac');
+
+    // The person allows after 3 min: past the usual 2 min, still pending.
+    const { req, body } = await nextRequest(mac);
+    await mac.send({
+      type: 'claim',
+      req_id: body.req_id,
+      generation: req.generation,
+    });
+    await h.tick(3 * 60_000);
+    await mac.reply(body.req_id, {
+      outcome: 'ok',
+      value: { space, name: 'Edit', branch: 'b' },
+    });
+    const r = await tool(h, 'space_read', { space });
+    expect(r.v).toMatchObject({
+      status: 'running',
+      waiting_for: null,
+      error: null,
+    });
+  });
+
+  it('hears fleet.offline only after the 5 min window', async () => {
+    const { h, mac } = await setup({ replyWaitMs: 30 });
+    const s = await tool(h, 'space_start', {
+      device: mac.id,
+      project: 'p1',
+      goal: 'edit it',
+      mode: 'edit',
+    });
+    const space = String(s.v.space.space);
+    const { req, body } = await nextRequest(mac);
+    await mac.send({
+      type: 'claim',
+      req_id: body.req_id,
+      generation: req.generation,
+    });
+    await h.tick(4 * 60_000);
+    expect((await tool(h, 'space_read', { space })).v.status).toBe('starting');
+    await h.tick(61_000);
+    const r = await tool(h, 'space_read', { space });
+    expect(r.v).toMatchObject({
+      status: 'failed',
+      error: 'fleet.offline',
+      waiting_for: null,
+    });
   });
 
   it('drops events that do not verify against the pin', async () => {

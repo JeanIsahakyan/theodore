@@ -30,7 +30,7 @@ const TRUST_NOTE =
   'Theodore runs nothing on a computer on the cloud’s word: the computer must trust this MCP connection (the user compares its fingerprint from theodore_status on the computer’s Devices screen), and this connection reaches only computers trusted here with device_trust.';
 
 const APPROVAL_NOTE =
-  'Its key lives in the cloud, so the computer caps it: Ask and Plan run directly; Edit and Run, and approving a plan, wait for a person to say yes on that computer. A no, or no answer in time, comes back as the refusal code fleet.denied.';
+  'Its key lives in the cloud, so the computer caps it: Ask and Plan run directly; Edit and Run, and approving a plan, wait for a person to Allow it on that computer, up to 5 minutes: tell the user to look at that computer. Meanwhile the result is "pending" and the space shows waiting_for: "waiting for approval on <computer>". Deny, or no answer within 5 minutes, comes back as the refusal code fleet.denied.';
 
 const device = {
   type: 'string',
@@ -157,7 +157,7 @@ export const TOOLS: ToolDef[] = [
   {
     name: 'space_wait',
     title: 'Wait for spaces',
-    description: `Wait until each space is idle, waiting for an answer, stopped or failed, at most timeout_ms (≤ ${MAX_WAIT_MS}); call again to keep waiting.`,
+    description: `Wait until each space is idle, waiting for an answer, waiting for approval on its computer (waiting_for), stopped or failed, at most timeout_ms (≤ ${MAX_WAIT_MS}); call again to keep waiting.`,
     inputSchema: {
       type: 'object',
       properties: {
@@ -323,7 +323,10 @@ function sentResult(
       return ok({
         ...extra,
         result: 'pending',
-        note: 'no answer from the computer yet: an Edit or Run request from Claude waits for a person’s yes there. Check with space_wait or space_read.',
+        waiting_for: sent.waitingFor,
+        note: sent.waitingFor
+          ? `${sent.waitingFor}: a person must Allow it there, within 5 minutes (else fleet.denied). Ask the user to, then check with space_wait or space_read.`
+          : 'no answer from the computer yet. Check with space_wait or space_read.',
       });
   }
 }

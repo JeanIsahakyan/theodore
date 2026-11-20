@@ -14,7 +14,8 @@ type Walked =
   | 'capabilities'
   | 'serverInfo'
   | 'tools'
-  | 'spaces';
+  | 'spaces'
+  | 'space';
 
 export type Loose = { readonly [K in Walked]: Loose } & {
   readonly [k: string]: Loose;

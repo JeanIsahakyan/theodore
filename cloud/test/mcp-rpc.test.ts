@@ -140,7 +140,7 @@ describe('legacy (initialize)', () => {
   it('describes the trust rules in the tools', () => {
     const start = TOOLS.find((t) => t.name === 'space_start')!;
     expect(start.description).toContain('fleet.denied');
-    expect(start.description).toContain('wait for a person to say yes');
+    expect(start.description).toContain('up to 5 minutes');
     expect(TOOLS.find((t) => t.name === 'device_trust')!.description).toContain(
       'never guess',
     );

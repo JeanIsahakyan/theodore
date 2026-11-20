@@ -433,9 +433,9 @@ export class Hub {
       }
       for (const p of this.store.rows<PendingRow>(
         `SELECT * FROM pending
-         WHERE (claimed = 0 AND grace_until <= ?) OR created_ms <= ?`,
+         WHERE (claimed = 0 AND grace_until <= ?) OR created_ms + ttl_ms <= ?`,
         now,
-        now - PENDING_TTL_MS,
+        now,
       )) {
         this.store.run('DELETE FROM pending WHERE req_id = ?', p.req_id);
         this.deliver(p.user_id, p.origin_device, p.req_id, {
@@ -808,8 +808,8 @@ export class Hub {
     this.store.run(
       `INSERT INTO pending (req_id, user_id, origin_device, target_device,
          generation, claimed, created_ms, grace_until, envelope, op, space,
-         parent, depth, ask_id)
-       VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         parent, depth, ask_id, ttl_ms)
+       VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       route.req_id,
       user,
       route.origin_device,
@@ -823,6 +823,11 @@ export class Hub {
       route.parent,
       route.depth,
       route.ask_id,
+      // The MCP device's edits and runs wait on the host for a person's
+      // yes, up to the request window: its requests live that long here.
+      origin && infoOf(origin).kind === 'mcp'
+        ? REQUEST_WINDOW_MS
+        : PENDING_TTL_MS,
     );
     if (to) {
       this.send(to.conn, {
@@ -1908,7 +1913,7 @@ export class Hub {
     const due = [
       s.num('SELECT MIN(deadline_ms) FROM conns'),
       s.num('SELECT MIN(grace_until) FROM pending WHERE claimed = 0'),
-      s.num('SELECT MIN(created_ms) FROM pending'),
+      s.num('SELECT MIN(created_ms + ttl_ms) FROM pending'),
       s.num('SELECT MIN(created_ms) FROM replies'),
       s.num('SELECT MIN(created_ms) FROM asks WHERE escalated = 0'),
       s.num(
@@ -1916,7 +1921,7 @@ export class Hub {
          WHERE revoked = 0 AND expires_at_ms > 0`,
       ),
     ];
-    const ttl = [0, 0, PENDING_TTL_MS, PENDING_TTL_MS, ESCALATE_MS, 0];
+    const ttl = [0, 0, 0, PENDING_TTL_MS, ESCALATE_MS, 0];
     const at = due
       .map((v, i) => (v === null ? null : v + ttl[i]!))
       .filter((v): v is number => v !== null);

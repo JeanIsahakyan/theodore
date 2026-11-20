@@ -33,7 +33,7 @@ import type {
   SignedEnvelope,
 } from '../gen/fleet';
 import type { Conn, ConnState, Hub } from '../fleet/hub';
-import { PROTOCOL_VERSION } from '../fleet/limits';
+import { PROTOCOL_VERSION, REQUEST_WINDOW_MS } from '../fleet/limits';
 import type { Sql } from '../fleet/store';
 import { unb64 } from '../fleet/wire';
 import {
@@ -167,6 +167,11 @@ export interface SpaceView {
   approve_mode: FleetMode | null;
   /** The last refusal, as a code. */
   error: string | null;
+  /**
+   * "waiting for approval on <computer>": an Edit or Run start or send the
+   * computer hasn't answered yet; a person there must Allow it (≤ 5 min).
+   */
+  waiting_for: string | null;
   updated_ms: number;
 }
 
@@ -174,7 +179,11 @@ export interface SpaceView {
 export type Sent =
   | { state: 'ok'; value: unknown }
   | { state: 'refused'; by: 'computer' | 'cloud'; code: string }
-  | { state: 'pending' };
+  | {
+      state: 'pending';
+      /** "waiting for approval on <computer>" for an Edit or Run. */
+      waitingFor: string | null;
+    };
 
 export class McpFleet {
   readonly store: McpStore;
@@ -753,7 +762,7 @@ export class McpFleet {
         'SELECT * FROM mcp_spaces WHERE user_id = ? ORDER BY updated_ms DESC',
         c.userId,
       )
-      .map(viewOf);
+      .map((sp) => this.view(c.userId, sp));
   }
 
   /** A pinned computer whose listed key is still the pinned one. */
@@ -835,7 +844,10 @@ export class McpFleet {
       parent: null,
       depth: 0,
     });
-    return { space: viewOf(this.store.space(c.userId, space)!), sent };
+    return {
+      space: this.view(c.userId, this.store.space(c.userId, space)!),
+      sent,
+    };
   }
 
   /** Spaces past the cloud's 200 per user: the oldest finished go here too. */
@@ -944,7 +956,7 @@ export class McpFleet {
         since,
       )
       .reverse();
-    return { ...viewOf(sp), last_seq: sp.last_seq, lines };
+    return { ...this.view(c.userId, sp), last_seq: sp.last_seq, lines };
   }
 
   /** Until every space is idle, waiting, stopped or failed, or `ms` pass. */
@@ -952,9 +964,12 @@ export class McpFleet {
     for (const s of spaces) this.ownSpace(c.userId, s);
     const { me, conn } = await this.online(c);
     const views = () =>
-      spaces.map((s) => viewOf(this.store.space(c.userId, s)!));
+      spaces.map((s) => this.view(c.userId, this.store.space(c.userId, s)!));
+    // Waiting for a person (a question, an approval) is for the user now.
     const settled = (v: SpaceView) =>
-      SETTLED.includes(v.status) || v.question !== null;
+      SETTLED.includes(v.status) ||
+      v.question !== null ||
+      v.waiting_for !== null;
     const done = await this.until(c, me, conn, ms, () => {
       const v = views();
       return v.every(settled) ? v : null;
@@ -967,6 +982,7 @@ export class McpFleet {
         status: v.status,
         question: v.question !== null,
         plan: v.plan !== null,
+        waiting_for: v.waiting_for,
         error: v.error,
       })),
     };
@@ -997,14 +1013,15 @@ export class McpFleet {
     );
     this.store.run(
       `INSERT INTO mcp_requests (req_id, user_id, target_device, target_key,
-         op, space, created_ms, seq_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+         op, space, mode, created_ms, seq_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       reqId,
       c.userId,
       pin.device_id,
       pin.public_key,
       op.op,
       op.space,
+      op.op === 'start_space' || op.op === 'send' ? (op.mode ?? null) : null,
       now,
       this.store.space(c.userId, op.space)?.last_seq ?? 0,
     );
@@ -1017,13 +1034,48 @@ export class McpFleet {
       const r = this.store.request(c.userId, reqId);
       return r?.outcome ? (JSON.parse(r.outcome) as Outcome) : null;
     });
-    if (!outcome) return { state: 'pending' };
+    if (!outcome) {
+      return {
+        state: 'pending',
+        waitingFor: this.waitingFor(c.userId, op.space),
+      };
+    }
     if (outcome.kind === 'ok') return { state: 'ok', value: outcome.value };
     return {
       state: 'refused',
       by: outcome.kind === 'err' ? 'computer' : 'cloud',
       code: outcome.code,
     };
+  }
+
+  /** A space as a tool shows it, with what it waits for. */
+  private view(user: string, sp: McpSpaceRow): SpaceView {
+    return viewOf(sp, this.waitingFor(user, sp.space));
+  }
+
+  /**
+   * "waiting for approval on <computer>" while an Edit or Run start or send
+   * (a plan's approval too) has no answer and is inside the request window:
+   * the computer is asking a person. A send without a mode runs in the
+   * space's, so an Edit or Run space's send counts too.
+   */
+  private waitingFor(user: string, space: string): string | null {
+    const sp = this.store.space(user, space);
+    if (!sp) return null;
+    const open = this.store.one<RequestRow>(
+      `SELECT * FROM mcp_requests
+       WHERE user_id = ? AND space = ? AND outcome IS NULL
+         AND op IN ('start_space', 'send') AND created_ms > ?
+       ORDER BY created_ms DESC LIMIT 1`,
+      user,
+      space,
+      this.env.now() - REQUEST_WINDOW_MS,
+    );
+    if (!open) return null;
+    const mode = open.mode ?? sp.mode;
+    return mode === 'edit' || mode === 'run'
+      ? `waiting for approval on ${sp.host_name}`
+      : null;
   }
 
   /** Drains until `check` gives something, or `ms` pass (then `null`). */
@@ -1082,7 +1134,10 @@ function questionOf(
   }
 }
 
-export function viewOf(sp: McpSpaceRow): SpaceView {
+export function viewOf(
+  sp: McpSpaceRow,
+  waitingFor: string | null = null,
+): SpaceView {
   return {
     space: sp.space,
     computer: { device: sp.host_device, name: sp.host_name },
@@ -1096,6 +1151,7 @@ export function viewOf(sp: McpSpaceRow): SpaceView {
     plan: sp.plan,
     approve_mode: sp.plan ? (sp.build_mode === 'run' ? 'run' : 'edit') : null,
     error: sp.error,
+    waiting_for: waitingFor,
     updated_ms: sp.updated_ms,
   };
 }

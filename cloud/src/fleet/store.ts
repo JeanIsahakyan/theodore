@@ -12,7 +12,8 @@
  *          with its mirrors
  * mirrors  (space, model, id) ─ the latest `mirror` event of a `space` or
  *          `chat_message` row (a tombstone too): seq, envelope, bytes
- * pending  req_id ─ a routed request until its reply (or 2 min)
+ * pending  req_id ─ a routed request until its reply (or 2 min; 5 min
+ *          from the MCP device, whose edits wait for a person's yes)
  * replies  req_id ─ a reply or refusal held for an origin that's offline
  *          (2 min), as the frame to send
  * asks     ask_id ─ an open question (the host's envelope): where it shows,
@@ -22,7 +23,7 @@
  * push_tokens  device_id ─ its Expo push token, this minute's push count
  * delegations  (origin, delegate) ─ the origin's latest signed delegation;
  *          a revocation stays as a tombstone for the 5 min freshness window
- * meta     schema ─ SCHEMA_VERSION; on any other, every table but devices,
+ * meta     schema ─ SCHEMA_VERSION (7: pending.ttl_ms); on any other, every table but devices,
  *          conns, push_tokens and delegations is dropped (older rows carry
  *          older signatures)
  * ```
@@ -36,7 +37,7 @@ export interface Sql {
   exec(query: string, ...binds: SqlValue[]): Record<string, unknown>[];
 }
 
-export const SCHEMA_VERSION = 6;
+export const SCHEMA_VERSION = 7;
 
 /** Relay state that a schema change throws away; devices stay pinned. */
 const RESET = [
@@ -107,7 +108,8 @@ const SCHEMA = [
     space TEXT NOT NULL,
     parent TEXT,
     depth INTEGER NOT NULL,
-    ask_id TEXT)`,
+    ask_id TEXT,
+    ttl_ms INTEGER NOT NULL)`,
   `CREATE INDEX IF NOT EXISTS pending_target ON pending (target_device)`,
   `CREATE TABLE IF NOT EXISTS replies (
     req_id TEXT PRIMARY KEY,
@@ -209,6 +211,11 @@ export interface PendingRow {
   parent: string | null;
   depth: number;
   ask_id: string | null;
+  /**
+   * How long it may wait for its reply: PENDING_TTL_MS, or
+   * REQUEST_WINDOW_MS from an `mcp` origin (a person may be asked first).
+   */
+  ttl_ms: number;
 }
 
 export interface AskRow {
