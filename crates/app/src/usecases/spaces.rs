@@ -55,8 +55,19 @@ impl Core {
     /// starts (a fleet start marks it hosted, so that turn's tools know).
     pub(crate) async fn create_space_then(
         &self,
+        req: CreateSpaceRequest,
+        created: Option<OnSpaceCreated>,
+    ) -> AppResult<Space> {
+        self.create_space_with(req, created, None).await
+    }
+
+    /// `create_space_then`; `parent` when another space's agent started it
+    /// (docs/spaces.md "Sub-spaces"), set before its first turn.
+    pub(crate) async fn create_space_with(
+        &self,
         mut req: CreateSpaceRequest,
         created: Option<OnSpaceCreated>,
+        parent: Option<theodore_contract::SpaceParent>,
     ) -> AppResult<Space> {
         let project = self
             .project_row(&req.project)
@@ -225,7 +236,7 @@ impl Core {
             commands_denied: false,
             agent_session: None,
             sent_feedback: Vec::new(),
-            parent: None,
+            parent,
             created_at: now,
             updated_at: now,
             attention_at: None,
@@ -630,15 +641,20 @@ impl Core {
                 .space_review_rules(&space, &project, &wt.path)
                 .await
                 .with_system(Some(crate::usecases::space_plan::with_plan_rules(
-                    with_fleet_tools(
-                        system_prompt(
-                            &space,
-                            self.0.deps.tools.is_some(),
-                            code,
-                            !hosted && self.user_mcp_allowed().await,
-                            hosted.then_some(device_name.as_str()),
+                    with_local_spaces(
+                        with_fleet_tools(
+                            system_prompt(
+                                &space,
+                                self.0.deps.tools.is_some(),
+                                code,
+                                !hosted && self.user_mcp_allowed().await,
+                                hosted.then_some(device_name.as_str()),
+                            ),
+                            self.0.deps.tools.is_some() && self.fleet_tools_available(),
                         ),
-                        self.0.deps.tools.is_some() && self.fleet_tools_available(),
+                        self.0.deps.tools.is_some() && !hosted,
+                        matches!(mode, SpaceMode::Edit | SpaceMode::Run)
+                            && self.sub_spaces_enabled().await,
                     ),
                     mode,
                 )))
@@ -1136,7 +1152,7 @@ impl Core {
     }
 
     /// The transcript so far, oldest first, without failed placeholders.
-    async fn space_history(&self, space: &Space) -> AppResult<Vec<ChatMessage>> {
+    pub(crate) async fn space_history(&self, space: &Space) -> AppResult<Vec<ChatMessage>> {
         let store = self.0.deps.store.clone();
         let key = space_chat_key(&space.id).0;
         let undone: Vec<&str> = space
@@ -1390,8 +1406,12 @@ async fn stream_run(
                         // The whole block: it replaces its own deltas.
                         out.partial.clear();
                         push_block(&mut out.text, &t);
+                        core.note_live_text(space, &out.text, &out.partial);
                     }
-                    AgentEvent::TextDelta { text: t } => out.partial.push_str(&t),
+                    AgentEvent::TextDelta { text: t } => {
+                        out.partial.push_str(&t);
+                        core.note_live_text(space, &out.text, &out.partial);
+                    }
                     AgentEvent::Session { id } => out.session = Some(id),
                     AgentEvent::Plan { text } => out.plan = Some(text),
                     AgentEvent::Done { final_text, .. } => {
@@ -1457,6 +1477,7 @@ async fn stream_run(
         });
     }
     payloads.finish(core).await;
+    core.clear_live_text(space);
     // Cut off mid-block (Stop): the deltas are all there is of it.
     let partial = std::mem::take(&mut out.partial);
     out.steps.record_cut_off(&partial);
@@ -2207,6 +2228,22 @@ fn with_fleet_tools(mut prompt: String, fleet: bool) -> String {
     if fleet {
         prompt.push('\n');
         prompt.push_str(crate::usecases::fleet_tools::FLEET_TOOLS_PROMPT);
+    }
+    prompt
+}
+
+/// The local-space tools' lines (docs/spaces.md "Sub-spaces"): `local`
+/// for a space of this device's own, `sub_spaces` when its turn may start
+/// sub-spaces too.
+fn with_local_spaces(mut prompt: String, local: bool, sub_spaces: bool) -> String {
+    use crate::usecases::space_children::{LOCAL_SPACES_PROMPT, SUB_SPACES_PROMPT};
+    if local {
+        prompt.push('\n');
+        prompt.push_str(LOCAL_SPACES_PROMPT);
+        if sub_spaces {
+            prompt.push(' ');
+            prompt.push_str(SUB_SPACES_PROMPT);
+        }
     }
     prompt
 }

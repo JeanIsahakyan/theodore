@@ -33,7 +33,7 @@ pub enum FleetModeParam {
 }
 
 impl FleetModeParam {
-    fn as_str(self) -> &'static str {
+    pub(crate) fn as_str(self) -> &'static str {
         match self {
             FleetModeParam::Ask => "ask",
             FleetModeParam::Plan => "plan",

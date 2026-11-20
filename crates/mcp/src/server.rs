@@ -32,7 +32,8 @@ use uuid::Uuid;
 
 use crate::backend::{
     BackendError, CODE_EDIT_TOOL_NAMES, CodeTools, CodeToolsBackend, FLEET_TOOL_NAMES, NoCodeTools,
-    NoSpaceTools, ReviewToolsBackend, RunContext, SpaceToolError, SpaceToolsBackend, ToolSet,
+    NoSpaceTools, ReviewToolsBackend, RunContext, SUB_SPACE_TOOL_NAMES, SpaceToolError,
+    SpaceToolsBackend, ToolSet,
 };
 use crate::tools::{
     AddFindingParams, AddFindingResult, AskUserParams, AskUserResult, BaseFileResult,
@@ -175,10 +176,13 @@ pub(crate) struct ReviewToolsServer {
 }
 
 impl ReviewToolsServer {
-    /// [`RunContext::allows`], and the fleet tools only while the fleet is
-    /// connected.
-    fn may_call(&self, run: &RunContext, tool: &str) -> bool {
-        run.allows(tool) && (!FLEET_TOOL_NAMES.contains(&tool) || self.spaces.fleet_available())
+    /// [`RunContext::allows`], the fleet tools only while the fleet is
+    /// connected, and the sub-space tools only while `spaces.sub_spaces`
+    /// is on.
+    async fn may_call(&self, run: &RunContext, tool: &str) -> bool {
+        run.allows(tool)
+            && (!FLEET_TOOL_NAMES.contains(&tool) || self.spaces.fleet_available())
+            && (!SUB_SPACE_TOOL_NAMES.contains(&tool) || self.spaces.sub_spaces_enabled().await)
     }
 }
 
@@ -198,6 +202,7 @@ impl ReviewToolsServer {
                 + Self::space_agent_router()
                 + Self::code_router()
                 + Self::fleet_router()
+                + Self::local_spaces_router()
                 + Self::approve_router(),
         }
     }
@@ -585,11 +590,18 @@ impl ServerHandler for ReviewToolsServer {
     ) -> Result<ListToolsResult, ErrorData> {
         let run = request_run(&context)
             .ok_or_else(|| ErrorData::internal_error("missing run context", None))?;
+        let sub_spaces = self.spaces.sub_spaces_enabled().await;
+        let fleet = self.spaces.fleet_available();
         let tools = self
             .tool_router
             .list_all()
             .into_iter()
-            .filter(|t| self.may_call(&run, &t.name))
+            .filter(|t| {
+                let name = t.name.as_ref();
+                run.allows(name)
+                    && (!FLEET_TOOL_NAMES.contains(&name) || fleet)
+                    && (!SUB_SPACE_TOOL_NAMES.contains(&name) || sub_spaces)
+            })
             .collect();
         Ok(ListToolsResult::with_all_items(tools))
     }
@@ -602,7 +614,7 @@ impl ServerHandler for ReviewToolsServer {
     ) -> Result<CallToolResponse, ErrorData> {
         let run = request_run(&context)
             .ok_or_else(|| ErrorData::internal_error("missing run context", None))?;
-        if !self.may_call(&run, &request.name) {
+        if !self.may_call(&run, &request.name).await {
             // A space turn that may not write hears why, instead of a
             // tool that doesn't exist.
             if run.tools == ToolSet::Space

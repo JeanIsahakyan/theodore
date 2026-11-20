@@ -7,7 +7,8 @@ use async_trait::async_trait;
 use theodore_domain::{AgentId, Commit, FileStatus, FindingId, Group, Hunk, PrId, RunId, Severity};
 pub use theodore_ports::{
     Answer, AppStatus, BaseChange, CheckOutcome, CodeHit, CodeSymbol, CodeSymbolKind, Diagnostic,
-    FleetToolDevice, FleetToolRead, FleetToolSpace, FleetToolWait, LanguageStatus, LogTail,
+    FleetToolDevice, FleetToolRead, FleetToolSpace, FleetToolWait, LanguageStatus, LocalAnswer,
+    LocalSpaceItem, LocalSpaceList, LocalSpaceRead, LocalSpaceStart, LocalSpaceWait, LogTail,
     NewReviewComment, Position, ProgressStep, ProgressStepState, ReviewItem, ShipOutcome,
     ShipToolAction, SpaceCommandName, SpaceDiff, SpaceInfo, SpaceToolError, TerminalTail,
     UserAnswer, UserQuestion,
@@ -71,6 +72,25 @@ pub const FLEET_TOOL_NAMES: &[&str] = &[
 /// Run of a space of this device's own only ([`RunContext::fleet_steers`]).
 /// The rest (`fleet_devices`, `fleet_read`, `fleet_wait`) only read.
 pub const FLEET_STEER_TOOL_NAMES: &[&str] = &["fleet_start_space", "fleet_send", "fleet_stop"];
+
+/// The local-space tools that only read (docs/spaces.md "Sub-spaces"):
+/// every space turn of a space of this device's own, whatever its mode.
+pub const LOCAL_SPACE_READ_TOOL_NAMES: &[&str] = &["spaces_list", "space_read"];
+
+/// The sub-space tools: listed only while
+/// [`SpaceToolsBackend::sub_spaces_enabled`] (`spaces.sub_spaces`).
+pub const SUB_SPACE_TOOL_NAMES: &[&str] = &[
+    "space_start",
+    "space_send",
+    "space_wait",
+    "space_stop",
+    "space_answer",
+];
+
+/// The sub-space tools that change something: a turn in Edit or Run only
+/// ([`RunContext::sub_space_steers`]). `space_wait` only waits.
+pub const SUB_SPACE_STEER_TOOL_NAMES: &[&str] =
+    &["space_start", "space_send", "space_stop", "space_answer"];
 
 /// Drafts a problem report about the run's chat (docs/telemetry.md
 /// "Report from a chat"): a space turn's, or an AI panel question's —
@@ -206,6 +226,12 @@ impl RunContext {
         if FLEET_STEER_TOOL_NAMES.contains(&tool) {
             return self.fleet_steers();
         }
+        if SUB_SPACE_STEER_TOOL_NAMES.contains(&tool) {
+            return self.sub_space_steers();
+        }
+        if LOCAL_SPACE_READ_TOOL_NAMES.contains(&tool) || SUB_SPACE_TOOL_NAMES.contains(&tool) {
+            return self.local_spaces();
+        }
         match self.tools {
             ToolSet::Review => {
                 REVIEW_TOOL_NAMES.contains(&tool)
@@ -241,6 +267,19 @@ impl RunContext {
             && self.space.is_some()
             && self.fleet == FleetTools::Steer
             && self.mode.is_some_and(|m| m >= TurnMode::Edit)
+    }
+
+    /// May list, read and wait for other spaces on this computer: a space
+    /// turn, of a space that isn't hosted here for another device (that
+    /// device's trust doesn't reach this one's spaces).
+    pub fn local_spaces(&self) -> bool {
+        self.tools == ToolSet::Space && self.space.is_some() && self.fleet != FleetTools::Hosted
+    }
+
+    /// May start, send to, stop and answer sub-spaces: [`Self::local_spaces`]
+    /// in an Edit or Run turn.
+    pub fn sub_space_steers(&self) -> bool {
+        self.local_spaces() && self.mode.is_some_and(|m| m >= TurnMode::Edit)
     }
 
     /// A chat with the user: a space's turn, or an AI panel question
@@ -585,6 +624,91 @@ pub trait SpaceToolsBackend: Send + Sync {
         let _ = (space, target);
         Err(no_fleet())
     }
+
+    // ── other spaces on this computer (docs/spaces.md "Sub-spaces") ──
+
+    /// `spaces.sub_spaces`: the sub-space tools are listed.
+    async fn sub_spaces_enabled(&self) -> bool {
+        false
+    }
+    /// Spaces here, not archived; `space` is the caller.
+    async fn local_list(
+        &self,
+        space: &str,
+        project: Option<&str>,
+        include_done: bool,
+    ) -> Result<LocalSpaceList, SpaceToolError> {
+        let _ = (space, project, include_done);
+        Err(no_local())
+    }
+    /// Any space here, read only; its last `messages` messages.
+    async fn local_read(
+        &self,
+        space: &str,
+        target: &str,
+        messages: usize,
+    ) -> Result<LocalSpaceRead, SpaceToolError> {
+        let _ = (space, target, messages);
+        Err(no_local())
+    }
+    /// A sub-space of `space`, whose turn runs in `turn`.
+    async fn local_start(
+        &self,
+        space: &str,
+        turn: TurnMode,
+        req: LocalSpaceStart,
+    ) -> Result<LocalSpaceItem, SpaceToolError> {
+        let _ = (space, turn, req);
+        Err(no_local())
+    }
+    /// A message to `target`, a sub-space of `space`; at most `turn`'s mode.
+    async fn local_send(
+        &self,
+        space: &str,
+        turn: TurnMode,
+        target: &str,
+        message: &str,
+        mode: Option<&str>,
+    ) -> Result<LocalSpaceItem, SpaceToolError> {
+        let _ = (space, turn, target, message, mode);
+        Err(no_local())
+    }
+    /// Until one of `targets` settles, or `timeout_ms`.
+    async fn local_wait(
+        &self,
+        space: &str,
+        targets: &[String],
+        timeout_ms: u64,
+    ) -> Result<LocalSpaceWait, SpaceToolError> {
+        let _ = (space, targets, timeout_ms);
+        Err(no_local())
+    }
+    async fn local_stop(
+        &self,
+        space: &str,
+        turn: TurnMode,
+        target: &str,
+    ) -> Result<LocalSpaceItem, SpaceToolError> {
+        let _ = (space, turn, target);
+        Err(no_local())
+    }
+    /// Answers question set `ask` waiting in `target`, a sub-space of
+    /// `space`.
+    async fn local_answer(
+        &self,
+        space: &str,
+        turn: TurnMode,
+        target: &str,
+        ask: &str,
+        answers: Vec<LocalAnswer>,
+    ) -> Result<LocalSpaceItem, SpaceToolError> {
+        let _ = (space, turn, target, ask, answers);
+        Err(no_local())
+    }
+}
+
+fn no_local() -> SpaceToolError {
+    SpaceToolError::Unavailable("other spaces aren't available here".into())
 }
 
 fn no_fleet() -> SpaceToolError {

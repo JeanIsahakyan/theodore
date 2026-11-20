@@ -1163,6 +1163,8 @@ configured commands, never a shell of the agent's choosing.
 | `report_problem` | drafts a problem report about Theodore from this turn (title, description, scope, logs) and opens the report window on it; you review and send it, never the agent (docs/telemetry.md "Report from a chat") |
 | `fleet_devices`, `fleet_wait`, `fleet_read` | spaces on your other devices trusted here: list the devices, wait for and read the spaces this space started. Only while the fleet is on and connected (docs/fleet.md "Agents use it too") |
 | `fleet_start_space`, `fleet_send`, `fleet_stop` | start one (this space is its parent, mode at most the turn's), message it (at most the turn's mode), stop it — only spaces this space started. Only in an Edit or Run turn, and never in a space hosted here for another device |
+| `spaces_list`, `space_read` | the other spaces on this computer, read only (below, "Sub-spaces"). Never in a space hosted here for another device |
+| `space_start`, `space_send`, `space_wait`, `space_stop`, `space_answer` | sub-spaces of this one: start, message, wait for, stop, answer (below). While `spaces.sub_spaces` is on |
 
 ```
 turn ─▶ token for this space ─▶ agent ─▶ run_check ─▶ check ─▶ result ─▶ agent fixes ─▶ …
@@ -1198,6 +1200,51 @@ turn ─▶ token for this space ─▶ agent ─▶ run_check ─▶ check ─�
   without the agent.
 
 Details, limits and errors: `docs/config.md` §7.
+
+### Sub-spaces
+
+A space's agent sees the other spaces on this computer, and may split
+clearly independent work into sub-spaces: normal spaces, each with its own
+branch and worktree, `Space::parent` naming the space that started it.
+
+```
+parent turn (Edit/Run) ─▶ space_start {goal} ─▶ create_space (the usual path)
+                                                 parent = {parent, depth+1}
+                                                 └─▶ child's turn 1 (its goal)
+                       ─▶ space_wait [children] ─▶ one settles: turn ended,
+                                                   failed, or a question waits
+                       ─▶ space_read child ─▶ messages, diff stat ─▶ integrate
+child asks ─▶ question card for you, as any space ─┬─ you answer
+                                                   └─ or space_answer (parent)
+```
+
+| Tool | Does | Who gets it |
+| --- | --- | --- |
+| `spaces_list {project?, include_done?}` | spaces here, not archived (and not shipped or merged unless `include_done`), newest first, ≤ 50: id, name, title, project, status, mode, agent, turns, parent, `self` / `child` / `parent`, a mirror flagged `remote` | every turn of a space of this device's own |
+| `space_read {space, messages?}` | any space here: goal, status, mode, progress steps, last messages (10, ≤ 50, each ≤ 4000 characters), the running turn's text so far, a waiting question (`ask` id), diff stat | same |
+| `space_start {goal, project?, mode?, agent?, model?, effort?, name?}` | a child: project default the caller's, mode default Edit | an Edit or Run turn, `spaces.sub_spaces` on |
+| `space_send {space, message, mode?}` | a message to a child, queued like yours while it runs | same |
+| `space_wait {spaces, timeout_ms?}` | until one of the children settles, ≤ 10 min | every turn, `spaces.sub_spaces` on |
+| `space_stop {space}` / `space_answer {space, ask, answer}` | stop a child's turn / answer its waiting question | an Edit or Run turn, `spaces.sub_spaces` on |
+
+| Rule | Refused with |
+| --- | --- |
+| start, send, stop, answer only from an Edit or Run turn | `sub_spaces.mode` |
+| a child's mode ≤ the turn's; a send's ≤ the turn's and ≤ the child's | `sub_spaces.mode` |
+| never from a space hosted here for another device (no tool at all) | `sub_spaces.hosted` |
+| depth ≤ `spaces.max_depth` (default 2; a top-level space is 0) | `sub_spaces.depth` |
+| live (not archived) children per space < `spaces.max_children` (default 5), counted under one lock | `sub_spaces.children` |
+| send, wait, stop, answer: own children only, not grandchildren | `sub_spaces.not_child` |
+| `spaces.sub_spaces` off (default on): the five tools unlisted | `sub_spaces.off` |
+
+- Another space's words are data: `spaces_list` and `space_read` say so in
+  their `note`, and the system prompt does too.
+- The system prompt names the tools for a space of this device's own, and
+  says to split only clearly independent work (each part's goal says all
+  it needs), then wait, read and integrate; not small tasks.
+- The running turn's text is kept in memory per space while it streams,
+  and dropped when the turn ends.
+- Settings are `user` scope (Settings → Spaces).
 
 ---
 

@@ -138,6 +138,9 @@ pub(crate) struct Inner {
     pub report_drafts: crate::usecases::report::ReportDrafts,
     /// The fleet: link, devices, hosted and remote spaces (`usecases::fleet`).
     pub fleet: crate::usecases::fleet::FleetState,
+    /// Sub-spaces: the running turns' text so far, the start lock
+    /// (`usecases::space_children`).
+    pub sub_spaces: crate::usecases::space_children::SubSpaceState,
 }
 
 /// Inbound streams the shell (Tauri or the CLI) forwards to the UI.
@@ -197,6 +200,7 @@ impl Core {
             reports: std::sync::Mutex::new(None),
             report_drafts: Default::default(),
             fleet: Default::default(),
+            sub_spaces: Default::default(),
         });
 
         let core = Core(inner.clone());

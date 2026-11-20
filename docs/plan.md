@@ -1091,6 +1091,9 @@ Which agent does what is a setting, layered user → repo:
 | `agents.fix` | `claude` | one agent; edits only in the PR worktree |
 | `agents.<id>.enabled`, `.path`, `.model`, `.effort` | detected on onboarding; model and effort unset = the CLI's own | CLI path, model and effort override. Effort: Claude `--effort`, Codex `-c model_reasoning_effort="…"`, Gemini none. The picker shows no "default": an agent without a model or effort set gets, and keeps, the one shown. Its models (`agent_models`): Claude Code's catalog cache (else its aliases), Codex's from `codex debug models` (listed ones, by priority; read once per run of the app), none for Gemini |
 | `agents.user_mcp` | `true` | user scope only: Claude runs may use the user's own MCP servers (§8.2) |
+| `spaces.sub_spaces` | `true` | user scope: a space's agent may start, steer and wait for sub-spaces (docs/spaces.md "Sub-spaces"); listing and reading other spaces stay on |
+| `spaces.max_depth` | `2` | user scope: how deep sub-spaces nest (a top-level space is 0) |
+| `spaces.max_children` | `5` | user scope: live (not archived) sub-spaces per space |
 
 `theodore group --agent <id>` overrides the setting for evals. M1 ships the
 Claude runner; the others follow in M4 behind the same runner trait.
