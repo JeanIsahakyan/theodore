@@ -4,13 +4,14 @@
  * carries types only); the rest are the cloud's own (docs/cloud.md "Fleet").
  */
 
-export const PROTOCOL_VERSION = 6;
+export const PROTOCOL_VERSION = 7;
 /**
  * The oldest protocol still accepted. Protocol-3 connections never see
  * `mobile` / `web` devices (their `DeviceKind` can't read them) nor
  * `delegations`; protocol 3 and 4 never see the cloud's own `mcp` device;
  * below 6, no `confirm` / `confirm_dismissed` frames nor the `confirm` /
- * `set_mcp_auto` ops.
+ * `set_mcp_auto` ops; below 7, none of the ops on any space of a computer
+ * (`list_spaces` … `merge_child`).
  */
 export const MIN_PROTOCOL_VERSION = 3;
 /** A signed request or delegation older or newer than this is stale. */
@@ -90,12 +91,28 @@ export const PUSH_ACTIONS = 4;
 export const MAX_SPACE_EVENT_BYTES = 16 * 1024 * 1024;
 export const MAX_USER_EVENT_BYTES = 128 * 1024 * 1024;
 
+/**
+ * The `mirror` model of a sub-space of a hosted space (protocol 7,
+ * `SUB_SPACE_MODEL`): `id` the child's local id on the host, `data` a
+ * `MirroredSubSpace` (null: gone).
+ */
+export const SUB_SPACE_MODEL = 'sub_space';
 /** `mirror` models the cloud keeps, the latest per `(model, id)`. */
-export const MIRROR_KEPT = ['space', 'chat_message'] as const;
+export const MIRROR_KEPT = ['space', 'chat_message', SUB_SPACE_MODEL] as const;
 /** `mirror` models relayed live, never stored. */
 export const MIRROR_RELAYED = ['turn_step'] as const;
 /** A `mirror` event's `id`. */
 export const MAX_MIRROR_ID_CHARS = 256;
+
+/**
+ * The ops on any space of a computer (protocol 7), bounded only: the
+ * target checks them. A space id there is the target's own (or an `rs_`
+ * one); a question or message as long as an MCP goal.
+ */
+export const MAX_ANY_SPACE_ID_CHARS = 64;
+export const MAX_ANY_SPACE_TEXT_CHARS = 20_000;
+/** `read_space.messages` (the target's default: 10). */
+export const MAX_READ_MESSAGES = 50;
 
 export const codes = {
   BAD_SIGNATURE: 'fleet.bad_signature',
@@ -106,6 +123,8 @@ export const codes = {
   INTERNAL: 'fleet.internal',
   /** An mcp device's edit or run the person on the host denied (or let lapse). */
   DENIED: 'fleet.denied',
+  /** A slow op (`ask_space`'s answer) didn't finish on the target in time. */
+  TIMEOUT: 'fleet.timeout',
   UNAUTHORIZED: 'fleet.unauthorized',
   NO_ORG: 'fleet.no_org',
   VERSION: 'fleet.version',
@@ -123,7 +142,8 @@ export const codes = {
   /** The cloud couldn't check a token (signing keys unreachable): redial. */
   UNAVAILABLE: 'fleet.unavailable',
   /** The target runs a Theodore too old for this request (a phone's or the
-   * web app's, which a protocol-3 computer can't see, so can't trust). */
+   * web app's, which a protocol-3 computer can't see, so can't trust; an op
+   * its protocol doesn't have). */
   UPGRADE_REQUIRED: 'fleet.upgrade_required',
 } as const;
 

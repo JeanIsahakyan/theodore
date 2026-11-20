@@ -147,7 +147,9 @@ export function confirmPush(
       ? `start ${withArticle(c.mode)} space in ${c.project_name ?? 'a project'}`
       : c.action === 'send'
         ? `send to ${space} in ${mode}`
-        : `approve the plan in ${space} (${mode})`;
+        : c.action === 'merge'
+          ? `merge a sub-space into ${space}`
+          : `approve the plan in ${space} (${mode})`;
   const text = c.text.trim();
   return {
     title: clip(`Claude via cloud · ${hostName}`, 120),

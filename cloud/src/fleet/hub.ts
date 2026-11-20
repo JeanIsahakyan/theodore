@@ -19,6 +19,9 @@
  *      confirm_resolved (its host) │ expiry │ delegation ended
  *        ─▶ confirm_dismissed ─▶ where it showed
  *      a delegate's yes/no: request{op: confirm} ─▶ host (routed as below)
+ *   ─▶ request on any space of the target (protocol 7: list_spaces …
+ *      merge_child, by its local id) ─▶ routed on no cloud space; a target
+ *      below 7 ─▶ refused{fleet.upgrade_required}
  * POST /v1/fleet/request ─▶ routed like a socket request
  * ```
  *
@@ -114,6 +117,8 @@ import {
   peekEvent,
   peekReply,
   peekRequest,
+  onAnySpace,
+  protocolFor,
   protocolToSee,
   unb64,
   V6,
@@ -599,6 +604,17 @@ export class Hub {
       'SELECT * FROM pending WHERE target_device = ? AND claimed = 0 ORDER BY created_ms',
       deviceId,
     )) {
+      // Sent while it was away, for an op its protocol doesn't have.
+      if (msg.protocol < protocolFor(p.op)) {
+        this.store.run('DELETE FROM pending WHERE req_id = ?', p.req_id);
+        this.deliver(p.user_id, p.origin_device, p.req_id, {
+          type: 'refused',
+          req_id: p.req_id,
+          code: codes.UPGRADE_REQUIRED,
+          message: upgradeWords(p.op),
+        });
+        continue;
+      }
       this.send(conn, {
         type: 'request',
         envelope: JSON.parse(p.envelope),
@@ -765,21 +781,18 @@ export class Hub {
     const targetConn = this.readyDevice(user, route.target_device);
     // A person's yes (or no), or the auto mode that skips asking: on no
     // space, and never from Claude via the cloud itself (the host refuses
-    // that too).
-    const onSpace = route.op !== 'confirm' && route.op !== 'set_mcp_auto';
-    if (!onSpace) {
-      if (!origin || infoOf(origin).kind === 'mcp') {
-        return refuse(
-          codes.NOT_YOURS,
-          'Claude via the cloud can’t answer its own requests or set auto mode',
-        );
-      }
-      if (targetConn && protocolOf(targetConn.state) < V6) {
-        return refuse(
-          codes.UPGRADE_REQUIRED,
-          'that computer runs an older Theodore: update it to take approvals and auto mode from another device',
-        );
-      }
+    // that too). The ops on any of the target's own spaces are on no space
+    // the cloud tracks either, but anyone may send them (the target decides).
+    const personOnly = route.op === 'confirm' || route.op === 'set_mcp_auto';
+    const onSpace = !personOnly && !onAnySpace(route.op);
+    if (personOnly && (!origin || infoOf(origin).kind === 'mcp')) {
+      return refuse(
+        codes.NOT_YOURS,
+        'Claude via the cloud can’t answer its own requests or set auto mode',
+      );
+    }
+    if (targetConn && protocolOf(targetConn.state) < protocolFor(route.op)) {
+      return refuse(codes.UPGRADE_REQUIRED, upgradeWords(route.op));
     }
     if (
       origin &&
@@ -2286,6 +2299,13 @@ export class Hub {
  */
 function badToken(e: unknown): boolean {
   return e instanceof CloudError && e.code === 'cloud.unauthorized';
+}
+
+/** Why a target too old for `op` is refused (static words). */
+function upgradeWords(op: string): string {
+  return onAnySpace(op)
+    ? 'that computer runs an older Theodore: update it to reach all its spaces'
+    : 'that computer runs an older Theodore: update it to take approvals and auto mode from another device';
 }
 
 /** A `mirror` model the cloud keeps (the latest per id), not just relays. */
