@@ -716,9 +716,9 @@ Per environment (staging, production):
 - [x] WorkOS staging ─▶ Redirects: `https://theodore-cloud-staging.prd-instance.workers.dev/oauth/callback`
       (added through the WorkOS API: `POST /user_management/redirect_uris`
       with that environment's API key).
-- [ ] WorkOS production ─▶ Redirects: `https://theodore-cloud.prd-instance.workers.dev/oauth/callback`
-      (dashboard, or the same API call with the production key). Until
-      then the sign-in stops at WorkOS's "not a valid redirect URI".
+- [x] WorkOS production ─▶ Redirects: `https://theodore-cloud.prd-instance.workers.dev/oauth/callback`
+      (dashboard). Check: WorkOS's authorize with this URI goes to the
+      AuthKit sign-in, an unknown one to `error.workos.com/redirect-uri-invalid`.
 - [x] Nothing new for WorkOS keys: the code exchange and refresh use the
       `WORKOS_API_KEY` already set.
 - [ ] Computers on the protocol this build speaks (7): older ones can't

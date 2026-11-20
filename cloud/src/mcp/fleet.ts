@@ -69,6 +69,7 @@ import {
   isMode,
   lineOf,
   pinName,
+  projectName,
   remoteStatus,
   safeCode,
   truncate,
@@ -122,6 +123,8 @@ export const APPROVED_TEXT = 'Plan approved, implement it.';
 export const MAX_TEXT_CHARS = 20_000;
 
 const SETTLED = ['idle', 'waiting', 'stopped', 'failed'];
+/** How long a taken start or send may wait for its turn to begin. */
+const TURN_START_MS = 2 * 60 * 1000;
 
 /** A tool's refusal: a stable code and static words (no unsigned text). */
 export class McpError extends Error {
@@ -612,6 +615,14 @@ export class McpFleet {
             ? truncate(last.plan, 8000)
             : null;
         patch.build_mode = row.build_mode === 'run' ? 'run' : 'edit';
+        // The host names a space after its first turn: follow its title.
+        const title =
+          typeof row.title === 'string' && row.title.trim()
+            ? row.title
+            : typeof row.name === 'string'
+              ? row.name
+              : '';
+        if (title.trim()) patch.name = truncate(title.trim(), 200);
       }
       this.update(sp.space, patch);
       return;
@@ -884,7 +895,7 @@ export class McpFleet {
       // Ids only where they pass the agents' pattern; names cut like pins.
       projects: d.info.projects
         .filter((p) => validProjectId(p.id))
-        .map((p) => ({ id: p.id, name: pinName(p.name) })),
+        .map((p) => ({ id: p.id, name: projectName(p.name) })),
       agents: (d.info.agents ?? []).map((a) => ({
         id: a.id,
         default_model: a.default_model ?? null,
@@ -1284,11 +1295,41 @@ export class McpFleet {
 
   /** A space as a tool shows it, with what it waits for. */
   private view(user: string, sp: McpSpaceRow): SpaceView {
+    // A host reports `idle` right after making a space, before the goal's
+    // turn starts (and between a send's ok and its turn): while a turn it
+    // took hasn't ended, the space is still running.
+    const owed = sp.status === 'idle' && this.turnsOwed(user, sp.space);
     return viewOf(
-      sp,
+      owed ? { ...sp, status: 'running' } : sp,
       this.waitingFor(user, sp.space),
       this.store.subSpaces(sp.space),
     );
+  }
+
+  /**
+   * Whether the last start or send the host took hasn't begun its turn yet
+   * (nothing of a turn since: no turn, tool, reply, question or end line),
+   * for up to `TURN_START_MS`: a turn starts within
+   * seconds, and a missed event must not keep a space running for good.
+   */
+  private turnsOwed(user: string, space: string): boolean {
+    const req = this.store.one<RequestRow>(
+      `SELECT * FROM mcp_requests
+       WHERE user_id = ? AND space = ? AND op IN ('start_space', 'send')
+         AND json_extract(outcome, '$.kind') = 'ok'
+       ORDER BY created_ms DESC LIMIT 1`,
+      user,
+      space,
+    );
+    if (!req || this.env.now() - req.created_ms > TURN_START_MS) return false;
+    const began = this.store.one<{ n: number }>(
+      `SELECT COUNT(*) AS n FROM mcp_lines
+       WHERE space = ? AND kind IN ('turn', 'tool', 'reply', 'question', 'ended')
+         AND seq > ?`,
+      space,
+      req.seq_at,
+    );
+    return (began?.n ?? 0) === 0;
   }
 
   /**

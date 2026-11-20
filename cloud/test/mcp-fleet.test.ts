@@ -161,6 +161,53 @@ describe('MCP device', () => {
     });
   });
 
+  it('is not settled on the idle a host sends before the goal turn runs', async () => {
+    const { h, mac, mcpId } = await setup();
+    const { space } = await started(h, mac);
+    const host = mac.id!;
+    await mac.emit(space, 1, {
+      kind: 'started',
+      host_device: host,
+      origin_device: mcpId(),
+      project_id: 'p1',
+      project_name: 'theodore',
+      name: 'Fix',
+      branch: 'fix-bug',
+      mode: 'plan',
+      depth: 0,
+    });
+    await mac.emit(space, 2, { kind: 'status', status: 'idle' });
+    const early = await tool(h, 'space_wait', {
+      spaces: [space],
+      timeout_ms: 300,
+    });
+    expect(early.v.settled).toBe(false);
+    expect(early.v.spaces[0].status).toBe('running');
+    await mac.emit(space, 3, { kind: 'turn_started', turn: 1, text: 'fix' });
+    await mac.emit(space, 4, { kind: 'reply', turn: 1, text: 'done' });
+    await mac.emit(space, 5, { kind: 'turn_ended', turn: 1, outcome: 'done' });
+    await mac.emit(space, 6, { kind: 'status', status: 'idle' });
+    const w = await tool(h, 'space_wait', {
+      spaces: [space],
+      timeout_ms: 2000,
+    });
+    expect(w.v.settled).toBe(true);
+    // The host titles the space after its first turn: the name follows.
+    await mac.emit(space, 7, {
+      kind: 'mirror',
+      model: 'space',
+      id: space,
+      data: {
+        id: space,
+        title: 'Fix the login bug',
+        name: 'fix',
+        turn_log: [],
+      },
+    });
+    const r = await tool(h, 'space_read', { space });
+    expect(r.v.name).toBe('Fix the login bug');
+  });
+
   it('follows the space from verified events: reply, plan, approve', async () => {
     const { h, mac, mcpId } = await setup();
     const { space } = await started(h, mac);
