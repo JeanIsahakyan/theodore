@@ -26,7 +26,7 @@
 //! (`item/agentMessage/delta`) — a different runner, not a flag.
 
 use serde_json::Value;
-use theodore_domain::Usage;
+use theodore_domain::{AgentId, Usage};
 use theodore_ports::agent::{AgentEvent, AgentMode, AgentRequest, ToolResultDetail};
 
 use crate::config::AgentBinaryConfig;
@@ -168,6 +168,30 @@ pub fn parse_line(line: &str, last_agent_message: &mut String) -> Vec<AgentEvent
     let Ok(v) = serde_json::from_str::<Value>(line) else {
         return vec![];
     };
+    let events = line_events(&v, last_agent_message);
+    match rate_limits(&v) {
+        Some(limit) => std::iter::once(limit).chain(events).collect(),
+        None => events,
+    }
+}
+
+/// Codex's rate-limit snapshot, where a line carries one (its internal
+/// `token_count` event has it as `msg.rate_limits`). `codex exec --json`
+/// isn't known to send it: read defensively, wherever it sits.
+fn rate_limits(v: &Value) -> Option<AgentEvent> {
+    [
+        "/rate_limits",
+        "/msg/rate_limits",
+        "/info/rate_limits",
+        "/msg/info/rate_limits",
+    ]
+    .iter()
+    .find_map(|at| v.pointer(at).filter(|r| r.is_object()))
+    .and_then(crate::limits::codex_rate_limits)
+    .map(|limit| AgentEvent::Limit { limit })
+}
+
+fn line_events(v: &Value, last_agent_message: &mut String) -> Vec<AgentEvent> {
     match v.get("type").and_then(Value::as_str) {
         Some("item.started") => item_started(v.get("item")),
         Some("item.completed") => item_completed(v.get("item"), last_agent_message),
@@ -183,10 +207,20 @@ pub fn parse_line(line: &str, last_agent_message: &mut String) -> Vec<AgentEvent
                 .and_then(Value::as_str)
                 .unwrap_or("codex turn failed")
                 .to_string();
-            vec![AgentEvent::Error {
-                message,
-                stderr_tail: String::new(),
-            }]
+            // The usage limit, from the message or a code next to it
+            // (`usage_limit_reached`), before the error it ends the run with.
+            let said = ["/error/code", "/error/type"]
+                .iter()
+                .filter_map(|at| v.pointer(at).and_then(Value::as_str))
+                .fold(message.clone(), |all, code| format!("{all}\n{code}"));
+            crate::limits::limit_in_error(AgentId::Codex, &said, chrono::Local::now())
+                .map(|limit| AgentEvent::Limit { limit })
+                .into_iter()
+                .chain(std::iter::once(AgentEvent::Error {
+                    message,
+                    stderr_tail: String::new(),
+                }))
+                .collect()
         }
         // A new thread or a resumed one: its id is what `exec resume` takes.
         Some("thread.started") => v

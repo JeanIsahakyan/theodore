@@ -5709,6 +5709,7 @@ name = "theodore-agents"
 version = "0.1.21"
 dependencies = [
  "async-trait",
+ "chrono",
  "dirs 6.0.0",
  "nix 0.31.3",
  "portable-pty",
