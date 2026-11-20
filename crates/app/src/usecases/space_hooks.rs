@@ -819,7 +819,12 @@ impl Core {
                 .open(&path)
                 .await
             {
+                // A tokio file finishes its writes in the background: without
+                // the flush, reading the file right after can see it empty.
                 f.write_all(config::GLOBAL_TEMPLATE.as_bytes())
+                    .await
+                    .map_err(|e| AppError::Invalid(format!("{}: {e}", path.display())))?;
+                f.flush()
                     .await
                     .map_err(|e| AppError::Invalid(format!("{}: {e}", path.display())))?;
             }

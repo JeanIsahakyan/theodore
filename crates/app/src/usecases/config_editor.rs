@@ -668,6 +668,11 @@ pub(crate) async fn ensure_gitignored(folder: &Path) -> AppResult<bool> {
     f.write_all(add.as_bytes())
         .await
         .map_err(|e| AppError::Invalid(format!("{}: {e}", path.display())))?;
+    // A tokio file finishes its writes in the background: flush so the
+    // line is there when the caller reads `.gitignore` next.
+    f.flush()
+        .await
+        .map_err(|e| AppError::Invalid(format!("{}: {e}", path.display())))?;
     Ok(true)
 }
 
