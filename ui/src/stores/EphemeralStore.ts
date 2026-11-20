@@ -47,6 +47,8 @@ const LOG_LIMIT = 500;
 const STEP_LIMIT = 500;
 /** Of one subagent, the same. */
 const NESTED_STEP_LIMIT = 100;
+/** Calls whose start and end are remembered (`stepTimes`). */
+const TIMED_CALLS = 500;
 
 export interface ToastAction {
   label: string;
@@ -192,6 +194,13 @@ export class EphemeralStore {
     {},
     { deep: false },
   );
+  /** When this window saw each call start and end, by `run\u0000call`: how
+   *  long a subagent ran (the Agents panel). Steps carry no times; outlives
+   *  the run, the oldest going past `TIMED_CALLS`. */
+  readonly stepTimes: ObservableMap<
+    string,
+    { start: number; end: number | null }
+  > = observable.map({}, { deep: false });
   /** Runs whose next piece of text starts a new row. */
   private readonly textBreaks = new Set<string>();
   /** A file's chip was clicked: the Changes pane opens on `path` (`null`: just
@@ -617,11 +626,15 @@ export class EphemeralStore {
           // What it wrote before this comes before it in the steps.
           this.flushRun(e.run);
           this.addStep(e.run, e.step);
+          if (e.step.kind === 'tool' && e.step.id) {
+            this.timeStep(e.run, e.step.id, e.step.ok != null);
+          }
           this.clearStalled(e.run);
           return;
         case 'run_step_done':
           this.flushRun(e.run);
           this.markStep(e.run, e.id, e.ok, e.summary, e.background);
+          if (e.ok != null) this.timeStep(e.run, e.id, true);
           this.clearStalled(e.run);
           return;
         case 'run_text_break':
@@ -882,6 +895,26 @@ export class EphemeralStore {
       if (prev && prev !== run) this.clearRun(prev);
       this.taskRuns.set(task, run);
     });
+  }
+
+  /** A call's start, or its end once it has a result. */
+  private timeStep(run: string, call: string, ended: boolean): void {
+    const key = `${run}\u0000${call}`;
+    const now = Date.now();
+    const seen = this.stepTimes.get(key);
+    if (!seen) {
+      this.stepTimes.set(key, { start: now, end: ended ? now : null });
+      if (this.stepTimes.size > TIMED_CALLS) {
+        this.stepTimes.delete(this.stepTimes.keys().next().value!);
+      }
+    } else if (ended && seen.end == null) {
+      this.stepTimes.set(key, { ...seen, end: now });
+    }
+  }
+
+  /** When `call` of `run` started and ended, as this window saw it. */
+  stepTime(run: string, call: string) {
+    return this.stepTimes.get(`${run}\u0000${call}`) ?? null;
   }
 
   private addStep(run: string, step: TurnStep): void {

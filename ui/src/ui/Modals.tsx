@@ -187,8 +187,8 @@ const KEYS: [string, string][] = [
   ['Everywhere', ''],
   ['⌘K', 'command palette: any action, any PR'],
   [
-    `G I${FEATURES.currentUser ? ' / G M' : ''} / G T / G S`,
-    `Inbox${FEATURES.currentUser ? ' / my pull requests' : ''} / Tasks / Settings`,
+    `G I${FEATURES.currentUser ? ' / G M' : ''} / G T / G A / G S`,
+    `Inbox${FEATURES.currentUser ? ' / my pull requests' : ''} / Tasks / Agents / Settings`,
   ],
   ['[', 'collapse sidebar'],
   ['⌥1…9 / ⌥W', 'switch / close tab'],

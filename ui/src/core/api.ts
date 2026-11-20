@@ -240,9 +240,10 @@ export const api = {
     call<Attachment>('save_attachment', { req }),
   /** A saved attachment as a `data:<mime>;base64,…` URL. */
   attachmentData: (id: string) => call<string>('attachment_data', { id }),
-  /** What's stored of a tool call; `null`: nothing was. */
-  toolPayload: (run: string, callId: string) =>
-    call<ToolPayload | null>('tool_payload', { run, call: callId }),
+  /** What's stored of a tool call; `null`: nothing was. `quiet`: a passive
+   *  read (the Agents panel's models), no toast. */
+  toolPayload: (run: string, callId: string, quiet = false) =>
+    call<ToolPayload | null>('tool_payload', { run, call: callId }, quiet),
   cancelRun: (run: string) => call<null>('cancel_run', { run }),
   submitReview: (req: SubmitReviewRequest) =>
     call<null>('submit_review', { req }),

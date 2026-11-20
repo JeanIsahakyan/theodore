@@ -26,6 +26,7 @@ import {
   CircleFill,
   Clock,
   CodePullRequest,
+  Cpus,
   Eye,
   FileText,
   Folder,
@@ -543,6 +544,17 @@ export const CommandMenu = observer(function CommandMenu() {
     ...prItems,
     ...thisSpaceItems,
     ...spaceItems,
+    ...(isBuildMode(store)
+      ? [
+          {
+            group: 'Spaces',
+            label: 'Agents — everything running now',
+            icon: <Cpus />,
+            keys: 'G A',
+            run: () => ui.go({ name: 'agents' }),
+          } satisfies Item,
+        ]
+      : []),
     // New space on another device (docs/fleet.md): the same dialog, on
     // "Run on" one of them.
     ...(isBuildMode(store) &&
@@ -761,6 +773,8 @@ export function useGlobalKeys() {
         if (latinKey(e) === 's') ui.go({ name: 'settings', page: 'agents' });
         if (latinKey(e) === 'm' && FEATURES.currentUser) ui.goPrs('mine');
         if (latinKey(e) === 'k') ui.go({ name: 'skills' });
+        if (latinKey(e) === 'a' && isBuildMode(store))
+          ui.go({ name: 'agents' });
       } else if (latinKey(e) === 'g') {
         gAt = Date.now();
       } else if (latinKey(e) === '[') {

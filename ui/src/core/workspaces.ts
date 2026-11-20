@@ -183,6 +183,7 @@ const ROUTE_NAMES = new Set([
   'review',
   'new',
   'space',
+  'agents',
 ]);
 
 /** The sections of a project's settings, in menu order. */

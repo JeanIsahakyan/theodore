@@ -21,6 +21,7 @@ import {
   useEffect,
   useMemo,
   useRef,
+  useState,
   type ComponentType,
   type ReactNode,
 } from 'react';
@@ -44,7 +45,12 @@ import { Md } from '../highlight';
 import { Spinner } from './bits';
 import { useFileHover } from './FileHoverPreview';
 import { FileTypeIcon } from './FileTypeIcon';
-import { useKeptOpen, useSteadyChange } from './rowState';
+import {
+  revealDone,
+  useKeptOpen,
+  useReveal,
+  useSteadyChange,
+} from './rowState';
 import { toolRow, type ToolKind } from './toolSummary';
 import { AgentDetails, ToolDetails } from './ToolDetails';
 import { toolKey, useToolRun } from './toolPayload';
@@ -333,6 +339,24 @@ const AgentRow = memo(
       step.id ? `agent:${step.id}` : keptAs && `agent:${keptAs}`,
     );
     const steady = useSteadyChange();
+    // Asked for by the Agents panel: into view, with a short glow.
+    const line = useRef<HTMLDivElement>(null);
+    const [glow, setGlow] = useState(false);
+    useEffect(() => {
+      if (!glow) return;
+      const t = window.setTimeout(() => setGlow(false), 1600);
+      return () => window.clearTimeout(t);
+    }, [glow]);
+    useReveal(step.id ?? null, (call) => {
+      revealDone(call);
+      setGlow(true);
+      // After the fold above it opened and the chat measured it.
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() =>
+          line.current?.scrollIntoView?.({ block: 'center' }),
+        ),
+      );
+    });
     // A background launch answers at once, its report comes later or never.
     const waiting = !!step.background && !step.summary;
     const stillRunning = useRunningBackgroundCall(step.id);
@@ -342,7 +366,12 @@ const AgentRow = memo(
       ? (latestOf(own) ?? (waiting ? 'running in background' : null))
       : (step.summary ?? (step.background ? 'ran in background' : null));
     return (
-      <div data-kind="agent" className="turn-agent min-w-0">
+      <div
+        ref={line}
+        data-kind="agent"
+        data-call={step.id ?? undefined}
+        className={`turn-agent min-w-0 ${glow ? 'reveal-flash' : ''}`}
+      >
         <button
           type="button"
           aria-expanded={open}
@@ -394,6 +423,15 @@ const AgentRow = memo(
 
 const NOTHING_UNDER = new Map<string, TurnStep[]>();
 
+/** The subagent calls among `items`, folds included. */
+function agentCalls(items: readonly TurnItem[]): string[] {
+  return items.flatMap((it) => {
+    if (it.kind === 'fold') return agentCalls(it.items);
+    if (it.kind !== 'step' || it.step.kind !== 'tool' || !it.step.id) return [];
+    return toolRow(it.step.name).kind === 'agent' ? [it.step.id] : [];
+  });
+}
+
 /** Rows that fold away: muted, no border, chevron on the left, then how much
  *  is in it and the kinds of tools. */
 const FoldRow = memo(function FoldRow({
@@ -407,6 +445,11 @@ const FoldRow = memo(function FoldRow({
 }) {
   const [open, setOpen] = useKeptOpen(keptAs && `fold:${keptAs}:${item.index}`);
   const steady = useSteadyChange();
+  // A subagent in here was asked for: open, so its row can show itself.
+  const calls = useMemo(() => agentCalls(item.items).join('\n'), [item.items]);
+  useReveal(calls || null, () => {
+    if (!open) setOpen(true);
+  });
   return (
     <div className="turn-fold min-w-0">
       <button

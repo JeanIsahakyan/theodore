@@ -34,6 +34,7 @@ import { showToast } from './shell/toasts';
 import { isBuildMode } from './space/mode';
 import { isHostOn } from './settings/labs';
 import { SpacePage } from './space/SpacePage';
+import { AgentsPage } from './space/AgentsPage';
 import { FleetNotices } from './fleet/FleetNotices';
 import { useWelcome, Welcome } from './Welcome';
 
@@ -204,6 +205,10 @@ export const App = observer(function App() {
               <ProjectSettingsPage project={r.project} section={r.section} />
             ) : r.name === 'new' ? (
               <NewTab key={r.id} route={r} />
+            ) : r.name === 'agents' ? (
+              buildMode ? (
+                <AgentsPage />
+              ) : null
             ) : r.name === 'space' ? (
               // A tab left over from when build mode was on shows nothing.
               buildMode ? (
