@@ -193,6 +193,10 @@ pub struct Space {
     /// fleet; local-only parts (worktree, diff, terminal) are the host's.
     #[serde(default)]
     pub remote: Option<SpaceRemote>,
+    /// Set when another space's agent started this one on this device
+    /// (docs/spaces.md "Sub-spaces"): shown under that space.
+    #[serde(default)]
+    pub parent: Option<SpaceParent>,
     pub created_at: Millis,
     pub updated_at: Millis,
     /// When the space last had something for you: a turn ended or failed
@@ -360,8 +364,16 @@ pub struct AgentSession {
     pub cwd: String,
 }
 
-/// One agent turn of a space: the messages it answered and the checkpoint
-/// it moved the space from and to.
+/// The space whose agent started this one.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct SpaceParent {
+    /// `Space::id` of the parent (local).
+    pub space: String,
+    /// 1 for a child of a top-level space, 2 for its child; at most
+    /// `spaces.max_depth`.
+    pub depth: u32,
+}
+
 /// Where a mirrored space runs.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 pub struct SpaceRemote {
@@ -376,6 +388,8 @@ pub struct SpaceRemote {
     pub started_here: bool,
 }
 
+/// One agent turn of a space: the messages it answered and the checkpoint
+/// it moved the space from and to.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
 pub struct SpaceTurn {
     /// The `chat_message` id of your message that started it; the reply's

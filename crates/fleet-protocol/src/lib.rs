@@ -28,9 +28,10 @@ pub use keys::{DeviceKey, KeyError, fingerprint, verify};
 
 /// Protocol version sent in `hello`; the cloud refuses others with
 /// `fleet.version`.
-pub const PROTOCOL_VERSION: u32 = 4;
+pub const PROTOCOL_VERSION: u32 = 5;
 /// The oldest protocol the cloud still accepts (it hides `mobile` / `web`
-/// devices from those connections, whose `DeviceKind` can't read them).
+/// devices from protocol-3 connections and `mcp` ones from protocol < 5,
+/// whose `DeviceKind` can't read them).
 pub const MIN_PROTOCOL_VERSION: u32 = 3;
 /// A signed request older or newer than this is refused (`fleet.stale_request`).
 pub const REQUEST_WINDOW_MS: u64 = 5 * 60 * 1000;
@@ -93,6 +94,11 @@ pub enum DeviceKind {
     Mobile,
     /// The web app: a client only, never a target.
     Web,
+    /// The cloud's MCP endpoint (docs/fleet.md "MCP over the cloud"): a
+    /// client only, never a target. Its key lives in the cloud, so a host
+    /// caps what it may do without a person (`FleetMode::Plan`); an Edit or
+    /// Run from it waits for a yes on the host.
+    Mcp,
 }
 
 impl DeviceKind {

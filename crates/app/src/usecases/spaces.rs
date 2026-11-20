@@ -225,6 +225,7 @@ impl Core {
             commands_denied: false,
             agent_session: None,
             sent_feedback: Vec::new(),
+            parent: None,
             created_at: now,
             updated_at: now,
             attention_at: None,

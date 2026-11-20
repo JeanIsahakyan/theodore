@@ -91,7 +91,14 @@ export type DeviceKind =
 /**  The phone app (docs/mobile.md): a client only, never a target. */
 "mobile" |
 /**  The web app: a client only, never a target. */
-"web";
+"web" |
+/**
+ *  The cloud's MCP endpoint (docs/fleet.md "MCP over the cloud"): a
+ *  client only, never a target. Its key lives in the cloud, so a host
+ *  caps what it may do without a person (`FleetMode::Plan`); an Edit or
+ *  Run from it waits for a yes on the host.
+ */
+"mcp";
 
 export type DeviceOs = "macos" | "linux" | "windows" | "ios" | "android" |
 /**

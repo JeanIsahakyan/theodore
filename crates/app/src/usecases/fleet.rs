@@ -833,6 +833,7 @@ impl Core {
                     DeviceKind::Daemon => "daemon".into(),
                     DeviceKind::Mobile => "mobile".into(),
                     DeviceKind::Web => "web".into(),
+                    DeviceKind::Mcp => "mcp".into(),
                 },
                 online: d.online,
                 last_seen_ms: d.last_seen_ms,

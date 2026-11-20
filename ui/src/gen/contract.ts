@@ -2304,6 +2304,11 @@ export type Space = {
 	 *  fleet; local-only parts (worktree, diff, terminal) are the host's.
 	 */
 	remote?: SpaceRemote | null,
+	/**
+	 *  Set when another space's agent started this one on this device
+	 *  (docs/spaces.md "Sub-spaces"): shown under that space.
+	 */
+	parent?: SpaceParent | null,
 	created_at: number,
 	updated_at: number,
 	/**
@@ -2536,6 +2541,17 @@ export type SpaceMode =
  */
 "plan";
 
+/**  The space whose agent started this one. */
+export type SpaceParent = {
+	/**  `Space::id` of the parent (local). */
+	space: string,
+	/**
+	 *  1 for a child of a top-level space, 2 for its child; at most
+	 *  `spaces.max_depth`.
+	 */
+	depth: number,
+};
+
 /**  The space's long-running `run` command. */
 export type SpaceProcess = {
 	status: ProcessStatus,
@@ -2596,11 +2612,7 @@ export type SpaceQueuedRequest = {
 	action: QueuedAction,
 };
 
-/**
- *  One agent turn of a space: the messages it answered and the checkpoint
- *  it moved the space from and to.
- *  Where a mirrored space runs.
- */
+/**  Where a mirrored space runs. */
 export type SpaceRemote = {
 	/**  The fleet id (`rs_…`). */
 	space: string,
@@ -2767,6 +2779,10 @@ export type SpaceTrustRequest = {
 	hash: string,
 };
 
+/**
+ *  One agent turn of a space: the messages it answered and the checkpoint
+ *  it moved the space from and to.
+ */
 export type SpaceTurn = {
 	/**
 	 *  The `chat_message` id of your message that started it; the reply's
