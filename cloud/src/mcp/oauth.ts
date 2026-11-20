@@ -264,6 +264,34 @@ const unavailable = () =>
 const escape = (v: string) =>
   v.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
+/** The Theodore tile (mobile/assets/src/logo.svg), inline: the page's CSP
+ *  loads nothing. */
+const LOGO = `<svg xmlns="http://www.w3.org/2000/svg" width="56" height="56" aria-hidden="true" viewBox="0 0 1024 1024"><defs><radialGradient id="blob" cx="0.5" cy="0.5" r="0.5"><stop offset="0" stop-color="#0C5BC0" stop-opacity="0.95"/><stop offset="1" stop-color="#0C5BC0" stop-opacity="0"/></radialGradient><linearGradient id="glass" x1="0" y1="0" x2="0.3" y2="1"><stop offset="0" stop-color="#FFFFFF" stop-opacity="0.72"/><stop offset="1" stop-color="#FFFFFF" stop-opacity="0.14"/></linearGradient><linearGradient id="rim" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FFFFFF" stop-opacity="1"/><stop offset="0.5" stop-color="#FFFFFF" stop-opacity="0.25"/><stop offset="1" stop-color="#FFFFFF" stop-opacity="0.7"/></linearGradient><clipPath id="tile"><rect x="100" y="100" width="824" height="824" rx="185"/></clipPath><clipPath id="lenses"><circle cx="352" cy="500" r="150"/><circle cx="672" cy="500" r="150"/></clipPath></defs><rect x="100" y="100" width="824" height="824" rx="185" fill="#3F86D6"/><g clip-path="url(#tile)"><circle cx="300" cy="330" r="300" fill="url(#blob)"/><circle cx="740" cy="380" r="320" fill="url(#blob)"/><circle cx="520" cy="800" r="330" fill="url(#blob)"/></g><g fill="#03306B" fill-opacity="0.18" transform="translate(0 26)"><circle cx="352" cy="500" r="150"/><circle cx="672" cy="500" r="150"/></g><circle cx="352" cy="500" r="150" fill="url(#glass)" fill-opacity="0.75"/><circle cx="672" cy="500" r="150" fill="url(#glass)" fill-opacity="0.75"/><g clip-path="url(#lenses)" stroke="#FFFFFF" stroke-opacity="0.45" stroke-width="40"><path d="M100 330 L 924 330"/><path d="M100 440 L 924 440"/><path d="M100 550 L 924 550"/><path d="M100 660 L 924 660"/></g><g fill="none" stroke="url(#rim)" stroke-width="6"><circle cx="352" cy="500" r="150"/><circle cx="672" cy="500" r="150"/></g><path d="M500 486 C 506 456, 518 456, 524 486" fill="none" stroke="#FFFFFF" stroke-width="20" stroke-linecap="round"/><g fill="none" stroke="#FFFFFF" stroke-width="12" stroke-linecap="round"><path d="M250 430 A 120 120 0 0 1 300 380"/><path d="M570 430 A 120 120 0 0 1 620 380"/></g><rect x="100" y="100" width="824" height="824" rx="185" fill="none" stroke="#FFFFFF" stroke-opacity="0.6" stroke-width="6"/></svg>`;
+
+/** The pages look like the app: HeroUI's tokens (ui/), light and dark. */
+const STYLE = `
+:root{color-scheme:light dark;--bg:oklch(.9702 0 0);--fg:oklch(.2103 .0059 285.89);--surface:#fff;--muted:oklch(.5517 .0138 285.94);--default:oklch(94% .001 286.375);--sep:oklch(92% .004 286.32);--accent:oklch(.6204 .195 253.83);--accent-fg:oklch(.9911 0 0);--warn-bg:color-mix(in oklab,oklch(.78 .16 75) 14%,transparent);--r:.75rem}
+@media (prefers-color-scheme:dark){:root{--bg:oklch(12% .005 285.823);--fg:oklch(.9911 0 0);--surface:oklch(.2103 .0059 285.89);--muted:oklch(70.5% .015 286.067);--default:oklch(27.4% .006 286.033);--sep:oklch(27.4% .006 286.033)}}
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:1.5rem;background:var(--bg);color:var(--fg);font:15px/1.5 'Geist Variable','Geist',ui-sans-serif,system-ui,-apple-system,sans-serif;-webkit-font-smoothing:antialiased}
+main{width:100%;max-width:26rem;background:var(--surface);border-radius:calc(var(--r)*1.5);padding:2rem;box-shadow:0 1px 2px rgb(0 0 0/.06),0 8px 24px rgb(0 0 0/.06)}
+header{display:flex;flex-direction:column;align-items:center;text-align:center;gap:.75rem;margin-bottom:1.25rem}
+h1{font-size:1.25rem;font-weight:600;margin:0;letter-spacing:-.01em}
+p{margin:0 0 .75rem}
+.muted{color:var(--muted);font-size:.875rem}
+.note{background:var(--warn-bg);border-radius:var(--r);padding:.625rem .75rem;font-size:.875rem}
+ul{margin:0 0 1rem;padding:0;list-style:none;border-top:1px solid var(--sep)}
+li{padding:.5rem 0;border-bottom:1px solid var(--sep);font-size:.875rem}
+form{margin:0}
+.actions{display:flex;gap:.5rem;margin-top:1.25rem}
+button{flex:1;font:inherit;font-weight:500;border:0;border-radius:var(--r);padding:.625rem 1rem;cursor:pointer;background:var(--default);color:var(--fg);transition:filter .15s}
+button:hover{filter:brightness(.96)}
+button.primary{background:var(--accent);color:var(--accent-fg)}
+button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+label{display:flex;align-items:center;gap:.625rem;padding:.625rem .75rem;border-radius:var(--r);background:var(--default);margin:.375rem 0;cursor:pointer}
+input[type=radio]{accent-color:var(--accent);margin:0}
+`;
+
 function page(title: string, body: string, headers = new Headers()): Response {
   headers.set('content-type', 'text/html; charset=utf-8');
   headers.set('cache-control', 'no-store');
@@ -273,10 +301,9 @@ function page(title: string, body: string, headers = new Headers()): Response {
   );
   headers.set('x-frame-options', 'DENY');
   return new Response(
-    `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width">` +
-      `<title>${escape(title)}</title>` +
-      `<style>body{font:16px system-ui,sans-serif;max-width:32rem;margin:3rem auto;padding:0 1rem;line-height:1.45}button{font:inherit;padding:.5rem 1rem;margin-right:.5rem}label{display:block;margin:.4rem 0}</style>` +
-      `<h1>${escape(title)}</h1>${body}`,
+    `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">` +
+      `<title>${escape(title)}</title><style>${STYLE}</style>` +
+      `<main><header>${LOGO}<h1>${escape(title)}</h1></header>${body}</main></html>`,
     { status: 200, headers },
   );
 }
@@ -337,14 +364,17 @@ async function consent(oauth: OAuthHelpers, request: Request) {
     : `<strong>${escape(d.clientName)}</strong> (a name the app gave itself)`;
   return page(
     'Connect to Theodore',
-    `<p>${who} wants to use Theodore for you. Access goes to <strong>${escape(d.redirectHost)}</strong>.</p>` +
+    `<p>${who} wants to use Theodore for you.</p>` +
+      `<p class="muted">Access goes to <strong>${escape(d.redirectHost)}</strong>.</p>` +
       (d.redirectIsLoopback
-        ? '<p><strong>That is an app on your computer.</strong> Continue only if you just started connecting from it.</p>'
+        ? '<p class="note"><strong>That is an app on your computer.</strong> Continue only if you just started connecting from it.</p>'
         : '') +
-      '<p>It will see your computers and their projects, and can start and steer spaces on the computers you trust for it. ' +
-      'Each computer decides: it takes requests only after you trust “Claude (MCP)” there, and Edit or Run waits for your yes on it.</p>' +
+      '<ul><li>Sees your computers and their projects</li>' +
+      '<li>Starts and steers spaces on computers you trust for it</li>' +
+      '<li>Edit or Run waits for your yes on the computer</li></ul>' +
+      '<p class="muted">Each computer decides: it takes requests only after you trust “Claude (MCP)” there.</p>' +
       `<form method="post" action="${AUTHORIZE_PATH}"><input type="hidden" name="handle" value="${escape(t.handle)}">` +
-      '<button name="decision" value="allow">Allow and sign in</button><button name="decision" value="deny">Deny</button></form>',
+      '<div class="actions"><button name="decision" value="deny">Deny</button><button class="primary" name="decision" value="allow">Allow and sign in</button></div></form>',
     t.headers,
   );
 }
@@ -431,9 +461,9 @@ async function pickOrg(
     .join('');
   return page(
     'Which organization?',
-    `<p>Claude works with the computers of one organization.</p>` +
+    `<p class="muted">Claude works with the computers of one organization.</p>` +
       `<form method="post" action="${ORG_PATH}?state=${encodeURIComponent(up.state)}">${choices}` +
-      '<p><button>Continue</button></p></form>',
+      '<div class="actions"><button class="primary">Continue</button></div></form>',
     up.headers,
   );
 }
