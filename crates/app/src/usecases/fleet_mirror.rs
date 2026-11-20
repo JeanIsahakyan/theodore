@@ -20,7 +20,9 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 
 use serde_json::Value;
 use theodore_contract::{SyncCode, SyncFrame, TurnStep, models};
-use theodore_fleet_protocol::{DEVICE_JOURNAL, MIRROR_ROW_MAX_BYTES, RemoteSpaceEvent};
+use theodore_fleet_protocol::{
+    DEVICE_JOURNAL, MIRROR_ROW_MAX_BYTES, MirroredSubSpace, RemoteSpaceEvent, SUB_SPACE_MODEL,
+};
 
 use crate::core::Core;
 use crate::usecases::spaces::space_chat_key;
@@ -55,6 +57,9 @@ pub(crate) struct Mirror {
     tools: HashMap<(String, String), String>,
     /// Local run → the mirrored id of the text row being written.
     text: HashMap<String, String>,
+    /// Sub-space (local id) → the hosted space at the top of its tree:
+    /// its `sub_space` rows go there.
+    subs: HashMap<String, String>,
 }
 
 impl Mirror {
@@ -179,7 +184,7 @@ fn event_len(model: &str, id: &str, data: Option<&Value>) -> usize {
 }
 
 /// JSON pointer of the longest string in `v`, and its length.
-fn longest_string(v: &Value, at: &str, best: &mut Option<(String, usize)>) {
+pub(crate) fn longest_string(v: &Value, at: &str, best: &mut Option<(String, usize)>) {
     match v {
         Value::String(s) if best.as_ref().is_none_or(|(_, n)| s.len() > *n) => {
             *best = Some((at.to_string(), s.len()));
@@ -220,7 +225,7 @@ fn longest_array(v: &Value, at: &str, best: &mut Option<(String, usize)>) {
     }
 }
 
-fn floor_boundary(s: &str, mut at: usize) -> usize {
+pub(crate) fn floor_boundary(s: &str, mut at: usize) -> usize {
     at = at.min(s.len());
     while !s.is_char_boundary(at) {
         at -= 1;
@@ -295,6 +300,13 @@ impl Core {
                     m.chat.remove(&id);
                 }
             }
+            if model == SUB_SPACE_MODEL {
+                if data.is_some() {
+                    m.subs.insert(id.clone(), remote.to_string());
+                } else {
+                    m.subs.remove(&id);
+                }
+            }
             m.sent
                 .insert((remote.to_string(), model, id), hash_of(&data));
         }
@@ -311,7 +323,12 @@ impl Core {
     ) -> Option<Value> {
         let store = self.0.deps.store.clone();
         let (mdl, key) = (
-            model.to_string(),
+            // A sub-space's row is a space row.
+            if model == SUB_SPACE_MODEL {
+                models::SPACE.to_string()
+            } else {
+                model.to_string()
+            },
             if model == models::SPACE {
                 local.to_string()
             } else {
@@ -325,6 +342,23 @@ impl Core {
             .flatten()?;
         match model {
             models::SPACE => Some(mirror_space(row.data, local, remote)),
+            SUB_SPACE_MODEL => {
+                let s: theodore_contract::Space = serde_json::from_value(row.data).ok()?;
+                let parent = s.parent.as_ref()?.space.clone();
+                let sub = MirroredSubSpace {
+                    space: s.id.clone(),
+                    parent: if parent == local {
+                        remote.to_string()
+                    } else {
+                        parent
+                    },
+                    title: crate::usecases::space_children::title_of(&s),
+                    status: crate::usecases::space_children::status_word(&s).to_string(),
+                    mode: crate::usecases::fleet::fleet_mode(s.mode),
+                    done: s.done_at.is_some(),
+                };
+                serde_json::to_value(sub).ok()
+            }
             models::CHAT_MESSAGE => {
                 let mine = row.data.get("pr").and_then(Value::as_str)
                     == Some(space_chat_key(local).0.as_str());
@@ -497,6 +531,64 @@ impl Core {
             self.fleet_mirror_touch(m, remote, models::CHAT_MESSAGE, &id)
                 .await;
         }
+        self.fleet_mirror_resync_subs(m, remote, &local).await;
+    }
+
+    /// The hosted space whose tree space row action `a` is in (a sub-space
+    /// of it, at any depth), if any: known already, or found from the
+    /// row's parents when the action names a parent.
+    async fn fleet_mirror_sub_of(
+        &self,
+        m: &mut Mirror,
+        a: &theodore_contract::WireAction,
+    ) -> Option<String> {
+        if let Some(r) = m.subs.get(&a.model_id) {
+            return Some(r.clone());
+        }
+        let names_parent = a
+            .data
+            .as_ref()
+            .and_then(|d| d.get("parent"))
+            .is_some_and(|p| !p.is_null());
+        if !names_parent {
+            return None;
+        }
+        let root = self.fleet_hosted_root(&a.model_id).await?;
+        if root.local_space == a.model_id {
+            return None;
+        }
+        m.subs.insert(a.model_id.clone(), root.space.clone());
+        Some(root.space)
+    }
+
+    /// Every sub-space under hosted space `remote` (local `local`), as a
+    /// change.
+    async fn fleet_mirror_resync_subs(&self, m: &mut Mirror, remote: &str, local: &str) {
+        let Ok(spaces) = self.local_spaces(None).await else {
+            return;
+        };
+        let mut tree: HashSet<String> = HashSet::from([local.to_string()]);
+        // Parents before children needn't hold in the list: grow until
+        // nothing joins (a tree is a few levels deep).
+        loop {
+            let before = tree.len();
+            for s in &spaces {
+                if let Some(p) = &s.parent
+                    && tree.contains(&p.space)
+                {
+                    tree.insert(s.id.clone());
+                }
+            }
+            if tree.len() == before {
+                break;
+            }
+        }
+        tree.remove(local);
+        for id in tree {
+            m.subs.insert(id.clone(), remote.to_string());
+            self.fleet_mirror_touch(m, remote, SUB_SPACE_MODEL, &id)
+                .await;
+        }
     }
 
     pub(crate) async fn fleet_mirror_resync_all(&self, m: &mut Mirror) {
@@ -515,6 +607,8 @@ impl Core {
                 if a.model == models::SPACE {
                     if let Some(r) = by_local.get(&a.model_id) {
                         touched.push((r.clone(), models::SPACE, r.clone()));
+                    } else if let Some(r) = self.fleet_mirror_sub_of(m, a).await {
+                        touched.push((r, SUB_SPACE_MODEL, a.model_id.clone()));
                     }
                 } else if a.model == models::CHAT_MESSAGE {
                     let pr = a

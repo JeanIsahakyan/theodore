@@ -443,18 +443,21 @@ impl Core {
                 "this device couldn't record the request",
             ));
         }
-        if let Err(refusal) = self.fleet_check_op(&mut req, &s, pinned).await {
-            // Refused either way; a store failure only costs the replay
-            // memory of a request that ran nothing.
-            let _ = self
-                .fleet_mark_seen(&req.req_id, issued_at, Seen::Done)
-                .await;
-            return Err(refusal);
-        }
+        let mode = match self.fleet_check_op(&mut req, &s, pinned).await {
+            Ok(mode) => mode,
+            Err(refusal) => {
+                // Refused either way; a store failure only costs the replay
+                // memory of a request that ran nothing.
+                let _ = self
+                    .fleet_mark_seen(&req.req_id, issued_at, Seen::Done)
+                    .await;
+                return Err(refusal);
+            }
+        };
         // Claude via the cloud (its key is the cloud's): an edit or run
         // waits for a person here, and a daemon has nobody to ask.
-        let confirm = self.fleet_origin_mcp(pinned) && needs_person(&req.op);
-        if confirm && let Err(refusal) = self.fleet_confirm_gate(pinned, &req.op) {
+        let confirm = self.fleet_origin_mcp(pinned) && needs_person(mode);
+        if confirm && let Err(refusal) = self.fleet_confirm_gate(pinned, mode) {
             self.fleet().release(req.op.space(), &req.req_id);
             let _ = self
                 .fleet_mark_seen(&req.req_id, issued_at, Seen::Done)
@@ -464,13 +467,32 @@ impl Core {
         Ok(Claimed {
             req,
             key: pinned.public_key.clone(),
+            mode,
             confirm,
         })
     }
 
-    /// What the op itself must fit, checked before the claim. A send
-    /// without a mode gets the space's (what the cap was checked against).
+    /// What the op itself must fit, checked before the claim; the mode it
+    /// runs in (`Claimed::mode`). A send without a mode gets the space's
+    /// (what the cap was checked against).
     async fn fleet_check_op(
+        &self,
+        req: &mut RemoteRequest,
+        s: &FleetSettings,
+        pin: &TrustedDevice,
+    ) -> Result<Option<FleetMode>, Refusal> {
+        if req.op.on_any_space() {
+            return self.fleet_check_any_space(req, s).await;
+        }
+        self.fleet_check_space_op(req, s, pin).await?;
+        Ok(match &req.op {
+            RemoteOp::StartSpace { mode, .. } => Some(*mode),
+            RemoteOp::Send { mode, .. } => *mode,
+            _ => None,
+        })
+    }
+
+    async fn fleet_check_space_op(
         &self,
         req: &mut RemoteRequest,
         s: &FleetSettings,
@@ -674,6 +696,13 @@ impl Core {
                 }
                 Ok(())
             }
+            // `fleet_check_any_space`.
+            RemoteOp::ListSpaces { .. }
+            | RemoteOp::ReadSpace { .. }
+            | RemoteOp::AskSpace { .. }
+            | RemoteOp::SendTo { .. }
+            | RemoteOp::AnswerSpace { .. }
+            | RemoteOp::MergeChild { .. } => Ok(()),
         }
     }
 
@@ -758,8 +787,7 @@ impl Core {
                 "the requesting device isn't trusted on this device any more",
             ));
         }
-        let mode = crate::usecases::fleet_auto::op_mode(&c.req.op);
-        if let Some(m) = mode
+        if let Some(m) = c.mode
             && m > s.max_mode
         {
             return Err(refuse(
@@ -780,7 +808,7 @@ impl Core {
         let req = c.req;
         let outcome = match checked {
             Err(refusal) => Err(refusal),
-            Ok(()) => self.fleet_run_op(&req).await,
+            Ok(()) => self.fleet_run_op(&req, c.mode).await,
         };
         // A start's slot goes either way: hosted now, or not at all.
         self.fleet().release(req.op.space(), &req.req_id);
@@ -803,7 +831,14 @@ impl Core {
             .map_err(app_refusal)
     }
 
-    async fn fleet_run_op(&self, req: &RemoteRequest) -> Result<serde_json::Value, Refusal> {
+    async fn fleet_run_op(
+        &self,
+        req: &RemoteRequest,
+        mode: Option<FleetMode>,
+    ) -> Result<serde_json::Value, Refusal> {
+        if req.op.on_any_space() {
+            return self.fleet_run_any_space(req, mode).await;
+        }
         match req.op.clone() {
             RemoteOp::StartSpace { .. } => self.fleet_host_start(req).await,
             RemoteOp::Send {
@@ -870,6 +905,13 @@ impl Core {
                 .await
                 .map(|()| serde_json::json!({}))
                 .map_err(|e| refuse(codes::INVALID, e.to_string())),
+            // `fleet_run_any_space`.
+            RemoteOp::ListSpaces { .. }
+            | RemoteOp::ReadSpace { .. }
+            | RemoteOp::AskSpace { .. }
+            | RemoteOp::SendTo { .. }
+            | RemoteOp::AnswerSpace { .. }
+            | RemoteOp::MergeChild { .. } => Err(refuse(codes::INTERNAL, "not a space op")),
         }
     }
 
@@ -909,8 +951,9 @@ impl Core {
         // Marked hosted before its first turn starts: that turn's tools
         // must already be a hosted space's.
         let core = self.clone();
+        let origin = req.origin_device.clone();
         let mark: crate::usecases::spaces::OnSpaceCreated = Box::new(move |s: &Space| {
-            core.fleet().hosting.insert(s.id.clone());
+            core.fleet().hosting.insert(s.id.clone(), origin);
         });
         let space = self
             .create_space_then(

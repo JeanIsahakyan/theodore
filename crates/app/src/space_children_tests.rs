@@ -201,23 +201,31 @@ async fn an_edit_turn_is_told_it_may_split_work() {
 }
 
 #[tokio::test]
-async fn a_space_hosted_for_another_device_sees_and_starts_nothing() {
+async fn a_space_hosted_for_another_device_reads_but_starts_only_what_that_device_may() {
     let e = start_env(true).await;
     let p = parent(&e).await;
-    e.core.fleet().hosting.insert(p.id.clone());
+    e.core.fleet().hosting.insert(p.id.clone(), "dev_x".into());
+    // It reads this computer's spaces (that device's trust is enough for
+    // that: docs/fleet.md "Trust").
+    let list = e.core.sub_space_list(&p.id, None, false).await.unwrap();
+    assert!(list.spaces.iter().any(|s| s.space == p.id));
+    assert!(e.core.sub_space_read(&p.id, &p.id, 5).await.is_ok());
+    // It starts children only while this computer takes remote requests
+    // (off here) and within what that device may do.
     let r = e
         .core
         .sub_space_start(&p.id, SpaceMode::Run, goal("x"))
         .await;
     assert_eq!(code(r), "sub_spaces.hosted");
-    assert_eq!(
-        code(e.core.sub_space_list(&p.id, None, false).await),
-        "sub_spaces.hosted"
-    );
-    assert_eq!(
-        code(e.core.sub_space_read(&p.id, &p.id, 5).await),
-        "sub_spaces.hosted"
-    );
+    let elsewhere = LocalSpaceStart {
+        project: Some("not-offered".into()),
+        ..goal("x")
+    };
+    let r = e
+        .core
+        .sub_space_start(&p.id, SpaceMode::Run, elsewhere)
+        .await;
+    assert_eq!(code(r), "sub_spaces.project");
 }
 
 pub(crate) fn send(space: &str, text: &str) -> SpaceSendRequest {

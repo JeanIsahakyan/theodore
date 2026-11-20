@@ -23,11 +23,11 @@ use std::collections::{HashMap, VecDeque};
 
 use serde::{Deserialize, Serialize};
 use theodore_contract::{
-    ChatMessage, Ephemeral, FleetAnswerRequest, FleetRemoteSpace, FleetSendRequest,
-    FleetSpaceStatus, Space, SpaceAnswerRequest, SpaceRemote, SpaceSendRequest, SpaceStatus,
-    TurnStep, models,
+    ChatMessage, Ephemeral, FleetAnswerRequest, FleetLineKind, FleetRemoteSpace, FleetSendRequest,
+    FleetSpaceLine, FleetSpaceStatus, Space, SpaceAnswerRequest, SpaceRemote, SpaceSendRequest,
+    SpaceStatus, TurnStep, models,
 };
-use theodore_fleet_protocol::{ClientMessage, MIRROR_MODELS};
+use theodore_fleet_protocol::{ClientMessage, MIRROR_MODELS, MirroredSubSpace, SUB_SPACE_MODEL};
 use theodore_ports::{NewAction, SyncActionCode};
 
 use crate::core::Core;
@@ -295,6 +295,7 @@ impl Core {
         let applied = match model {
             models::SPACE => self.fleet_mirror_space(space, id, data).await,
             models::CHAT_MESSAGE => self.fleet_mirror_chat(space, id, data).await,
+            SUB_SPACE_MODEL => self.fleet_follow_sub_space(space, id, data),
             _ => self.fleet_follow_step(space, id, data).await,
         };
         match applied {
@@ -306,6 +307,51 @@ impl Core {
                 tracing::warn!(remote = %space, model, error.code = e.code(), error = %e, "couldn't keep a mirrored row");
             }
         }
+    }
+
+    /// A sub-space the followed space started on its host: a line of its
+    /// history (`<id> · <title> · <status>`), at the event's seq.
+    fn fleet_follow_sub_space(
+        &self,
+        space: &str,
+        id: &str,
+        data: Option<serde_json::Value>,
+    ) -> Result<(), Dropped> {
+        let text = match data {
+            None => format!("{id} · gone"),
+            Some(v) => {
+                let s: MirroredSubSpace =
+                    serde_json::from_value(v).map_err(|_| Dropped::Invalid("not a sub-space"))?;
+                if s.space != id {
+                    return Err(Dropped::Invalid("a sub-space row of another id"));
+                }
+                let title = crate::usecases::fleet_origin::truncate(&s.title, 120);
+                let status = if s.done { "merged" } else { s.status.as_str() };
+                format!("{id} · {title} · {status}")
+            }
+        };
+        let line = {
+            let mut mem = self.fleet();
+            let o = mem
+                .outbound
+                .get_mut(space)
+                .ok_or(Dropped::Invalid("a space not followed here"))?;
+            let line = FleetSpaceLine {
+                seq: o.last_seq,
+                kind: FleetLineKind::SubSpace,
+                text,
+            };
+            o.lines.push_back(line.clone());
+            while o.lines.len() > crate::usecases::fleet_origin::LINES_KEPT {
+                o.lines.pop_front();
+            }
+            line
+        };
+        self.emit(Ephemeral::FleetSpaceLine {
+            space: space.to_string(),
+            line,
+        });
+        Ok(())
     }
 
     /// What this device knows of `space` as its follower: where it runs.

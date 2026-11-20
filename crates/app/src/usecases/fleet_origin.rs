@@ -49,7 +49,7 @@ pub(crate) struct RemotePick {
 }
 
 /// History kept per remote space in memory.
-const LINES_KEPT: usize = 500;
+pub(crate) const LINES_KEPT: usize = 500;
 /// Most characters of a space name or branch taken from a signed reply.
 const NAME_MAX: usize = 200;
 

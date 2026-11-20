@@ -458,11 +458,15 @@ async fn local_space_tools_follow_the_turn_the_setting_and_the_host() {
     drop(client);
     local.on.store(true, Ordering::SeqCst);
 
-    // A space hosted here for another device, and a review run: none.
-    for ctx in [
-        turn(ToolSet::Space, TurnMode::Run, FleetTools::Hosted),
-        turn(ToolSet::Review, TurnMode::Run, FleetTools::Steer),
-    ] {
+    // A space hosted here for another device: all of them too (the core
+    // keeps it to what that device may do here).
+    let hosted = handle.register_run(turn(ToolSet::Space, TurnMode::Edit, FleetTools::Hosted));
+    let client = connect(&hosted.url, &hosted.token).await;
+    assert_eq!(local_names(&client).await, all);
+    drop(client);
+
+    // A review run: none.
+    for ctx in [turn(ToolSet::Review, TurnMode::Run, FleetTools::Steer)] {
         let ep = handle.register_run(ctx.clone());
         let client = connect(&ep.url, &ep.token).await;
         assert!(local_names(&client).await.is_empty(), "{ctx:?}");
@@ -482,11 +486,10 @@ async fn local_space_tools_follow_the_turn_the_setting_and_the_host() {
     handle.shutdown().await;
 }
 
-/// `space_ask` only reads: every turn of a space of this device's own
-/// gets it, whatever its mode and `spaces.sub_spaces`; a hosted space and
-/// a review run don't.
+/// `space_ask` only reads: every space turn gets it (a hosted space's
+/// too), whatever its mode and `spaces.sub_spaces`; a review run doesn't.
 #[tokio::test]
-async fn space_ask_is_for_every_turn_of_a_space_of_this_devices_own() {
+async fn space_ask_is_for_every_space_turn() {
     let local = Arc::new(FakeLocal {
         on: AtomicBool::new(false),
         calls: Mutex::new(Vec::new()),
@@ -523,10 +526,7 @@ async fn space_ask_is_for_every_turn_of_a_space_of_this_devices_own() {
     drop(client);
     assert_eq!(*local.calls.lock().unwrap(), ["ask s1 s2 Which store?"]);
 
-    for ctx in [
-        turn(ToolSet::Space, TurnMode::Run, FleetTools::Hosted),
-        turn(ToolSet::Review, TurnMode::Run, FleetTools::Steer),
-    ] {
+    for ctx in [turn(ToolSet::Review, TurnMode::Run, FleetTools::Steer)] {
         let ep = handle.register_run(ctx.clone());
         let client = connect(&ep.url, &ep.token).await;
         let refused = client

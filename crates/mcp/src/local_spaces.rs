@@ -2,10 +2,11 @@
 //! `spaces_list`, `space_read` and `space_ask` see the other spaces on
 //! this computer; `space_send` and `space_answer` reach any of them;
 //! `space_start`, `space_wait`, `space_stop` and `space_merge` start,
-//! steer and bring back sub-spaces of the calling space. Never
-//! for a space hosted here for another device; the steering ones only in
-//! an Edit or Run turn, and the sub-space ones only while
-//! `spaces.sub_spaces` is on. The calling space is always the run's own.
+//! steer and bring back sub-spaces of the calling space. The steering
+//! ones only in an Edit or Run turn, and the sub-space ones only while
+//! `spaces.sub_spaces` is on. A space hosted here for another device gets
+//! them too; the core keeps it to what that device may do here. The
+//! calling space is always the run's own.
 
 use rmcp::ErrorData;
 use rmcp::handler::server::tool::Extension;

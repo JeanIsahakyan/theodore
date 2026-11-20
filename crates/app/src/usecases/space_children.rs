@@ -11,13 +11,18 @@
 //!                read only, no MCP, in its worktree (the space untouched)
 //!              else, or the fork failed: a fresh read-only agent there,
 //!                told its goal, recent turns and diff stat
-//! space_start ─▶ setting on · caller not hosted for another device ·
-//!                turn Edit/Run · mode ≤ turn · depth ≤ spaces.max_depth ·
+//! space_start ─▶ setting on · turn Edit/Run · mode ≤ turn ·
+//!                depth ≤ spaces.max_depth ·
 //!                live children < spaces.max_children (under one lock)
 //!             ─▶ create_space (the usual path) with parent {caller, depth}
-//! space_send / space_answer ─▶ any other local space (not a mirror, not
-//!                hosted for another device); marked from the caller
+//! space_send / space_answer ─▶ any other local space in reach (not a
+//!                mirror; see Reach); marked from the caller
 //!                (send: mode ≤ turn and ≤ the target's; queued while it runs)
+//! caller hosted here for device D (or under such a space)
+//!   ─▶ reads and asks any space; sends and answers only D's spaces here
+//!   ─▶ start / send / merge: fleet_hosted_gate (accept_remote, D pinned,
+//!      mode ≤ max_mode; D is mcp and mode ≥ Edit ─▶ auto or a person's yes)
+//!   ─▶ start: only in a project offered to remote spaces; fleet depth too
 //! space_stop ─▶ own children only
 //! space_wait ─▶ until one of them settles: turn ended or failed, a
 //!               question waits ─ or the timeout
@@ -53,6 +58,7 @@ use tokio::sync::broadcast::error::RecvError;
 
 use crate::core::Core;
 use crate::error::AppError;
+use crate::usecases::fleet_spaces::HostedAsk;
 
 /// `spaces.sub_spaces`: the sub-space tools are on (user scope, default on).
 pub const SUB_SPACES_KEY: &str = "spaces.sub_spaces";
@@ -142,7 +148,35 @@ impl Drop for AskSlot {
     }
 }
 
-fn refuse(code: &str, why: impl std::fmt::Display) -> SpaceToolError {
+/// What a space's agent does to another space here: ask it (read only) or
+/// steer it (message, answer). A space of this device's own reaches this
+/// device's own spaces; one hosted here for another device (or under one)
+/// steers only that device's spaces here (its sub-spaces, other spaces
+/// hosted for it) and reads and asks any.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Reach {
+    Read,
+    Steer,
+}
+
+impl Reach {
+    /// `(origin, own)` for [`Core::reachable_space`], for `me`'s agent.
+    async fn of(self, me: &Space, core: &Core) -> (Option<String>, bool) {
+        let origin = core.fleet_hosted_origin(&me.id).await;
+        let own = origin.is_none() || self == Reach::Read;
+        (origin, own)
+    }
+}
+
+/// Who asks a `space_ask`: another space's agent, or one of the user's
+/// devices through the fleet (`ask_space`).
+pub(crate) enum AskFrom {
+    Space(FromSpace),
+    /// The name pinned here for the device.
+    Device(String),
+}
+
+pub(crate) fn refuse(code: &str, why: impl std::fmt::Display) -> SpaceToolError {
     SpaceToolError::Unavailable(format!("sub_spaces.{code}: {why}"))
 }
 
@@ -227,7 +261,7 @@ fn settled(s: &Space) -> bool {
     !matches!(status_word(s), "running" | "setting_up")
 }
 
-fn title_of(s: &Space) -> String {
+pub(crate) fn title_of(s: &Space) -> String {
     let t = s
         .title
         .clone()
@@ -245,12 +279,18 @@ fn from_of(s: &Space) -> FromSpace {
 }
 
 /// The prompt of a `space_ask` run: the question, said to be another
-/// space's agent's.
-fn ask_prompt(from: &FromSpace, question: &str) -> String {
-    format!(
-        "Question from the agent of space \"{}\" ({}), not from the user:\n\n{question}",
-        from.title, from.space
-    )
+/// space's agent's, or asked from another of the user's devices.
+fn ask_prompt(from: &AskFrom, question: &str) -> String {
+    match from {
+        AskFrom::Space(from) => format!(
+            "Question from the agent of space \"{}\" ({}), not from the user:\n\n{question}",
+            from.title, from.space
+        ),
+        AskFrom::Device(name) => format!(
+            "Question asked from the user's device \"{name}\" (possibly by an agent acting \
+             for the user), not typed in this space:\n\n{question}"
+        ),
+    }
 }
 
 /// A fresh `space_ask` agent's prompt: what `space`'s own agent would
@@ -259,7 +299,7 @@ fn fresh_ask_prompt(
     space: &Space,
     history: &[theodore_contract::ChatMessage],
     diff: Option<&LocalDiffStat>,
-    from: &FromSpace,
+    from: &AskFrom,
     question: &str,
 ) -> String {
     let mut out = format!(
@@ -350,15 +390,10 @@ impl Core {
         }
     }
 
-    /// A space hosted here for another device sees nothing of this one's.
+    /// The calling space. One hosted here for another device (or under
+    /// one) gets these tools too: it reads like any, and steers only
+    /// within what that device may do here ([`Reach`], `fleet_hosted_gate`).
     async fn local_caller(&self, caller: &str) -> Result<Space, SpaceToolError> {
-        if self.fleet_hosts_local(caller).await {
-            return Err(refuse(
-                "hosted",
-                "this space runs here for another device: it can't see or start this \
-                 computer's spaces",
-            ));
-        }
         self.space_row(caller)
             .await
             .map_err(|_| refuse("unknown", "this space is gone"))
@@ -424,22 +459,58 @@ impl Core {
         })
     }
 
-    /// `target`, another space of this computer's own that `me`'s agent
-    /// may ask, message or answer: not `me`, not hosted here for another
-    /// device, not a mirror of one elsewhere, not archived.
-    async fn other_local_space(&self, me: &Space, target: &str) -> Result<Space, SpaceToolError> {
+    /// `target`, another space here that `me`'s agent may ask (`Read`),
+    /// message or answer (`Steer`): not `me`, not a mirror of one
+    /// elsewhere, not archived, and within `me`'s reach ([`Reach`]).
+    async fn other_local_space(
+        &self,
+        me: &Space,
+        target: &str,
+        reach: Reach,
+    ) -> Result<Space, SpaceToolError> {
+        let row = self
+            .reachable_space(target, reach.of(me, self).await)
+            .await?;
+        if row.id == me.id {
+            return Err(refuse("self", "that is this space"));
+        }
+        Ok(row)
+    }
+
+    /// `target` as one acting for `origin` (`None`: this device's own
+    /// space; `Some(device)`: a space hosted here for that device, or that
+    /// device's request) may reach it: not a mirror, not archived; hosted
+    /// here for another device (or under such a space) only for that
+    /// device; this device's own spaces as `own` says.
+    pub(crate) async fn reachable_space(
+        &self,
+        target: &str,
+        (origin, own): (Option<String>, bool),
+    ) -> Result<Space, SpaceToolError> {
         // Mirrors too, to say why not.
         let row = self
             .space_row_any(target)
             .await
             .map_err(|_| refuse("unknown", format!("no space {target} here")))?;
-        if row.id == me.id {
-            return Err(refuse("self", "that is this space"));
-        }
-        if self.fleet_hosts_local(&row.id).await {
+        let its = self.fleet_hosted_origin(&row.id).await;
+        let reached = match &its {
+            Some(d) => origin.as_ref() == Some(d),
+            None => own,
+        };
+        if !reached {
             return Err(refuse(
                 "hosted",
-                format!("{target} runs here for another device: it can't be reached from here"),
+                match its {
+                    Some(_) => {
+                        format!(
+                            "{target} runs here for another device: it can't be reached from here"
+                        )
+                    }
+                    None => format!(
+                        "{target} is this computer's own: a space running here for another \
+                         device only reads and asks it"
+                    ),
+                },
             ));
         }
         if row.remote.is_some() {
@@ -467,6 +538,17 @@ impl Core {
         include_done: bool,
     ) -> Result<LocalSpaceList, SpaceToolError> {
         let me = self.local_caller(caller).await?;
+        self.spaces_list_for(Some(&me), project, include_done).await
+    }
+
+    /// `spaces_list` as `me`'s agent sees it (`None`: another device,
+    /// `list_spaces`).
+    pub(crate) async fn spaces_list_for(
+        &self,
+        me: Option<&Space>,
+        project: Option<&str>,
+        include_done: bool,
+    ) -> Result<LocalSpaceList, SpaceToolError> {
         let spaces: Vec<Space> = self
             .list_spaces(project.map(str::to_string))
             .await
@@ -481,7 +563,7 @@ impl Core {
             spaces: spaces
                 .iter()
                 .take(SPACES_LIST_MAX)
-                .map(|s| item(s, Some(&me)))
+                .map(|s| item(s, me))
                 .collect(),
         })
     }
@@ -494,6 +576,17 @@ impl Core {
         messages: usize,
     ) -> Result<LocalSpaceRead, SpaceToolError> {
         let me = self.local_caller(caller).await?;
+        self.space_read_for(Some(&me), target, messages).await
+    }
+
+    /// `space_read` as `me`'s agent sees it (`None`: another device,
+    /// `read_space`).
+    pub(crate) async fn space_read_for(
+        &self,
+        me: Option<&Space>,
+        target: &str,
+        messages: usize,
+    ) -> Result<LocalSpaceRead, SpaceToolError> {
         let row = self
             .space_row(target)
             .await
@@ -552,7 +645,7 @@ impl Core {
         };
         Ok(LocalSpaceRead {
             note: OTHER_SPACE_NOTE,
-            space: item(&row, Some(&me)),
+            space: item(&row, me),
             goal: head(&row.goal, MESSAGE_CHARS).0,
             branch: row.branch.clone(),
             base: row.base.clone(),
@@ -603,7 +696,33 @@ impl Core {
         question: &str,
     ) -> Result<LocalSpaceAsk, SpaceToolError> {
         let me = self.local_caller(caller).await?;
-        let row = self.other_local_space(&me, target).await?;
+        let row = self.other_local_space(&me, target, Reach::Read).await?;
+        self.ask_space_as(
+            AskFrom::Space(from_of(&me)),
+            &me.id,
+            Some(&me),
+            row,
+            question,
+        )
+        .await
+    }
+
+    /// `space_ask` of `row` (already found reachable) for `from`, using
+    /// one of `slot`'s asks; `me`: the asking space, for the result's
+    /// relation (`None`: another device, `ask_space`).
+    pub(crate) async fn ask_space_as(
+        &self,
+        from: AskFrom,
+        slot: &str,
+        me: Option<&Space>,
+        row: Space,
+        question: &str,
+    ) -> Result<LocalSpaceAsk, SpaceToolError> {
+        let target = row.id.clone();
+        let asker = match &from {
+            AskFrom::Space(f) => f.space.clone(),
+            AskFrom::Device(name) => format!("device {name}"),
+        };
         let question = question.trim();
         if question.is_empty() {
             return Err(refuse("invalid", "the question is empty"));
@@ -615,7 +734,7 @@ impl Core {
                 format!("{target}'s worktree isn't there; space_read it instead"),
             ));
         }
-        let _slot = self.ask_slot(&me.id)?;
+        let _slot = self.ask_slot(slot)?;
         let secs = self
             .setting_u32(ASK_TIMEOUT_KEY, SPACE_ASK_TIMEOUT_SECS)
             .await
@@ -627,7 +746,6 @@ impl Core {
                 format!("{target} gave no answer within {secs} s; space_read it instead"),
             )
         };
-        let from = from_of(&me);
         let store = &self.0.deps.store;
         let base = AgentRequest {
             agent: row.agent,
@@ -651,7 +769,7 @@ impl Core {
         };
         let answered = |answer: String, agent: AgentId, model: Option<String>, how| LocalSpaceAsk {
             note: OTHER_SPACE_NOTE,
-            space: item(&row, Some(&me)),
+            space: item(&row, me),
             answer,
             agent: agent.as_str().into(),
             model,
@@ -683,7 +801,7 @@ impl Core {
             {
                 Err(_) => return Err(timed_out()),
                 Ok(Ok(answer)) => {
-                    tracing::info!(space = %row.id, from = %me.id, "answered a space_ask (fork)");
+                    tracing::info!(space = %row.id, from = %asker, "answered a space_ask (fork)");
                     return Ok(answered(answer, AgentId::Claude, model, "fork"));
                 }
                 Ok(Err(why)) => {
@@ -705,7 +823,7 @@ impl Core {
             Err(_) => Err(timed_out()),
             Ok(Err(why)) => Err(refuse("failed", format!("{target}'s agent failed: {why}"))),
             Ok(Ok(answer)) => {
-                tracing::info!(space = %row.id, from = %me.id, "answered a space_ask (fresh)");
+                tracing::info!(space = %row.id, from = %asker, "answered a space_ask (fresh)");
                 Ok(answered(answer, row.agent, model, "fresh"))
             }
         }
@@ -792,6 +910,50 @@ impl Core {
             ),
             None => None,
         };
+        let project = req
+            .project
+            .filter(|p| !p.trim().is_empty())
+            .unwrap_or_else(|| me.project.clone());
+        // Hosted here for another device: within what that device may
+        // start here, asked of a person first when it's Claude via cloud.
+        // Before the lock: a person may take minutes.
+        if self.fleet_hosts_local(&me.id).await {
+            let root_depth = self.fleet_hosted_root(&me.id).await.map_or(0, |r| r.depth);
+            if root_depth + depth > theodore_fleet_protocol::MAX_DEPTH {
+                return Err(refuse(
+                    "depth",
+                    format!(
+                        "spaces started from another device nest at most {} deep",
+                        theodore_fleet_protocol::MAX_DEPTH
+                    ),
+                ));
+            }
+            let Some(p) = self
+                .fleet_projects()
+                .await
+                .into_iter()
+                .find(|p| p.id == project)
+            else {
+                return Err(refuse(
+                    "project",
+                    format!(
+                        "this space runs here for another device: its sub-spaces start only in \
+                         the projects this computer takes remote spaces in, not {project}"
+                    ),
+                ));
+            };
+            self.fleet_hosted_gate(
+                &me,
+                crate::usecases::fleet::fleet_mode(mode),
+                HostedAsk {
+                    action: theodore_contract::FleetConfirmAction::Start,
+                    project_name: Some(p.name),
+                    space_name: None,
+                    text: goal.to_string(),
+                },
+            )
+            .await?;
+        }
         let max_children = self
             .setting_u32(MAX_CHILDREN_KEY, DEFAULT_MAX_CHILDREN)
             .await;
@@ -818,10 +980,7 @@ impl Core {
         let space = self
             .create_space_with(
                 CreateSpaceRequest {
-                    project: req
-                        .project
-                        .filter(|p| !p.trim().is_empty())
-                        .unwrap_or_else(|| me.project.clone()),
+                    project,
                     goal: goal.to_string(),
                     name: req.name.filter(|n| !n.trim().is_empty()),
                     branch: None,
@@ -858,7 +1017,7 @@ impl Core {
         mode: Option<&str>,
     ) -> Result<LocalSpaceItem, SpaceToolError> {
         let me = self.sub_space_steer(caller, turn).await?;
-        let child = self.other_local_space(&me, target).await?;
+        let child = self.other_local_space(&me, target, Reach::Steer).await?;
         if message.trim().is_empty() {
             return Err(refuse("invalid", "the message is empty"));
         }
@@ -898,6 +1057,17 @@ impl Core {
                 ),
             ));
         }
+        self.fleet_hosted_gate(
+            &me,
+            crate::usecases::fleet::fleet_mode(mode),
+            HostedAsk {
+                action: theodore_contract::FleetConfirmAction::Send,
+                project_name: None,
+                space_name: Some(title_of(&child)),
+                text: message.trim().to_string(),
+            },
+        )
+        .await?;
         self.space_send_with(
             SpaceSendRequest {
                 space: child.id.clone(),
@@ -942,7 +1112,7 @@ impl Core {
         answers: Vec<LocalAnswer>,
     ) -> Result<LocalSpaceItem, SpaceToolError> {
         let me = self.sub_space_steer(caller, turn).await?;
-        let child = self.other_local_space(&me, target).await?;
+        let child = self.other_local_space(&me, target, Reach::Steer).await?;
         if child.question.as_ref().map(|q| q.id.as_str()) != Some(ask) {
             return Err(refuse(
                 "no_question",
@@ -981,6 +1151,32 @@ impl Core {
         target: &str,
     ) -> Result<LocalSpaceMerge, SpaceToolError> {
         let me = self.sub_space_steer(caller, turn).await?;
+        let child = self.own_child(caller, target).await?;
+        // Before the lock: a person may take minutes.
+        self.fleet_hosted_gate(
+            &me,
+            theodore_fleet_protocol::FleetMode::Edit,
+            HostedAsk {
+                action: theodore_contract::FleetConfirmAction::Merge,
+                project_name: None,
+                space_name: Some(title_of(&me)),
+                text: title_of(&child),
+            },
+        )
+        .await?;
+        self.merge_child_into(&me, target, Some(&me)).await
+    }
+
+    /// `space_merge` of `target`, a child of `me`, into `me`'s worktree;
+    /// `viewer`: whom the result's relations are told to (`None`: another
+    /// device, `merge_child`).
+    pub(crate) async fn merge_child_into(
+        &self,
+        me: &Space,
+        target: &str,
+        viewer: Option<&Space>,
+    ) -> Result<LocalSpaceMerge, SpaceToolError> {
+        let caller = me.id.as_str();
         let _merge = self.0.sub_spaces.merge_lock.lock().await;
         let child = self.own_child(caller, target).await?;
         let setting_up = child
@@ -1081,7 +1277,7 @@ impl Core {
             )
         };
         Ok(LocalSpaceMerge {
-            space: item(&row, Some(&me)),
+            space: item(&row, viewer),
             from: from.0,
             to: to.0,
             additions: applied.files.iter().map(|f| f.additions).sum(),

@@ -679,7 +679,7 @@ impl Core {
                             ),
                             self.0.deps.tools.is_some() && self.fleet_tools_available(),
                         ),
-                        self.0.deps.tools.is_some() && !hosted,
+                        self.0.deps.tools.is_some(),
                         matches!(mode, SpaceMode::Edit | SpaceMode::Run)
                             && self.sub_spaces_enabled().await,
                     ),
