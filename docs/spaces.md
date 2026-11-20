@@ -1763,13 +1763,13 @@ no row, or `true`, means on. The flag forces them on and locks the switch.
 
 ## Seeing sub-spaces and agents
 
-What a space's agent sets going shows in three places. Subagents are Claude
+What a space's agent sets going shows with that space: in the sidebar
+and on its page, never in a view of its own. Subagents are Claude
 Code's `Agent`/`Task` calls (§ "A subagent"); sub-spaces are spaces another
 space's agent started on this computer (`Space::parent`, § "Sub-spaces").
 
 ```
 sidebar        Spaces
-                 Agents                       1    ─▶ the Agents view (G A, ⌘K)
                  Fix the login redirect   2 ›      a parent: count, hide/show
                    ◌ Fix the flaky test             one step in per level
                    ✎ Update the docs
@@ -1779,10 +1779,6 @@ space page     header   Fix the flaky test   from Fix the login redirect  ─▶
                composer ◌ 1 agent running · 2 sub-spaces, 1 running ▾
                           This turn   ◌ Explore auth   sonnet  running  32s  ─▶ its row
                           Sub-spaces  ◌ Update docs  ?  claude · Edit · 3 turns ─▶ opens
-
-Agents view    one card per tree with something going: a turn, a background
-               task, an agent waiting on you; its subagents, its tasks, then
-               its sub-spaces the same way, one step in
 ```
 
 | Where | Rule |
@@ -1793,7 +1789,6 @@ Agents view    one card per tree with something going: a turn, a background
 | a subagent's model | read from its call's payload once the panel shows it, quietly; none for a mirrored space |
 | a subagent's time | from when this window saw its call start and end (`EphemeralStore.stepTimes`), or its background task; a turn from before the window opened has none |
 | click a subagent | its turn's chat row comes into view, the fold holding it opens, the row glows (`revealCall`, `rowState.ts`) |
-| Agents view count | spaces with a turn running |
 
 Pure rules: `ui/space/subspaces.ts` (the tree), `ui/space/agents.ts` (subagents,
-the turn read, what the view lists).
+the turn read).

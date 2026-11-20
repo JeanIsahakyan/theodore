@@ -1,5 +1,4 @@
-/** The space page's Agents panel and "from <parent>" link, the Agents view,
- *  and a subagent's timeline row answering a reveal. */
+/** The space page's Agents panel and "from <parent>" link, and a subagent's timeline row answering a reveal. */
 import { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatMessage, Space, TurnStep } from '../../gen/contract';
@@ -10,7 +9,6 @@ import { FakeTransport } from '../../test/fakeTransport';
 import { click, mount, settle, type Mounted } from '../../test/dom';
 import { pendingReveal, revealCall } from '../rowState';
 import { TurnActivity } from '../TurnTimeline';
-import { AgentsPage } from './AgentsPage';
 import { ParentLink, SpaceAgents } from './SpaceAgents';
 import { spaceChatKey } from './spaces';
 
@@ -210,54 +208,6 @@ describe('"from <parent>"', () => {
     );
     expect(m!.host.textContent).toBe('from a removed space');
     expect(m!.host.querySelector('button')).toBeNull();
-  });
-});
-
-describe('the Agents view', () => {
-  it('says nothing runs when nothing does', async () => {
-    put(space('a'));
-    await render(<AgentsPage />);
-    expect(m!.host.textContent).toContain('No agents running');
-  });
-
-  it('lists each busy tree: turn, subagents, background tasks, sub-spaces', async () => {
-    put(space('a', { status: 'running', run: 'r1', updated_at: 5 }));
-    put(
-      space('k', {
-        parent: { space: 'a', depth: 1 },
-        background_tasks: [
-          {
-            id: 't1',
-            kind: 'command',
-            description: 'pnpm test --watch',
-            started_at: Date.now() - 2000,
-            status: 'running',
-          },
-        ],
-      }),
-    );
-    put(space('idle'));
-    act(() => {
-      store.ephemeral.handle({
-        type: 'run_step',
-        run: 'r1',
-        step: agent('x1'),
-      });
-    });
-    await render(<AgentsPage />);
-    const trees = m!.host.querySelectorAll('.agents-tree');
-    expect(trees.length).toBe(1);
-    const text = trees[0]!.textContent!;
-    expect(text).toContain('Goal a');
-    expect(text).toContain('Explore x1');
-    expect(text).toContain('Goal k');
-    expect(text).toContain('pnpm test --watch');
-    expect(m!.host.textContent).not.toContain('Goal idle');
-
-    // A subagent opens its space on its row.
-    await click(trees[0]!.querySelector('.space-subagent button'));
-    expect(store.ui.route).toEqual({ name: 'space', id: 'a' });
-    expect(pendingReveal()?.call).toBe('x1');
   });
 });
 

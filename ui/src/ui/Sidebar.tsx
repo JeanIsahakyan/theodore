@@ -8,7 +8,6 @@ import {
   CircleXmark,
   ChevronRight,
   CodePullRequest,
-  Cpus,
   Gear,
   LayoutSideContentLeft,
   ListCheck,
@@ -60,7 +59,6 @@ import {
   spacesIn,
   type SpaceGlyph,
 } from './space/spaces';
-import { runningSpaces } from './space/agents';
 import { collapsedSpaces, toggleSubSpaces } from './space/collapsed';
 import {
   nestSpaces,
@@ -372,14 +370,6 @@ export const Sidebar = observer(function Sidebar() {
             id: 'spaces',
             title: 'Spaces',
             items: [
-              {
-                key: routeKey({ name: 'agents' }),
-                icon: <Cpus />,
-                label: 'Agents',
-                n: runningSpaces(store.models.spaces.all()),
-                nTitle: 'Spaces with a turn running',
-                route: { name: 'agents' },
-              } satisfies NavItem,
               // A sub-space sits under the space whose agent started it.
               ...spaceRows(
                 nestSpaces(spaces),

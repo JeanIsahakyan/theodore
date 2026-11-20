@@ -115,11 +115,4 @@ describe('sub-spaces in the sidebar', () => {
     await click(shut.querySelector('[aria-label="Show sub-spaces"]'));
     expect(spaceRows()).toContain('>kid');
   });
-
-  it('leads with Agents, counting the spaces running a turn', () => {
-    const agents = rows().find((r) => label(r) === 'Agents')!;
-    expect(agents.textContent).toBe('Agents1');
-    agents.click();
-    expect(store.ui.route).toEqual({ name: 'agents' });
-  });
 });

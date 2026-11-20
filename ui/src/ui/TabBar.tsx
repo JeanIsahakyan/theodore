@@ -1,7 +1,6 @@
 import {
   BranchesRight,
   CodePullRequest,
-  Cpus,
   Gear,
   LayoutSideContentLeft,
   ListCheck,
@@ -50,8 +49,6 @@ function useLabel(r: Route): {
       return { icon: <ListCheck />, title: 'Tasks' };
     case 'skills':
       return { icon: <Sparkles />, title: 'Skills' };
-    case 'agents':
-      return { icon: <Cpus />, title: 'Agents' };
     case 'settings':
       return { icon: <Gear />, title: 'Settings' };
     case 'project-settings': {

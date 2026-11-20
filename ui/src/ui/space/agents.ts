@@ -1,7 +1,6 @@
 /**
  * What a space has set going (docs/spaces.md "Seeing sub-spaces and agents"):
- * the subagents of its current or last turn, and what is running right now
- * across spaces for the Agents view. Pure: the panels only draw these.
+ * the subagents of its current or last turn. Pure: the panel only draws these.
  *
  * ```text
  * turn running ──▶ its live steps (runSteps)        subagents, running ones spin
@@ -18,7 +17,6 @@ import type {
 import { toolRow } from '../toolSummary';
 import { pairTurns } from './chatTurns';
 import { splitQueue } from './queue';
-import { asking, nestSpaces, type SpaceNode } from './subspaces';
 
 export type SubagentStatus = 'running' | 'background' | 'done' | 'failed';
 
@@ -197,19 +195,3 @@ export function spaceBusy(
       (s.background_tasks ?? []).some((t) => t.status === 'running'))
   );
 }
-
-/** What the Agents view lists: each tree of spaces with something running
- *  in it (or an agent waiting on you), the busiest first. Archived spaces
- *  aside. */
-export function activeTrees(all: readonly Space[]): SpaceNode[] {
-  const live = all
-    .filter((s) => s.status !== 'archived')
-    .sort((a, b) => b.updated_at - a.updated_at);
-  const active = (n: SpaceNode): boolean =>
-    spaceBusy(n.space) || asking(n.space) || n.children.some(active);
-  return nestSpaces(live).filter(active);
-}
-
-/** Spaces with a turn running, everywhere: the sidebar's count. */
-export const runningSpaces = (all: readonly Space[]): number =>
-  all.filter((s) => s.status === 'running').length;

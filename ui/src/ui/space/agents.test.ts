@@ -6,7 +6,6 @@ import type {
   TurnStep,
 } from '../../gen/contract';
 import {
-  activeTrees,
   agentsHeadline,
   spaceBusy,
   subagentElapsed,
@@ -165,25 +164,9 @@ describe('the turn the panel reads', () => {
   });
 });
 
-describe('what the Agents view lists', () => {
+describe('a busy space', () => {
   const s = (id: string, over: Partial<Space> = {}): Space =>
     ({ id, status: 'idle', updated_at: 0, ...over }) as Space;
-
-  it('trees with something going in them, archived ones aside', () => {
-    const trees = activeTrees([
-      s('idle'),
-      s('busy', { status: 'running', updated_at: 2 }),
-      s('parent', { updated_at: 1 }),
-      s('kid', {
-        status: 'running',
-        parent: { space: 'parent', depth: 1 },
-      }),
-      s('bg', { background_tasks: [task({})] }),
-      s('old', { status: 'archived', background_tasks: [task({})] }),
-    ]);
-    expect(trees.map((t) => t.space.id)).toEqual(['busy', 'parent', 'bg']);
-    expect(trees[1]!.children.map((c) => c.space.id)).toEqual(['kid']);
-  });
 
   it('a background task counts as busy, an ended one not', () => {
     expect(spaceBusy(s('a', { background_tasks: [task({})] }))).toBe(true);
