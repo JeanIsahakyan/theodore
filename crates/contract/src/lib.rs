@@ -662,6 +662,14 @@ pub enum Ephemeral {
     FleetTrustNeeded {
         request: FleetTrustNeeded,
     },
+    /// A request that waits for a person here (Allow / Deny).
+    FleetConfirm {
+        request: FleetConfirm,
+    },
+    /// Answered, or out of time: drop the prompt.
+    FleetConfirmDone {
+        id: String,
+    },
     /// One line of a space command's output (docs/config.md); the last
     /// lines are kept per space and returned by `space_logs`.
     SpaceLog {
@@ -1252,6 +1260,8 @@ pub fn types() -> specta::Types {
         .register::<FleetSpaceLine>()
         .register::<FleetQuestion>()
         .register::<FleetTrustNeeded>()
+        .register::<FleetConfirm>()
+        .register::<FleetConfirmAnswer>()
         .register::<ClientLog>()
         .register::<ClientLogLevel>()
         .register::<UiEvent>()

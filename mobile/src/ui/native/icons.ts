@@ -31,7 +31,7 @@ export const SF = {
 
 export type IconName = keyof typeof SF;
 
-/** A device kind's glyph (desktop | daemon | mobile | web). */
+/** A device kind's glyph (desktop | daemon | mobile | web | mcp). */
 export function kindIcon(kind: string): IconName {
   switch (kind) {
     case 'daemon':
@@ -39,6 +39,7 @@ export function kindIcon(kind: string): IconName {
     case 'mobile':
       return 'phone';
     case 'web':
+    case 'mcp':
       return 'globe';
     default:
       return 'computer';

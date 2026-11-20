@@ -268,6 +268,8 @@ export const commands = {
 	fleetSpaces: () => typedError<FleetRemoteSpace[], CommandError>(__TAURI_INVOKE("fleet_spaces")),
 	fleetSpaceLines: (space: string, since: number) => typedError<FleetSpaceLine[], CommandError>(__TAURI_INVOKE("fleet_space_lines", { space, since })),
 	fleetPresence: (req: FleetPresenceRequest) => typedError<null, CommandError>(__TAURI_INVOKE("fleet_presence", { req })),
+	fleetConfirms: () => typedError<FleetConfirm[], CommandError>(__TAURI_INVOKE("fleet_confirms")),
+	fleetConfirm: (req: FleetConfirmAnswer) => typedError<null, CommandError>(__TAURI_INVOKE("fleet_confirm", { req })),
 	/**
 	 *  Brings the main window forward: the browser sign-in finishes in another
 	 *  app, and the user should land back in Theodore without hunting for it.
@@ -1037,6 +1039,10 @@ server_trouble?: boolean } |
 { type: "fleet_ask_dismissed"; ask_id: string } |
 /**  A device that isn't trusted here asked for something. */
 { type: "fleet_trust_needed"; request: FleetTrustNeeded } |
+/**  A request that waits for a person here (Allow / Deny). */
+{ type: "fleet_confirm"; request: FleetConfirm } |
+/**  Answered, or out of time: drop the prompt. */
+{ type: "fleet_confirm_done"; id: string } |
 /**
  *  One line of a space command's output (docs/config.md); the last
  *  lines are kept per space and returned by `space_logs`.
@@ -1194,13 +1200,55 @@ export type FleetAnswerRequest = {
 	answers: string[][],
 };
 
+/**
+ *  A request from a device whose key the cloud holds (kind `mcp`: Claude
+ *  via the cloud) that would edit or run here: it waits for a person on
+ *  this device (docs/fleet.md "Trust"). Allow runs it; Deny, or no answer
+ *  by `expires_at_ms`, refuses it with `fleet.denied`.
+ */
+export type FleetConfirm = {
+	/**  The request's id: what `fleet_confirm` answers. */
+	id: string,
+	device_id: string,
+	/**  The name pinned here for the device. */
+	device_name: string,
+	action: FleetConfirmAction,
+	mode: SpaceMode,
+	/**  `start`: the project it starts in. */
+	project_name: string | null,
+	/**  `send` / `approve_plan`: the space, as people know it here. */
+	space_name: string | null,
+	/**  `send` / `approve_plan`: its local id, to open it. */
+	local_space: string | null,
+	/**  The goal or the message, cut to 500 characters. */
+	text: string,
+	/**  Unix ms: refused unless answered before. */
+	expires_at_ms: number,
+};
+
+/**  What a request waiting for a person here would do. */
+export type FleetConfirmAction =
+/**  Start a space in `project_name`. */
+"start" |
+/**  Send a message to `space_name`, as its next turn. */
+"send" |
+/**  Approve the plan in `space_name` (its next turn edits). */
+"approve_plan";
+
+export type FleetConfirmAnswer = {
+	id: string,
+	allow: boolean,
+};
+
 export type FleetDevice = {
 	device_id: string,
 	name: string,
 	os: FleetOs,
 	/**
 	 *  `desktop` or `daemon` (computers: they run spaces), `mobile` or `web`
-	 *  (the phone and web app: clients only, never a space's target).
+	 *  (the phone and web app: clients only, never a space's target), `mcp`
+	 *  (Claude via the cloud: a client whose key the cloud holds; an Edit or
+	 *  Run from it waits for a person here).
 	 */
 	kind: string,
 	online: boolean,
@@ -1365,6 +1413,11 @@ export type FleetTrustNeeded = {
 	device_name: string,
 	fingerprint: string,
 	public_key: string,
+	/**
+	 *  `FleetDevice::kind` as the cloud lists it; empty when it doesn't
+	 *  list the device.
+	 */
+	kind?: string,
 };
 
 /**

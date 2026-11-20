@@ -6,6 +6,7 @@ import { RootStore } from '../../stores/RootStore';
 import { RootStoreProvider } from '../../stores/context';
 import { click, mount, settle, typeInto, type Mounted } from '../../test/dom';
 import {
+  confirmRequest,
   device,
   question,
   status,
@@ -172,5 +173,71 @@ describe('a device that wants to run spaces here', () => {
     await click(q('.fleet-trust-dismiss'));
     expect(q('.fleet-trust-needed')).toBeNull();
     expect(calls('fleet_trust_device')).toEqual([]);
+  });
+
+  it('Claude via the cloud is named as such, with its warning', async () => {
+    store.fleet.handle({
+      type: 'fleet_trust_needed',
+      request: trustNeeded({ kind: 'mcp', device_name: 'Claude' }),
+    });
+    await render();
+    expect(q('.fleet-trust-needed .fleet-mcp-warning')!.textContent).toContain(
+      'held by the Theodore cloud',
+    );
+  });
+});
+
+describe('a request from Claude via the cloud', () => {
+  beforeEach(() => {
+    transport.onCall('fleet_confirm', () => null);
+  });
+
+  it('says what it would do, with the goal as plain text', async () => {
+    store.fleet.handle({
+      type: 'fleet_confirm',
+      request: confirmRequest({ text: '<b>Fix</b> the login bug' }),
+    });
+    await render();
+    const card = q('.fleet-request-confirm')!;
+    expect(card.textContent).toContain(
+      'Claude via cloud wants to start an Edit space in app',
+    );
+    expect(q('.fleet-request-text')!.textContent).toBe(
+      '<b>Fix</b> the login bug',
+    );
+    expect(card.querySelector('b')).toBeNull();
+    expect(card.textContent).toContain('From Claude');
+  });
+
+  it('Allow sends a yes and the prompt goes', async () => {
+    store.fleet.handle({ type: 'fleet_confirm', request: confirmRequest() });
+    await render();
+    await click(q('.fleet-request-allow'));
+    await settle();
+    expect(calls('fleet_confirm')).toEqual([
+      { req: { id: 'req1', allow: true } },
+    ]);
+    expect(q('.fleet-request-confirm')).toBeNull();
+  });
+
+  it('Deny sends a no', async () => {
+    store.fleet.handle({ type: 'fleet_confirm', request: confirmRequest() });
+    await render();
+    await click(q('.fleet-request-deny'));
+    await settle();
+    expect(calls('fleet_confirm')).toEqual([
+      { req: { id: 'req1', allow: false } },
+    ]);
+    expect(q('.fleet-request-confirm')).toBeNull();
+  });
+
+  it('goes when the core says it is answered or out of time', async () => {
+    store.fleet.handle({ type: 'fleet_confirm', request: confirmRequest() });
+    await render();
+    expect(q('.fleet-request-confirm')).not.toBeNull();
+    store.fleet.handle({ type: 'fleet_confirm_done', id: 'req1' });
+    await settle();
+    expect(q('.fleet-request-confirm')).toBeNull();
+    expect(calls('fleet_confirm')).toEqual([]);
   });
 });

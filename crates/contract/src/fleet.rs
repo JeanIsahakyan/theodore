@@ -5,9 +5,11 @@
 //!
 //! Commands: `fleet_status`, `fleet_set_settings`, `fleet_trust_device`,
 //! `fleet_remove_device`, `fleet_delegate`, `fleet_start_space`, `fleet_send`, `fleet_stop`, `fleet_answer`,
-//! `fleet_spaces`, `fleet_space_lines`, `fleet_presence`.
+//! `fleet_spaces`, `fleet_space_lines`, `fleet_presence`, `fleet_confirms`,
+//! `fleet_confirm`.
 //! Ephemerals: `fleet_status`, `fleet_space`, `fleet_space_line`,
-//! `fleet_ask`, `fleet_ask_dismissed`, `fleet_trust_needed`.
+//! `fleet_ask`, `fleet_ask_dismissed`, `fleet_trust_needed`,
+//! `fleet_confirm`, `fleet_confirm_done`.
 
 use serde::{Deserialize, Serialize};
 use specta::Type;
@@ -39,7 +41,9 @@ pub struct FleetDevice {
     pub name: String,
     pub os: FleetOs,
     /// `desktop` or `daemon` (computers: they run spaces), `mobile` or `web`
-    /// (the phone and web app: clients only, never a space's target).
+    /// (the phone and web app: clients only, never a space's target), `mcp`
+    /// (Claude via the cloud: a client whose key the cloud holds; an Edit or
+    /// Run from it waits for a person here).
     pub kind: String,
     pub online: bool,
     /// Unix ms; 0 if never.
@@ -258,4 +262,51 @@ pub struct FleetTrustNeeded {
     pub device_name: String,
     pub fingerprint: String,
     pub public_key: String,
+    /// `FleetDevice::kind` as the cloud lists it; empty when it doesn't
+    /// list the device.
+    #[serde(default)]
+    pub kind: String,
+}
+
+/// What a request waiting for a person here would do.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum FleetConfirmAction {
+    /// Start a space in `project_name`.
+    Start,
+    /// Send a message to `space_name`, as its next turn.
+    Send,
+    /// Approve the plan in `space_name` (its next turn edits).
+    ApprovePlan,
+}
+
+/// A request from a device whose key the cloud holds (kind `mcp`: Claude
+/// via the cloud) that would edit or run here: it waits for a person on
+/// this device (docs/fleet.md "Trust"). Allow runs it; Deny, or no answer
+/// by `expires_at_ms`, refuses it with `fleet.denied`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+pub struct FleetConfirm {
+    /// The request's id: what `fleet_confirm` answers.
+    pub id: String,
+    pub device_id: String,
+    /// The name pinned here for the device.
+    pub device_name: String,
+    pub action: FleetConfirmAction,
+    pub mode: SpaceMode,
+    /// `start`: the project it starts in.
+    pub project_name: Option<String>,
+    /// `send` / `approve_plan`: the space, as people know it here.
+    pub space_name: Option<String>,
+    /// `send` / `approve_plan`: its local id, to open it.
+    pub local_space: Option<String>,
+    /// The goal or the message, cut to 500 characters.
+    pub text: String,
+    /// Unix ms: refused unless answered before.
+    pub expires_at_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+pub struct FleetConfirmAnswer {
+    pub id: String,
+    pub allow: bool,
 }

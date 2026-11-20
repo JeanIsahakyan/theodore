@@ -1,14 +1,102 @@
 /** What the fleet puts in front of you wherever you are (docs/fleet.md):
- *  questions of agents on other devices, routed to this one, and devices
- *  that asked to run a space here without being trusted. */
-import { useState } from 'react';
-import { ShieldExclamation } from '@gravity-ui/icons';
+ *  requests from Claude via the cloud waiting for your yes, questions of
+ *  agents on other devices, routed to this one, and devices that asked to
+ *  run a space here without being trusted. */
+import { useEffect, useState } from 'react';
+import { Cloud, ShieldExclamation } from '@gravity-ui/icons';
 import { Button, Card } from '@heroui/react';
 import { observer } from 'mobx-react-lite';
-import type { FleetTrustNeeded } from '../../gen/contract';
+import type { FleetConfirm, FleetTrustNeeded } from '../../gen/contract';
+import { notifySpace } from '../../core/native';
 import { useRootStore, useUi } from '../../stores/context';
+import { CLOUD_CLAUDE_WARNING, confirmAction } from './fleet';
 import { FleetQuestionCard } from './FleetQuestionCard';
 import { Fingerprint, TrustConfirm } from './TrustConfirm';
+
+const CLOUD_CLAUDE = 'Claude via cloud';
+
+/** "Claude via cloud wants to start an Edit space in app: <goal>", with
+ *  Allow / Deny. Nothing runs until Allow; Deny, or no answer before the
+ *  request's window ends, refuses it (`fleet.denied`). The goal or
+ *  message is shown as plain text. */
+export const ConfirmCard = observer(function ConfirmCard({
+  request,
+}: {
+  request: FleetConfirm;
+}) {
+  const fleet = useRootStore().fleet;
+  const [busy, setBusy] = useState<'allow' | 'deny' | null>(null);
+  const what = confirmAction(request);
+  // Away from the window: the system says so too (a click brings it up).
+  useEffect(() => {
+    if (document.hasFocus()) return;
+    void notifySpace(
+      request.local_space ?? '',
+      `${CLOUD_CLAUDE} wants to ${what}`,
+      request.text,
+    ).catch(() => false);
+    // Once per request.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [request.id]);
+  const answer = (allow: boolean) => {
+    setBusy(allow ? 'allow' : 'deny');
+    void fleet
+      .confirm(request.id, allow)
+      .catch(() => {
+        // toasted by api.ts; the prompt goes either way
+      })
+      .finally(() => setBusy(null));
+  };
+  const until = new Date(request.expires_at_ms).toLocaleTimeString([], {
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+  return (
+    <Card
+      role="alertdialog"
+      aria-label={`${CLOUD_CLAUDE} wants to ${what}`}
+      className="fleet-request-confirm flex flex-col gap-2 border border-warning/40 p-3 shadow-lg"
+      data-request={request.id}
+    >
+      <div className="flex items-start gap-2">
+        <Cloud className="mt-0.5 size-4 shrink-0 text-warning" />
+        <div className="flex min-w-0 flex-col gap-1">
+          <span className="text-sm">
+            <span className="font-medium">{CLOUD_CLAUDE}</span> wants to {what}:
+          </span>
+          <p className="fleet-request-text line-clamp-6 whitespace-pre-wrap rounded-md bg-default px-2 py-1 text-sm [overflow-wrap:anywhere]">
+            {request.text}
+          </p>
+          <span className="text-xs text-muted">
+            From {request.device_name}. {CLOUD_CLAUDE_WARNING} Unanswered by{' '}
+            {until}, it is refused.
+          </span>
+        </div>
+      </div>
+      <div className="flex justify-end gap-2">
+        <Button
+          size="sm"
+          variant="ghost"
+          className="fleet-request-deny"
+          isDisabled={busy !== null}
+          isPending={busy === 'deny'}
+          onPress={() => answer(false)}
+        >
+          Deny
+        </Button>
+        <Button
+          size="sm"
+          className="fleet-request-allow"
+          isDisabled={busy !== null}
+          isPending={busy === 'allow'}
+          onPress={() => answer(true)}
+        >
+          Allow
+        </Button>
+      </div>
+    </Card>
+  );
+});
 
 /** "<device> wants to run spaces here": Trust opens the same fingerprint
  *  check as Settings → Devices, and only its button pins the key — the one
@@ -40,6 +128,14 @@ export const TrustNeededCard = observer(function TrustNeededCard({
               it.
             </span>
           )}
+          {!confirming && request.kind === 'mcp' && (
+            <span
+              role="note"
+              className="fleet-mcp-warning text-xs text-warning"
+            >
+              {CLOUD_CLAUDE} (MCP). {CLOUD_CLAUDE_WARNING}
+            </span>
+          )}
         </div>
       </div>
       {confirming ? (
@@ -48,6 +144,7 @@ export const TrustNeededCard = observer(function TrustNeededCard({
           name={request.device_name}
           fingerprint={request.fingerprint}
           publicKey={request.public_key}
+          kind={request.kind}
           onCancel={() => setConfirming(false)}
         />
       ) : (
@@ -85,9 +182,15 @@ export const FleetNotices = observer(function FleetNotices() {
     (q) => !(route.name === 'space' && route.id === q.space),
   );
   const trusts = fleet.trustNeededList;
-  if (asks.length === 0 && trusts.length === 0) return null;
+  const confirms = fleet.confirmList;
+  if (asks.length === 0 && trusts.length === 0 && confirms.length === 0) {
+    return null;
+  }
   return (
     <div className="fleet-notices pointer-events-none absolute right-4 top-12 z-30 flex max-h-[75vh] w-[420px] max-w-[calc(100%-2rem)] flex-col gap-2 overflow-auto [&>*]:pointer-events-auto">
+      {confirms.map((c) => (
+        <ConfirmCard key={c.id} request={c} />
+      ))}
       {trusts.map((r) => (
         <TrustNeededCard key={r.device_id} request={r} />
       ))}

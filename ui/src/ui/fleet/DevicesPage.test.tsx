@@ -414,6 +414,33 @@ describe('the device list', () => {
     expect(row('ph').querySelector('.fleet-trust')).not.toBeNull();
   });
 
+  it('Claude via the cloud is labelled, warned about, and never followed', async () => {
+    await render(
+      status({
+        devices: [
+          thisDevice(),
+          device({
+            device_id: 'cl',
+            name: 'Claude',
+            kind: 'mcp',
+            trusted: true,
+          }),
+        ],
+      }),
+    );
+    const row = q('.fleet-device[data-device="cl"]')!;
+    expect(row.querySelector('[data-kind="mcp"]')).not.toBeNull();
+    expect(row.querySelector('.fleet-device-meta')!.textContent).toContain(
+      'Claude via cloud (MCP)',
+    );
+    expect(row.textContent).toContain('Edit and Run wait for your yes');
+    expect(row.querySelector('.fleet-mcp-warning')!.textContent).toContain(
+      'held by the Theodore cloud',
+    );
+    expect(row.querySelector('.fleet-delegate')).toBeNull();
+    expect(button('Run on another device…')!.disabled).toBe(true);
+  });
+
   it('Run on another device is off when the only trusted one is a phone', async () => {
     await render(
       status({

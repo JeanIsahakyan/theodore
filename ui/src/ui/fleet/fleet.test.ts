@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { device, thisDevice } from '../../test/fleet';
+import { confirmRequest, device, thisDevice } from '../../test/fleet';
 import {
+  canFollow,
   capMode,
+  confirmAction,
   isAnswered,
   isClient,
   kindLabel,
@@ -59,6 +61,16 @@ describe('kinds', () => {
     expect(isClient(device({ kind: 'web' }))).toBe(true);
     expect(isClient(device({ kind: 'desktop' }))).toBe(false);
     expect(isClient(device({ kind: 'daemon' }))).toBe(false);
+  });
+
+  it('Claude via the cloud is a client that follows nothing', () => {
+    expect(isClient(device({ kind: 'mcp' }))).toBe(true);
+    expect(kindLabel(device({ kind: 'mcp' }))).toBe('Claude via cloud (MCP)');
+    expect(canFollow(device({ kind: 'mcp' }))).toBe(false);
+    expect(canFollow(device({ kind: 'mobile' }))).toBe(true);
+    expect(startableDevices([device({ kind: 'mcp', trusted: true })])).toEqual(
+      [],
+    );
   });
 
   it('reads as Phone, Web app, or the OS', () => {
@@ -129,5 +141,28 @@ describe('answers', () => {
         { selected: ['a'], other: 'and more' },
       ]),
     ).toEqual([['a', 'b'], ['my own'], ['a', 'and more']]);
+  });
+});
+
+describe('confirmAction', () => {
+  it('says what Claude via the cloud would do', () => {
+    expect(confirmAction(confirmRequest())).toBe('start an Edit space in app');
+    expect(confirmAction(confirmRequest({ mode: 'run' }))).toBe(
+      'start a Run space in app',
+    );
+    expect(
+      confirmAction(
+        confirmRequest({ action: 'send', space_name: 'Fix login' }),
+      ),
+    ).toBe('send to Fix login in Edit');
+    expect(
+      confirmAction(
+        confirmRequest({
+          action: 'approve_plan',
+          space_name: 'Fix login',
+          mode: 'run',
+        }),
+      ),
+    ).toBe('approve the plan in Fix login (Run)');
   });
 });

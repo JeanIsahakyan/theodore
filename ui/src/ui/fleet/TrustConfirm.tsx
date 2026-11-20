@@ -6,6 +6,7 @@
 import { useState } from 'react';
 import { Button } from '@heroui/react';
 import { useRootStore } from '../../stores/context';
+import { CLOUD_CLAUDE_WARNING } from './fleet';
 
 /** "a1b2 c3d4 …" — all 8 groups, wrapping rather than clipped — in a box
  *  to read aloud and compare. */
@@ -22,6 +23,7 @@ export function TrustConfirm({
   name,
   fingerprint,
   publicKey,
+  kind,
   onCancel,
   onTrusted,
 }: {
@@ -30,6 +32,8 @@ export function TrustConfirm({
   fingerprint: string;
   /** The key `fingerprint` is of. */
   publicKey: string;
+  /** `FleetDevice.kind`, when known: `mcp` adds its warning. */
+  kind?: string;
   onCancel: () => void;
   onTrusted?: () => void;
 }) {
@@ -60,6 +64,11 @@ export function TrustConfirm({
         A trusted device can start and steer spaces here, within the highest
         mode set in Settings → Devices.
       </span>
+      {kind === 'mcp' && (
+        <span role="note" className="fleet-mcp-warning text-xs text-warning">
+          {CLOUD_CLAUDE_WARNING}
+        </span>
+      )}
       <div className="flex justify-end gap-2">
         <Button
           size="sm"

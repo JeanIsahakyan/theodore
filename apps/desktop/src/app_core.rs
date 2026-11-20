@@ -1368,6 +1368,15 @@ impl CoreApi for AppCore {
     ) -> Result<(), CommandError> {
         self.core.fleet_presence(req).await.map_err(err)
     }
+    async fn fleet_confirms(&self) -> Result<Vec<theodore_contract::FleetConfirm>, CommandError> {
+        Ok(self.core.fleet_confirms())
+    }
+    async fn fleet_confirm(
+        &self,
+        req: theodore_contract::FleetConfirmAnswer,
+    ) -> Result<(), CommandError> {
+        self.core.fleet_confirm(req).await.map_err(err)
+    }
 }
 
 #[cfg(test)]
