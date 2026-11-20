@@ -313,6 +313,8 @@ pub enum FleetLineKind {
     Ended,
     Question,
     Gap,
+    /// A sub-space the space started on its host: `<id> · <title> · <status>`.
+    SubSpace,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
@@ -345,6 +347,8 @@ pub enum FleetConfirmAction {
     Send,
     /// Approve the plan in `space_name` (its next turn edits).
     ApprovePlan,
+    /// Merge a sub-space (`text`: its title) into `space_name`.
+    Merge,
 }
 
 /// A request from a device whose key the cloud holds (kind `mcp`: Claude

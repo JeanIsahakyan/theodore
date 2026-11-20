@@ -15,6 +15,7 @@ mod fleet_follow;
 pub(crate) mod fleet_host;
 mod fleet_mirror;
 mod fleet_origin;
+mod fleet_spaces;
 mod fleet_tools;
 pub mod grouping;
 pub mod host;

@@ -217,5 +217,7 @@ export function confirmAction(c: FleetConfirm): string {
       return `approve the plan in ${space} (${mode})`;
     case 'send':
       return `send to ${space} in ${mode}`;
+    case 'merge':
+      return `merge a sub-space into ${space}`;
   }
 }

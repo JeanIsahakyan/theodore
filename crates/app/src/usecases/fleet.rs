@@ -315,11 +315,23 @@ pub(crate) struct Hosted {
     pub view: FleetRemoteSpace,
 }
 
+/// Where a walk up a space's parents met the fleet.
+enum HostedAt {
+    Row(FleetHostedRow),
+    /// Being made for this device, not mapped yet.
+    Making(String),
+}
+
 /// A verified request waiting for its claim result, with the origin key
 /// it verified against (checked again right before it runs).
 pub(crate) struct Claimed {
     pub req: RemoteRequest,
     pub key: String,
+    /// The mode it runs in, as the gate resolved it (a send without one:
+    /// the space's; `send_to`: the target's own; `merge_child`: Edit;
+    /// reading: Ask); `None` for what runs in no mode (stop, answers).
+    /// What `max_mode`, the person's yes and auto mode are checked against.
+    pub mode: Option<FleetMode>,
     /// From an `mcp` device, and it edits or runs: a person here says yes
     /// before it runs (`fleet_confirm_wait`).
     pub confirm: bool,
@@ -385,8 +397,9 @@ pub(crate) struct FleetMem {
     pub reserved: HashMap<String, Reserved>,
     /// By remote id.
     pub hosted: HashMap<String, Hosted>,
-    /// Local spaces being made for another device, not mapped yet.
-    pub hosting: std::collections::HashSet<String>,
+    /// Local spaces being made for another device, not mapped yet: the
+    /// device each runs for.
+    pub hosting: HashMap<String, String>,
     pub outbound: HashMap<String, Outbound>,
     pub replies: HashMap<String, PendingReply>,
     /// Questions from elsewhere routed here, by ask id, with the (pinned,
@@ -804,22 +817,67 @@ impl Core {
             .find(|t| t.device_id == device)
     }
 
-    /// Whether `local` is a space hosted here for another device.
+    /// Whether `local` runs here for another device: hosted for it, or a
+    /// sub-space of a space that is (its children are the origin's too,
+    /// with the same limits).
     pub(crate) async fn fleet_hosts_local(&self, local: &str) -> bool {
-        {
-            let mem = self.fleet();
-            if mem.hosting.contains(local)
-                || mem.hosted.values().any(|h| h.row.local_space == local)
-            {
-                return true;
-            }
+        self.fleet_hosted_origin(local).await.is_some()
+    }
+
+    /// The hosted row `local` is, or sits under (its nearest ancestor
+    /// hosted here for another device), once mapped.
+    pub(crate) async fn fleet_hosted_root(&self, local: &str) -> Option<FleetHostedRow> {
+        match self.fleet_hosted_walk(local).await? {
+            HostedAt::Row(r) => Some(r),
+            HostedAt::Making(_) => None,
         }
-        let store = self.0.deps.store.clone();
-        tokio::task::spawn_blocking(move || store.fleet_hosted_all())
-            .await
-            .ok()
-            .and_then(Result::ok)
-            .is_some_and(|rows| rows.iter().any(|r| r.local_space == local))
+    }
+
+    /// The device `local` runs here for ([`Self::fleet_hosts_local`]):
+    /// hosted for it (or being made for it), or under such a space.
+    pub(crate) async fn fleet_hosted_origin(&self, local: &str) -> Option<String> {
+        Some(match self.fleet_hosted_walk(local).await? {
+            HostedAt::Row(r) => r.origin_device,
+            HostedAt::Making(origin) => origin,
+        })
+    }
+
+    /// From `local` up its parents to the first space hosted here (or
+    /// being made) for another device.
+    async fn fleet_hosted_walk(&self, local: &str) -> Option<HostedAt> {
+        let (rows, making): (Vec<FleetHostedRow>, HashMap<String, String>) = {
+            let mem = self.fleet();
+            (
+                mem.hosted.values().map(|h| h.row.clone()).collect(),
+                mem.hosting.clone(),
+            )
+        };
+        let rows = if rows.is_empty() {
+            let store = self.0.deps.store.clone();
+            tokio::task::spawn_blocking(move || store.fleet_hosted_all())
+                .await
+                .ok()
+                .and_then(Result::ok)
+                .unwrap_or_default()
+        } else {
+            rows
+        };
+        if rows.is_empty() && making.is_empty() {
+            return None;
+        }
+        let mut at = local.to_string();
+        // A tree is a few levels deep; a few more steps end any loop.
+        for _ in 0..8 {
+            if let Some(origin) = making.get(&at) {
+                return Some(HostedAt::Making(origin.clone()));
+            }
+            if let Some(r) = rows.iter().find(|r| r.local_space == at) {
+                return Some(HostedAt::Row(r.clone()));
+            }
+            let parent = self.space_row_any(&at).await.ok()?.parent?;
+            at = parent.space;
+        }
+        None
     }
 
     /// The stable fleet id spaces started by local space `local`'s agent

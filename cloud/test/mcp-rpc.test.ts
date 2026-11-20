@@ -96,6 +96,11 @@ describe('legacy (initialize)', () => {
       'space_stop',
       'ask_answer',
       'plan_approve',
+      'computer_spaces',
+      'computer_space_read',
+      'space_ask',
+      'space_answer',
+      'space_merge',
     ]);
     expect(list.result.resultType).toBeUndefined();
 

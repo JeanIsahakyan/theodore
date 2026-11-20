@@ -4,7 +4,8 @@
 //! someone at this computer.
 //!
 //! ```text
-//! gate: origin pinned as mcp (or listed as mcp now) + start/send in Edit|Run
+//! gate: origin pinned as mcp (or listed as mcp now) + a request in Edit|Run
+//!   (start/send in Edit|Run, send_to a space in Edit|Run, merge_child)
 //!   auto mode covers it (fleet_auto) ─▶ claim ─▶ runs, logged "auto"
 //!   daemon (nobody here) ─▶ fleet.denied, nothing claimed
 //!   else ─▶ claim ─▶ claimed ─▶ FleetConfirm prompt (Allow / Deny)
@@ -12,7 +13,9 @@
 //!            Allow (here, or a delegate's signed confirm op) ─▶ recheck ─▶ run
 //!            Deny | issued_at + REQUEST_WINDOW_MS passes ─▶ reply{fleet.denied}
 //!            either way ─▶ confirm_resolved (the cloud dismisses it there)
-//! answer (ask reply), stop, Ask, Plan ─▶ no prompt
+//! answer (ask reply), stop, Ask, Plan, reading and asking spaces ─▶ no prompt
+//! a hosted mcp space's sub-space tool in Edit|Run (fleet_confirm_hosted)
+//!   ─▶ the same: auto, else this prompt (its own id), a daemon refuses
 //!
 //! a host's confirm{RemoteConfirm} here (this device is its delegate)
 //!   ─▶ host pinned, signature (Domain::Confirm) ─▶ the same prompt, "on <host>"
@@ -51,6 +54,7 @@ fn wire_action(a: FleetConfirmAction) -> ConfirmAction {
         FleetConfirmAction::Start => ConfirmAction::Start,
         FleetConfirmAction::Send => ConfirmAction::Send,
         FleetConfirmAction::ApprovePlan => ConfirmAction::ApprovePlan,
+        FleetConfirmAction::Merge => ConfirmAction::Merge,
     }
 }
 
@@ -59,23 +63,17 @@ fn ui_action(a: ConfirmAction) -> FleetConfirmAction {
         ConfirmAction::Start => FleetConfirmAction::Start,
         ConfirmAction::Send => FleetConfirmAction::Send,
         ConfirmAction::ApprovePlan => FleetConfirmAction::ApprovePlan,
+        ConfirmAction::Merge => FleetConfirmAction::Merge,
     }
 }
 
-/// Whether `op` edits or runs here: a start or a send in Edit or Run (a
-/// send's mode already resolved by the gate). Approving a plan is a send
-/// in its build mode, so it counts; answering a question and stopping
-/// don't.
-pub(crate) fn needs_person(op: &RemoteOp) -> bool {
-    let writes = |m: FleetMode| m >= FleetMode::Edit;
-    match op {
-        RemoteOp::StartSpace { mode, .. } => writes(*mode),
-        RemoteOp::Send { mode, .. } => mode.is_some_and(writes),
-        RemoteOp::Stop { .. }
-        | RemoteOp::Answer { .. }
-        | RemoteOp::Confirm { .. }
-        | RemoteOp::SetMcpAuto { .. } => false,
-    }
+/// Whether a request in `mode` (`Claimed::mode`, as the gate resolved
+/// it) edits or runs here: a start or a send in Edit or Run, a `send_to`
+/// to a space in Edit or Run, a `merge_child`. Approving a plan is a send
+/// in its build mode, so it counts; reading, asking, answering a question
+/// and stopping don't.
+pub(crate) fn needs_person(mode: Option<FleetMode>) -> bool {
+    mode.is_some_and(|m| m >= FleetMode::Edit)
 }
 
 fn denied(why: &str) -> Refusal {
@@ -101,9 +99,9 @@ impl Core {
     pub(crate) fn fleet_confirm_gate(
         &self,
         pin: &TrustedDevice,
-        op: &RemoteOp,
+        mode: Option<FleetMode>,
     ) -> Result<(), Refusal> {
-        if self.fleet_auto_covers(pin, op) {
+        if self.fleet_auto_covers(pin, mode) {
             return Ok(());
         }
         if self.fleet_kind() == DeviceKind::Daemon {
@@ -124,12 +122,12 @@ impl Core {
             .await
             .filter(|p| p.public_key == c.key);
         if let Some(pin) = pin
-            && self.fleet_auto_covers(&pin, &c.req.op)
+            && self.fleet_auto_covers(&pin, c.mode)
         {
             tracing::info!(
                 req_id = %c.req.req_id,
                 origin = %c.req.origin_device,
-                mode = %self.fleet_auto_note(&pin, &c.req.op),
+                mode = %self.fleet_auto_note(&pin, c.mode),
                 "auto"
             );
             return Ok(());
@@ -147,6 +145,48 @@ impl Core {
     pub(crate) async fn fleet_confirm_wait(&self, c: &Claimed) -> Result<(), Refusal> {
         let deadline = c.req.issued_at_ms.saturating_add(REQUEST_WINDOW_MS);
         let view = self.fleet_confirm_view(c, deadline).await;
+        self.fleet_confirm_prompt(view).await
+    }
+
+    /// What a space hosted here for an `mcp` device (or a sub-space of
+    /// one) asks to do with its sub-space tools, when it edits or runs:
+    /// auto mode (read now, from `pin`) lets it through, a daemon refuses
+    /// it, else the same prompt as a request's, for `REQUEST_WINDOW_MS`.
+    /// `view` names the action; its id, device, deadline are filled here.
+    pub(crate) async fn fleet_confirm_hosted(
+        &self,
+        pin: &TrustedDevice,
+        mode: FleetMode,
+        view: FleetConfirm,
+    ) -> Result<(), Refusal> {
+        if self.fleet_auto_covers(pin, Some(mode)) {
+            tracing::info!(
+                origin = %pin.device_id,
+                mode = %self.fleet_auto_note(pin, Some(mode)),
+                "auto (sub-space tool)"
+            );
+            return Ok(());
+        }
+        if self.fleet_kind() == DeviceKind::Daemon {
+            return Err(denied(
+                "nobody sits at this device to allow an edit or run from Claude via the cloud",
+            ));
+        }
+        let now = self.0.deps.clock.now().max(0) as u64;
+        let view = FleetConfirm {
+            id: format!("sub_{}", uuid::Uuid::new_v4().simple()),
+            device_id: pin.device_id.clone(),
+            device_name: pin.name.clone(),
+            expires_at_ms: now.saturating_add(REQUEST_WINDOW_MS),
+            ..view
+        };
+        self.fleet_confirm_prompt(view).await
+    }
+
+    /// Shows `view` here and on the delegates, and waits for Allow, Deny
+    /// or `view.expires_at_ms`.
+    async fn fleet_confirm_prompt(&self, view: FleetConfirm) -> Result<(), Refusal> {
+        let deadline = view.expires_at_ms;
         let id = view.id.clone();
         let (tx, rx) = oneshot::channel();
         self.fleet().confirms.insert(
@@ -156,7 +196,7 @@ impl Core {
                 tx: Some(tx),
             },
         );
-        tracing::info!(req_id = %id, origin = %c.req.origin_device, "a fleet request waits for a person here");
+        tracing::info!(req_id = %id, origin = %view.device_id, "a fleet request waits for a person here");
         self.emit(Ephemeral::FleetConfirm {
             request: view.clone(),
         });
@@ -246,6 +286,39 @@ impl Core {
                     space_name: Some(name.unwrap_or_else(|| space.clone())),
                     local_space: local,
                     text: truncate(text, CONFIRM_TEXT_MAX),
+                    ..base
+                }
+            }
+            RemoteOp::SendTo { space, message } => {
+                let local = self.fleet_any_local(&c.req.origin_device, space);
+                let name = self
+                    .space_row(&local)
+                    .await
+                    .ok()
+                    .map(|s| space_label(&s).to_string());
+                FleetConfirm {
+                    action: FleetConfirmAction::Send,
+                    mode: space_mode(c.mode.unwrap_or(FleetMode::Edit)),
+                    space_name: Some(name.unwrap_or_else(|| space.clone())),
+                    local_space: Some(local),
+                    text: truncate(message, CONFIRM_TEXT_MAX),
+                    ..base
+                }
+            }
+            RemoteOp::MergeChild { parent, child } => {
+                let local = self.fleet_any_local(&c.req.origin_device, parent);
+                let label = |s: theodore_contract::Space| space_label(&s).to_string();
+                let parent_name = self.space_row(&local).await.ok().map(label);
+                let child_name = self.space_row(child).await.ok().map(label);
+                FleetConfirm {
+                    action: FleetConfirmAction::Merge,
+                    mode: theodore_contract::SpaceMode::Edit,
+                    space_name: Some(parent_name.unwrap_or_else(|| parent.clone())),
+                    local_space: Some(local),
+                    text: truncate(
+                        &child_name.unwrap_or_else(|| child.clone()),
+                        CONFIRM_TEXT_MAX,
+                    ),
                     ..base
                 }
             }
@@ -453,30 +526,13 @@ impl Core {
 mod tests {
     use super::*;
 
-    fn send(mode: Option<FleetMode>) -> RemoteOp {
-        RemoteOp::Send {
-            space: "rs_1".into(),
-            text: "go".into(),
-            mode,
-            agent: None,
-            model: None,
-            effort: None,
-        }
-    }
-
     #[test]
     fn only_what_edits_or_runs_needs_a_person() {
-        assert!(!needs_person(&send(Some(FleetMode::Ask))));
-        assert!(!needs_person(&send(Some(FleetMode::Plan))));
-        assert!(needs_person(&send(Some(FleetMode::Edit))));
-        assert!(needs_person(&send(Some(FleetMode::Run))));
-        assert!(!needs_person(&RemoteOp::Stop {
-            space: "rs_1".into()
-        }));
-        assert!(!needs_person(&RemoteOp::Answer {
-            space: "rs_1".into(),
-            ask_id: "q".into(),
-            answers: vec![],
-        }));
+        assert!(!needs_person(Some(FleetMode::Ask)));
+        assert!(!needs_person(Some(FleetMode::Plan)));
+        assert!(needs_person(Some(FleetMode::Edit)));
+        assert!(needs_person(Some(FleetMode::Run)));
+        // Stop and answers run in no mode.
+        assert!(!needs_person(None));
     }
 }

@@ -29,11 +29,12 @@ pub use keys::{DeviceKey, KeyError, fingerprint, verify};
 
 /// Protocol version sent in `hello`; the cloud refuses others with
 /// `fleet.version`.
-pub const PROTOCOL_VERSION: u32 = 6;
+pub const PROTOCOL_VERSION: u32 = 7;
 /// The oldest protocol the cloud still accepts (it hides `mobile` / `web`
 /// devices from protocol-3 connections and `mcp` ones from protocol < 5,
 /// whose `DeviceKind` can't read them; `confirm` / `confirm_dismissed` and
-/// the `confirm` / `set_mcp_auto` ops need protocol 6).
+/// the `confirm` / `set_mcp_auto` ops need protocol 6; the ops on any
+/// space of a computer ([`RemoteOp::on_any_space`]) need protocol 7).
 pub const MIN_PROTOCOL_VERSION: u32 = 3;
 /// A signed request older or newer than this is refused (`fleet.stale_request`).
 pub const REQUEST_WINDOW_MS: u64 = 5 * 60 * 1000;
@@ -418,21 +419,91 @@ pub enum RemoteOp {
         #[serde(default)]
         until_ms: Option<u64>,
     },
+    // ── protocol 7: any space on the target (docs/fleet.md "Any space on a
+    // computer"). `space`, `parent` and `child` name the target's own local
+    // space ids, or an `rs_` id the target hosts for this origin. Results
+    // are the target's local tool results (docs/spaces.md "Sub-spaces"),
+    // kept within `REPLY_VALUE_MAX_BYTES`.
+    /// Every space on the target that isn't archived, newest activity
+    /// first (`spaces_list`).
+    ListSpaces {
+        #[serde(default)]
+        project: Option<String>,
+    },
+    /// One space: goal, status, its last `messages` (default 10, at most
+    /// 50), the running turn's text, a question, progress, diff stat
+    /// (`space_read`).
+    ReadSpace {
+        space: String,
+        #[serde(default)]
+        messages: Option<u32>,
+    },
+    /// Its own agent answers `question` from a read-only fork of its
+    /// session; the space is left as it was (`space_ask`).
+    AskSpace {
+        space: String,
+        question: String,
+    },
+    /// A message as the space's next turn, in the space's own mode (never
+    /// changed); refused while it runs (`fleet.busy`).
+    SendTo {
+        space: String,
+        message: String,
+    },
+    /// Answers question set `ask` waiting in `space`, as `Answer` does.
+    AnswerSpace {
+        space: String,
+        ask: String,
+        answers: Vec<Vec<String>>,
+    },
+    /// Merges sub-space `child` into its parent `parent`'s worktree
+    /// (`space_merge`); counts as Edit.
+    MergeChild {
+        parent: String,
+        child: String,
+    },
 }
 
 impl RemoteOp {
-    /// The space it acts on; empty for an op on no space (`confirm`,
-    /// `set_mcp_auto`).
+    /// The cloud space (`rs_` id) it acts on; empty for an op on no space
+    /// (`confirm`, `set_mcp_auto`) and for one on any of the target's own
+    /// spaces ([`RemoteOp::on_any_space`]), which the cloud doesn't track.
     pub fn space(&self) -> &str {
         match self {
             RemoteOp::StartSpace { space, .. }
             | RemoteOp::Send { space, .. }
             | RemoteOp::Stop { space }
             | RemoteOp::Answer { space, .. } => space,
-            RemoteOp::Confirm { .. } | RemoteOp::SetMcpAuto { .. } => "",
+            RemoteOp::Confirm { .. }
+            | RemoteOp::SetMcpAuto { .. }
+            | RemoteOp::ListSpaces { .. }
+            | RemoteOp::ReadSpace { .. }
+            | RemoteOp::AskSpace { .. }
+            | RemoteOp::SendTo { .. }
+            | RemoteOp::AnswerSpace { .. }
+            | RemoteOp::MergeChild { .. } => "",
         }
     }
+
+    /// An op on any space of the target, by its local id (protocol 7).
+    pub fn on_any_space(&self) -> bool {
+        matches!(
+            self,
+            RemoteOp::ListSpaces { .. }
+                | RemoteOp::ReadSpace { .. }
+                | RemoteOp::AskSpace { .. }
+                | RemoteOp::SendTo { .. }
+                | RemoteOp::AnswerSpace { .. }
+                | RemoteOp::MergeChild { .. }
+        )
+    }
 }
+
+/// The largest `reply.value` a target sends for an op on any space, as its
+/// JSON sits in the signed reply (escaped once more): well within
+/// [`MAX_FRAME_BYTES`]. A longer result drops its oldest items and cuts its
+/// longest texts first.
+pub const REPLY_VALUE_MAX_BYTES: usize = 128 * 1024;
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum EnvelopeError {
@@ -684,6 +755,9 @@ pub mod codes {
     /// that needs a person on the target: denied there, not answered within
     /// the request window, or refused outright by a daemon (nobody there).
     pub const DENIED: &str = "fleet.denied";
+    /// A slow op (`ask_space`'s answer) didn't finish on the target in
+    /// time.
+    pub const TIMEOUT: &str = "fleet.timeout";
     // the cloud's own
     pub const UNAUTHORIZED: &str = "fleet.unauthorized";
     pub const NO_ORG: &str = "fleet.no_org";
@@ -725,6 +799,7 @@ pub mod codes {
         ("BUSY", BUSY),
         ("INTERNAL", INTERNAL),
         ("DENIED", DENIED),
+        ("TIMEOUT", TIMEOUT),
         ("UNAUTHORIZED", UNAUTHORIZED),
         ("NO_ORG", NO_ORG),
         ("VERSION", VERSION),
@@ -840,8 +915,33 @@ pub enum RemoteSpaceEvent {
 /// The largest mirrored row a host sends (its JSON); longer texts are cut
 /// with a note, the host's copy stays whole.
 pub const MIRROR_ROW_MAX_BYTES: usize = 48 * 1024;
-/// Models a host mirrors to the origin and its delegates.
-pub const MIRROR_MODELS: &[&str] = &["space", "chat_message", "turn_step"];
+/// Models a host mirrors to the origin and its delegates. A follower drops
+/// a model it doesn't know (`sub_space` is protocol 7's).
+pub const MIRROR_MODELS: &[&str] = &["space", "chat_message", "turn_step", SUB_SPACE_MODEL];
+/// The `mirror` model of a sub-space of a hosted space: `id` is the
+/// child's local id on the host, `data` a [`MirroredSubSpace`] (`None`:
+/// gone). Sent on the hosted space at the top of the tree, for every
+/// sub-space under it.
+pub const SUB_SPACE_MODEL: &str = "sub_space";
+
+/// `mirror{sub_space}`'s `data`: a sub-space of a hosted space, as that
+/// space's followers see it in its tree.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct MirroredSubSpace {
+    /// Its local id on the host (what `send_to` and `read_space` take).
+    pub space: String,
+    /// Its parent: the hosted space's `rs_` id, or another sub-space's
+    /// local id.
+    pub parent: String,
+    /// At most 120 characters.
+    pub title: String,
+    /// `setting_up`, `running`, `question`, `waiting`, `idle`, `failed` or
+    /// `archived`, as `spaces_list` says it.
+    pub status: String,
+    pub mode: FleetMode,
+    /// Merged into its parent, or shipped.
+    pub done: bool,
+}
 
 /// One event of a hosted space, as its host signs it ([`Domain::Event`]).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
@@ -887,6 +987,9 @@ pub enum ConfirmAction {
     Send,
     /// Approve the plan in `space_name` (its next turn edits).
     ApprovePlan,
+    /// Merge sub-space `text` (its title) into `space_name`'s worktree
+    /// (protocol 7; an older delegate drops the prompt).
+    Merge,
 }
 
 /// A request from Claude via the cloud (`DeviceKind::Mcp`) waiting on its
@@ -1109,7 +1212,8 @@ pub fn types() -> specta::Types {
         .register::<Delegation>()
         .register::<RemoteAsk>()
         .register::<RemoteConfirm>()
-        .register::<StartedSpace>();
+        .register::<StartedSpace>()
+        .register::<MirroredSubSpace>();
     // JS numbers: seqs, generations and unix-ms timestamps stay far below
     // 2^53 (same call as the contract crate).
     use specta::datatype::Primitive as P;

@@ -305,7 +305,7 @@ export class Harness {
 
   constructor(
     db = new DatabaseSync(':memory:'),
-    o: { mcp?: boolean; replyWaitMs?: number } = {},
+    o: { mcp?: boolean; replyWaitMs?: number; askWaitMs?: number } = {},
   ) {
     this.db = db;
     const sql = {
@@ -319,6 +319,7 @@ export class Harness {
         hub: () => this.hub,
         secret: MCP_TEST_SECRET,
         replyWaitMs: o.replyWaitMs,
+        askWaitMs: o.askWaitMs,
       });
     }
     this.hub = new Hub({

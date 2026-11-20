@@ -57,7 +57,12 @@ export type ConfirmAction =
 /**  Send a message to `space_name`, as its next turn. */
 "send" |
 /**  Approve the plan in `space_name` (its next turn edits). */
-"approve_plan";
+"approve_plan" |
+/**
+ *  Merge sub-space `text` (its title) into `space_name`'s worktree
+ *  (protocol 7; an older delegate drops the prompt).
+ */
+"merge";
 
 /**
  *  An origin lets another of its user's devices follow the spaces it
@@ -212,6 +217,30 @@ export type McpAutoState = {
 	until_ms?: number | null,
 };
 
+/**
+ *  `mirror{sub_space}`'s `data`: a sub-space of a hosted space, as that
+ *  space's followers see it in its tree.
+ */
+export type MirroredSubSpace = {
+	/**  Its local id on the host (what `send_to` and `read_space` take). */
+	space: string,
+	/**
+	 *  Its parent: the hosted space's `rs_` id, or another sub-space's
+	 *  local id.
+	 */
+	parent: string,
+	/**  At most 120 characters. */
+	title: string,
+	/**
+	 *  `setting_up`, `running`, `question`, `waiting`, `idle`, `failed` or
+	 *  `archived`, as `spaces_list` says it.
+	 */
+	status: string,
+	mode: FleetMode,
+	/**  Merged into its parent, or shipped. */
+	done: boolean,
+};
+
 export type ProjectRef = {
 	/**  The project's id on that device. */
 	id: string,
@@ -290,7 +319,35 @@ agent?: string | null; model?: string | null; effort?: string | null } | { op: "
  */
 { op: "set_mcp_auto"; mcp_device: string; auto: McpAuto;
 /**  Unix ms it ends; `None`: until turned off. */
-until_ms?: number | null };
+until_ms?: number | null } |
+/**
+ *  Every space on the target that isn't archived, newest activity
+ *  first (`spaces_list`).
+ */
+{ op: "list_spaces"; project?: string | null } |
+/**
+ *  One space: goal, status, its last `messages` (default 10, at most
+ *  50), the running turn's text, a question, progress, diff stat
+ *  (`space_read`).
+ */
+{ op: "read_space"; space: string; messages?: number | null } |
+/**
+ *  Its own agent answers `question` from a read-only fork of its
+ *  session; the space is left as it was (`space_ask`).
+ */
+{ op: "ask_space"; space: string; question: string } |
+/**
+ *  A message as the space's next turn, in the space's own mode (never
+ *  changed); refused while it runs (`fleet.busy`).
+ */
+{ op: "send_to"; space: string; message: string } |
+/**  Answers question set `ask` waiting in `space`, as `Answer` does. */
+{ op: "answer_space"; space: string; ask: string; answers: string[][] } |
+/**
+ *  Merges sub-space `child` into its parent `parent`'s worktree
+ *  (`space_merge`); counts as Edit.
+ */
+{ op: "merge_child"; parent: string; child: string };
 
 export type RemoteQuestion = {
 	question: string,
@@ -460,6 +517,7 @@ export const FLEET_CODES = {
 	BUSY: "fleet.busy",
 	INTERNAL: "fleet.internal",
 	DENIED: "fleet.denied",
+	TIMEOUT: "fleet.timeout",
 	UNAUTHORIZED: "fleet.unauthorized",
 	NO_ORG: "fleet.no_org",
 	VERSION: "fleet.version",

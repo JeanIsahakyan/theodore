@@ -133,6 +133,27 @@ function opInOrder(op: RemoteOp): RemoteOp {
         auto: op.auto,
         until_ms: op.until_ms ?? null,
       };
+    case 'list_spaces':
+      return { op: 'list_spaces', project: op.project ?? null };
+    case 'read_space':
+      return {
+        op: 'read_space',
+        space: op.space,
+        messages: op.messages ?? null,
+      };
+    case 'ask_space':
+      return { op: 'ask_space', space: op.space, question: op.question };
+    case 'send_to':
+      return { op: 'send_to', space: op.space, message: op.message };
+    case 'answer_space':
+      return {
+        op: 'answer_space',
+        space: op.space,
+        ask: op.ask,
+        answers: op.answers,
+      };
+    case 'merge_child':
+      return { op: 'merge_child', parent: op.parent, child: op.child };
   }
 }
 

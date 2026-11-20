@@ -277,11 +277,13 @@ impl RunContext {
             && self.mode.is_some_and(|m| m >= TurnMode::Edit)
     }
 
-    /// May list, read and wait for other spaces on this computer: a space
-    /// turn, of a space that isn't hosted here for another device (that
-    /// device's trust doesn't reach this one's spaces).
+    /// May list, read and wait for other spaces on this computer: any
+    /// space turn. A space hosted here for another device gets them too;
+    /// the core keeps it to what that device may do here (it steers only
+    /// its own sub-spaces and that device's spaces, and an Edit or Run from
+    /// Claude via cloud waits for a person's yes).
     pub fn local_spaces(&self) -> bool {
-        self.tools == ToolSet::Space && self.space.is_some() && self.fleet != FleetTools::Hosted
+        self.tools == ToolSet::Space && self.space.is_some()
     }
 
     /// May start, send to, stop and answer sub-spaces: [`Self::local_spaces`]

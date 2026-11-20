@@ -14,6 +14,8 @@
  *      verified against the pin of the computer that signed it
  *   ─▶ request: signed here (target_key = the pin) ─▶ hub ─▶ the computer
  *      decides (its trust in this device, its caps; Edit/Run wait for a yes)
+ *      on a space it started (rs_…), or on any space of that computer by
+ *      its local id (protocol 7: list, read, ask, send_to, answer, merge)
  * hub ─▶ InboxConn.send(frame) ─▶ mcp_inbox (until a tool reads it)
  * ```
  *
@@ -33,9 +35,14 @@ import type {
   SignedEnvelope,
 } from '../gen/fleet';
 import type { Conn, ConnState, Hub } from '../fleet/hub';
-import { PROTOCOL_VERSION, REQUEST_WINDOW_MS } from '../fleet/limits';
+import {
+  PROTOCOL_VERSION,
+  REQUEST_WINDOW_MS,
+  SUB_SPACE_MODEL,
+} from '../fleet/limits';
 import type { Sql } from '../fleet/store';
-import { unb64 } from '../fleet/wire';
+import { onAnySpace, unb64, type AnySpaceOp } from '../fleet/wire';
+import { subSpaceOf } from './computer';
 import {
   fingerprint,
   newDeviceKey,
@@ -53,6 +60,8 @@ import {
   type Outcome,
   type PinRow,
   type RequestRow,
+  SUB_SPACES_KEPT,
+  type SubSpaceRow,
 } from './store';
 import {
   gapLine,
@@ -84,6 +93,8 @@ export interface McpFleetEnv {
   secret: string;
   /** How long a request waits for its reply (default REPLY_WAIT_MS). */
   replyWaitMs?: number;
+  /** How long `space_ask` waits for the answer (default MAX_WAIT_MS). */
+  askWaitMs?: number;
 }
 
 /** How the MCP device lists itself. */
@@ -175,7 +186,30 @@ export interface SpaceView {
    * must Allow it there or on a device it sends its approvals to (≤ 5 min).
    */
   waiting_for: string | null;
+  /** Its sub-spaces on the computer (`mirror{sub_space}`), by local id. */
+  sub_spaces: SubSpaceView[];
   updated_ms: number;
+}
+
+/** A sub-space of a space this device started. */
+export interface SubSpaceView {
+  /** Its local id on the computer (what the computer's own ops take). */
+  space: string;
+  /** The space's `rs_` id, or another sub-space's local id. */
+  parent: string;
+  title: string;
+  status: string;
+  mode: string;
+  done: boolean;
+}
+
+/** An op on any space of a computer, by its local id (protocol 7). */
+export type ComputerOp = Extract<RemoteOp, { op: AnySpaceOp }>;
+
+/** What came of a computer op, with the computer it went to. */
+export interface ComputerSent {
+  computer: { device: string; name: string };
+  sent: Sent;
 }
 
 /** What came of a request a tool sent and waited for. */
@@ -186,6 +220,8 @@ export type Sent =
       state: 'pending';
       /** "waiting for approval on <computer>" for an Edit or Run. */
       waitingFor: string | null;
+      /** Its request id (`space_ask {request}` waits for it again). */
+      request: string;
     };
 
 export class McpFleet {
@@ -497,6 +533,9 @@ export class McpFleet {
       JSON.stringify(outcome),
       req.req_id,
     );
+    // An op on any space of a computer leaves the spaces here as they are:
+    // its outcome is for the tool that waits for it.
+    if (onAnySpace(req.op)) return;
     const sp = this.store.space(user, req.space);
     if (!sp) return;
     if (req.op === 'start_space') {
@@ -555,8 +594,9 @@ export class McpFleet {
   private applyEvent(sp: McpSpaceRow, seq: number, ev: RemoteSpaceEvent) {
     if (seq <= sp.last_seq || !ev || typeof ev !== 'object') return;
     if (ev.kind === 'mirror') {
-      // Only the space row matters here: its plan and build mode. Holes
+      // The space row (its plan and build mode) and its sub-spaces. Holes
       // in seq from compaction aren't gaps.
+      if (ev.model === SUB_SPACE_MODEL) this.onSubSpace(sp, seq, ev);
       const patch: Partial<McpSpaceRow> = { last_seq: seq };
       if (ev.model === 'space' && ev.data && typeof ev.data === 'object') {
         const row = ev.data as Record<string, unknown>;
@@ -613,6 +653,77 @@ export class McpFleet {
     }
     this.store.addLine(sp.space, line.seq, line.kind, line.text);
     this.update(sp.space, patch);
+  }
+
+  /**
+   * A sub-space under `sp`, kept as the latest per id (`null` data: gone),
+   * with a line when its title, status or done changes.
+   */
+  private onSubSpace(
+    sp: McpSpaceRow,
+    seq: number,
+    ev: Extract<RemoteSpaceEvent, { kind: 'mirror' }>,
+  ) {
+    const old = this.store.one<SubSpaceRow>(
+      'SELECT * FROM mcp_sub_spaces WHERE space = ? AND id = ?',
+      sp.space,
+      ev.id,
+    );
+    if (ev.data === null || ev.data === undefined) {
+      if (!old) return;
+      this.store.run(
+        'DELETE FROM mcp_sub_spaces WHERE space = ? AND id = ?',
+        sp.space,
+        ev.id,
+      );
+      this.store.addLine(
+        sp.space,
+        seq,
+        'sub_space',
+        `${old.id} · ${old.title} · removed`,
+      );
+      return;
+    }
+    const sub = subSpaceOf(ev.id, ev.data);
+    if (!sub) return;
+    if (
+      !old &&
+      (this.store.num(
+        'SELECT COUNT(*) AS n FROM mcp_sub_spaces WHERE space = ?',
+        sp.space,
+      ) ?? 0) >= SUB_SPACES_KEPT
+    ) {
+      return;
+    }
+    this.store.run(
+      `INSERT INTO mcp_sub_spaces
+         (space, id, parent, title, status, mode, done, seq)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT (space, id) DO UPDATE SET parent = excluded.parent,
+         title = excluded.title, status = excluded.status,
+         mode = excluded.mode, done = excluded.done, seq = excluded.seq`,
+      sp.space,
+      sub.space,
+      sub.parent,
+      sub.title,
+      sub.status,
+      sub.mode,
+      sub.done ? 1 : 0,
+      seq,
+    );
+    if (
+      !old ||
+      old.title !== sub.title ||
+      old.status !== sub.status ||
+      old.done !== (sub.done ? 1 : 0)
+    ) {
+      this.store.addLine(
+        sp.space,
+        seq,
+        'sub_space',
+        `${sub.space} · ${sub.title} · ${sub.status}${sub.done ? ' · done' : ''}`,
+      );
+    }
   }
 
   private async onAsk(user: string, envelope: SignedEnvelope) {
@@ -892,6 +1003,7 @@ export class McpFleet {
     );
     for (const o of old) {
       this.store.run('DELETE FROM mcp_lines WHERE space = ?', o.space);
+      this.store.run('DELETE FROM mcp_sub_spaces WHERE space = ?', o.space);
       this.store.run('DELETE FROM mcp_spaces WHERE space = ?', o.space);
     }
   }
@@ -976,6 +1088,74 @@ export class McpFleet {
     });
   }
 
+  // ── any space of a computer (protocol 7) ───────────────────────────────
+
+  /** Whether `space` is one this device started (and still knows). */
+  startedHere(c: McpCaller, space: string): boolean {
+    return this.store.space(c.userId, space) !== undefined;
+  }
+
+  /**
+   * `op` on any space of a pinned computer, signed and sent; waits up to
+   * `ms` for the reply. The computer resolves the id (its own, or an `rs_`
+   * one it hosts for this device) and decides, as for any request.
+   */
+  async onComputer(
+    c: McpCaller,
+    device: string,
+    op: ComputerOp,
+    ms?: number,
+  ): Promise<ComputerSent> {
+    const { me, conn } = await this.online(c);
+    const pin = this.target(c.userId, device);
+    return {
+      computer: { device: pin.device_id, name: pin.name },
+      sent: await this.send(c, me, conn, pin, op, ms),
+    };
+  }
+
+  /** `ask_space`: slow (the computer gives it minutes), so a longer wait. */
+  ask(c: McpCaller, device: string, space: string, question: string) {
+    return this.onComputer(
+      c,
+      device,
+      { op: 'ask_space', space, question },
+      this.env.askWaitMs ?? MAX_WAIT_MS,
+    );
+  }
+
+  /** Waits again for an `ask_space` this device sent (`space_ask {request}`). */
+  async askAgain(c: McpCaller, request: string): Promise<ComputerSent> {
+    const req =
+      typeof request === 'string'
+        ? this.store.request(c.userId, request)
+        : undefined;
+    if (!req || req.op !== 'ask_space') {
+      throw new McpError(
+        'mcp.unknown_request',
+        'not a space_ask request made through this MCP connection',
+      );
+    }
+    const { me, conn } = await this.online(c);
+    const name =
+      this.store.pin(c.userId, req.target_device)?.name ??
+      pinName(
+        this.listed(c.userId).find((d) => d.device_id === req.target_device)
+          ?.info.name ?? '',
+      );
+    return {
+      computer: { device: req.target_device, name },
+      sent: await this.outcome(
+        c,
+        me,
+        conn,
+        req.req_id,
+        this.env.askWaitMs ?? MAX_WAIT_MS,
+        () => null,
+      ),
+    };
+  }
+
   async read(c: McpCaller, space: string, since: number) {
     this.ownSpace(c.userId, space);
     await this.online(c);
@@ -1030,7 +1210,16 @@ export class McpFleet {
     conn: Conn,
     pin: PinRow,
     op: Exclude<RemoteOp, { op: 'confirm' | 'set_mcp_auto' }>,
+    waitMs = this.env.replyWaitMs ?? REPLY_WAIT_MS,
   ): Promise<Sent> {
+    // A space it started, or the computer's own space the op names (its
+    // parent, for a merge; none for a list).
+    const space =
+      op.op === 'merge_child'
+        ? op.parent
+        : op.op === 'list_spaces'
+          ? ''
+          : op.space;
     const row = this.store.device(c.userId)!;
     const key = await this.signingKey(c, row);
     const reqId = `req_${crypto.randomUUID()}`;
@@ -1055,25 +1244,35 @@ export class McpFleet {
       pin.device_id,
       pin.public_key,
       op.op,
-      op.space,
+      space,
       op.op === 'start_space' || op.op === 'send' ? (op.mode ?? null) : null,
       now,
-      this.store.space(c.userId, op.space)?.last_seq ?? 0,
+      this.store.space(c.userId, space)?.last_seq ?? 0,
     );
     this.store.trimRequests(c.userId);
     await this.env
       .hub()
       .message(conn, JSON.stringify({ type: 'request', envelope }));
-    const wait = this.env.replyWaitMs ?? REPLY_WAIT_MS;
-    const outcome = await this.until(c, me, conn, wait, () => {
+    return this.outcome(c, me, conn, reqId, waitMs, () =>
+      this.waitingFor(c.userId, space),
+    );
+  }
+
+  /** Waits up to `ms` for request `reqId`'s outcome. */
+  private async outcome(
+    c: McpCaller,
+    me: string,
+    conn: Conn,
+    reqId: string,
+    ms: number,
+    waitingFor: () => string | null,
+  ): Promise<Sent> {
+    const outcome = await this.until(c, me, conn, ms, () => {
       const r = this.store.request(c.userId, reqId);
       return r?.outcome ? (JSON.parse(r.outcome) as Outcome) : null;
     });
     if (!outcome) {
-      return {
-        state: 'pending',
-        waitingFor: this.waitingFor(c.userId, op.space),
-      };
+      return { state: 'pending', waitingFor: waitingFor(), request: reqId };
     }
     if (outcome.kind === 'ok') return { state: 'ok', value: outcome.value };
     return {
@@ -1085,7 +1284,11 @@ export class McpFleet {
 
   /** A space as a tool shows it, with what it waits for. */
   private view(user: string, sp: McpSpaceRow): SpaceView {
-    return viewOf(sp, this.waitingFor(user, sp.space));
+    return viewOf(
+      sp,
+      this.waitingFor(user, sp.space),
+      this.store.subSpaces(sp.space),
+    );
   }
 
   /**
@@ -1173,6 +1376,7 @@ function questionOf(
 export function viewOf(
   sp: McpSpaceRow,
   waitingFor: string | null = null,
+  subSpaces: SubSpaceRow[] = [],
 ): SpaceView {
   return {
     space: sp.space,
@@ -1188,6 +1392,14 @@ export function viewOf(
     approve_mode: sp.plan ? (sp.build_mode === 'run' ? 'run' : 'edit') : null,
     error: sp.error,
     waiting_for: waitingFor,
+    sub_spaces: subSpaces.map((s) => ({
+      space: s.id,
+      parent: s.parent,
+      title: s.title,
+      status: s.status,
+      mode: s.mode,
+      done: s.done === 1,
+    })),
     updated_ms: sp.updated_ms,
   };
 }

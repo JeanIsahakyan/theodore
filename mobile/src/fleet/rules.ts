@@ -192,6 +192,7 @@ const CONFIRM_ACTIONS: readonly ConfirmAction[] = [
   'start',
   'send',
   'approve_plan',
+  'merge',
 ];
 /** `CONFIRM_TEXT_MAX` in Rust. */
 export const CONFIRM_TEXT_MAX = 500;

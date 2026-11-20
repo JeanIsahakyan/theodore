@@ -25,6 +25,8 @@ import {
   codes,
   CONFIRM_TEXT_MAX,
   MAX_AGENT_ID_CHARS,
+  MAX_ANY_SPACE_ID_CHARS,
+  MAX_ANY_SPACE_TEXT_CHARS,
   MAX_AGENT_LABEL_CHARS,
   MAX_AGENT_MODELS,
   MAX_AGENTS,
@@ -37,6 +39,7 @@ import {
   MAX_MCP_AUTO,
   MAX_MIRROR_ID_CHARS,
   MAX_PUSH_TOKEN_CHARS,
+  MAX_READ_MESSAGES,
   MIN_PROTOCOL_VERSION,
   MIRROR_KEPT,
   MIRROR_RELAYED,
@@ -131,6 +134,31 @@ const MCP_AUTOS = ['off', 'edit', 'full'] as const;
 
 /** Protocol 6: confirms and auto mode (frames, ops, `mcp_auto`). */
 export const V6 = 6;
+/** Protocol 7: ops on any space of a computer, the `sub_space` mirror. */
+export const V7 = 7;
+
+/**
+ * Ops on any of the target's own spaces, by its local id (protocol 7,
+ * `RemoteOp::on_any_space`): on no space the cloud tracks.
+ */
+export const ANY_SPACE_OPS = [
+  'list_spaces',
+  'read_space',
+  'ask_space',
+  'send_to',
+  'answer_space',
+  'merge_child',
+] as const;
+export type AnySpaceOp = (typeof ANY_SPACE_OPS)[number];
+
+export const onAnySpace = (op: string): op is AnySpaceOp =>
+  (ANY_SPACE_OPS as readonly string[]).includes(op);
+
+/** The protocol a target needs to take `op`. */
+export function protocolFor(op: string): number {
+  if (op === 'confirm' || op === 'set_mcp_auto') return V6;
+  return onAnySpace(op) ? V7 : MIN_PROTOCOL_VERSION;
+}
 
 /** Device kinds requests may target (`DeviceKind::hosts`). */
 export const HOST_KINDS: readonly DeviceInfo['kind'][] = ['desktop', 'daemon'];
@@ -470,8 +498,19 @@ export interface Routing {
   target_device: string;
   /** The target's key as the origin pinned it. */
   target_key: string;
-  op: 'start_space' | 'send' | 'stop' | 'answer' | 'confirm' | 'set_mcp_auto';
-  /** '' for an op on no space (`confirm`, `set_mcp_auto`). */
+  op:
+    | 'start_space'
+    | 'send'
+    | 'stop'
+    | 'answer'
+    | 'confirm'
+    | 'set_mcp_auto'
+    | AnySpaceOp;
+  /**
+   * The cloud space (`rs_` id) it acts on; '' for an op on no space
+   * (`confirm`, `set_mcp_auto`) and for one on any of the target's own
+   * spaces (`ANY_SPACE_OPS`), which the cloud doesn't track.
+   */
   space: string;
   /** start_space */
   parent: string | null;
@@ -500,6 +539,7 @@ export function peekRequest(body: string): Routing {
     'answer',
     'confirm',
     'set_mcp_auto',
+    ...ANY_SPACE_OPS,
   ]);
   // Not read for routing, only bounded: the target checks them against
   // what it lists.
@@ -517,7 +557,9 @@ export function peekRequest(body: string): Routing {
     oneOf(op, 'auto', MCP_AUTOS);
     optUint(op, 'until_ms');
   }
-  const onSpace = kind !== 'confirm' && kind !== 'set_mcp_auto';
+  if (onAnySpace(kind)) anySpaceFields(op, kind);
+  const onSpace =
+    kind !== 'confirm' && kind !== 'set_mcp_auto' && !onAnySpace(kind);
   return {
     req_id: str(o, 'req_id'),
     origin_device: str(o, 'origin_device', 64),
@@ -529,6 +571,52 @@ export function peekRequest(body: string): Routing {
     depth: kind === 'start_space' ? uint(op, 'depth') : 0,
     ask_id: kind === 'answer' ? str(op, 'ask_id') : null,
   };
+}
+
+/** An op on any space of the target: every field bounded, none routed. */
+function anySpaceFields(op: Obj, kind: AnySpaceOp) {
+  const id = (k: string) => str(op, k, MAX_ANY_SPACE_ID_CHARS);
+  const text = (k: string) => chars(op, k, MAX_ANY_SPACE_TEXT_CHARS);
+  switch (kind) {
+    case 'list_spaces':
+      optStr(op, 'project', 100);
+      return;
+    case 'read_space': {
+      id('space');
+      const n = optUint(op, 'messages');
+      if (n !== null && n > MAX_READ_MESSAGES) {
+        throw bad(`messages must be at most ${MAX_READ_MESSAGES}`);
+      }
+      return;
+    }
+    case 'ask_space':
+      id('space');
+      text('question');
+      return;
+    case 'send_to':
+      id('space');
+      text('message');
+      return;
+    case 'answer_space':
+      id('space');
+      str(op, 'ask');
+      // As the MCP tools take them: ≤ 20 questions, ≤ 50 picks of ≤ 4000.
+      for (const a of arr(op, 'answers', 20)) {
+        if (!Array.isArray(a) || a.length > 50) {
+          throw bad('answers must hold lists of at most 50');
+        }
+        for (const x of a) {
+          if (typeof x !== 'string' || x.length > 4000) {
+            throw bad('an answer must be a string of at most 4000 chars');
+          }
+        }
+      }
+      return;
+    case 'merge_child':
+      id('parent');
+      id('child');
+      return;
+  }
 }
 
 /** A host's space event body: what the cloud stores and orders by. */
@@ -576,7 +664,7 @@ export function peekConfirm(body: string): RemoteConfirm {
     confirm_id: str(o, 'confirm_id'),
     host_device: str(o, 'host_device', 64),
     mcp_device: str(o, 'mcp_device', 64),
-    action: oneOf(o, 'action', ['start', 'send', 'approve_plan']),
+    action: oneOf(o, 'action', ['start', 'send', 'approve_plan', 'merge']),
     mode: oneOf(o, 'mode', MODES),
     project_name: optChars(o, 'project_name', 200),
     space_name: optChars(o, 'space_name', 200),

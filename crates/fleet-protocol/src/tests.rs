@@ -430,6 +430,68 @@ fn confirm_and_auto_ops_are_tagged_and_on_no_space() {
 }
 
 #[test]
+fn ops_on_any_space_are_tagged_and_on_no_cloud_space() {
+    let ops = [
+        (
+            RemoteOp::ListSpaces { project: None },
+            serde_json::json!({"op": "list_spaces", "project": null}),
+        ),
+        (
+            RemoteOp::ReadSpace {
+                space: "a1".into(),
+                messages: Some(5),
+            },
+            serde_json::json!({"op": "read_space", "space": "a1", "messages": 5}),
+        ),
+        (
+            RemoteOp::AskSpace {
+                space: "a1".into(),
+                question: "why?".into(),
+            },
+            serde_json::json!({"op": "ask_space", "space": "a1", "question": "why?"}),
+        ),
+        (
+            RemoteOp::SendTo {
+                space: "a1".into(),
+                message: "go".into(),
+            },
+            serde_json::json!({"op": "send_to", "space": "a1", "message": "go"}),
+        ),
+        (
+            RemoteOp::AnswerSpace {
+                space: "a1".into(),
+                ask: "q1".into(),
+                answers: vec![vec!["Yes".into()]],
+            },
+            serde_json::json!({"op": "answer_space", "space": "a1", "ask": "q1", "answers": [["Yes"]]}),
+        ),
+        (
+            RemoteOp::MergeChild {
+                parent: "rs_1".into(),
+                child: "c1".into(),
+            },
+            serde_json::json!({"op": "merge_child", "parent": "rs_1", "child": "c1"}),
+        ),
+    ];
+    for (op, json) in ops {
+        assert!(op.on_any_space(), "{op:?}");
+        assert_eq!(op.space(), "", "{op:?}");
+        assert_eq!(serde_json::to_value(&op).unwrap(), json);
+        assert_eq!(serde_json::from_value::<RemoteOp>(json).unwrap(), op);
+    }
+    assert!(
+        !RemoteOp::Stop {
+            space: "rs_1".into()
+        }
+        .on_any_space()
+    );
+    // Optional fields may be left out.
+    let op: RemoteOp = serde_json::from_value(serde_json::json!({"op": "list_spaces"})).unwrap();
+    assert_eq!(op, RemoteOp::ListSpaces { project: None });
+    assert!(MIRROR_MODELS.contains(&SUB_SPACE_MODEL));
+}
+
+#[test]
 fn a_confirm_is_signed_by_its_host_for_its_own_domain() {
     let key = DeviceKey::generate().unwrap();
     let c = RemoteConfirm {

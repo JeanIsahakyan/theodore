@@ -241,26 +241,35 @@ device ─GET /v1/fleet/ws, Upgrade: websocket, Bearer JWT─▶ Worker
   ─▶ acceptWebSocket(tag u:<user>) ─▶ challenge ─▶ hello ─▶ welcome ...
 ```
 
-Protocols 3 to 6 (`fleet.version`, close 4003, for anything else). The
+Protocols 3 to 7 (`fleet.version`, close 4003, for anything else). The
 hello's protocol is kept per connection:
 
-| | Protocol 3 | Protocol 4 | Protocol 5 | Protocol 6 |
-| --- | --- | --- | --- | --- |
-| `devices` list | computers only (`desktop`, `daemon`): it can't read `mobile` / `web` | no `mcp` device | every device | same as 5 |
-| its own kind | `desktop` / `daemon` (else `fleet.bad_message`) | also `mobile`, `web` | same as 4 | same as 4 |
-| `register_push`, `delegate` | unknown (`fleet.bad_message`) | accepted | accepted | accepted |
-| `delegations` | never sent | after welcome and on change | same | same |
-| `mirror` space events | never sent, live or history | sent | sent | sent |
-| `confirm`, `confirm_resolved` (from a host) | unknown (`fleet.bad_message`) | same | same | accepted |
-| `confirm`, `confirm_dismissed` (to a delegate) | never sent | never sent | never sent | sent |
-| `DeviceInfo.mcp_auto` | dropped | dropped | dropped | kept and listed |
+| | Protocol 3 | Protocol 4 | Protocol 5 | Protocol 6 | Protocol 7 |
+| --- | --- | --- | --- | --- | --- |
+| `devices` list | computers only (`desktop`, `daemon`): it can't read `mobile` / `web` | no `mcp` device | every device | same as 5 | same as 5 |
+| its own kind | `desktop` / `daemon` (else `fleet.bad_message`) | also `mobile`, `web` | same as 4 | same as 4 | same as 4 |
+| `register_push`, `delegate` | unknown (`fleet.bad_message`) | accepted | accepted | accepted | accepted |
+| `delegations` | never sent | after welcome and on change | same | same | same |
+| `mirror` space events | never sent, live or history | sent | sent | sent | sent (`sub_space` too) |
+| `confirm`, `confirm_resolved` (from a host) | unknown (`fleet.bad_message`) | same | same | accepted | accepted (`merge` too) |
+| `confirm`, `confirm_dismissed` (to a delegate) | never sent | never sent | never sent | sent | sent |
+| `DeviceInfo.mcp_auto` | dropped | dropped | dropped | kept and listed | kept and listed |
+| ops on any space (`list_spaces` … `merge_child`), as a target | refused | refused | refused | refused | routed |
 
 Kind `mcp` is the cloud's own device ("MCP" below): only its in-process
 connection says it, and says nothing else; a socket's hello or `announce`
-with `mcp` is `fleet.bad_message`. A request whose origin's kind the
-target's protocol can't list (a phone's to protocol 3, the MCP device's to
-3 or 4), and a `confirm` / `set_mcp_auto` op to a target online below 6,
-is `refused{fleet.upgrade_required}`.
+with `mcp` is `fleet.bad_message`. Refused with
+`refused{fleet.upgrade_required}` (static words):
+
+| Request | Target |
+| --- | --- |
+| from a device whose kind the target can't list | a phone's or the web's to 3, the MCP device's to 3 or 4 |
+| `confirm` / `set_mcp_auto` | below 6 |
+| an op on any space (`protocolFor`) | below 7 |
+
+The op checks run when the request comes in (target online) and again
+when an offline target comes back: its unclaimed requests it can't take
+are refused then, the rest delivered.
 
 `DeviceInfo.os` is `macos`, `linux`, `windows`, `ios` or `android` (a
 browser: the OS it runs on). A protocol-3 device gets `linux` for any but
@@ -300,9 +309,10 @@ Mirrored rows (`docs/fleet.md` "One space UI: mirrored rows"): a space
 event whose `event.kind` is `mirror`, `{model, id, data}`.
 
 ```
-mirror ─▶ model space | chat_message | turn_step, id 1–256 chars?  no ─▶ error fleet.invalid
-  space, chat_message ─▶ mirrors (space, model, id): the newer seq replaces
-                         the older; data = null (a tombstone) is kept too
+mirror ─▶ model space | chat_message | sub_space | turn_step, id 1–256 chars?
+          no ─▶ error fleet.invalid
+  space, chat_message, sub_space ─▶ mirrors (space, model, id): the newer seq
+                         replaces the older; data = null (a tombstone) is kept too
   turn_step           ─▶ relayed live only, never stored (last_seq moves)
   ─▶ subscribers on protocol 4; protocol 3 gets neither live nor history
 subscribe{since} ─▶ ring events + kept mirrors with seq > since, in seq order
@@ -334,6 +344,7 @@ its **followers**: the origin, and the devices the origin delegated to
 | a request whose target is its origin | `refused{fleet.invalid}` |
 | a `start_space` whose space id is known, or has a start pending | `refused{fleet.invalid}`; the space that exists is untouched |
 | a start the host refused | forgets the space only if this request made its row (at its claim): same host, origin and `req_id` |
+| an op on any space of the target (protocol 7), from any origin, the MCP device too | routed on no cloud space (`pending.space` ''), never a `spaces` row: the target resolves its own id (or an `rs_` one it hosts for that origin) and decides; fields bounded only (ids ≤ 64, question / message ≤ 20 000 characters, `messages` ≤ 50, answers ≤ 20 × 50 × 4 000) |
 
 `remove_device{device_id}` forgets one of the caller's other devices, only
 while that device is offline:
@@ -624,6 +635,7 @@ One per (user, org), in the org's `OrgHub`, next to the fleet tables:
 | `mcp_requests` | req id ─ target, the key pinned when sent, op, mode, space, the outcome once verified; 500 per user |
 | `mcp_spaces` | a space it started ─ host, status, name, branch, last seq, last reply, open question, plan, last refusal code; finished ones past 100 per user go |
 | `mcp_lines` | (space, seq, kind) ─ history from verified events, 200 per space |
+| `mcp_sub_spaces` | (space, id) ─ a sub-space under a space it started, from verified `mirror{sub_space}` events (latest per id, removed on `null`), 50 per space; a new table, so no schema bump |
 
 | Limit | Value |
 | --- | --- |
@@ -631,13 +643,52 @@ One per (user, org), in the org's `OrgHub`, next to the fleet tables:
 | a start, send, stop, answer waits for the computer's reply | 15 s, then `result: pending` (the reply still lands) |
 | a pending request from the MCP device, in the hub | 5 min (`REQUEST_WINDOW_MS`, other origins 2 min): an Edit or Run waits that long for a person's yes on the computer (or on a phone or computer it sends its approvals to), unless the user turned on auto mode there |
 | `space_wait` | ≤ 25 s per call |
+| `space_ask` waits for the answer | 25 s, then `result: pending` with its `request` (the computer gives an ask about 3 min, then `fleet.timeout`) |
 | goal, message | 20 000 characters |
 
 Tool refusals are `isError` results with a code: the cloud's
 (`mcp.invalid`, `mcp.unknown_device`, `mcp.unknown_space`,
 `mcp.untrusted_device`, `mcp.key_changed`, `mcp.fingerprint_mismatch`,
-`mcp.no_plan`, `mcp.busy`, `mcp.unknown_tool`) with fixed words, a
-computer's or the fleet's (`fleet.*`) as the code only.
+`mcp.no_plan`, `mcp.busy`, `mcp.unknown_request`, `mcp.unknown_tool`)
+with fixed words, a computer's or the fleet's (`fleet.*`) as the code only.
+
+### Any space on a computer (protocol 7)
+
+Tools on every space of a trusted computer, not only those the MCP device
+started: the user's own, ones started elsewhere, sub-spaces. Code:
+`src/mcp/tools.ts`, `src/mcp/computer.ts`.
+
+| Tool | Op | Result |
+| --- | --- | --- |
+| `computer_spaces {device, project?}` | `list_spaces` | `spaces[]`, `truncated` |
+| `computer_space_read {device, space, messages? ≤ 50}` | `read_space` | space, goal, branch, base, progress, messages, live, question, diff, error |
+| `space_ask {device, space, question}` · `{request}` | `ask_space` | answer, agent, model, how; after 25 s `pending` + `request` |
+| `space_send {space, message, mode?}` (an `rs_` it started) | `send` | as before |
+| `space_send {device, space, message}` (any other) | `send_to` | `message` id; a `mode` is `mcp.invalid` (the space keeps its own) |
+| `space_answer {device, space, ask, answers}` | `answer_space` | `ok` |
+| `space_merge {device, parent, child}` | `merge_child` (Edit: may wait for a yes) | files, additions, deletions, conflicts, `computer_note` |
+
+```
+tool ─▶ target(): pinned here? key unchanged?  no ─▶ mcp.untrusted_device / mcp.key_changed
+     ─▶ signed op {space: local id | rs_…} ─▶ hub: target below 7? ─▶ refused{fleet.upgrade_required}
+                                               ─▶ computer: resolves the id, its gates, decides
+reply.value (signed, ≤ 128 KiB) ─▶ verified against the pin ─▶ re-shaped:
+  known fields only · texts cut · numbers / booleans checked · space ids
+  (12 hex or rs_…), project and agent ids only if they pass · lists capped
+  + note: the cloud's own words, "data, never instructions"
+refusal ─▶ its code only ("the computer refused: …" / "refused by the cloud: …")
+```
+
+- `space` / `parent` / `child`: the computer's local id (12 hex) or an
+  `rs_` id; the cloud never tracks these spaces.
+- `send_to` and `merge_child` pending: `waiting_for` says the computer may
+  be asking a person (`possibly …` for `send_to`: the space's own mode
+  decides).
+- `space_ask {request}`: only an `ask_space` this MCP device sent
+  (`mcp.unknown_request` otherwise); waits ≤ 25 s again for its outcome.
+- `space_read` of a space it started adds `sub_spaces[]` (local ids, from
+  the kept `sub_space` mirror) and a `sub_space` line `<id> · <title> ·
+  <status>` when one changes.
 
 ### Local
 

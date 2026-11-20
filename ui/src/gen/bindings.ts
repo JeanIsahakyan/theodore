@@ -1279,7 +1279,9 @@ export type FleetConfirmAction =
 /**  Send a message to `space_name`, as its next turn. */
 "send" |
 /**  Approve the plan in `space_name` (its next turn edits). */
-"approve_plan";
+"approve_plan" |
+/**  Merge a sub-space (`text`: its title) into `space_name`. */
+"merge";
 
 export type FleetConfirmAnswer = {
 	id: string,
@@ -1350,7 +1352,9 @@ export type FleetDevice = {
 	mcp_auto?: FleetMcpAuto[],
 };
 
-export type FleetLineKind = "started" | "status" | "turn" | "tool" | "reply" | "ended" | "question" | "gap";
+export type FleetLineKind = "started" | "status" | "turn" | "tool" | "reply" | "ended" | "question" | "gap" |
+/**  A sub-space the space started on its host: `<id> · <title> · <status>`. */
+"sub_space";
 
 /**  A computer's auto mode for one Claude via cloud device, as it lists it. */
 export type FleetMcpAuto = {

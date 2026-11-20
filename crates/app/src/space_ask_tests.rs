@@ -218,11 +218,20 @@ async fn ask_refuses_itself_mirrors_hosted_and_archived_spaces() {
     assert_eq!(code(r), "sub_spaces.remote");
 
     let hosted = other(&e, "Hosted", None).await;
-    e.core.fleet().hosting.insert(hosted.id.clone());
+    e.core
+        .fleet()
+        .hosting
+        .insert(hosted.id.clone(), "dev_x".into());
     let r = e.core.sub_space_ask(&a.id, &hosted.id, "?").await;
     assert_eq!(code(r), "sub_spaces.hosted");
-    // Nor may a hosted space ask out.
-    let r = e.core.sub_space_ask(&hosted.id, &a.id, "?").await;
+    // A hosted space reads and asks this computer's own spaces, but not
+    // one hosted for another device.
+    let elsewhere = other(&e, "Hosted elsewhere", None).await;
+    e.core
+        .fleet()
+        .hosting
+        .insert(elsewhere.id.clone(), "dev_y".into());
+    let r = e.core.sub_space_ask(&hosted.id, &elsewhere.id, "?").await;
     assert_eq!(code(r), "sub_spaces.hosted");
 
     let gone = other(&e, "Archived", None).await;
@@ -460,7 +469,10 @@ async fn send_and_answer_refuse_itself_mirrors_and_hosted_spaces() {
         .await;
     assert_eq!(code(r), "sub_spaces.remote");
     let hosted = other(&e, "Hosted", None).await;
-    e.core.fleet().hosting.insert(hosted.id.clone());
+    e.core
+        .fleet()
+        .hosting
+        .insert(hosted.id.clone(), "dev_x".into());
     let r = e
         .core
         .sub_space_send(&a.id, turn, &hosted.id, "x", None)
@@ -469,6 +481,17 @@ async fn send_and_answer_refuse_itself_mirrors_and_hosted_spaces() {
     let r = e
         .core
         .sub_space_answer(&a.id, turn, &hosted.id, "q", vec![])
+        .await;
+    assert_eq!(code(r), "sub_spaces.hosted");
+    // Nor does a hosted space steer this computer's own spaces.
+    let r = e
+        .core
+        .sub_space_send(&hosted.id, turn, &a.id, "x", None)
+        .await;
+    assert_eq!(code(r), "sub_spaces.hosted");
+    let r = e
+        .core
+        .sub_space_answer(&hosted.id, turn, &a.id, "q", vec![])
         .await;
     assert_eq!(code(r), "sub_spaces.hosted");
 }

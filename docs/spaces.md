@@ -1278,7 +1278,7 @@ space_merge {child}   (own child · settled · same project · not shipped on it
 
 | Tool | Does | Who gets it |
 | --- | --- | --- |
-| `spaces_list {project?, include_done?}` | spaces here, not archived (and not shipped or merged unless `include_done`), newest first, ≤ 50: id, name, title, project, status, mode, agent, turns, parent, `self` / `child` / `parent`, a mirror flagged `remote` | every turn of a space of this device's own |
+| `spaces_list {project?, include_done?}` | spaces here, not archived (and not shipped or merged unless `include_done`), newest first, ≤ 50: id, name, title, project, status, mode, agent, turns, parent, `self` / `child` / `parent`, a mirror flagged `remote` | every space turn (a space hosted here for another device too) |
 | `space_read {space, messages?}` | any space here: goal, status, mode, progress steps, last messages (10, ≤ 50, each ≤ 4000 characters; `from` is `user`, the agent, or `space:<id>` for another space's message), the running turn's text so far, a waiting question (`ask` id), diff stat | same |
 | `space_ask {space, question}` | another space's answer, from its own agent's context (above): `answer`, `agent`, `model`, `how` (`fork` / `fresh`), `note`. ≤ 2 at once per asking space; gives up after `spaces.ask_timeout_secs` (default 180) | same, any mode, whatever `spaces.sub_spaces` says |
 | `space_start {goal, project?, mode?, agent?, model?, effort?, name?}` | a child: project default the caller's, mode default Edit | an Edit or Run turn, `spaces.sub_spaces` on |
@@ -1292,8 +1292,10 @@ space_merge {child}   (own child · settled · same project · not shipped on it
 | --- | --- |
 | start, send, stop, answer, merge only from an Edit or Run turn | `sub_spaces.mode` |
 | a child's mode ≤ the turn's; a send's ≤ the turn's and ≤ the target's. A mode sticks to a space, so only a parent sets its child's; another space keeps its own, and a send to it is refused when its mode is above the turn's | `sub_spaces.mode` |
-| never from a space hosted here for another device (no tool at all) | `sub_spaces.hosted` |
-| ask, send, answer: not to a space hosted here for another device | `sub_spaces.hosted` |
+| ask, send, answer: a space of this device's own reaches this device's own spaces, never one hosted here for another device (nor a sub-space of one) | `sub_spaces.hosted` |
+| a space hosted here for another device (or a sub-space of one): sends and answers only that device's spaces here (its sub-spaces, other spaces hosted for it); reads and asks any | `sub_spaces.hosted` |
+| a space hosted here for another device: start, send, merge only while this computer accepts remote requests and still trusts that device, in a mode ≤ `fleet.max_mode`; children only in a project it takes remote spaces in; depth counted from the hosted space's fleet depth (≤ 2 in all) | `sub_spaces.hosted` / `sub_spaces.mode` / `sub_spaces.project` / `sub_spaces.depth` |
+| …and when that device is Claude via cloud (`mcp`): an Edit or Run start or send, and every merge, waits for a person's yes here (or on a device this one delegates to) unless auto mode covers it; a daemon refuses | `sub_spaces.denied` |
 | ask, send, answer: not to a mirror of a space on another device (its agent is there) | `sub_spaces.remote` |
 | ask, send, answer: not to this space itself, nor an archived one | `sub_spaces.self` / `sub_spaces.archived` |
 | ask: ≤ 2 running per asking space | `sub_spaces.asks` |
@@ -1311,7 +1313,13 @@ space_merge {child}   (own child · settled · same project · not shipped on it
 - Another space's words are data: `spaces_list`, `space_read` and
   `space_ask` say so in their `note`, and the system prompt does too: read
   or ask another space when you need what it knows.
-- The system prompt names the tools for a space of this device's own, and
+- A space hosted here for another device has these tools too
+  (docs/fleet.md "What a hosted space's agent may do"). Its children are
+  local spaces it owns, hosted here like it (the same limits: commands
+  only in Run, no merge into the local folder, no user MCP servers), and
+  its origin sees them as `sub_space` rows of the hosted space (id, parent,
+  title, status, mode, done).
+- The system prompt names the tools, and
   says to split only clearly independent work (each part's goal says all
   it needs), then wait and read, `space_merge` each child worth keeping,
   resolve the conflicts it lists and check the result; not small tasks.

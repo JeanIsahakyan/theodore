@@ -4320,3 +4320,6 @@ mod confirm;
 
 #[path = "fleet_auto_tests.rs"]
 mod auto;
+
+#[path = "fleet_spaces_tests.rs"]
+mod spaces;

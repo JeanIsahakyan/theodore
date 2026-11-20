@@ -24,15 +24,6 @@ use crate::error::{AppError, AppResult};
 use crate::usecases::fleet::{FleetSettings, TrustedDevice, mode_str, wire_auto};
 use crate::usecases::fleet_origin::{FleetFail, REPLY_WAIT};
 
-/// The mode a start or send runs in (a send's resolved by the gate).
-pub(crate) fn op_mode(op: &RemoteOp) -> Option<FleetMode> {
-    match op {
-        RemoteOp::StartSpace { mode, .. } => Some(*mode),
-        RemoteOp::Send { mode, .. } => *mode,
-        _ => None,
-    }
-}
-
 fn auto_word(a: McpAuto) -> &'static str {
     match a {
         McpAuto::Off => "off",
@@ -46,9 +37,10 @@ impl Core {
         self.0.deps.clock.now().max(0) as u64
     }
 
-    /// Whether `pin`'s auto mode lets `op` run here without a person now.
-    pub(crate) fn fleet_auto_covers(&self, pin: &TrustedDevice, op: &RemoteOp) -> bool {
-        op_mode(op).is_some_and(|m| pin.auto_at(self.fleet_now()).covers(m))
+    /// Whether `pin`'s auto mode lets a request in `mode` (`Claimed::mode`)
+    /// run here without a person now.
+    pub(crate) fn fleet_auto_covers(&self, pin: &TrustedDevice, mode: Option<FleetMode>) -> bool {
+        mode.is_some_and(|m| pin.auto_at(self.fleet_now()).covers(m))
     }
 
     /// `DeviceInfo.mcp_auto`: the auto mode of each `mcp` device pinned
@@ -207,11 +199,11 @@ impl Core {
     }
 
     /// The auto mode a request from `pin` runs under, if any, for the log.
-    pub(crate) fn fleet_auto_note(&self, pin: &TrustedDevice, op: &RemoteOp) -> String {
+    pub(crate) fn fleet_auto_note(&self, pin: &TrustedDevice, mode: Option<FleetMode>) -> String {
         format!(
             "{} ({})",
             auto_word(pin.auto_at(self.fleet_now())),
-            op_mode(op).map_or("", mode_str)
+            mode.map_or("", mode_str)
         )
     }
 }
