@@ -777,3 +777,50 @@ async fn a_mirrored_space_survives_a_restart_and_is_followed_from_its_last_seq()
     );
     stopped.await.unwrap().unwrap();
 }
+
+#[tokio::test]
+async fn a_followed_spaces_sub_spaces_show_as_lines_of_its_history() {
+    let f = fixtures();
+    let (core, _recv, host, rs) = following(&f).await;
+    mirrored(&f, &host, &rs, 1, "running").await;
+    let child = json!({
+        "space": "c1", "parent": rs, "title": "Port the parser",
+        "status": "running", "mode": "edit", "done": false,
+    });
+    mirror(&f, &host, &rs, 2, "sub_space", "c1", child);
+    eventually("the line", || async {
+        core.fleet_space_lines(&rs, 0)
+            .await
+            .unwrap()
+            .iter()
+            .any(|l| {
+                l.kind == theodore_contract::FleetLineKind::SubSpace
+                    && l.text == "c1 · Port the parser · running"
+            })
+    })
+    .await;
+    // Neither a turn step nor a space row.
+    assert!(row(&f, models::SPACE, "c1").is_none());
+    // A row naming another id is dropped; a delete says it's gone.
+    let other = json!({
+        "space": "c2", "parent": rs, "title": "x", "status": "idle", "mode": "edit", "done": false,
+    });
+    mirror(&f, &host, &rs, 3, "sub_space", "c9", other);
+    mirror(&f, &host, &rs, 4, "sub_space", "c1", Value::Null);
+    eventually("gone", || async {
+        core.fleet_space_lines(&rs, 0)
+            .await
+            .unwrap()
+            .iter()
+            .any(|l| l.text == "c1 · gone")
+    })
+    .await;
+    assert!(
+        !core
+            .fleet_space_lines(&rs, 0)
+            .await
+            .unwrap()
+            .iter()
+            .any(|l| l.text.starts_with("c9"))
+    );
+}
