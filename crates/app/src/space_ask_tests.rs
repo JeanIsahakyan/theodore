@@ -398,6 +398,11 @@ async fn a_send_to_another_space_is_capped_by_the_turn_and_its_mode() {
         .sub_space_send(&a.id, SpaceMode::Run, &o.id, "x", Some("edit"))
         .await;
     assert_eq!(code(r), "sub_spaces.mode", "above the space's own");
+    let r = e
+        .core
+        .sub_space_send(&a.id, SpaceMode::Run, &o.id, "x", Some("ask"))
+        .await;
+    assert_eq!(code(r), "sub_spaces.mode", "never lowers another's mode");
     e.f.agents.push_script(done("planned"));
     e.core
         .sub_space_send(&a.id, SpaceMode::Run, &o.id, "Plan it", None)
@@ -405,6 +410,27 @@ async fn a_send_to_another_space_is_capped_by_the_turn_and_its_mode() {
         .unwrap();
     e.until(&o.id, |s| s.turns == 2 && s.run.is_none()).await;
     assert_eq!(e.f.agents.last_request().unwrap().mode, AgentMode::Plan);
+    let row = e.core.space_row(&o.id).await.unwrap();
+    assert_eq!(row.mode, SpaceMode::Plan, "its mode is its own");
+}
+
+#[tokio::test]
+async fn a_send_never_changes_another_spaces_mode() {
+    let e = start_env(true).await;
+    let a = parent(&e).await;
+    let o = other(&e, "Someone else's", None).await;
+    patch(&e, &o.id, serde_json::json!({ "mode": "run" }));
+    let r = e
+        .core
+        .sub_space_send(&a.id, SpaceMode::Edit, &o.id, "x", None)
+        .await;
+    assert_eq!(
+        code(r),
+        "sub_spaces.mode",
+        "its Run is above this Edit turn"
+    );
+    let row = e.core.space_row(&o.id).await.unwrap();
+    assert_eq!(row.mode, SpaceMode::Run);
 }
 
 #[tokio::test]

@@ -1290,7 +1290,7 @@ space_merge {child}   (own child · settled · same project · not shipped on it
 | Rule | Refused with |
 | --- | --- |
 | start, send, stop, answer, merge only from an Edit or Run turn | `sub_spaces.mode` |
-| a child's mode ≤ the turn's; a send's ≤ the turn's and ≤ the target's | `sub_spaces.mode` |
+| a child's mode ≤ the turn's; a send's ≤ the turn's and ≤ the target's. A mode sticks to a space, so only a parent sets its child's; another space keeps its own, and a send to it is refused when its mode is above the turn's | `sub_spaces.mode` |
 | never from a space hosted here for another device (no tool at all) | `sub_spaces.hosted` |
 | ask, send, answer: not to a space hosted here for another device | `sub_spaces.hosted` |
 | ask, send, answer: not to a mirror of a space on another device (its agent is there) | `sub_spaces.remote` |

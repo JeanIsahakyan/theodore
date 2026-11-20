@@ -846,7 +846,9 @@ impl Core {
 
     /// `space_send`: to any other local space (a child or not), marked as
     /// from the caller; queued like your own message while it runs; at
-    /// most the turn's mode and the target's own.
+    /// most the turn's mode and the target's own. Only a child's mode can
+    /// be set; another space keeps its own, so its mode must be within
+    /// the turn's.
     pub async fn sub_space_send(
         &self,
         caller: &str,
@@ -861,6 +863,7 @@ impl Core {
             return Err(refuse("invalid", "the message is empty"));
         }
         let cap = lower(turn, child.mode);
+        let mine = child.parent.as_ref().is_some_and(|p| p.space == me.id);
         let mode = match mode {
             Some(m) => {
                 let m = parse_mode(m)?;
@@ -878,13 +881,30 @@ impl Core {
             }
             None => cap,
         };
+        // A mode sticks to the space from this turn on: only a parent sets
+        // its child's. Another space's runs in its own mode, which this
+        // turn must reach.
+        if !mine && mode != child.mode {
+            return Err(refuse(
+                "mode",
+                format!(
+                    "that space runs in {}; a message from another space never changes it{}",
+                    mode_word(child.mode),
+                    if rank(child.mode) > rank(turn) {
+                        format!(", and this turn is only {}", mode_word(turn))
+                    } else {
+                        String::new()
+                    }
+                ),
+            ));
+        }
         self.space_send_with(
             SpaceSendRequest {
                 space: child.id.clone(),
                 text: message.trim().to_string(),
                 agent: None,
                 model: None,
-                mode: Some(mode),
+                mode: mine.then_some(mode),
                 attachments: None,
                 effort: None,
             },
