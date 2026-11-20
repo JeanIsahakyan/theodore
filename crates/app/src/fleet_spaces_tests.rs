@@ -6,15 +6,16 @@
 //! harness.
 
 use theodore_contract::{
-    CreateSpaceRequest, FleetAuto, FleetAutoRequest, FleetConfirm, FleetConfirmAction,
-    FleetConfirmAnswer, FleetSettingsRequest, Project, Space, SpaceMode, SpaceStatus,
+    AskedBy, CreateSpaceRequest, FleetAuto, FleetAutoRequest, FleetConfirm, FleetConfirmAction,
+    FleetConfirmAnswer, FleetSettingsRequest, Project, Space, SpaceMode, SpaceNote, SpaceStatus,
+    models,
 };
 use theodore_domain::Sha;
 use theodore_fleet_protocol::{
     DeviceKey, DeviceKind, FleetMode, MirroredSubSpace, RemoteOp, RemoteSpaceEvent, ReplyOutcome,
     SUB_SPACE_MODEL, codes,
 };
-use theodore_ports::{AgentEvent, LocalSpaceStart, SpaceToolError};
+use theodore_ports::{AgentEvent, LocalSpaceStart, SpaceToolError, Store};
 
 use super::{
     ORIGIN, STRANGER, claim_result, claimed, client, connect, deliver, done, events, local_of,
@@ -299,6 +300,28 @@ async fn ask_space_answers_from_the_space_and_leaves_it_unchanged() {
         .find(|r| r.prompt.contains("Which store?"))
         .unwrap();
     assert_eq!(ask.mode, theodore_ports::AgentMode::ReadOnly);
+
+    // The space's timeline notes the device that asked, not a space.
+    let notes: Vec<SpaceNote> = f
+        .store
+        .query(
+            models::SPACE_NOTE,
+            "pr",
+            &crate::usecases::spaces::space_chat_key(&a.id).0,
+        )
+        .unwrap()
+        .into_iter()
+        .map(|r| serde_json::from_value(r.data).unwrap())
+        .collect();
+    assert_eq!(notes.len(), 1);
+    assert_eq!(
+        notes[0].ask.from,
+        AskedBy::Device {
+            name: "mac1".into()
+        }
+    );
+    assert_eq!(notes[0].ask.question, "Which store?");
+    assert_eq!(notes[0].ask.answer.as_deref(), Some("SQLite."));
 }
 
 #[tokio::test]

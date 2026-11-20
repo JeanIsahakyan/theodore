@@ -1286,6 +1286,31 @@ A's turn (Edit/Run) ─▶ space_send {B, message}  ─▶ B's chat: "From <A>" 
 - Neither space's chat shows the ask while it runs (`stream_text` off);
   A's timeline has its `space_ask` row ("Asked <B>: <question>", § "Seeing
   sub-spaces and agents").
+- Once it answers or fails, B's timeline gets a note for B's owner. B's
+  agent never sees it:
+
+```
+ask ends (answer | timeout | agent failed) ─▶ space_note row, pr = space:<B>
+   from: space {id, title} ─▶ "Asked by <A>: <question, line 1>"  (A links)
+         device {name}     ─▶ "Asked by <device>: …"  (fleet ask_space, MCP)
+   click ─▶ answer (or "No answer: <why>"), agent · model · forked session | fresh read
+
+reads chat_message only, never space_note:
+   B's turn prompts and replay · space_history · space_read · handoff summary
+   fleet mirror · shipping · chat reports
+```
+
+| | `space_note` (chosen) | a `chat_message` with a notice role |
+| --- | --- | --- |
+| Reaches a prompt | only if a prompt path starts querying `space_note` | unless every reader filters it |
+| Mirrored to other devices | no: the mirror sends `chat_message` and `space` rows | yes, unless filtered |
+| Timeline | placed between turns by `at`; loaded with B's transcript | inside a turn |
+
+- A refusal before anything runs (empty question, no worktree, too many
+  asks out) leaves no note. A fork that fails and falls back to a fresh
+  read leaves one note: how it ended.
+- The note stays on the computer that ran the ask; the space's mirror on
+  another device doesn't show it. Archiving keeps it, like the transcript.
 
 ```
 parent turn (Edit/Run) ─▶ space_start {goal} ─▶ create_space (the usual path)
