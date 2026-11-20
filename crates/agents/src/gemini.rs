@@ -17,7 +17,7 @@
 use std::path::PathBuf;
 
 use serde_json::Value;
-use theodore_domain::Usage;
+use theodore_domain::{AgentId, Usage};
 use theodore_ports::agent::{AgentEvent, AgentMode, AgentRequest};
 
 use crate::config::AgentBinaryConfig;
@@ -177,7 +177,9 @@ impl GeminiParser {
             }
             Some("result") => {
                 let mut out: Vec<AgentEvent> = self.flush().into_iter().collect();
-                out.push(result_event(&v, &self.last_text));
+                let result = result_event(&v, &self.last_text);
+                out.extend(quota_limit(&v, &result));
+                out.push(result);
                 out
             }
             // `init`, and `error` (`severity` warning or error: loop
@@ -259,6 +261,25 @@ fn result_event(v: &Value, last_text: &str) -> AgentEvent {
         .unwrap_or_else(|| last_text.to_string());
     let usage = v.get("stats").map(gemini_usage).unwrap_or_default();
     AgentEvent::Done { final_text, usage }
+}
+
+/// A failed result that ran out of quota (`RESOURCE_EXHAUSTED`, a 429, in
+/// its message or next to it as `error.code` / `status` / `type`): the
+/// `Limit` that goes before its `Error`.
+fn quota_limit(v: &Value, result: &AgentEvent) -> Option<AgentEvent> {
+    let AgentEvent::Error { message, .. } = result else {
+        return None;
+    };
+    let said = ["/error/code", "/error/status", "/error/type"]
+        .iter()
+        .filter_map(|at| match v.pointer(at)? {
+            Value::String(s) => Some(s.clone()),
+            Value::Number(n) => Some(format!("code: {n}")),
+            _ => None,
+        })
+        .fold(message.clone(), |all, code| format!("{all}\n{code}"));
+    crate::limits::limit_in_error(AgentId::Gemini, &said, chrono::Local::now())
+        .map(|limit| AgentEvent::Limit { limit })
 }
 
 fn gemini_usage(stats: &Value) -> Usage {
