@@ -14,19 +14,26 @@ import {
   ToggleButtonGroup,
   Typography,
 } from '@heroui/react';
-import { Display, Globe, Server, Smartphone } from '@gravity-ui/icons';
+import { Cloud, Display, Globe, Server, Smartphone } from '@gravity-ui/icons';
 import { observer } from 'mobx-react-lite';
 import type { FleetDevice, SpaceMode } from '../../gen/contract';
 import { useRootStore, useUi } from '../../stores/context';
 import {
+  AUTO_LABEL,
   MODE_HINT,
   MODE_LABEL,
   MODE_ORDER,
+  CLOUD_CLAUDE_WARNING,
+  autoOn,
+  canFollow,
   isClient,
+  isCloudClaude,
   kindLabel,
   lastSeenLabel,
   startableDevices,
+  untilLabel,
 } from './fleet';
+import { AutoControl } from './AutoControl';
 import { Fingerprint, TrustConfirm } from './TrustConfirm';
 import { isBuildMode } from '../space/mode';
 import { RUN_ELSEWHERE } from '../space/spaces';
@@ -186,16 +193,18 @@ const ThisDevice = observer(function ThisDevice() {
   );
 });
 
-/** A phone, a browser, a server or a computer. */
+/** A phone, a browser, Claude via the cloud, a server or a computer. */
 function KindIcon({ device }: { device: FleetDevice }) {
   const Icon =
     device.kind === 'mobile'
       ? Smartphone
       : device.kind === 'web'
         ? Globe
-        : device.kind === 'daemon'
-          ? Server
-          : Display;
+        : device.kind === 'mcp'
+          ? Cloud
+          : device.kind === 'daemon'
+            ? Server
+            : Display;
   return (
     <Icon
       aria-hidden
@@ -223,8 +232,9 @@ const DelegateRow = observer(function DelegateRow({
         <span className="text-sm">{label}</span>
         <span className="text-xs text-muted">
           Questions from spaces you start on this computer also go to{' '}
-          {device.name}, which can follow those spaces. Its answers still run
-          only on computers that trust it.
+          {device.name}, which can follow those spaces, and so do requests from
+          Claude via cloud waiting for your yes here. Its answers still run only
+          on computers that trust it.
         </span>
         {pending && (
           <span className="fleet-delegate-pending text-xs text-warning">
@@ -256,7 +266,13 @@ const DelegateRow = observer(function DelegateRow({
 });
 
 /** What a device does for the fleet, in a few words. */
-function roleLabel(device: FleetDevice): string {
+function roleLabel(device: FleetDevice, now: number): string {
+  if (isCloudClaude(device)) {
+    if (device.auto && autoOn(device.auto, device.auto_until_ms, now)) {
+      return `asks and plans; ${AUTO_LABEL[device.auto]} ${untilLabel(device.auto_until_ms, now)}`;
+    }
+    return 'asks and plans; Edit and Run wait for your yes';
+  }
   if (isClient(device)) return 'starts and answers spaces, runs none';
   return device.accepts_remote
     ? `runs spaces up to ${MODE_LABEL[device.max_mode]}`
@@ -303,11 +319,19 @@ const DeviceRow = observer(function DeviceRow({
           <span className="fleet-device-meta text-xs text-muted">
             {kindLabel(device)} ·{' '}
             {lastSeenLabel(device.last_seen_ms, device.online, now)} ·{' '}
-            {roleLabel(device)}
+            {roleLabel(device, now)}
           </span>
           <span className="text-xs text-muted">
             <Fingerprint value={device.fingerprint} />
           </span>
+          {isCloudClaude(device) && !device.this_device && (
+            <span
+              role="note"
+              className="fleet-mcp-warning text-xs text-warning"
+            >
+              {CLOUD_CLAUDE_WARNING}
+            </span>
+          )}
         </div>
         {!device.this_device && (
           <div className="flex shrink-0 gap-1">
@@ -349,7 +373,41 @@ const DeviceRow = observer(function DeviceRow({
           </div>
         )}
       </div>
-      {!device.this_device && isClient(device) && device.trusted && (
+      {!device.this_device && isCloudClaude(device) && device.trusted && (
+        <div className="rounded-lg bg-default/50 px-3 py-2">
+          <AutoControl
+            deviceId={device.device_id}
+            auto={device.auto}
+            until={device.auto_until_ms}
+            label="Auto mode here"
+          />
+        </div>
+      )}
+      {!device.this_device &&
+        !isClient(device) &&
+        (device.mcp_auto ?? []).map((a) => (
+          <div
+            key={a.device_id}
+            className="fleet-remote-auto flex flex-col gap-1 rounded-lg bg-default/50 px-3 py-2"
+          >
+            <AutoControl
+              deviceId={a.device_id}
+              hostDevice={device.device_id}
+              auto={a.auto}
+              until={a.until_ms}
+              label={`Claude via cloud (${a.name}) on ${device.name}`}
+              isDisabled={!device.trusted || !device.online}
+            />
+            {(!device.trusted || !device.online) && (
+              <span className="text-xs text-muted">
+                {device.trusted
+                  ? `${device.name} is offline.`
+                  : `Trust ${device.name} to change it.`}
+              </span>
+            )}
+          </div>
+        ))}
+      {!device.this_device && canFollow(device) && device.trusted && (
         <DelegateRow device={device} />
       )}
       {!device.this_device && device.online && (
@@ -367,6 +425,7 @@ const DeviceRow = observer(function DeviceRow({
           name={device.name}
           fingerprint={device.fingerprint}
           publicKey={device.public_key}
+          kind={device.kind}
           onCancel={() => setConfirm(null)}
           onTrusted={() => setConfirm(null)}
         />

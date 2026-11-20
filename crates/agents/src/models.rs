@@ -29,6 +29,11 @@ pub fn claude_models() -> Vec<ModelInfo> {
         .unwrap_or_else(claude_aliases)
 }
 
+/// `claude_models` of an extra account: its own config dir's catalog.
+pub fn claude_models_in(config_dir: &Path) -> Vec<ModelInfo> {
+    claude_catalog(&config_dir.join("cache/model-catalog")).unwrap_or_else(claude_aliases)
+}
+
 /// `CLAUDE_CONFIG_DIR`, else `~/.claude`.
 pub(crate) fn claude_config_dir() -> Option<std::path::PathBuf> {
     std::env::var_os("CLAUDE_CONFIG_DIR")
@@ -200,13 +205,16 @@ pub fn parse_codex_models(json: &str) -> Result<Vec<ModelInfo>, serde_json::Erro
         .collect())
 }
 
-/// Run `<codex> debug models` and parse it. `Err` carries a one-line reason
-/// for the log.
-pub async fn codex_models(program: &Path) -> Result<Vec<ModelInfo>, String> {
+/// Run `<codex> debug models` with `env` (an account's) and parse it.
+/// `Err` carries a one-line reason for the log.
+pub async fn codex_models(
+    program: &Path,
+    env: &[(String, String)],
+) -> Result<Vec<ModelInfo>, String> {
     let mut cmd = tokio::process::Command::new(program);
     cmd.args(["debug", "models"])
         .env_clear()
-        .envs(crate::env::filtered_env())
+        .envs(env.iter().cloned())
         .stdin(std::process::Stdio::null())
         .kill_on_drop(true);
     let fut = crate::exit_output::output_after_exit(cmd);
@@ -403,13 +411,17 @@ mod tests {
         )
         .unwrap();
         std::fs::set_permissions(&ok, std::fs::Permissions::from_mode(0o755)).unwrap();
-        let models = codex_models(&ok).await.unwrap();
+        let models = codex_models(&ok, &crate::env::filtered_env())
+            .await
+            .unwrap();
         assert_eq!(models.len(), 1);
 
         let bad = dir.path().join("codex-fails");
         std::fs::write(&bad, "#!/bin/sh\necho nope >&2\nexit 1\n").unwrap();
         std::fs::set_permissions(&bad, std::fs::Permissions::from_mode(0o755)).unwrap();
-        let err = codex_models(&bad).await.unwrap_err();
+        let err = codex_models(&bad, &crate::env::filtered_env())
+            .await
+            .unwrap_err();
         assert!(err.contains("nope"), "{err}");
     }
 }

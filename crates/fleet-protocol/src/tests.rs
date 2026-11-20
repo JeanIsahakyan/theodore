@@ -1,5 +1,15 @@
 use super::*;
 
+#[test]
+fn every_code_is_listed_once_and_looks_like_one() {
+    let mut seen = std::collections::HashSet::new();
+    for (name, code) in codes::ALL {
+        assert!(seen.insert(*code), "{code} listed twice");
+        assert!(code.starts_with("fleet."), "{name}: {code}");
+    }
+    assert!(seen.contains(codes::DENIED));
+}
+
 fn req(origin: &str) -> RemoteRequest {
     RemoteRequest {
         req_id: "r1".into(),
@@ -248,6 +258,7 @@ fn info_with(agents: Vec<FleetAgentInfo>) -> DeviceInfo {
         accepts_remote: true,
         max_mode: FleetMode::Edit,
         agents,
+        mcp_auto: vec![],
     }
 }
 
@@ -375,4 +386,134 @@ fn fit_agents_caps_counts_lengths_and_the_info_size() {
     assert!(big.agents[0].models.len() < 12);
     assert!(big.agents[0].models[0].id.ends_with("00"), "the first stay");
     assert_eq!(big.agents[1].models.len(), 1);
+}
+
+#[test]
+fn auto_covers_edit_or_everything() {
+    assert!(!McpAuto::Off.covers(FleetMode::Edit));
+    assert!(McpAuto::Edit.covers(FleetMode::Edit));
+    assert!(!McpAuto::Edit.covers(FleetMode::Run));
+    assert!(McpAuto::Full.covers(FleetMode::Run));
+    assert_eq!(McpAuto::default(), McpAuto::Off);
+}
+
+#[test]
+fn confirm_and_auto_ops_are_tagged_and_on_no_space() {
+    let op = RemoteOp::Confirm {
+        confirm_id: "r1".into(),
+        allow: true,
+    };
+    assert_eq!(op.space(), "");
+    assert_eq!(
+        serde_json::to_value(&op).unwrap(),
+        serde_json::json!({"op": "confirm", "confirm_id": "r1", "allow": true})
+    );
+    let op: RemoteOp = serde_json::from_value(serde_json::json!({
+        "op": "set_mcp_auto", "mcp_device": "dev_m", "auto": "full"
+    }))
+    .unwrap();
+    assert_eq!(
+        op,
+        RemoteOp::SetMcpAuto {
+            mcp_device: "dev_m".into(),
+            auto: McpAuto::Full,
+            until_ms: None
+        }
+    );
+    // An older host's info has no auto list.
+    let info: DeviceInfo = serde_json::from_value(serde_json::json!({
+        "name": "mac", "os": "macos", "kind": "desktop", "app_version": "1",
+        "projects": [], "accepts_remote": false, "max_mode": "edit"
+    }))
+    .unwrap();
+    assert!(info.mcp_auto.is_empty());
+}
+
+#[test]
+fn ops_on_any_space_are_tagged_and_on_no_cloud_space() {
+    let ops = [
+        (
+            RemoteOp::ListSpaces { project: None },
+            serde_json::json!({"op": "list_spaces", "project": null}),
+        ),
+        (
+            RemoteOp::ReadSpace {
+                space: "a1".into(),
+                messages: Some(5),
+            },
+            serde_json::json!({"op": "read_space", "space": "a1", "messages": 5}),
+        ),
+        (
+            RemoteOp::AskSpace {
+                space: "a1".into(),
+                question: "why?".into(),
+            },
+            serde_json::json!({"op": "ask_space", "space": "a1", "question": "why?"}),
+        ),
+        (
+            RemoteOp::SendTo {
+                space: "a1".into(),
+                message: "go".into(),
+            },
+            serde_json::json!({"op": "send_to", "space": "a1", "message": "go"}),
+        ),
+        (
+            RemoteOp::AnswerSpace {
+                space: "a1".into(),
+                ask: "q1".into(),
+                answers: vec![vec!["Yes".into()]],
+            },
+            serde_json::json!({"op": "answer_space", "space": "a1", "ask": "q1", "answers": [["Yes"]]}),
+        ),
+        (
+            RemoteOp::MergeChild {
+                parent: "rs_1".into(),
+                child: "c1".into(),
+            },
+            serde_json::json!({"op": "merge_child", "parent": "rs_1", "child": "c1"}),
+        ),
+    ];
+    for (op, json) in ops {
+        assert!(op.on_any_space(), "{op:?}");
+        assert_eq!(op.space(), "", "{op:?}");
+        assert_eq!(serde_json::to_value(&op).unwrap(), json);
+        assert_eq!(serde_json::from_value::<RemoteOp>(json).unwrap(), op);
+    }
+    assert!(
+        !RemoteOp::Stop {
+            space: "rs_1".into()
+        }
+        .on_any_space()
+    );
+    // Optional fields may be left out.
+    let op: RemoteOp = serde_json::from_value(serde_json::json!({"op": "list_spaces"})).unwrap();
+    assert_eq!(op, RemoteOp::ListSpaces { project: None });
+    assert!(MIRROR_MODELS.contains(&SUB_SPACE_MODEL));
+}
+
+#[test]
+fn a_confirm_is_signed_by_its_host_for_its_own_domain() {
+    let key = DeviceKey::generate().unwrap();
+    let c = RemoteConfirm {
+        confirm_id: "r1".into(),
+        host_device: "dev_h".into(),
+        mcp_device: "dev_m".into(),
+        action: ConfirmAction::ApprovePlan,
+        mode: FleetMode::Edit,
+        project_name: None,
+        space_name: Some("fix".into()),
+        text: "Plan approved".into(),
+        expires_at_ms: 9,
+    };
+    let env = SignedEnvelope::seal_as(&c, &key, Domain::Confirm);
+    assert_eq!(env.device_id, "dev_h");
+    assert_eq!(
+        env.open_as::<RemoteConfirm>(&key.public_key(), Domain::Confirm)
+            .unwrap(),
+        c
+    );
+    assert_eq!(
+        env.open_as::<RemoteConfirm>(&key.public_key(), Domain::Ask),
+        Err(EnvelopeError::BadSignature)
+    );
 }

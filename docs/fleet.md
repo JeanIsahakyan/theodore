@@ -25,21 +25,26 @@ The cloud never makes a device run anything on its own word.
 | Device key: ed25519, made on first use, kept in the keychain (`fleet.device_key`) | device | the cloud only ever sees the public half |
 | Every signature has a purpose: it signs `"theodore-fleet-<hello\|request\|event\|ask\|reply\|delegate>-v3\0" ‖ bytes` (`Domain`), so one made for one purpose never verifies as another | every device | yes |
 | Hello signs only a 32-byte nonce, one challenge per socket (another, or a nonce of any other length ─▶ the socket is dropped unsigned) | adapter | yes: the cloud can't get a request signed |
-| Every request (start, send, stop, answer) is a `SignedEnvelope` by the origin device's key over the exact body bytes (`Domain::Request`) | origin core | yes |
+| Every request (start, send, stop, answer, and the ops on any space: list, read, ask, send_to, answer_space, merge_child) is a `SignedEnvelope` by the origin device's key over the exact body bytes (`Domain::Request`) | origin core | yes |
+| **An origin trusted here can read every space on this computer**: `list_spaces`, `read_space` and `ask_space` hand it any space's goal, chat, running text, question and diff stat, and an answer from its agent (not just the spaces it started). Only for a device pinned here, with `accept_remote` on, like any request; nothing asks a person first. Accepted by design: trusting a device means trusting it with this computer's spaces | target core | yes for the cloud itself; but Claude via cloud's key is the cloud's, so trusting it lets whoever runs the cloud read them |
 | Every request names its target's public key as pinned on the origin (`target_key`, under the signature); the target runs it only if that is its own key (`fleet.not_yours` otherwise): the cloud assigns device ids, so an id alone can't say which machine a request was signed for | origin + target core | yes |
 | Every reply (`ReplyBody{req_id, origin_device, target_device, outcome}`) is signed by the target (`Domain::Reply`); the origin opens it against the key it pinned for the target when it sent the request, and drops one that doesn't verify (the request then times out) | target + origin core | yes |
 | The cloud's own refusals (offline, not yours, depth, busy, too many spaces, expiry…) come as `refused{req_id, code, message}`, unsigned: the origin keeps only the code, and only if it looks like one (`fleet.unknown` otherwise); `message` never reaches the UI or an agent | origin core | yes |
 | Every event of a hosted space (`SpaceEventBody`) and every question (`RemoteAsk`) is signed by its host (`Domain::Event`, `Domain::Ask`); the origin keeps only those that verify against the host's key pinned there, and the host of a space is the start's target for good | host + origin core | yes |
 | A device accepts requests, events and questions only from devices it trusts: their public key pinned locally (`fleet.trusted_devices`), trust given on that device, for exactly the key whose fingerprint (128 bits, 8 groups) the user compared | every core | yes |
 | Only trusted devices are targets: the start dialog, `fleet_devices` and `fleet_start_space` list and reach only devices pinned here, and no request (start, send, stop, answer) is signed for a device that isn't pinned | origin core | yes |
-| Phones and the web app (`kind` `mobile` / `web`) are never targets: the start dialog, `fleet_devices` and `fleet_start_space` skip them whatever they list, and no request is signed for one | origin core + UI | yes |
+| Phones, the web app and Claude via the cloud (`kind` `mobile` / `web` / `mcp`) are never targets: the start dialog, `fleet_devices` and `fleet_start_space` skip them whatever they list, and no request is signed for one | origin core + UI | yes |
+| Claude via the cloud (`kind` `mcp`) holds no key of its own: the cloud does. It is trusted like a phone (fingerprint compared, pinned here with its kind), and a request from it that edits or runs (a start or send in Edit or Run, so a plan's approval too; a `send_to` to a space in Edit or Run; a `merge_child`; a sub-space tool of a space hosted for it, in Edit or Run) runs only after a person says Allow, on this device or on a device it delegates to; Deny, or no answer before `issued_at` + 5 min ─▶ `fleet.denied`; a daemon (nobody there) refuses it outright. Ask, Plan, answers and stop need no yes | target core + UI | yes: the cloud can sign as that device, never say yes for you |
+| Auto mode (opt-in, per `mcp` pin, on this device only): `edit` lets its Edit through without the yes, `full` Edit and Run; with an end (`auto_until_ms`) or until turned off. It skips only the yes: `accept_remote`, `max_mode`, the pin and freshness still hold, and it's read again right before the request runs. Set here (`fleet_set_auto`) or by a signed `set_mcp_auto` from a trusted device that isn't `mcp` | target core + UI | no, while on: the cloud can make this device edit (and with `full` run) without you; the Devices row and a notice that stays say so |
+| A yes from elsewhere is a signed `confirm{confirm_id, allow}` request: taken only from a device pinned here, delegated to (`fleet.delegates`), not `mcp`, while that prompt waits; the first answer wins. The prompt it answers went out signed by this device (`Domain::Confirm`) | target core | yes |
+| The `mcp` cap follows the pin's kind or the cloud's listing, whichever is `mcp`: a listing can add the cap, never lift it | target core | yes |
 | A delegation (this device's spaces' questions also go to a phone) is signed by this device (`Domain::Delegate`), only for a phone or web app pinned here; one the cloud lists counts only if it verifies (this device's own against its key, another's against that origin's pin) | origin core | yes |
 | `issued_at` within 5 min, `req_id` never seen in the last 10 min — kept in the store (`fleet_seen`), so a request that ran is a replay after a restart too; a request the store couldn't record as done doesn't run (`fleet.internal`) | target core | yes |
 | `fleet.accept_remote` off by default; `fleet.max_mode` caps the mode (default Edit; Run only if set to Run); both, the pin and `issued_at` are checked again right before a claimed request runs | target core | yes |
 | A refusal made before the request verifies carries static words only: nothing the sender claimed (its device id, any field) goes into a reply this device signs | target core | yes |
 | Agents act within their turn: start, send and stop only from a turn in Edit or Run, at most in its mode, and only on spaces that space started; never from a space hosted here for another device | origin core + MCP | yes |
 | What reaches an agent carries no unsigned free text: device ids only as the cloud issues them (`^dev_[0-9a-f-]{36}$`, other listed devices dropped), device names are the pins' (sanitized when pinned), project ids pass a strict pattern (names never), space names, branches, replies and questions come from signed events and replies, a refusal is its code alone (even a verified target's words stay in the UI) | origin core | yes |
-| A space hosted here for another device runs commands only in Run, ships only in Edit or Run, never merges into the local folder, and gets neither the user's MCP servers nor `approve_tool` | host core + MCP | yes |
+| A space hosted here for another device (and every sub-space under it) runs commands only in Run, ships only in Edit or Run, never merges into the local folder, and gets neither the user's MCP servers nor `approve_tool`; its sub-space tools steer only that device's spaces here, within `max_mode`, while that device is pinned and `accept_remote` is on | host core + MCP | yes |
 | Claim with the connection's `generation` before running: one execution per request | cloud + target | — |
 | Access JWT (WorkOS, with `org_id`) on connect and on every refresh (`reauth`); fatal only when the token itself is refused, never when the cloud can't fetch the signing keys | cloud | — |
 
@@ -110,6 +115,7 @@ Two kinds of refusal, told apart on the wire:
 | `fleet.agent_unavailable` | target | a start or send names an agent, model or effort the target doesn't list (`DeviceInfo.agents`): not installed, turned off, not signed in ("Sign-in"), or not that model's ("Agent, model and effort") |
 | `fleet.busy` | target, cloud | a send to a space whose turn is running |
 | `fleet.internal` | target | the target couldn't record the request, so it didn't run it |
+| `fleet.denied` | target | from an `mcp` device, an edit or run the person on the target (or on a device it delegates to) denied, or didn't allow before `issued_at` + 5 min; a daemon's at once, unless auto mode covers it |
 | `fleet.offline` | cloud | target not connected within 10 s grace |
 | `fleet.too_many_spaces` | cloud | the user's 200 spaces |
 
@@ -270,6 +276,32 @@ core (`Core::fleet_hosted_may`, `space_tool_check` / `space_tool_start` /
 origin's to change; push or a PR is. The limits are the agent's: you can
 still ship a hosted space from its page here.
 
+It has the sub-space tools too (docs/spaces.md "Sub-spaces"), within the
+origin's rights here (`Core::fleet_hosted_gate`):
+
+```
+hosted space (origin D) ─▶ spaces_list / space_read / space_ask ─▶ any space here
+  ─▶ space_send / space_answer ─▶ only D's spaces here (its sub-spaces, other
+     spaces hosted for D), never this computer's own
+  ─▶ space_start / space_send / space_merge in mode m
+       accept_remote on, D still pinned, m ≤ max_mode   (else sub_spaces.hosted / .mode)
+       start: a project offered to remote spaces, fleet depth + local depth ≤ 2
+       D is mcp and m ≥ Edit (a merge counts as Edit)
+         ─▶ auto covers it ─▶ runs, logged "auto (sub-space tool)"
+         ─▶ daemon ─▶ sub_spaces.denied
+         ─▶ else the FleetConfirm prompt (start / send / merge, its own id,
+            ≤ 5 min, delegates too) ─▶ Allow ─▶ runs; Deny / none ─▶ sub_spaces.denied
+  ─▶ child: a local space, parent = the hosted space, hosted like it (the
+     limits above apply to it and its own children)
+  ─▶ the origin sees it: mirror{sub_space, <child id>} on the hosted space
+```
+
+A child isn't a fleet space of its own: no `rs_` id, no journal. Its row is
+sent as a `sub_space` mirror of the hosted space at the top of its tree
+(`MirroredSubSpace{space, parent, title, status, mode, done}`, `parent` the
+hosted `rs_` id or another child's id), on every change, latest kept; the
+origin reaches it by its local id through the ops on any space below.
+
 ## Settings (per device)
 
 | Key | Default | |
@@ -277,14 +309,14 @@ still ship a hosted space from its page here.
 | `fleet.enabled` | `false` | connect to the cloud at all |
 | `fleet.accept_remote` | `false` | let trusted devices start and steer spaces here |
 | `fleet.max_mode` | `edit` | highest mode a remote request may use (`ask`, `plan`, `edit`, `run`) |
-| `fleet.trusted_devices` | `[]` | `[{device_id, public_key, name}]`, changed only on this device; `name` sanitized when pinned (and when read, for older pins) |
-| `fleet.delegates` | `[]` | device ids of the phones / web apps this device sends its spaces' questions to ("Phones and the web app") |
+| `fleet.trusted_devices` | `[]` | `[{device_id, public_key, name, kind, auto, auto_until_ms}]`, changed only on this device; `name` sanitized when pinned (and when read, for older pins); `kind` as listed when pinned (absent on older pins); `auto` (`off` / `edit` / `full`, absent = `off`) and `auto_until_ms` (absent = until turned off) only on an `mcp` pin, reset to off when trusted again ("Auto mode and remote prompts") |
+| `fleet.delegates` | `[]` | device ids of the phones / web apps / desktop computers this device sends its spaces' questions and Claude via cloud prompts to ("Phones and the web app") |
 | `fleet.name` | the Mac's computer name | how other devices list this one |
 
 Kept in the local store (kv `fleet.settings`), not as synced `setting`
 rows: only `fleet_set_settings`, `fleet_trust_device`,
-`fleet_remove_device` and `fleet_delegate` change them, never a UI
-transaction.
+`fleet_remove_device`, `fleet_delegate` and `fleet_set_auto` (or a
+trusted device's `set_mcp_auto`) change them, never a UI transaction.
 
 ```
 Devices page / "Trust <device>?" notice ─▶ Trust ─▶ confirm: the full
@@ -356,6 +388,121 @@ claim_result{claimed: true} ─▶ seen done kept in the store (else fleet.inter
   effort) and stores the mapping in `fleet_spaces` (remote id, local space,
   origin, parent, depth, bookkeeping as JSON).
 
+#### Requests from Claude via the cloud (`mcp`)
+
+The cloud holds this device's key, so the cloud could sign anything as
+it: the host caps it (`crates/app/src/usecases/fleet_confirm.rs`).
+
+```
+gate passes, origin pinned (or listed) as mcp
+  ├─ Ask / Plan start or send, answer, stop, list / read / ask any space
+  │    ─▶ claim ─▶ run, as any client
+  └─ start or send in Edit / Run (a plan's approval is a send in Edit / Run),
+     send_to a space in Edit / Run, merge_child
+       ├─ auto mode covers the mode, not expired ─▶ claim ─▶ auto read
+       │    again ─▶ recheck ─▶ run, logged "auto" (a daemon too)
+       ├─ daemon ─▶ reply{fleet.denied}, nothing claimed
+       └─ claim ─▶ claimed ─▶ FleetConfirm prompt, in its own task
+            ├─ delegates? ─▶ confirm{RemoteConfirm, signed} ─▶ cloud ─▶ them
+            Allow (here, or a delegate's signed confirm op) ─▶ recheck ─▶ run
+            Deny, or issued_at + 5 min ─▶ reply{fleet.denied}
+            either way ─▶ confirm_resolved ─▶ dismissed on the delegates
+```
+
+| | |
+| --- | --- |
+| Prompt | "Claude via cloud wants to start an Edit space in app" / "send to Fix login in Run" / "approve the plan in Fix login (Edit)" / "merge a sub-space into Fix login", the goal, message or sub-space title as plain text (≤ 500 characters), the pinned name, Allow / Deny |
+| UI | `fleet_confirm` / `fleet_confirm_done` ephemerals, `fleet_confirms` (what waits, after a reload), `fleet_confirm{id, allow}`; a system notification while the window is in the background |
+| Memory | pending prompts live in memory only and hold up nothing else; a restart forgets them (their requests are out of time by then) |
+| Hosted | a space started this way is hosted like any other (no user MCP servers, no `approve_tool`, `run_check` only in Run) |
+| Devices | listed as "Claude via cloud (MCP)" with a cloud icon and the warning that its key is held by the cloud; never a target, never a delegate; trusted, its row has the auto mode control |
+| Auto | "Auto mode and remote prompts" below |
+
+#### Any space on a computer
+
+Protocol 7. A device trusted here reaches every space on this computer,
+not only those it started, through the same core functions as a space's
+own agent (`crates/app/src/usecases/fleet_spaces.rs`, `space_children.rs`).
+A space is named by its local id, or by an `rs_` id this computer hosts for
+that origin.
+
+```
+request ─▶ the gate above (pin, target_key, fresh, accept_remote, claim)
+  ─▶ the space: not a mirror, not archived, not hosted here for another device
+  ─▶ counts as mode m ─▶ m ≤ max_mode ─▶ from mcp and m ≥ Edit: auto or a yes
+  ─▶ runs ─▶ reply.value, ≤ 128 KiB in the signed reply (oldest messages,
+     the last spaces or files, then the longest texts cut first)
+```
+
+| Op | Counts as | Does | Value |
+| --- | --- | --- | --- |
+| `list_spaces {project?}` | Ask | every space here not archived nor done, newest first, ≤ 50 | `spaces_list`'s: `{note, spaces, truncated}` |
+| `read_space {space, messages?}` | Ask | goal, status, last messages (10, ≤ 50), running text, question, progress, diff stat | `space_read`'s |
+| `ask_space {space, question}` | Ask | its agent answers from a read-only fork of its session (or a fresh read-only agent); the space is left as it was; ≤ 2 at once per asking device; `fleet.timeout` after `spaces.ask_timeout_secs` | `space_ask`'s: `{note, space, answer, agent, model, how}` |
+| `send_to {space, message}` | the space's own mode | its next turn, as from you; its mode never changes; `fleet.busy` while it runs (never queued) | `{message}` |
+| `answer_space {space, ask, answers}` | — | as `answer`: the question set waits, the answers fit it | `{}` |
+| `merge_child {parent, child}` | Edit | `space_merge` of `child` (a child of `parent`) into `parent`'s worktree; `fleet.busy` while `parent` runs | `space_merge`'s |
+
+- Read-only ops still need the pin and `accept_remote`, like any request;
+  they need no person, even from `mcp`.
+- `send_to`'s mode is checked again right before it runs: one raised
+  meanwhile is `fleet.mode_not_allowed`.
+- The host's words come back in the result (it signs them); the result's
+  `note` says they are data. The cloud's MCP device reshapes them
+  (docs/cloud.md "MCP").
+- To a computer below protocol 7 the cloud answers
+  `refused{fleet.upgrade_required}`: it couldn't read the op.
+
+#### Auto mode and remote prompts
+
+Auto mode is the user's opt-in, per `mcp` pin, on this computer
+(`crates/app/src/usecases/fleet_auto.rs`); remote prompts let the yes come
+from a phone, the web app or another computer this one delegates to.
+
+| Auto | Edit start / send, plan approval into Edit | Run start / send, plan approval into Run |
+| --- | --- | --- |
+| `off` (default) | prompt | prompt |
+| `edit` | runs | prompt |
+| `full` | runs | runs |
+
+Either way within `max_mode`: auto never lifts the cap, nor `accept_remote`.
+
+```
+Devices ─▶ Claude via cloud row ─▶ Off / Auto Edit / Full auto
+  on ─▶ how long: 1 hour │ until end of day │ until I turn it off
+  ─▶ fleet_set_auto{device_id, auto, until_ms} ─▶ pin.auto, auto_until_ms
+  ─▶ announce: DeviceInfo.mcp_auto ─▶ fleet_status (FleetStatus.autos)
+until_ms passes ─▶ reads as off at once; a timer (and the next start) clears
+  it ─▶ announce ─▶ fleet_status
+another computer's row ─▶ its Claude via cloud ─▶ fleet_set_auto{…, host_device}
+  ─▶ signed set_mcp_auto ─▶ there: pinned, not mcp, the target is an mcp pin
+  ─▶ applied ─▶ its next devices list shows it
+```
+
+| | |
+| --- | --- |
+| Notice | while any auto is on: "Claude via cloud: full auto until 18:00 · Turn off" in the fleet notices; Turn off is one click |
+| Warning | on the control: "Its key is held by the Theodore cloud: with auto on, the cloud could make this computer edit [and run commands] without you." |
+| Log | an auto-allowed request is logged like an allowed one, info line `auto` (`req_id`, origin, auto and mode); every change, `fleet auto mode changed` with who asked |
+| Contract | `fleet_set_auto(FleetAutoRequest{device_id, auto, until_ms, host_device})` ─▶ `FleetStatus`; refused unless `device_id` is an `mcp` pin (here), or for an end in the past; `FleetDevice.auto`, `auto_until_ms` (this computer's, on the `mcp` row), `FleetDevice.mcp_auto` (another computer's, as it lists it), `FleetStatus.autos` |
+
+```
+prompt here ─▶ RemoteConfirm{confirm_id = req_id, host_device, mcp_device,
+  action, mode, project / space name ≤ 200, text ≤ 500, expires_at_ms}
+  sealed with this device's key (Domain::Confirm) ─▶ confirm{envelope}
+  ─▶ cloud ─▶ this device's live delegates on protocol 6 (push to phones)
+delegate: host pinned there, signature, not expired ─▶ the same card,
+  "… on <host>" ─▶ Allow / Deny ─▶ signed confirm{confirm_id, allow} ─▶ host
+host: pinned, not mcp, in fleet.delegates, still waiting ─▶ the person's
+  answer, logged with the delegate's id; else fleet.invalid
+answered anywhere / timed out ─▶ confirm_resolved ─▶ confirm_dismissed there
+```
+
+A desktop computer may be a delegate too (`fleet_delegate`, not a daemon
+or an `mcp` device): it gets this device's prompts and its spaces'
+questions. Prompts shown for another computer live in memory and are
+dropped at each welcome (the cloud sends those still waiting again).
+
 ### Hosted spaces: events and journal
 
 One observer task reads the core's sync frames and run steps; it never
@@ -377,6 +524,7 @@ welcome{resume} ─▶ journal after the cloud's seq ─▶ open questions asked
 | the agent's reply lands | `reply` (≤ 8000), `turn_ended` (done · stopped · failed) |
 | `question` set / cleared | `question` + `ask` / `question_cleared` + `ask_resolved` |
 | status | `status`: running · waiting (a question) · idle · failed · stopped (archived) |
+| a sub-space under it changes (protocol 7) | `mirror{sub_space, <child id>}` ("What a hosted space's agent may do") |
 
 ### Questions
 
@@ -432,6 +580,11 @@ run step (live)                  ─▶ mirror{turn_step}     ─▶ relay only 
 | `space` | `rs_…` (the fleet id) | `Space`, local-only fields blanked | on change, ≤ 1 per second | latest |
 | `chat_message` | the message id | `ChatMessage`, `pr = "space:rs_…"` | on change, ≤ 1 per second per row | latest |
 | `turn_step` | `<run>:<n>` | `TurnStep`, `run = "space:rs_…:<message>"` | as it happens | relayed, not kept |
+| `sub_space` | the child's local id | `MirroredSubSpace`, `parent` the `rs_` id or another child's id | on change | latest |
+
+A follower drops a model it doesn't know (a protocol-6 one, `sub_space`);
+a desktop follower shows a `sub_space` row as a history line
+(`<id> · <title> · <status>`, kind `sub_space`).
 
 - **Ids.** The host rewrites its local space id to the fleet id in every
   row (`id`, `pr`, `run`), so all followers share one id. Message ids stay.
@@ -456,7 +609,9 @@ run step (live)                  ─▶ mirror{turn_step}     ─▶ relay only 
 
 The phone and web app (docs/mobile.md) join as devices of kind `mobile` /
 `web`. Here they are listed (phone / globe icon, "Phone" / "Web app"),
-trusted like any device, and never a target.
+trusted like any device, and never a target. They and desktop computers
+can be delegates ("Send my spaces' questions here", which also brings this
+device's Claude via cloud prompts); a daemon or an `mcp` device can't.
 
 ```
 trusted phone ─signs─▶ start / send / stop / answer ─▶ this device's gate,
@@ -470,7 +625,7 @@ questions here" on a trusted phone's row lets it follow the spaces this
 device started:
 
 ```
-switch on  ─▶ fleet_delegate(id, true): a phone / web app, pinned with its
+switch on  ─▶ fleet_delegate(id, true): a phone / web app / desktop, pinned with its
   listed key ─▶ fleet.delegates += id
   ─▶ delegate{seal_as(Delegation{me, id, now, expires 0, revoke: false}, Delegate)}
 switch off / Untrust / Remove ─▶ fleet.delegates -= id ─▶ the same, revoke: true
@@ -523,9 +678,11 @@ pins down what this doc leaves open:
   first, then their mirrors, else `error{fleet.busy}` and the host keeps
   the event in its journal). Only ring loss is a `space_gap`; seq holes
   from compaction or relayed `turn_step`s are not.
-- Protocols 3 and 4 are accepted. A protocol-3 connection never sees
-  `mobile` / `web` devices in `devices` nor gets `delegations`; a request
-  to a `mobile` / `web` device is `refused{fleet.invalid}`.
+- Protocols 3 to 7 are accepted. A protocol-3 connection never sees
+  `mobile` / `web` devices in `devices` nor gets `delegations`, one below 5
+  never sees the `mcp` device ("MCP over the cloud"); a request to a
+  `mobile` / `web` / `mcp` device is `refused{fleet.invalid}`; an op on
+  any space to a computer below 7 is `refused{fleet.upgrade_required}`.
 - A space's followers are its origin and the origin's live delegates
   (`docs/mobile.md`): they may subscribe, and its questions reach them as
   they reach the origin (escalation too). A delegation is signed by the
@@ -539,6 +696,130 @@ pins down what this doc leaves open:
   `fleet.too_many_devices` (20 per user), `fleet.too_many_connections` (10
   sockets per user), `fleet.too_many_spaces` (200 per user),
   `fleet.upgrade_required` (HTTP 426).
+
+## MCP over the cloud
+
+Claude Code or a claude.ai connector adds Theodore as a remote MCP server
+by URL. Its tools start, steer and answer spaces on the user's computers
+through the fleet, as the phone does. Cloud side (OAuth, transport,
+storage, deploy checklist): `docs/cloud.md` "MCP". Host side (the Allow
+prompt): "Requests from Claude via the cloud" above.
+
+```
+Claude Code:  claude mcp add --transport http theodore https://<cloud>/mcp
+              /mcp ─▶ theodore ─▶ Authenticate ─▶ browser: Allow, Theodore sign-in
+claude.ai:    Settings ─▶ Connectors ─▶ Add custom connector
+              ─▶ URL https://<cloud>/mcp ─▶ Connect ─▶ the same sign-in
+then:         theodore_status ─▶ trust both ways (below) ─▶ space_start …
+```
+
+`<cloud>` is the channel's Worker (`docs/cloud.md` "Environments"). MCP is
+off there until the checklist in `docs/cloud.md` "MCP" is done.
+
+### The MCP device
+
+One per (user, org), made when the user first authorizes an MCP client:
+an ed25519 key made in the cloud, its private half kept only wrapped
+under the `MCP_KEY_WRAP` secret, registered in the org as a device of
+kind `mcp` named "Claude (MCP)". It connects to the org's hub in process
+(no socket) with a signed hello like any device, is online for 15 min
+after each tool call, and is a client only: never a target.
+
+Its key lives in the cloud, so whoever runs the cloud can sign as it. The
+computers make up for that: they take nothing from it until the user
+trusted it there by its fingerprint, and an Edit or Run from it (a plan's
+approval too) waits for a person's yes on the computer (or on a phone or
+computer it sends its prompts to), up to 5 min, unless the user turned on
+auto mode there; Deny or no answer is `fleet.denied`. The hub keeps its pending requests that long
+(others: 2 min), so a late Allow still reaches it.
+
+### Trust, both ways
+
+```
+Claude                   cloud: MCP device                   computer (Theodore)
+theodore_status ───────▶ its id + fingerprint F_mcp ───────▶ user compares F_mcp:
+                                                              Devices ─▶ "Claude (MCP)"
+                                                              ─▶ Trust ─▶ pinned there
+user reads F_mac on the computer (Devices, "This device")
+device_trust{mac, F_mac} ─▶ F_mac = fingerprint(mac's listed key)?
+                            no ─▶ mcp.fingerprint_mismatch
+                            yes ─▶ mac's key pinned here
+space_start{mac, …} ────▶ pinned? key unchanged? ─▶ seal(MCP key,
+                          target_key = the pin) ──────────▶ pin, target_key, fresh,
+                                                              accept_remote, max_mode
+                                                              Ask / Plan ─▶ runs
+                                                              Edit / Run ─▶ auto? else Allow? (≤ 5 min)
+                                                                Deny / none ─▶ fleet.denied
+result: code only ◀──── reply opened with mac's pin ◀────── signed reply
+events, questions ◀──── opened with mac's pin, else dropped ◀── signed events
+```
+
+- Computer fingerprints are never listed by a tool: `device_trust` needs
+  the one the user reads on the computer.
+- A pinned computer whose listed key changed is refused here
+  (`mcp.key_changed`) until trusted again.
+
+### Tools
+
+| Tool | Does |
+| --- | --- |
+| `theodore_status` | the MCP device's id, name and fingerprint; the org; the computers, online, trusted here |
+| `devices_list` | computers only: id, sanitized name, kind, OS, online, last seen, trusted here (`yes` / `no` / `key_changed`), takes remote spaces, `max_mode` |
+| `device_trust {device, fingerprint}` | pins the computer if the fingerprint matches its listed key |
+| `projects_list {device}` | its project ids (strict pattern, names sanitized), agents, models, efforts, `max_mode` |
+| `spaces_list` | spaces this MCP device started, newest first |
+| `space_start {device, project, goal, mode, agent?, model?, effort?}` | signed `start_space` to a pinned computer; its `rs_` id; waits ≤ 15 s for the reply, then `result: pending` |
+| `space_send {space, message, mode?}` / `{device, space, message}` | the next turn; `fleet.busy` while one runs. An `rs_` id it started: `send` (mode allowed); any other space on a trusted computer: `send_to` (its mode never changes, so no `mode`) |
+| `space_read {space, since?}` | status, name, branch, last reply, open question (`ask` id), plan to approve and its build mode, `waiting_for`, last refusal code, last 50 lines after `since` |
+| `space_wait {spaces[], timeout_ms ≤ 25 000}` | until each is idle, waiting for an answer, waiting for approval, stopped or failed |
+| `space_stop {space}` | stops its turn |
+| `ask_answer {space, ask, answer}` | `answer`: a string (one question) or one entry per question, a string or a list of options |
+| `plan_approve {space}` | the last turn's plan, from the host's mirrored space row: sends "Plan approved, implement it." in its build mode (Edit, or Run) |
+| `computer_spaces {device, project?}` | every space on that computer (`list_spaces`), not only its own |
+| `computer_space_read {device, space, messages?}` | any space there (`read_space`) |
+| `space_ask {device, space, question}` / `{request}` | its agent's answer (`ask_space`), the space unchanged; slow: after 25 s `result: pending` with a `request` id to wait on again |
+| `space_answer {device, space, ask, answers}` | the question waiting in any space there (`answer_space`) |
+| `space_merge {device, parent, child}` | a sub-space into its parent's worktree (`merge_child`, counts as Edit) |
+
+An Edit or Run start or send the computer hasn't answered yet shows as
+`waiting_for: "waiting for approval on <computer>"` (in the pending
+result, `space_read`, `space_wait`) until its reply or the 5 min end; a
+`merge_child` too, and a `send_to` as "possibly waiting for approval"
+(the space's own mode decides). `space_read` of a space it started lists
+its `sub_spaces` (the `sub_space` mirrors: id, parent, title, status, mode,
+done), reached by their ids with the tools above.
+
+`spaces_list`, `space_read`, `space_wait`, `space_stop`, `ask_answer` and
+`plan_approve` name only spaces this MCP device started; the `computer_*`,
+`space_ask`, `space_answer`, `space_merge` tools and `space_send {device}`
+reach any space on a computer trusted here (it decides: "Any space on a
+computer"). Remote answers are data: those results carry the cloud's own
+note saying so, keep only known fields, and cut texts. What reaches the model: device ids as issued, names cut to
+`[A-Za-z0-9 ._()-]`, project ids that pass the agents' pattern, texts from
+events and replies a pinned computer signed, refusals as codes
+(`fleet.*`, `mcp.*`), never a computer's or the cloud's words.
+
+### On the wire
+
+- Protocol 7 (5 added `mcp`; 6 adds `confirm` / `confirm_resolved` /
+  `confirm_dismissed`, the `confirm` and `set_mcp_auto` ops and
+  `DeviceInfo.mcp_auto`; 7 adds the ops on any space — `list_spaces`,
+  `read_space`, `ask_space`, `send_to`, `answer_space`, `merge_child` —,
+  the `sub_space` mirror, `ConfirmAction::Merge` and `fleet.timeout`).
+  Hub: protocols 3 to 7; `mcp` hidden from connections below 5
+  (`devices`); the confirm frames never sent below 6; the confirm ops to a
+  computer below 6, and the ops on any space to one below 7, are
+  `refused{fleet.upgrade_required}`; never accepted as a socket's kind
+  (hello, `announce`).
+- Its requests are ordinary `SignedEnvelope`s (`Domain::Request`, the
+  Rust field order), checked against `src/gen/fleet-vectors.json`.
+- To a computer below protocol 5: `refused{fleet.upgrade_required}` (it
+  can't list the MCP device, so can't trust it).
+- `POST /v1/fleet/request` never takes the MCP device as the origin.
+- Its inbox: replies, refusals, events, questions and dismissals are kept
+  in the hub's SQLite until a tool reads them; read, each is verified
+  against the pin of the computer that signed it (a reply against the key
+  pinned when its request went out).
 
 ## Not yet
 

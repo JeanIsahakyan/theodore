@@ -25,6 +25,8 @@ fn req(agent: AgentId, mode: AgentMode, mcp: Option<&str>) -> AgentRequest {
         attachments: vec![],
         resume: None,
         stream_text: false,
+        fork_session: false,
+        account: None,
     }
 }
 

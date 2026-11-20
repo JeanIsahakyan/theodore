@@ -961,6 +961,70 @@ pub async fn set_space_pinned(
 
 #[tauri::command]
 #[specta::specta]
+pub async fn agent_accounts(
+    op: crate::op::Op,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<Vec<theodore_contract::AgentAccountStatus>, CommandError> {
+    op.run(async move { core.agent_accounts().await }).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn add_agent_account(
+    op: crate::op::Op,
+    req: theodore_contract::AddAgentAccountRequest,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<theodore_contract::AgentAccountStatus, CommandError> {
+    op.run(async move { core.add_agent_account(req).await })
+        .await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn remove_agent_account(
+    op: crate::op::Op,
+    req: theodore_contract::AgentAccountRequest,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<(), CommandError> {
+    op.run(async move { core.remove_agent_account(req).await })
+        .await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn check_agent_account(
+    op: crate::op::Op,
+    req: theodore_contract::AgentAccountRequest,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<theodore_contract::AgentAccountStatus, CommandError> {
+    op.run(async move { core.check_agent_account(req).await })
+        .await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn space_pause_continue(
+    op: crate::op::Op,
+    req: theodore_contract::SpacePauseRequest,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<(), CommandError> {
+    op.run(async move { core.space_pause_continue(req).await })
+        .await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn space_pause_cancel(
+    op: crate::op::Op,
+    req: theodore_contract::SpacePauseRequest,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<(), CommandError> {
+    op.run(async move { core.space_pause_cancel(req).await })
+        .await
+}
+
+#[tauri::command]
+#[specta::specta]
 pub async fn mirror_space(
     op: crate::op::Op,
     space: String,
@@ -1273,6 +1337,35 @@ pub async fn fleet_presence(
     core: State<'_, Arc<dyn CoreApi>>,
 ) -> Result<(), CommandError> {
     op.run(async move { core.fleet_presence(req).await }).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn fleet_confirms(
+    op: crate::op::Op,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<Vec<theodore_contract::FleetConfirm>, CommandError> {
+    op.run(async move { core.fleet_confirms().await }).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn fleet_confirm(
+    op: crate::op::Op,
+    req: theodore_contract::FleetConfirmAnswer,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<(), CommandError> {
+    op.run(async move { core.fleet_confirm(req).await }).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn fleet_set_auto(
+    op: crate::op::Op,
+    req: theodore_contract::FleetAutoRequest,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<theodore_contract::FleetStatus, CommandError> {
+    op.run(async move { core.fleet_set_auto(req).await }).await
 }
 
 /// Brings the main window forward: the browser sign-in finishes in another

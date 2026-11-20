@@ -6,7 +6,15 @@ import vectors from '../src/gen/fleet-vectors.json';
 describe('fleet vectors', () => {
   it('has every domain tag', () => {
     expect(Object.keys(vectors.tags).sort()).toEqual(
-      ['ask', 'delegate', 'event', 'hello', 'reply', 'request'].sort(),
+      [
+        'ask',
+        'confirm',
+        'delegate',
+        'event',
+        'hello',
+        'reply',
+        'request',
+      ].sort(),
     );
   });
 });

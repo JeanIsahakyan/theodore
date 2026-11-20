@@ -61,6 +61,7 @@ import {
   takesEffort,
 } from './agentModel';
 import { AccountCard } from './AccountCard';
+import { AgentAccounts } from './settings/AgentAccounts';
 import { SignInHint } from './AgentMenu';
 import { DevicesPage } from './fleet/DevicesPage';
 import { buildLabel, buildReport, builtAtIso } from './buildStamp';
@@ -650,6 +651,8 @@ const AgentsPage = observer(function AgentsPage() {
             </span>
           ))}
       </section>
+      <Separator />
+      <AgentAccounts />
       <Separator />
       <section className="flex flex-col gap-2">
         <Typography.Heading level={6}>Model and effort</Typography.Heading>

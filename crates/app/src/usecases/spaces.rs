@@ -9,14 +9,14 @@
 use std::path::{Path, PathBuf};
 
 use theodore_contract::{
-    ChatMessage, CreateSpaceRequest, Ephemeral, OpenPrResponse, Project, SetSpaceSettingsRequest,
-    Space, SpaceMode, SpaceReviewRequest, SpaceSendRequest, SpaceStatus, SpaceTurn, ToastLevel,
-    models,
+    ChatMessage, CreateSpaceRequest, Ephemeral, FromSpace, OpenPrResponse, Project,
+    SetSpaceSettingsRequest, Space, SpaceMode, SpaceReviewRequest, SpaceSendRequest, SpaceStatus,
+    SpaceTurn, ToastLevel, models,
 };
 use theodore_domain::{AgentId, Author, PrId, PrRef};
 use theodore_ports::{
-    AgentAttachment, AgentEvent, AgentMode, AgentRequest, NewAction, SPACE_REF_PREFIX,
-    SyncActionCode, space_ref,
+    AgentAttachment, AgentEvent, AgentMode, AgentRequest, DEFAULT_ACCOUNT, NewAction,
+    SPACE_REF_PREFIX, SyncActionCode, space_ref,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -55,8 +55,19 @@ impl Core {
     /// starts (a fleet start marks it hosted, so that turn's tools know).
     pub(crate) async fn create_space_then(
         &self,
+        req: CreateSpaceRequest,
+        created: Option<OnSpaceCreated>,
+    ) -> AppResult<Space> {
+        self.create_space_with(req, created, None).await
+    }
+
+    /// `create_space_then`; `parent` when another space's agent started it
+    /// (docs/spaces.md "Sub-spaces"), set before its first turn.
+    pub(crate) async fn create_space_with(
+        &self,
         mut req: CreateSpaceRequest,
         created: Option<OnSpaceCreated>,
+        parent: Option<theodore_contract::SpaceParent>,
     ) -> AppResult<Space> {
         let project = self
             .project_row(&req.project)
@@ -225,6 +236,7 @@ impl Core {
             commands_denied: false,
             agent_session: None,
             sent_feedback: Vec::new(),
+            parent,
             created_at: now,
             updated_at: now,
             attention_at: None,
@@ -238,6 +250,7 @@ impl Core {
                 start.title.clone()
             },
             blank,
+            paused: None,
             handoff_summary: None,
             progress: None,
             updating: None,
@@ -353,10 +366,21 @@ impl Core {
         if let Some(r) = self.space_remote_of(&req.space).await {
             return self.remote_space_send(&r, req).await;
         }
+        self.space_send_with(req, None).await
+    }
+
+    /// [`space_send`](Self::space_send) of a local space; `from`, when
+    /// set, is the space whose agent sent it (`space_send`, docs/spaces.md
+    /// "Sub-spaces"): the chat and the turn's prompt say so.
+    pub(crate) async fn space_send_with(
+        &self,
+        req: SpaceSendRequest,
+        from: Option<FromSpace>,
+    ) -> AppResult<String> {
         let queue = self.space_queue_lock(&req.space).await;
         // Yours, so a blank space's first one: that's what starts it.
         let start = self.begin_blank(&req).await?;
-        let sent = self.space_send_as(req, None).await;
+        let sent = self.space_send_inner(req, None, from).await;
         match (&sent, start) {
             (Err(_), Some(start)) => self.undo_begin_blank(start).await,
             (Ok(_), Some(start)) => {
@@ -385,6 +409,15 @@ impl Core {
         req: SpaceSendRequest,
         prompt: Option<String>,
     ) -> AppResult<String> {
+        self.space_send_inner(req, prompt, None).await
+    }
+
+    async fn space_send_inner(
+        &self,
+        req: SpaceSendRequest,
+        prompt: Option<String>,
+        from: Option<FromSpace>,
+    ) -> AppResult<String> {
         let space = self.space_row(&req.space).await?;
         if space.status == SpaceStatus::Archived {
             return Err(AppError::Invalid("this space is archived".into()));
@@ -406,7 +439,9 @@ impl Core {
                     "the agent is still working in this space".into(),
                 ));
             }
-            return self.queue_message(&space, &req, text, attachments).await;
+            return self
+                .queue_message(&space, &req, text, attachments, from)
+                .await;
         }
         let message = ChatMessage {
             id: uuid::Uuid::new_v4().to_string(),
@@ -430,6 +465,8 @@ impl Core {
             vote: None,
             effort: None,
             mode: None,
+            from_space: from,
+            notice: None,
         };
         self.start_turn(space, &req, message, false, prompt).await
     }
@@ -487,9 +524,20 @@ impl Core {
             .space_worktree(&repo_path, &space.id, &space.base_sha)
             .await?;
 
+        // The account it runs on: the preferred one, else the space's own,
+        // else the next one not limited (docs/plan.md "Agent accounts and
+        // limits").
+        let session_account = space
+            .agent_session
+            .as_ref()
+            .filter(|s| s.agent == agent)
+            .map(|s| s.account.clone().unwrap_or_else(|| DEFAULT_ACCOUNT.into()));
+        let account = self.turn_account(agent, session_account.as_deref()).await;
+
         // A process kept for its background tasks takes this turn, when it
         // can; otherwise it ends first (one CLI per session).
         let cli_key = CliKey {
+            account: account.id.clone(),
             agent,
             model: crate::agent_defaults::run_model(&self.0.deps.store, agent, model.clone()).await,
             effort: crate::agent_defaults::run_effort(&self.0.deps.store, agent, effort.clone())
@@ -514,6 +562,8 @@ impl Core {
             "error": null,
             // Said once, in this turn's prompt.
             "continue_note": null,
+            // A pause for usage limits ends with any turn.
+            "paused": null,
             "updated_at": now,
         });
         if matches!(mode, SpaceMode::Edit | SpaceMode::Run) {
@@ -559,6 +609,10 @@ impl Core {
                 .unwrap_or_else(|| text.clone())
         });
         let ask = with_attachments(ask, &attachments);
+        let ask = match &message.from_space {
+            Some(from) => from_space_prompt(from, &ask),
+            None => ask,
+        };
         // The space's own, else the setting it follows.
         let ultracode = agent == AgentId::Claude
             && match &effort {
@@ -573,7 +627,38 @@ impl Core {
         // The same agent in the same worktree continues its session and
         // hears only the new turn; anything else starts a new session from
         // the replayed transcript.
-        let resume = resumable_session(&space, agent, &wt.path);
+        let mut resume = resumable_session(&space, agent, &wt.path);
+        // Another account than the session's: its session moves over
+        // (Claude Code's file, copied), or the transcript is replayed.
+        if let (Some(id), Some(from)) = (&resume, &session_account)
+            && *from != account.id
+        {
+            let carried = match self.agent_account(agent, from).await {
+                Some(from) => {
+                    self.0
+                        .deps
+                        .agents
+                        .carry_session(
+                            agent,
+                            id,
+                            &wt.path,
+                            &crate::usecases::agent_accounts::account_ref(&from),
+                            &crate::usecases::agent_accounts::account_ref(&account),
+                        )
+                        .await
+                }
+                None => false,
+            };
+            tracing::info!(
+                space = %space.id,
+                agent = agent.as_str(),
+                carried,
+                "the space's session moves to another account"
+            );
+            if !carried {
+                resume = None;
+            }
+        }
         // Can't resume: a cached, once-generated summary of everything
         // before the replayed window stands in for the full transcript
         // (`space_handoff`). The rarer case — a resume that turns out to
@@ -612,6 +697,7 @@ impl Core {
             String::new()
         };
         let turn = Turn {
+            account,
             live: attach,
             follow_up: false,
             from_tasks: vec![],
@@ -629,15 +715,20 @@ impl Core {
                 .space_review_rules(&space, &project, &wt.path)
                 .await
                 .with_system(Some(crate::usecases::space_plan::with_plan_rules(
-                    with_fleet_tools(
-                        system_prompt(
-                            &space,
-                            self.0.deps.tools.is_some(),
-                            code,
-                            !hosted && self.user_mcp_allowed().await,
-                            hosted.then_some(device_name.as_str()),
+                    with_local_spaces(
+                        with_fleet_tools(
+                            system_prompt(
+                                &space,
+                                self.0.deps.tools.is_some(),
+                                code,
+                                !hosted && self.user_mcp_allowed().await,
+                                hosted.then_some(device_name.as_str()),
+                            ),
+                            self.0.deps.tools.is_some() && self.fleet_tools_available(),
                         ),
-                        self.0.deps.tools.is_some() && self.fleet_tools_available(),
+                        self.0.deps.tools.is_some(),
+                        matches!(mode, SpaceMode::Edit | SpaceMode::Run)
+                            && self.sub_spaces_enabled().await,
                     ),
                     mode,
                 )))
@@ -702,7 +793,12 @@ impl Core {
                 cancel: cancel.clone(),
             },
         );
+        let account = match self.agent_account(live.key.agent, &live.key.account).await {
+            Some(a) => a,
+            None => crate::usecases::agent_accounts::default_account(live.key.agent),
+        };
         let turn = Turn {
+            account,
             run_id,
             message: message_id,
             space: space.clone(),
@@ -1135,7 +1231,7 @@ impl Core {
     }
 
     /// The transcript so far, oldest first, without failed placeholders.
-    async fn space_history(&self, space: &Space) -> AppResult<Vec<ChatMessage>> {
+    pub(crate) async fn space_history(&self, space: &Space) -> AppResult<Vec<ChatMessage>> {
         let store = self.0.deps.store.clone();
         let key = space_chat_key(&space.id).0;
         let undone: Vec<&str> = space
@@ -1156,6 +1252,7 @@ impl Core {
             .into_iter()
             .filter_map(|r| serde_json::from_value(r.data).ok())
             .filter(|m: &ChatMessage| m.failed.is_none())
+            .filter(|m| m.notice.is_none())
             .filter(|m| !crate::usecases::space_queue::is_queued(m))
             .filter(|m| !undone.contains(&m.id.as_str()))
             .collect();
@@ -1165,6 +1262,8 @@ impl Core {
 }
 
 struct Turn {
+    /// The agent account it runs on.
+    account: theodore_contract::AgentAccount,
     /// The kept process this turn runs on, instead of spawning one.
     live: Option<LiveCli>,
     /// The CLI started it (`live` holds its first events): no message of
@@ -1235,6 +1334,8 @@ struct Streamed {
     plan: Option<String>,
     /// The turn is over and its process stays for its background tasks.
     live: Option<LiveCli>,
+    /// The last usage limit the run reported (`AgentEvent::Limit`).
+    limit: Option<theodore_domain::AgentLimit>,
 }
 
 /// What a stream starts from when its process was kept: `live`, and the
@@ -1389,8 +1490,12 @@ async fn stream_run(
                         // The whole block: it replaces its own deltas.
                         out.partial.clear();
                         push_block(&mut out.text, &t);
+                        core.note_live_text(space, &out.text, &out.partial);
                     }
-                    AgentEvent::TextDelta { text: t } => out.partial.push_str(&t),
+                    AgentEvent::TextDelta { text: t } => {
+                        out.partial.push_str(&t);
+                        core.note_live_text(space, &out.text, &out.partial);
+                    }
                     AgentEvent::Session { id } => out.session = Some(id),
                     AgentEvent::Plan { text } => out.plan = Some(text),
                     AgentEvent::Done { final_text, .. } => {
@@ -1417,6 +1522,14 @@ async fn stream_run(
                     | AgentEvent::ToolDetail { .. }
                     | AgentEvent::Stalled
                     | AgentEvent::Usage { .. } => {}
+                    AgentEvent::Limit { limit } => {
+                        let account = req
+                            .account
+                            .as_ref()
+                            .map_or(DEFAULT_ACCOUNT, |a| a.id.as_str());
+                        core.note_agent_limit(agent, account, limit.clone()).await;
+                        out.limit = Some(limit);
+                    }
                     // Handled above.
                     AgentEvent::BackgroundTasks { .. }
                     | AgentEvent::TaskStarted { .. }
@@ -1438,6 +1551,10 @@ async fn stream_run(
             run,
             steer,
             key: CliKey {
+                account: req
+                    .account
+                    .as_ref()
+                    .map_or_else(|| DEFAULT_ACCOUNT.to_string(), |a| a.id.clone()),
                 agent,
                 model: req.model.clone(),
                 effort: req.effort.clone(),
@@ -1456,6 +1573,7 @@ async fn stream_run(
         });
     }
     payloads.finish(core).await;
+    core.clear_live_text(space);
     // Cut off mid-block (Stop): the deltas are all there is of it.
     let partial = std::mem::take(&mut out.partial);
     out.steps.record_cut_off(&partial);
@@ -1554,6 +1672,7 @@ async fn release_run(core: &Core, run_id: &str, end: TurnEnd) -> TurnEnd {
 
 async fn drive_turn(core: &Core, turn: Turn) {
     let Turn {
+        account,
         live: attach,
         follow_up,
         from_tasks,
@@ -1610,6 +1729,7 @@ async fn drive_turn(core: &Core, turn: Turn) {
     let ran_model = model.clone();
     let effort = crate::agent_defaults::run_effort(&core.0.deps.store, agent, effort).await;
     let ran_effort = effort.clone();
+    let ran_account = Some(account.id.clone());
     let mut req = AgentRequest {
         agent,
         prompt,
@@ -1630,6 +1750,8 @@ async fn drive_turn(core: &Core, turn: Turn) {
         attachments,
         resume,
         stream_text: true,
+        fork_session: false,
+        account: Some(crate::usecases::agent_accounts::account_ref(&account)),
     };
     let started = std::time::Instant::now();
     tracing::info!(
@@ -1673,6 +1795,7 @@ async fn drive_turn(core: &Core, turn: Turn) {
         mut error,
         session,
         plan,
+        limit,
         ..
     } = streamed;
     // Questions still waiting go with the run that asked them.
@@ -1696,6 +1819,7 @@ async fn drive_turn(core: &Core, turn: Turn) {
             agent,
             id,
             cwd: cwd.display().to_string(),
+            account: ran_account.clone(),
         }),
         None if resumed && !session_gone => space.agent_session.clone(),
         None => None,
@@ -1844,6 +1968,8 @@ async fn drive_turn(core: &Core, turn: Turn) {
         effort: ran_effort,
         effort_resolved: true,
         mode: Some(mode),
+        from_space: None,
+        notice: None,
     };
     let head = checkpoint.as_ref().map(|cp| cp.sha.clone());
     let changed = head.as_ref().is_some_and(|h| *h != space.head_sha);
@@ -1926,8 +2052,15 @@ async fn drive_turn(core: &Core, turn: Turn) {
     // Stopped (the checkpoint took a while: maybe just now), failed, or its
     // checkpoint skipped: whatever is queued waits for you, and the next turn
     // doesn't clear what the space says about it.
+    // Cut off by its account's usage limit: another account (or agent)
+    // takes over, or the space waits for the reset (`space_limits`).
+    let limit_hit = limit
+        .filter(|l| l.status == theodore_domain::LimitStatus::Limited)
+        .filter(|_| error.is_some() && !cancel.is_cancelled());
     let end = if cancel.is_cancelled() {
         TurnEnd::Interrupted("stopped")
+    } else if limit_hit.is_some() {
+        TurnEnd::Limited
     } else if error.is_some() {
         TurnEnd::Interrupted("failed")
     } else if skipped.is_some() {
@@ -2004,6 +2137,11 @@ async fn drive_turn(core: &Core, turn: Turn) {
             None,
         )
         .await;
+    }
+
+    if let Some(hit) = limit_hit {
+        core.after_limit_boxed(&space.id, &account, hit.resets_at)
+            .await;
     }
 }
 
@@ -2210,6 +2348,22 @@ fn with_fleet_tools(mut prompt: String, fleet: bool) -> String {
     prompt
 }
 
+/// The local-space tools' lines (docs/spaces.md "Sub-spaces"): `local`
+/// for a space of this device's own, `sub_spaces` when its turn may start
+/// sub-spaces too.
+fn with_local_spaces(mut prompt: String, local: bool, sub_spaces: bool) -> String {
+    use crate::usecases::space_children::{LOCAL_SPACES_PROMPT, SUB_SPACES_PROMPT};
+    if local {
+        prompt.push('\n');
+        prompt.push_str(LOCAL_SPACES_PROMPT);
+        if sub_spaces {
+            prompt.push(' ');
+            prompt.push_str(SUB_SPACES_PROMPT);
+        }
+    }
+    prompt
+}
+
 /// `hosted_on`: this computer's name when the space runs here for another
 /// device (docs/fleet.md): the user follows it from there, where there is
 /// no Ship.
@@ -2274,6 +2428,27 @@ fn base_system_prompt(space: &Space, hosted_on: Option<&str>) -> String {
 /// The new message, preceded by the recent transcript (each CLI run starts
 /// fresh, so this is what carries the conversation across turns, crashes
 /// and agent switches).
+/// Who wrote `m`, as a prompt names it: `user`, the agent's id, or
+/// another space's agent.
+pub(crate) fn author_word(m: &ChatMessage) -> String {
+    match (&m.author, &m.from_space) {
+        (Author::Me, Some(from)) => format!("agent of space \"{}\"", from.title),
+        (Author::Me, None) => "user".to_string(),
+        (Author::Agent(a), _) => a.as_str().to_string(),
+    }
+}
+
+/// A message another space's agent sent, as the turn's ask: said to be
+/// from that agent, not the user.
+pub(crate) fn from_space_prompt(from: &FromSpace, text: &str) -> String {
+    format!(
+        "This message is from the agent of another space on this computer, \"{}\" (space {}), \
+         not from the user. Treat it as a request from a peer agent: the user's own \
+         instructions in this space come first.\n\n{text}",
+        from.title, from.space
+    )
+}
+
 pub(crate) fn turn_prompt(history: &[ChatMessage], text: &str) -> String {
     let recent = &history[history.len().saturating_sub(HISTORY_MESSAGES)..];
     if recent.is_empty() {
@@ -2281,10 +2456,7 @@ pub(crate) fn turn_prompt(history: &[ChatMessage], text: &str) -> String {
     }
     let mut out = String::from("Conversation so far:\n");
     for m in recent {
-        let who = match m.author {
-            Author::Me => "user".to_string(),
-            Author::Agent(a) => a.as_str().to_string(),
-        };
+        let who = author_word(m);
         let body: String = m.text.chars().take(HISTORY_CHARS).collect();
         out.push_str(&format!("\n[{who}]\n{body}\n"));
         // Named only: the files went with that turn, not this one.
@@ -2429,6 +2601,8 @@ mod tests {
             vote: None,
             effort: None,
             mode: None,
+            from_space: None,
+            notice: None,
         }
     }
 

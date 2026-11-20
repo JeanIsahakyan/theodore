@@ -1,8 +1,9 @@
 /**
  * The fleet in memory (docs/fleet.md): this device's connection and the
  * list of devices, the spaces started on other devices (or hosted here for
- * them), the questions routed to this device and the "wants to run spaces
- * here" notices. Fed by the `fleet_*` ephemerals and by the commands' own
+ * them), the questions routed to this device, the "wants to run spaces
+ * here" notices and the requests from Claude via the cloud waiting for a
+ * yes. Fed by the `fleet_*` ephemerals and by the commands' own
  * replies; never synced. A remote space itself is an ordinary `space` row
  * (mirrored, `Space.remote` set): its chat and page are the usual ones.
  */
@@ -15,6 +16,9 @@ import {
 } from 'mobx';
 import type {
   Ephemeral,
+  FleetAutoOn,
+  FleetAutoRequest,
+  FleetConfirm,
   FleetDevice,
   FleetQuestion,
   FleetRemoteSpace,
@@ -40,6 +44,9 @@ export class FleetStore {
     { deep: false },
   );
 
+  /** Requests from Claude via the cloud waiting for your yes, by id. */
+  readonly confirms = observable.map<string, FleetConfirm>({}, { deep: false });
+
   constructor() {
     makeObservable(this, {
       status: observableRef,
@@ -49,7 +56,11 @@ export class FleetStore {
       thisDevice: computed,
       askList: computed,
       trustNeededList: computed,
+      confirmList: computed,
+      autos: computed,
       handle: action,
+      setConfirms: action,
+      dropConfirm: action,
       setStatus: action,
       setSpaces: action,
       upsertSpace: action,
@@ -81,6 +92,19 @@ export class FleetStore {
 
   get trustNeededList(): FleetTrustNeeded[] {
     return [...this.trustNeeded.values()];
+  }
+
+  /** Waiting for your yes, the one running out first on top. */
+  get confirmList(): FleetConfirm[] {
+    return [...this.confirms.values()].sort(
+      (a, b) => a.expires_at_ms - b.expires_at_ms,
+    );
+  }
+
+  /** Auto modes on now on this computer (Claude via cloud skips your
+   *  yes): the notice that stays while one lasts. */
+  get autos(): FleetAutoOn[] {
+    return this.status?.autos ?? [];
   }
 
   device(id: string): FleetDevice | undefined {
@@ -115,6 +139,12 @@ export class FleetStore {
       case 'fleet_trust_needed':
         this.trustNeeded.set(e.request.device_id, e.request);
         return true;
+      case 'fleet_confirm':
+        this.confirms.set(e.request.id, e.request);
+        return true;
+      case 'fleet_confirm_done':
+        this.confirms.delete(e.id);
+        return true;
       default:
         return false;
     }
@@ -144,6 +174,30 @@ export class FleetStore {
     this.asks.delete(askId);
   }
 
+  setConfirms(list: FleetConfirm[]): void {
+    this.confirms.replace(new Map(list.map((c) => [c.id, c])));
+  }
+
+  dropConfirm(id: string): void {
+    this.confirms.delete(id);
+  }
+
+  /** Allow or Deny a request waiting here. It goes at once; one that
+   *  isn't waiting any more (answered elsewhere, out of time) just goes. */
+  async confirm(id: string, allow: boolean): Promise<void> {
+    try {
+      await api.fleetConfirm({ id, allow });
+    } finally {
+      this.dropConfirm(id);
+    }
+  }
+
+  /** Auto mode for Claude via cloud, here or (`host_device`) on another
+   *  computer; answered with the new status. */
+  async setAuto(req: FleetAutoRequest): Promise<void> {
+    this.setStatus(await api.fleetSetAuto(req));
+  }
+
   /** `fleet_status`, then (with a fleet) `fleet_spaces`. A failure leaves
    *  the feature hidden: the core says why in `status.error`. */
   async load(): Promise<void> {
@@ -157,6 +211,11 @@ export class FleetStore {
       this.setSpaces(await api.fleetSpaces());
     } catch {
       // Quiet: the list stays as it was.
+    }
+    try {
+      this.setConfirms(await api.fleetConfirms());
+    } catch {
+      // Quiet: new ones still come as events.
     }
   }
 

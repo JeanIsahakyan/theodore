@@ -370,7 +370,11 @@ impl Core {
         action: ShipAction,
     ) -> AppResult<SpaceShipped> {
         let git = &self.0.deps.git;
-        let last = space.shipped.as_ref();
+        // A merge into the parent space wrote no commit to build on.
+        let last = space
+            .shipped
+            .as_ref()
+            .filter(|s| s.how != ShipKind::MergedIntoParent);
         if last.is_some_and(|s| &s.head == head) {
             return Err(AppError::Invalid(
                 "this space was already shipped; there are no new turns".into(),

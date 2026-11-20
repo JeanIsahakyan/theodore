@@ -6,7 +6,7 @@
  *
  * ```text
  * start ─▶ session + org ─▶ WSS <cloud>/v1/fleet/ws (Bearer header | bearer.<token> subprotocol)
- *   challenge{nonce: 32 bytes} ─▶ hello{protocol 4, kind mobile|web, accepts_remote false,
+ *   challenge{nonce: 32 bytes} ─▶ hello{protocol 6, kind mobile|web, accepts_remote false,
  *                                       max_mode ask, projects [], spaces []}
  *   welcome ─▶ device id kept per org ─▶ reauth if the token changed meanwhile,
  *              register_push again, subscribe{space, since: last seq} again
@@ -24,6 +24,10 @@
  *   mirror{model, id, data} ─▶ the space's mirror (src/fleet/mirror.ts); its
  *   space row names the space and says its status, mode, question
  * space_gap ─▶ a gap line; dismiss ─▶ question gone; delegations ─▶ verified, kept
+ * confirm ─▶ opened with the host's pin (Confirm), signer = host_device, not
+ *            expired ─▶ kept by confirm_id until confirm_dismissed, its
+ *            expiry, an answer from here, or the next welcome (the cloud
+ *            sends the waiting ones again)
  * ```
  *
  * Kept across restarts (src/fleet/saved.ts), per account and organization:
@@ -84,8 +88,10 @@ import {
   ERROR_TEXT_MAX,
   LINES_KEPT,
   NAME_MAX,
+  confirmOf,
   gapLine,
   hosts,
+  isMcpAuto,
   isMode,
   lineOf,
   pinName,
@@ -93,10 +99,12 @@ import {
   safeCode,
   truncate,
   uiAgents,
+  uiMcpAuto,
   uiQuestions,
   validDeviceId,
 } from './rules';
 import type {
+  ConfirmView,
   FleetClient,
   FleetDeviceView,
   QuestionView,
@@ -104,7 +112,11 @@ import type {
   SpaceView,
 } from './types';
 
-export const PROTOCOL_VERSION = 4;
+export const PROTOCOL_VERSION = 6;
+/** Most confirms kept at once (the oldest go first). */
+export const CONFIRMS_KEPT = 20;
+/** A late answer to a confirm: answered elsewhere, or expired. */
+const LATE_CONFIRM = 'fleet.invalid';
 export const MAX_FRAME_BYTES = 256 * 1024;
 
 /** Cloud error codes that end the link for good (link.rs `FATAL_CODES`). */
@@ -305,6 +317,10 @@ export function createFleetClient(
   const pending = new Map<string, Pending>();
   const tracked = new Map<string, Tracked>();
   const questions = new Map<string, { view: QuestionView; host: string }>();
+  const confirms = new Map<
+    string,
+    { view: ConfirmView; expiry: ReturnType<typeof setTimeout> }
+  >();
   /** `<user>.<org>` whose saved set is loaded and written; `null`: none yet. */
   let scope: string | null = null;
   /** The device id the loaded set was written for. */
@@ -332,14 +348,39 @@ export function createFleetClient(
   };
   const publishQuestions = () =>
     set({ questions: [...questions.values()].map((q) => q.view) });
+  const publishConfirms = () =>
+    set({ confirms: [...confirms.values()].map((c) => c.view) });
+  /** Drops a confirm; `true` if it was here. */
+  const dropConfirm = (id: string): boolean => {
+    const c = confirms.get(id);
+    if (!c) return false;
+    clearTimeout(c.expiry);
+    confirms.delete(id);
+    publishConfirms();
+    return true;
+  };
+  const clearConfirms = () => {
+    for (const c of confirms.values()) clearTimeout(c.expiry);
+    confirms.clear();
+  };
   const publishDevices = async () => {
     const pinned = new Map((await pins.list()).map((p) => [p.deviceId, p]));
+    const nameOf = (d: DeviceSummary): string => {
+      const pin = pinned.get(d.device_id);
+      return pin && pin.publicKey === d.public_key
+        ? pin.name
+        : truncate(String(d.info?.name ?? ''), 100);
+    };
+    const listedName = (id: string): string | null => {
+      const d = devices.find((x) => x.device_id === id);
+      return d ? nameOf(d) : null;
+    };
     const views: FleetDeviceView[] = devices.map((d) => {
       const pin = pinned.get(d.device_id);
       const trusted = !!pin && pin.publicKey === d.public_key;
       return {
         deviceId: d.device_id,
-        name: trusted ? pin.name : truncate(String(d.info?.name ?? ''), 100),
+        name: nameOf(d),
         kind: String(d.info?.kind ?? ''),
         os: String(d.info?.os ?? ''),
         online: d.online === true,
@@ -354,6 +395,10 @@ export function createFleetClient(
         fingerprint: fingerprint(d.public_key),
         trusted,
         thisDevice: d.device_id === me,
+        // Only a computer pins `mcp` devices (docs/fleet.md "Auto mode").
+        mcpAuto: hosts(String(d.info?.kind ?? ''))
+          ? uiMcpAuto(d.info?.mcp_auto, deps.now(), listedName)
+          : [],
       };
     });
     set({ devices: views });
@@ -379,6 +424,7 @@ export function createFleetClient(
     pending.clear();
     tracked.clear();
     questions.clear();
+    clearConfirms();
     devices = [];
     rawDelegations = [];
     delegators = new Map();
@@ -775,6 +821,12 @@ export function createFleetClient(
       await deps.storage.set(deviceIdKey(l.org), msg.device_id).catch(() => {});
       if (link !== l) return;
       setConnection('connected');
+      // Waiting confirms come again after every welcome: one answered or
+      // gone meanwhile must not stay.
+      if (confirms.size) {
+        clearConfirms();
+        publishConfirms();
+      }
       // What changed during the handshake, then what belongs to every connection.
       const latest = session?.accessToken;
       if (latest && latest !== l.token) {
@@ -821,8 +873,14 @@ export function createFleetClient(
         rawDelegations = Array.isArray(msg.list) ? msg.list : [];
         await verifyDelegations();
         return resumeFollowed();
+      case 'confirm':
+        return onConfirm(msg.envelope);
+      case 'confirm_dismissed':
+        dropConfirm(String(msg.confirm_id));
+        return;
       default:
-        // `request` / `claim_result`: never a target, nothing to run.
+        // `request` / `claim_result`, or a type this build doesn't know:
+        // never a target, nothing to run.
         return;
     }
   };
@@ -1107,6 +1165,36 @@ export function createFleetClient(
     publishQuestions();
   };
 
+  /** A host's confirm: only with its pin, signed by it as `host_device`. */
+  const onConfirm = async (envelope: SignedEnvelope) => {
+    if (!isObj(envelope) || typeof envelope.device_id !== 'string') return;
+    const pin = await pins.get(envelope.device_id);
+    if (!pin) return;
+    const body = open(envelope, pin.publicKey, 'confirm');
+    if (!body || body.host_device !== envelope.device_id) return;
+    const now = deps.now();
+    const view = confirmOf(body, pin.name, now);
+    if (!view) return;
+    const before = confirms.get(view.confirmId);
+    if (before) clearTimeout(before.expiry);
+    confirms.delete(view.confirmId);
+    while (confirms.size >= CONFIRMS_KEPT) {
+      const oldest = confirms.keys().next().value;
+      if (oldest === undefined) break;
+      clearTimeout(confirms.get(oldest)!.expiry);
+      confirms.delete(oldest);
+    }
+    confirms.set(view.confirmId, {
+      view,
+      // Refused on the host from then on: nothing left to answer.
+      expiry: setTimeout(
+        () => dropConfirm(view.confirmId),
+        Math.min(view.expiresAtMs - now, 2 ** 31 - 1),
+      ),
+    });
+    publishConfirms();
+  };
+
   /** Delegations to this device, each opened with its origin's key. */
   const verifyDelegations = async () => {
     const next = new Map<string, number>();
@@ -1163,7 +1251,7 @@ export function createFleetClient(
     let settle!: (a: Answer) => void;
     const answer = new Promise<Answer>((r) => (settle = r));
     pending.set(reqId, {
-      space: op.space,
+      space: 'space' in op ? op.space : '',
       start,
       target,
       targetKey: pin.publicKey,
@@ -1203,6 +1291,63 @@ export function createFleetClient(
     const a = await within(answer, t.replyWaitMs);
     const err = answerError(a);
     if (err) throw err;
+  };
+
+  /**
+   * Signs `op` for a pinned `hostDevice` and posts it (`POST
+   * /v1/fleet/request`): a notification action, maybe the first thing to
+   * run after a cold start, so it loads the session and device id itself.
+   * Resolves once the cloud accepted it; the host's word comes later.
+   */
+  const overHttp = async (hostDevice: string, op: RemoteOp) => {
+    const s = await auth.current();
+    const token = await auth.accessToken();
+    if (!s || !token) throw new FleetError('not signed in');
+    if (!s.organizationId) throw new FleetError('no organization chosen');
+    const origin =
+      me ?? (await deps.storage.get(deviceIdKey(s.organizationId)));
+    if (!validDeviceId(origin)) {
+      throw new FleetError(
+        'this device has not joined the fleet yet: open the app once',
+      );
+    }
+    const pin = await pins.get(hostDevice);
+    if (!pin)
+      throw new FleetError(`device ${hostDevice} isn't trusted on this device`);
+    const key = await keys.deviceKey();
+    const envelope = await seal(
+      {
+        req_id: `req_${platform.randomUUID()}`,
+        origin_device: origin,
+        target_device: hostDevice,
+        target_key: pin.publicKey,
+        issued_at_ms: deps.now(),
+        op,
+      },
+      key,
+    );
+    const res = await deps.fetch(
+      `${deps.cloudUrl.replace(/\/+$/, '')}/v1/fleet/request`,
+      {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${token}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ device_id: origin, envelope }),
+      },
+    );
+    const json: unknown = await res.json().catch(() => null);
+    const body = isObj(json) ? json : {};
+    const refusal = isObj(body.refused)
+      ? body.refused
+      : isObj(body.error)
+        ? body.error
+        : null;
+    if (!res.ok || refusal || body.accepted === false) {
+      const code = safeCode(refusal?.code ?? body.code);
+      throw new FleetError(`refused by the cloud: ${code}`, code);
+    }
   };
 
   const client: FleetClient = {
@@ -1381,57 +1526,53 @@ export function createFleetClient(
     },
 
     async answerOverHttp(space, askId, answers, hostDevice) {
-      const s = await auth.current();
-      const token = await auth.accessToken();
-      if (!s || !token) throw new FleetError('not signed in');
-      if (!s.organizationId) throw new FleetError('no organization chosen');
-      const origin =
-        me ?? (await deps.storage.get(deviceIdKey(s.organizationId)));
-      if (!validDeviceId(origin)) {
-        throw new FleetError(
-          'this device has not joined the fleet yet: open the app once',
-        );
-      }
-      const pin = await pins.get(hostDevice);
-      if (!pin)
-        throw new FleetError(
-          `device ${hostDevice} isn't trusted on this device`,
-        );
-      const key = await keys.deviceKey();
-      const envelope = await seal(
-        {
-          req_id: `req_${platform.randomUUID()}`,
-          origin_device: origin,
-          target_device: hostDevice,
-          target_key: pin.publicKey,
-          issued_at_ms: deps.now(),
-          op: { op: 'answer', space, ask_id: askId, answers },
-        },
-        key,
-      );
-      const res = await deps.fetch(
-        `${deps.cloudUrl.replace(/\/+$/, '')}/v1/fleet/request`,
-        {
-          method: 'POST',
-          headers: {
-            authorization: `Bearer ${token}`,
-            'content-type': 'application/json',
-          },
-          body: JSON.stringify({ device_id: origin, envelope }),
-        },
-      );
-      const json: unknown = await res.json().catch(() => null);
-      const body = isObj(json) ? json : {};
-      const refusal = isObj(body.refused)
-        ? body.refused
-        : isObj(body.error)
-          ? body.error
-          : null;
-      if (!res.ok || refusal || body.accepted === false) {
-        const code = safeCode(refusal?.code ?? body.code);
-        throw new FleetError(`refused by the cloud: ${code}`, code);
-      }
+      await overHttp(hostDevice, {
+        op: 'answer',
+        space,
+        ask_id: askId,
+        answers,
+      });
       if (questions.delete(askId)) publishQuestions();
+    },
+
+    async confirm(hostDevice, confirmId, allow) {
+      const { answer } = await request(
+        hostDevice,
+        { op: 'confirm', confirm_id: confirmId, allow },
+        false,
+      );
+      // Sent: the card goes, whatever the host says.
+      dropConfirm(confirmId);
+      const a = await within(answer, t.replyWaitMs);
+      // Answered elsewhere first, or too late: nothing to tell.
+      if (a.kind === 'err' && a.code === LATE_CONFIRM) return;
+      const err = answerError(a);
+      if (err) throw err;
+    },
+
+    async confirmOverHttp(hostDevice, confirmId, allow) {
+      await overHttp(hostDevice, {
+        op: 'confirm',
+        confirm_id: confirmId,
+        allow,
+      });
+      dropConfirm(confirmId);
+    },
+
+    async setMcpAuto(hostDevice, mcpDevice, auto, untilMs) {
+      if (!validDeviceId(mcpDevice) || !isMcpAuto(auto))
+        throw new FleetError('not an auto mode this app can set');
+      const until =
+        auto === 'off' || untilMs === null || !Number.isFinite(untilMs)
+          ? null
+          : Math.floor(untilMs);
+      const { answer } = await request(
+        hostDevice,
+        { op: 'set_mcp_auto', mcp_device: mcpDevice, auto, until_ms: until },
+        false,
+      );
+      const err = answerError(await within(answer, t.replyWaitMs));
+      if (err) throw err;
     },
   };
 

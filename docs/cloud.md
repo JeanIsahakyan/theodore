@@ -19,6 +19,8 @@ Why it exists:
 | `GET /v1/orgs` | bearer access JWT | the caller's active organizations, personal first: `{ organizations: [{ id, name, role, personal }] }` |
 | `POST /v1/orgs/personal` | bearer access JWT | the caller's personal org, created once: `{ organization_id, created }` |
 | `POST /v1/auth/select-organization` | none (the pending token is the credential) | finishes a sign-in that needs an org picked: `{ user, organization_id, access_token, refresh_token }` |
+| `POST /mcp` | MCP OAuth access token (scope `fleet`) | MCP over Streamable HTTP for Claude ("MCP" below) |
+| `/.well-known/oauth-protected-resource/mcp`, `/.well-known/oauth-authorization-server`, `/oauth/register`, `/oauth/authorize`, `/oauth/callback`, `/oauth/org`, `/oauth/token` | none (OAuth itself) | the authorization server for `/mcp` ("MCP" below) |
 | `GET /v1/fleet/ws` | bearer access JWT with `org_id`; from a browser, the subprotocol `bearer.<JWT>` (below) | WebSocket upgrade to the org's fleet hub (below, and `docs/fleet.md`) |
 | `POST /v1/fleet/request` | bearer access JWT with `org_id` | a one-shot signed fleet request, no socket (a phone's notification action): `{ device_id, envelope }` ─▶ `202 { accepted: true, req_id }` or `409 { accepted: false, req_id, refused: { code, message } }` (`400` for `fleet.bad_message`) |
 
@@ -239,16 +241,35 @@ device ─GET /v1/fleet/ws, Upgrade: websocket, Bearer JWT─▶ Worker
   ─▶ acceptWebSocket(tag u:<user>) ─▶ challenge ─▶ hello ─▶ welcome ...
 ```
 
-Protocols 3 and 4 (`fleet.version`, close 4003, for anything else). The
+Protocols 3 to 7 (`fleet.version`, close 4003, for anything else). The
 hello's protocol is kept per connection:
 
-| | Protocol 3 | Protocol 4 |
-| --- | --- | --- |
-| `devices` list | computers only (`desktop`, `daemon`): it can't read `mobile` / `web` | every device |
-| its own kind | `desktop` / `daemon` (else `fleet.bad_message`) | also `mobile`, `web` |
-| `register_push`, `delegate` | unknown (`fleet.bad_message`) | accepted |
-| `delegations` | never sent | after welcome and on change |
-| `mirror` space events | never sent, live or history | sent |
+| | Protocol 3 | Protocol 4 | Protocol 5 | Protocol 6 | Protocol 7 |
+| --- | --- | --- | --- | --- | --- |
+| `devices` list | computers only (`desktop`, `daemon`): it can't read `mobile` / `web` | no `mcp` device | every device | same as 5 | same as 5 |
+| its own kind | `desktop` / `daemon` (else `fleet.bad_message`) | also `mobile`, `web` | same as 4 | same as 4 | same as 4 |
+| `register_push`, `delegate` | unknown (`fleet.bad_message`) | accepted | accepted | accepted | accepted |
+| `delegations` | never sent | after welcome and on change | same | same | same |
+| `mirror` space events | never sent, live or history | sent | sent | sent | sent (`sub_space` too) |
+| `confirm`, `confirm_resolved` (from a host) | unknown (`fleet.bad_message`) | same | same | accepted | accepted (`merge` too) |
+| `confirm`, `confirm_dismissed` (to a delegate) | never sent | never sent | never sent | sent | sent |
+| `DeviceInfo.mcp_auto` | dropped | dropped | dropped | kept and listed | kept and listed |
+| ops on any space (`list_spaces` … `merge_child`), as a target | refused | refused | refused | refused | routed |
+
+Kind `mcp` is the cloud's own device ("MCP" below): only its in-process
+connection says it, and says nothing else; a socket's hello or `announce`
+with `mcp` is `fleet.bad_message`. Refused with
+`refused{fleet.upgrade_required}` (static words):
+
+| Request | Target |
+| --- | --- |
+| from a device whose kind the target can't list | a phone's or the web's to 3, the MCP device's to 3 or 4 |
+| `confirm` / `set_mcp_auto` | below 6 |
+| an op on any space (`protocolFor`) | below 7 |
+
+The op checks run when the request comes in (target online) and again
+when an offline target comes back: its unclaimed requests it can't take
+are refused then, the rest delivered.
 
 `DeviceInfo.os` is `macos`, `linux`, `windows`, `ios` or `android` (a
 browser: the OS it runs on). A protocol-3 device gets `linux` for any but
@@ -258,8 +279,8 @@ browser: the OS it runs on). A protocol-3 device gets `linux` for any but
   attachment (user, org, token expiry, device, generation, presence); the
   rest is SQLite, so a woken hub rebuilds nothing.
 - **One alarm** for every deadline (hello due, token expiry + 60 s, 10 s
-  grace, 2 min pending, 20 s escalation, a delegation's expiry), set only
-  when it moves earlier.
+  grace, 2 min pending, 20 s escalation, a delegation's or a confirm's
+  expiry), set only when it moves earlier.
 - **Heartbeat**: the device pings (WebSocket ping frames); the runtime
   answers without waking the hub. The hub doesn't ping.
 - Messages run one at a time, in arrival order. Everything is scoped to the
@@ -277,6 +298,7 @@ never verifies as another):
 | space event: `event` tag ‖ `SpaceEventBody` | host | verifies against the sender's pinned key; `device_id` = `host_device` = sender = the space's host; stores and forwards unchanged |
 | ask: `ask` tag ‖ `RemoteAsk` | host | same as an event |
 | delegation: `delegate` tag ‖ `Delegation` | origin | verifies against the sender's pinned key; `device_id` = `origin_device` = sender (below) |
+| confirm: `confirm` tag ‖ `RemoteConfirm` | host | verifies against the sender's pinned key; `device_id` = `host_device` = sender, a computer (below) |
 
 A failed event, ask or reply check is `error{fleet.bad_signature}`, nothing
 stored or forwarded (a refused reply leaves its request pending).
@@ -287,9 +309,10 @@ Mirrored rows (`docs/fleet.md` "One space UI: mirrored rows"): a space
 event whose `event.kind` is `mirror`, `{model, id, data}`.
 
 ```
-mirror ─▶ model space | chat_message | turn_step, id 1–256 chars?  no ─▶ error fleet.invalid
-  space, chat_message ─▶ mirrors (space, model, id): the newer seq replaces
-                         the older; data = null (a tombstone) is kept too
+mirror ─▶ model space | chat_message | sub_space | turn_step, id 1–256 chars?
+          no ─▶ error fleet.invalid
+  space, chat_message, sub_space ─▶ mirrors (space, model, id): the newer seq
+                         replaces the older; data = null (a tombstone) is kept too
   turn_step           ─▶ relayed live only, never stored (last_seq moves)
   ─▶ subscribers on protocol 4; protocol 3 gets neither live nor history
 subscribe{since} ─▶ ring events + kept mirrors with seq > since, in seq order
@@ -321,6 +344,7 @@ its **followers**: the origin, and the devices the origin delegated to
 | a request whose target is its origin | `refused{fleet.invalid}` |
 | a `start_space` whose space id is known, or has a start pending | `refused{fleet.invalid}`; the space that exists is untouched |
 | a start the host refused | forgets the space only if this request made its row (at its claim): same host, origin and `req_id` |
+| an op on any space of the target (protocol 7), from any origin, the MCP device too | routed on no cloud space (`pending.space` ''), never a `spaces` row: the target resolves its own id (or an `rs_` one it hosts for that origin) and decides; fields bounded only (ids ≤ 64, question / message ≤ 20 000 characters, `messages` ≤ 50, answers ≤ 20 × 50 × 4 000) |
 
 `remove_device{device_id}` forgets one of the caller's other devices, only
 while that device is offline:
@@ -331,6 +355,7 @@ connected now? ─▶ fleet.invalid (nothing changes)
 ─▶ delete its row, the spaces it hosts (events, subs; their questions dismissed `resolved`)
 ─▶ requests waiting for it ─▶ origin: refused{fleet.offline};  replies held for it dropped
 ─▶ its push token and every delegation naming it dropped (the other side told)
+─▶ its confirms dismissed where they showed, dropped
 ─▶ devices pushed to the rest
 ```
 
@@ -363,6 +388,49 @@ revoke ─▶ kept as a tombstone 5 min (an older grant can't come back),
 - A delegate gains nothing on hosts: its requests (answers, too) still
   need the host's own trust in its key.
 
+### Confirms
+
+An Edit or Run from Claude via the cloud (the MCP device) waits on its host
+for a person's yes (`docs/fleet.md` "Requests from Claude via the cloud"),
+unless the user turned on auto mode there. The host shows it on its own
+screen and, through the cloud, on the devices it delegates to (a phone, the
+web app, another computer):
+
+```
+host ─ confirm{envelope: RemoteConfirm{confirm_id, host_device, mcp_device,
+                 action, mode, project_name, space_name, text, expires_at_ms}}
+  every field bounded (text ≤ 500 chars, names ≤ 200)?  no ─▶ error fleet.bad_message
+  device_id = host_device = sender?                 no ─▶ error fleet.not_yours
+  the sender a computer?                            no ─▶ error fleet.invalid
+  confirm_id open: the same host's ─▶ ignored;  another's ─▶ error fleet.not_yours
+  expires_at_ms past?                                  ─▶ error fleet.invalid
+  20 open for the user?                                ─▶ error fleet.busy
+  signed (`confirm` tag) by the sender's pinned key? no ─▶ error fleet.bad_signature
+─▶ kept until expires_at_ms (at most 5 min)
+─▶ confirm{envelope} ─▶ the host's live delegates online on protocol 6
+   (never an `mcp` one); again after their welcome, and to a new delegate
+─▶ push to those away from a screen, once each
+delegate ─ request{op: confirm{confirm_id, allow}} ─▶ host (any request route)
+host ─ confirm_resolved{confirm_id}  (answered anywhere, or timed out)
+  not its host? ─▶ error fleet.not_yours      unknown id ─▶ nothing
+─▶ confirm_dismissed{confirm_id} ─▶ where it showed and the host's delegates;
+   dropped
+expiry │ delegation revoked or expired (that delegate) │ host removed
+─▶ confirm_dismissed the same way
+```
+
+- A protocol-5 connection never gets `confirm` / `confirm_dismissed`: it
+  can't read them.
+- `confirm` and `set_mcp_auto{mcp_device, auto, until_ms}` (a host's auto
+  mode for an `mcp` device it pins) are requests on no space (`space` ''):
+  routed and claimed like any other, pending 2 min, nothing about spaces
+  checked. From the MCP device itself: `refused{fleet.not_yours}` (the host
+  refuses it too). To a target online below 6:
+  `refused{fleet.upgrade_required}`.
+- A host lists its auto modes in `DeviceInfo.mcp_auto` (≤ 8,
+  `{device_id, auto: off | edit | full, until_ms}`), relayed in `devices`
+  so another device can show and change them.
+
 ### Push notifications
 
 The phone registers its Expo token over the socket; the hub sends through
@@ -377,6 +445,8 @@ register_push{provider: expo, token}   (a `mobile` device only, else error fleet
 question from a host ─▶ followers ─▶ each with a token and not looking at it
   (offline, or connected but not focused / locked) ─▶ one push per question
   while you're at the host: none now; at the 20 s escalation, then
+confirm from a host ─▶ its delegates the same way (not one online on an
+  older protocol), one push per confirm
 space status running/waiting ─▶ idle | failed | stopped (from the host's
   signed events) ─▶ one push to each such follower
 send ─▶ ctx.waitUntil (routing never waits) ─▶ tickets:
@@ -387,13 +457,13 @@ What a push carries (the app's contract, `mobile/src/push/README.md`;
 `askPresentation` is ported in `src/fleet/push.ts` and a test checks both
 give the same output):
 
-| Field | Question | Finished |
-| --- | --- | --- |
-| `title` | `<host> · <space>` | same |
-| `body` | the question, and `\n1) A  2) B` for 2–3 options, ≤ 180 chars | `<space> finished` / `failed` / `stopped` |
-| `categoryId` | `ask_opt2`, `ask_opt3`, else `ask_text`; none for several questions or multi-select | none |
-| `channelId` / `priority` | `default` / `high` | `default` / — |
-| `data` | `{kind: ask, ask_id, space, host_device, options}` (≤ 4; `[]` for several questions or multi-select) | `{kind: finished, ask_id: "", space, host_device, options: [], status}` |
+| Field | Question | Finished | Confirm |
+| --- | --- | --- | --- |
+| `title` | `<host> · <space>` | same | `Claude via cloud · <host>` |
+| `body` | the question, and `\n1) A  2) B` for 2–3 options, ≤ 180 chars | `<space> finished` / `failed` / `stopped` | `wants to <what>: <text>`, ≤ 180 chars; `<what>`: `start an Edit space in <project>`, `send to <space> in Run`, `approve the plan in <space> (Edit)` |
+| `categoryId` | `ask_opt2`, `ask_opt3`, else `ask_text`; none for several questions or multi-select | none | `confirm` (Allow / Deny: a signed `confirm` request to `host_device`) |
+| `channelId` / `priority` | `default` / `high` | `default` / — | `default` / `high` |
+| `data` | `{kind: ask, ask_id, space, host_device, options}` (≤ 4; `[]` for several questions or multi-select) | `{kind: finished, ask_id: "", space, host_device, options: [], status}` | `{kind: confirm, confirm_id, host_device, space: "", ask_id: "", options: []}` |
 
 `<host>` is the host's own name (its hello), `<space>` the name in its
 host-signed `started` event (else the space id); the question and options
@@ -428,14 +498,15 @@ Storage (DO SQLite):
 | `spaces` | space, user, host, origin, parent, depth, last seq, status, last activity, its `started` envelope, stored event and mirror bytes, `lost_to` (holes at or below it are gaps), the start request (`req_id`) that made it |
 | `events` | the host's signed envelope and its body's bytes, the newest 500 per space, within its byte budget |
 | `mirrors` | (space, model, id) ─ the latest `space` / `chat_message` mirror (a tombstone too): seq, the host's signed envelope, its body's bytes |
-| `pending` | a routed request until its reply: target, generation, claimed, envelope, `ask_id` of an answer |
+| `pending` | a routed request until its reply: target, generation, claimed, envelope, `ask_id` of an answer, how long it may wait (`ttl_ms`: 2 min, 5 min from the MCP device) |
 | `replies` | a signed reply or a `refused` held for an origin that's offline (2 min), as the frame to send |
 | `asks` | an open question (the host's envelope): where it shows, via, escalated, which devices were pushed about it |
+| `confirms` | an open confirm (the host's envelope): when it lapses, where it shows, which devices were pushed about it |
 | `subs` | (device, space) live subscriptions, dropped with the connection |
 | `conns` | per-connection deadline (hello, token expiry) |
 | `push_tokens` | device ─ its Expo token, this minute's push count |
 | `delegations` | (origin, delegate) ─ the latest signed delegation, issued/expiry, revoked (tombstone) |
-| `meta` | `schema` = 6; on any other value every table but `devices`, `conns`, `push_tokens` and `delegations` is dropped (older rows carry older signatures) |
+| `meta` | `schema` = 7; on any other value every table but `devices`, `conns`, `push_tokens` and `delegations` is dropped (older rows carry older signatures); a new table (`confirms`) needs no bump. `mcp_schema` = 2 for the MCP device's own tables ("MCP" below) |
 
 Limits:
 
@@ -448,6 +519,7 @@ Limits:
 | requests in flight per user | 100 | `refused{fleet.busy}` |
 | spaces per user (pending starts count) | 200 | the oldest finished (stopped/failed) one is forgotten; none: `refused{fleet.too_many_spaces}` |
 | open questions | 20 per space, 100 per user | `error{fleet.busy}` (the host's own card stays) |
+| open confirms | 20 per user, 5 min each | `error{fleet.busy}` (the host's own prompt stays) |
 | a space whose host is offline | 30 days | forgotten with its events and questions (checked on any hello and alarm) |
 | device info | 8 KiB | `fleet.too_large` |
 | one space event | 64 KiB | `fleet.too_large` |
@@ -492,3 +564,168 @@ Logs name the error kind only: never a token, a nonce or an envelope body.
 
 Tests (`test/fleet-*.test.ts`) drive `Hub` with node:sqlite, fake sockets
 and a fake clock; the DO shell (`org-hub.ts`) itself runs only in Workers.
+
+## MCP
+
+Claude Code or a claude.ai connector adds Theodore as a remote MCP server
+by URL (`https://<cloud>/mcp`); the tools drive the user's computers
+through the fleet, as the phone does. What it means for the fleet and the
+tools: `docs/fleet.md` "MCP over the cloud". Code: `src/mcp/`.
+
+```
+client ─POST /mcp─▶ 401 WWW-Authenticate: Bearer resource_metadata=…
+  ─▶ /.well-known/oauth-protected-resource/mcp ─▶ authorization server = this Worker
+  ─▶ /.well-known/oauth-authorization-server
+  ─▶ POST /oauth/register (dynamic client registration, RFC 7591)
+  ─▶ browser: /oauth/authorize (PKCE S256, resource …/mcp) ─▶ consent page ─▶ Allow
+       ─▶ AuthKit sign-in (state bound to this browser by a __Host- cookie)
+       ─▶ /oauth/callback?code ─▶ WorkOS code exchange (API key as client secret)
+          2+ orgs ─▶ pick one (/oauth/org) ─▶ organization-selection grant
+          no org  ─▶ the personal org (as /v1/orgs/personal), refresh into it
+       ─▶ grant {user, org, WorkOS refresh token (encrypted)} ─▶ the MCP device made
+       ─▶ back to the client with a code
+  ─▶ POST /oauth/token (code + verifier) ─▶ access token (1 h) + refresh token (30 d)
+  refresh ─▶ WorkOS refreshes the same session into the same org
+             refused (signed out, left the org) ─▶ invalid_grant, grant revoked
+POST /mcp + Bearer ─▶ scope fleet ─▶ Origin ─▶ RL_USER ─▶ JSON-RPC (src/mcp/rpc.ts)
+  tools/call ─▶ OrgHub(org) POST /mcp/call {name, arguments} ─▶ McpFleet
+```
+
+### Auth: Cloudflare's OAuth provider
+
+`@cloudflare/workers-oauth-provider` (MIT, Cloudflare's, 1.2.x) is the
+authorization server; the cloud writes only the consent page, the AuthKit
+hop and the refresh callback.
+
+| | Library | Own |
+| --- | --- | --- |
+| Metadata (RFC 8414, 9728), DCR, PKCE, code and refresh rotation, token hashing, RFC 8707 audience | done, tested against the MCP conformance suite | ~1 500 lines of security code to write and keep current |
+| Confused-deputy rules for a proxy to another IdP (consent per client, browser-bound `state`, no framing) | `beginConsent` / `beginUpstream` helpers | to build |
+| Storage | a KV namespace (`OAUTH_KV`): one new binding | a DO or KV anyway |
+| Fit | wraps only `/mcp`, `/oauth/*`, `/.well-known/oauth-*`; every other route is untouched | — |
+| Cost | imports `cloudflare:workers` (tests alias it to a stub) | — |
+
+Off unless both `OAUTH_KV` and `MCP_KEY_WRAP` are there: those paths
+answer `404 cloud.not_found` and nothing else changes.
+
+### Transport
+
+Streamable HTTP, both eras, no sessions (`src/mcp/rpc.ts`):
+
+| | Modern (`2026-07-28`) | Legacy (`2025-03-26` … `2025-11-25`) |
+| --- | --- | --- |
+| Opens with | any request with `_meta["io.modelcontextprotocol/protocolVersion"]` | `initialize` (answered with the client's version if known, else `2025-11-25`) |
+| Headers | `MCP-Protocol-Version`, `Mcp-Method`, `Mcp-Name` (tools/call, base64 sentinel decoded) must match the body, else `400 -32020`; another version `400 -32022 {supported, requested}` | `MCP-Protocol-Version` one of these if present |
+| Methods | `server/discover`, `tools/list`, `tools/call`, `ping`; results carry `resultType: "complete"` | `initialize`, `tools/list`, `tools/call`, `ping` |
+| Unknown method | `404 -32601` | `200 -32601` |
+
+Every answer is `application/json`; notifications `202`; `GET` / `DELETE`
+`405`; batches `400`. A browser `Origin` other than the Worker's own,
+`https://claude.ai`, `https://claude.com` or one in `MCP_ORIGINS` is `403`.
+
+### The MCP device in the hub
+
+One per (user, org), in the org's `OrgHub`, next to the fleet tables:
+
+| Table | Holds |
+| --- | --- |
+| `mcp_devices` | user ─ device id, public key, the private key wrapped (AES-256-GCM, key = HKDF-SHA-256(`MCP_KEY_WRAP`), AAD = org, user, public key), the in-process connection: open, its `ConnState` |
+| `mcp_pins` | (user, device) ─ a computer's key confirmed with `device_trust`, its sanitized name |
+| `mcp_inbox` | frames the hub sent it (`reply`, `refused`, `space_event`, `space_gap`, `ask`, `dismiss`) until a tool reads them; 5 000 per user, oldest out |
+| `mcp_requests` | req id ─ target, the key pinned when sent, op, mode, space, the outcome once verified; 500 per user |
+| `mcp_spaces` | a space it started ─ host, status, name, branch, last seq, last reply, open question, plan, last refusal code; finished ones past 100 per user go |
+| `mcp_lines` | (space, seq, kind) ─ history from verified events, 200 per space |
+| `mcp_sub_spaces` | (space, id) ─ a sub-space under a space it started, from verified `mirror{sub_space}` events (latest per id, removed on `null`), 50 per space; a new table, so no schema bump |
+
+| Limit | Value |
+| --- | --- |
+| online after the last tool call | 15 min (then the alarm takes it offline; the next call says hello again and resubscribes) |
+| a start, send, stop, answer waits for the computer's reply | 15 s, then `result: pending` (the reply still lands) |
+| a pending request from the MCP device, in the hub | 5 min (`REQUEST_WINDOW_MS`, other origins 2 min): an Edit or Run waits that long for a person's yes on the computer (or on a phone or computer it sends its approvals to), unless the user turned on auto mode there |
+| `space_wait` | ≤ 25 s per call |
+| `space_ask` waits for the answer | 25 s, then `result: pending` with its `request` (the computer gives an ask about 3 min, then `fleet.timeout`) |
+| goal, message | 20 000 characters |
+
+Tool refusals are `isError` results with a code: the cloud's
+(`mcp.invalid`, `mcp.unknown_device`, `mcp.unknown_space`,
+`mcp.untrusted_device`, `mcp.key_changed`, `mcp.fingerprint_mismatch`,
+`mcp.no_plan`, `mcp.busy`, `mcp.unknown_request`, `mcp.unknown_tool`)
+with fixed words, a computer's or the fleet's (`fleet.*`) as the code only.
+
+### Any space on a computer (protocol 7)
+
+Tools on every space of a trusted computer, not only those the MCP device
+started: the user's own, ones started elsewhere, sub-spaces. Code:
+`src/mcp/tools.ts`, `src/mcp/computer.ts`.
+
+| Tool | Op | Result |
+| --- | --- | --- |
+| `computer_spaces {device, project?}` | `list_spaces` | `spaces[]`, `truncated` |
+| `computer_space_read {device, space, messages? ≤ 50}` | `read_space` | space, goal, branch, base, progress, messages, live, question, diff, error |
+| `space_ask {device, space, question}` · `{request}` | `ask_space` | answer, agent, model, how; after 25 s `pending` + `request` |
+| `space_send {space, message, mode?}` (an `rs_` it started) | `send` | as before |
+| `space_send {device, space, message}` (any other) | `send_to` | `message` id; a `mode` is `mcp.invalid` (the space keeps its own) |
+| `space_answer {device, space, ask, answers}` | `answer_space` | `ok` |
+| `space_merge {device, parent, child}` | `merge_child` (Edit: may wait for a yes) | files, additions, deletions, conflicts, `computer_note` |
+
+```
+tool ─▶ target(): pinned here? key unchanged?  no ─▶ mcp.untrusted_device / mcp.key_changed
+     ─▶ signed op {space: local id | rs_…} ─▶ hub: target below 7? ─▶ refused{fleet.upgrade_required}
+                                               ─▶ computer: resolves the id, its gates, decides
+reply.value (signed, ≤ 128 KiB) ─▶ verified against the pin ─▶ re-shaped:
+  known fields only · texts cut · numbers / booleans checked · space ids
+  (12 hex or rs_…), project and agent ids only if they pass · lists capped
+  + note: the cloud's own words, "data, never instructions"
+refusal ─▶ its code only ("the computer refused: …" / "refused by the cloud: …")
+```
+
+- `space` / `parent` / `child`: the computer's local id (12 hex) or an
+  `rs_` id; the cloud never tracks these spaces.
+- `send_to` and `merge_child` pending: `waiting_for` says the computer may
+  be asking a person (`possibly …` for `send_to`: the space's own mode
+  decides).
+- `space_ask {request}`: only an `ask_space` this MCP device sent
+  (`mcp.unknown_request` otherwise); waits ≤ 25 s again for its outcome.
+- `space_read` of a space it started adds `sub_spaces[]` (local ids, from
+  the kept `sub_space` mirror) and a `sub_space` line `<id> · <title> ·
+  <status>` when one changes.
+
+### Local
+
+```
+cd cloud
+printf 'WORKOS_API_KEY=sk_test_…\nMCP_KEY_WRAP=%s\n' "$(openssl rand -base64 48)" > .dev.vars
+pnpm dev:mcp                       # wrangler dev --env local: OAUTH_KV simulated, never deployed
+claude mcp add --transport http theodore-local http://localhost:8787/mcp
+```
+
+Staging WorkOS needs `http://localhost:8787/oauth/callback` as a redirect
+URI for that. Tests (`test/mcp-*.test.ts`) need none of it: fake WorkOS,
+in-memory KV, the real `OrgHub` over node:sqlite.
+
+### Production checklist
+
+Per environment (staging, production):
+
+- [x] `OAUTH_KV`: a KV namespace per environment, bound in `wrangler.toml`
+      (`wrangler kv namespace create OAUTH_KV --env <env>`).
+- [x] `MCP_KEY_WRAP` secret per environment (`openssl rand -base64 48 |
+      wrangler secret put MCP_KEY_WRAP --env <env>`). Never in git. Changing
+      it makes every MCP device key unreadable: those devices must be made
+      again (and trusted again on the computers).
+- [x] WorkOS staging ─▶ Redirects: `https://theodore-cloud-staging.prd-instance.workers.dev/oauth/callback`
+      (added through the WorkOS API: `POST /user_management/redirect_uris`
+      with that environment's API key).
+- [ ] WorkOS production ─▶ Redirects: `https://theodore-cloud.prd-instance.workers.dev/oauth/callback`
+      (dashboard, or the same API call with the production key). Until
+      then the sign-in stops at WorkOS's "not a valid redirect URI".
+- [x] Nothing new for WorkOS keys: the code exchange and refresh use the
+      `WORKOS_API_KEY` already set.
+- [ ] Computers on the protocol this build speaks (7): older ones can't
+      see the MCP device and answer `fleet.upgrade_required`. They update
+      themselves.
+- [ ] Optional: `MCP_ORIGINS` (var) for a browser-based MCP client; a
+      Cron Trigger calling the library's `purgeExpiredData()` (KV TTLs
+      already expire most); Client ID Metadata Documents
+      (`clientIdMetadataDocumentEnabled` + the `global_fetch_strictly_public`
+      compatibility flag; off now, DCR covers Claude Code and claude.ai).

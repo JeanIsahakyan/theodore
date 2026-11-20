@@ -827,6 +827,8 @@ async fn call_agent_streaming(
         attachments: vec![],
         resume: None,
         stream_text: on_delta.is_some(),
+        fork_session: false,
+        account: None,
     };
     let mut run = agent.run(req).await?;
     let mut usage = Usage::default();

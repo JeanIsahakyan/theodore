@@ -39,6 +39,7 @@ const KIND_STATE: Record<ToolKind, PinceNezState> = {
   run: 'loading',
   agent: 'loading',
   mcp: 'loading',
+  space: 'loading',
   other: 'loading',
 };
 

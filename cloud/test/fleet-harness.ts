@@ -22,9 +22,12 @@ import {
 import { CloudError } from '../src/errors';
 import { PROTOCOL_VERSION } from '../src/fleet/limits';
 import type { PushMessage, PushResult } from '../src/fleet/push';
+import { McpFleet } from '../src/mcp/fleet';
 import { b64, signedBytes, unb64, type Domain } from '../src/fleet/wire';
 
 export const T0 = 1_800_000_000_000;
+/** Tests only: wraps MCP device keys (production: the MCP_KEY_WRAP secret). */
+export const MCP_TEST_SECRET = 'test-only-mcp-key-wrap-0123456789abcdef';
 
 export class FakeConn implements Conn {
   open = true;
@@ -69,6 +72,7 @@ export const info = (name = 'mac', over: Partial<DeviceInfo> = {}) =>
     accepts_remote: true,
     max_mode: 'edit',
     agents: [],
+    mcp_auto: [],
     ...over,
   }) satisfies DeviceInfo;
 
@@ -296,9 +300,28 @@ export class Harness {
   deferred: Promise<unknown>[] = [];
 
   readonly db: DatabaseSync;
+  /** The cloud's MCP devices, on the same hub (`{ mcp: true }`). */
+  readonly mcp?: McpFleet;
 
-  constructor(db = new DatabaseSync(':memory:')) {
+  constructor(
+    db = new DatabaseSync(':memory:'),
+    o: { mcp?: boolean; replyWaitMs?: number; askWaitMs?: number } = {},
+  ) {
     this.db = db;
+    const sql = {
+      exec: (q: string, ...b: (string | number | null)[]) =>
+        db.prepare(q).all(...b),
+    };
+    if (o.mcp) {
+      this.mcp = new McpFleet({
+        sql,
+        now: () => this.now,
+        hub: () => this.hub,
+        secret: MCP_TEST_SECRET,
+        replyWaitMs: o.replyWaitMs,
+        askWaitMs: o.askWaitMs,
+      });
+    }
     this.hub = new Hub({
       push: async (msgs) => {
         this.pushes.push(...msgs);
@@ -307,12 +330,14 @@ export class Harness {
       defer: (work) => {
         this.deferred.push(work);
       },
-      sql: { exec: (q, ...b) => db.prepare(q).all(...b) },
+      sql,
       now: () => this.now,
-      conns: (user) =>
-        this.conns.filter(
+      conns: (user) => [
+        ...this.conns.filter(
           (c) => c.open && c.user && (user === undefined || c.user === user),
         ),
+        ...(this.mcp?.conns(user) ?? []),
+      ],
       verify: async (t) => {
         if (this.jwksDown) {
           throw new CloudError(

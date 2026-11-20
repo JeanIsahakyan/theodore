@@ -43,6 +43,8 @@ pub fn seed_messages(space: &str, turns: usize, now_ms: u64, tag: u64) -> Vec<Ch
         vote: None,
         effort: None,
         mode: None,
+        from_space: None,
+        notice: None,
     };
     (0..turns)
         .flat_map(|n| {

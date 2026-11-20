@@ -47,9 +47,11 @@ use tokio::sync::{broadcast, mpsc};
 use crate::core::Core;
 use crate::error::AppError;
 use crate::usecases::fleet::{
-    Claimed, FleetSettings, Hosted, Reserved, Seen, fleet_mode, mode_str, space_mode,
+    Claimed, FleetSettings, Hosted, Reserved, Seen, TrustedDevice, fleet_mode, kind_str, mode_str,
+    space_mode,
 };
 use crate::usecases::fleet_agents::{agent_of, check_pick};
+use crate::usecases::fleet_confirm::needs_person;
 use crate::usecases::fleet_mirror::Mirror;
 use crate::usecases::fleet_origin::{line_of, truncate};
 use crate::usecases::spaces::space_chat_key;
@@ -303,7 +305,7 @@ impl Core {
         self.fleet_send_reply(req_id, origin, outcome).await;
     }
 
-    fn fleet_hosted_local(&self, remote: &str) -> Option<String> {
+    pub(super) fn fleet_hosted_local(&self, remote: &str) -> Option<String> {
         self.fleet()
             .hosted
             .get(remote)
@@ -386,6 +388,10 @@ impl Core {
                         .as_ref()
                         .map(|d| d.public_key.clone())
                         .unwrap_or_default(),
+                    kind: listed
+                        .as_ref()
+                        .map(|d| kind_str(d.info.kind).to_string())
+                        .unwrap_or_default(),
                 },
             });
             // Static words: nothing read before `open` goes into a reply
@@ -437,9 +443,22 @@ impl Core {
                 "this device couldn't record the request",
             ));
         }
-        if let Err(refusal) = self.fleet_check_op(&mut req, &s).await {
-            // Refused either way; a store failure only costs the replay
-            // memory of a request that ran nothing.
+        let mode = match self.fleet_check_op(&mut req, &s, pinned).await {
+            Ok(mode) => mode,
+            Err(refusal) => {
+                // Refused either way; a store failure only costs the replay
+                // memory of a request that ran nothing.
+                let _ = self
+                    .fleet_mark_seen(&req.req_id, issued_at, Seen::Done)
+                    .await;
+                return Err(refusal);
+            }
+        };
+        // Claude via the cloud (its key is the cloud's): an edit or run
+        // waits for a person here, and a daemon has nobody to ask.
+        let confirm = self.fleet_origin_mcp(pinned) && needs_person(mode);
+        if confirm && let Err(refusal) = self.fleet_confirm_gate(pinned, mode) {
+            self.fleet().release(req.op.space(), &req.req_id);
             let _ = self
                 .fleet_mark_seen(&req.req_id, issued_at, Seen::Done)
                 .await;
@@ -448,15 +467,36 @@ impl Core {
         Ok(Claimed {
             req,
             key: pinned.public_key.clone(),
+            mode,
+            confirm,
         })
     }
 
-    /// What the op itself must fit, checked before the claim. A send
-    /// without a mode gets the space's (what the cap was checked against).
+    /// What the op itself must fit, checked before the claim; the mode it
+    /// runs in (`Claimed::mode`). A send without a mode gets the space's
+    /// (what the cap was checked against).
     async fn fleet_check_op(
         &self,
         req: &mut RemoteRequest,
         s: &FleetSettings,
+        pin: &TrustedDevice,
+    ) -> Result<Option<FleetMode>, Refusal> {
+        if req.op.on_any_space() {
+            return self.fleet_check_any_space(req, s).await;
+        }
+        self.fleet_check_space_op(req, s, pin).await?;
+        Ok(match &req.op {
+            RemoteOp::StartSpace { mode, .. } => Some(*mode),
+            RemoteOp::Send { mode, .. } => *mode,
+            _ => None,
+        })
+    }
+
+    async fn fleet_check_space_op(
+        &self,
+        req: &mut RemoteRequest,
+        s: &FleetSettings,
+        pin: &TrustedDevice,
     ) -> Result<(), Refusal> {
         let above = |m: FleetMode| {
             refuse(
@@ -614,6 +654,55 @@ impl Core {
                     None => Ok(()),
                 }
             }
+            // A person's yes, or auto mode, never from Claude via the cloud
+            // itself: its key is the cloud's.
+            RemoteOp::Confirm { confirm_id, .. } => {
+                if self.fleet_origin_mcp(pin) {
+                    return Err(refuse(
+                        codes::INVALID,
+                        "Claude via the cloud can't answer for a person",
+                    ));
+                }
+                if !s.delegates.contains(&pin.device_id) {
+                    return Err(refuse(
+                        codes::INVALID,
+                        "this device doesn't send its prompts to yours",
+                    ));
+                }
+                if !self.fleet_confirm_waiting(confirm_id) {
+                    return Err(refuse(
+                        codes::INVALID,
+                        "that request isn't waiting any more",
+                    ));
+                }
+                Ok(())
+            }
+            RemoteOp::SetMcpAuto { mcp_device, .. } => {
+                if self.fleet_origin_mcp(pin) {
+                    return Err(refuse(
+                        codes::INVALID,
+                        "Claude via the cloud can't change its own auto mode",
+                    ));
+                }
+                let target = s
+                    .trusted_devices
+                    .iter()
+                    .find(|t| &t.device_id == mcp_device);
+                if !target.is_some_and(|t| self.fleet_origin_mcp(t)) {
+                    return Err(refuse(
+                        codes::INVALID,
+                        "auto mode is only for a Claude via cloud device trusted here",
+                    ));
+                }
+                Ok(())
+            }
+            // `fleet_check_any_space`.
+            RemoteOp::ListSpaces { .. }
+            | RemoteOp::ReadSpace { .. }
+            | RemoteOp::AskSpace { .. }
+            | RemoteOp::SendTo { .. }
+            | RemoteOp::AnswerSpace { .. }
+            | RemoteOp::MergeChild { .. } => Ok(()),
         }
     }
 
@@ -656,6 +745,15 @@ impl Core {
                 core.fleet_reply(c.req, Err(refusal)).await;
                 return;
             }
+            // A person's yes first, when it needs one; waits in this task
+            // only, never in front of other requests.
+            if c.confirm
+                && let Err(refusal) = core.fleet_confirm_or_auto(&c).await
+            {
+                core.fleet().release(c.req.op.space(), &c.req.req_id);
+                core.fleet_reply(c.req, Err(refusal)).await;
+                return;
+            }
             core.fleet_run(c).await;
         });
     }
@@ -689,12 +787,7 @@ impl Core {
                 "the requesting device isn't trusted on this device any more",
             ));
         }
-        let mode = match &c.req.op {
-            RemoteOp::StartSpace { mode, .. } => Some(*mode),
-            RemoteOp::Send { mode, .. } => *mode,
-            RemoteOp::Stop { .. } | RemoteOp::Answer { .. } => None,
-        };
-        if let Some(m) = mode
+        if let Some(m) = c.mode
             && m > s.max_mode
         {
             return Err(refuse(
@@ -715,7 +808,7 @@ impl Core {
         let req = c.req;
         let outcome = match checked {
             Err(refusal) => Err(refusal),
-            Ok(()) => self.fleet_run_op(&req).await,
+            Ok(()) => self.fleet_run_op(&req, c.mode).await,
         };
         // A start's slot goes either way: hosted now, or not at all.
         self.fleet().release(req.op.space(), &req.req_id);
@@ -738,7 +831,14 @@ impl Core {
             .map_err(app_refusal)
     }
 
-    async fn fleet_run_op(&self, req: &RemoteRequest) -> Result<serde_json::Value, Refusal> {
+    async fn fleet_run_op(
+        &self,
+        req: &RemoteRequest,
+        mode: Option<FleetMode>,
+    ) -> Result<serde_json::Value, Refusal> {
+        if req.op.on_any_space() {
+            return self.fleet_run_any_space(req, mode).await;
+        }
         match req.op.clone() {
             RemoteOp::StartSpace { .. } => self.fleet_host_start(req).await,
             RemoteOp::Send {
@@ -792,6 +892,26 @@ impl Core {
                 }
                 None => Err(refuse(codes::UNKNOWN_SPACE, "no such space on this device")),
             },
+            RemoteOp::Confirm { confirm_id, allow } => self
+                .fleet_confirm_here(&confirm_id, allow, &req.origin_device)
+                .map(|()| serde_json::json!({}))
+                .map_err(|_| refuse(codes::INVALID, "that request isn't waiting any more")),
+            RemoteOp::SetMcpAuto {
+                mcp_device,
+                auto,
+                until_ms,
+            } => self
+                .fleet_apply_auto(&mcp_device, auto, until_ms, &req.origin_device)
+                .await
+                .map(|()| serde_json::json!({}))
+                .map_err(|e| refuse(codes::INVALID, e.to_string())),
+            // `fleet_run_any_space`.
+            RemoteOp::ListSpaces { .. }
+            | RemoteOp::ReadSpace { .. }
+            | RemoteOp::AskSpace { .. }
+            | RemoteOp::SendTo { .. }
+            | RemoteOp::AnswerSpace { .. }
+            | RemoteOp::MergeChild { .. } => Err(refuse(codes::INTERNAL, "not a space op")),
         }
     }
 
@@ -831,8 +951,9 @@ impl Core {
         // Marked hosted before its first turn starts: that turn's tools
         // must already be a hosted space's.
         let core = self.clone();
+        let origin = req.origin_device.clone();
         let mark: crate::usecases::spaces::OnSpaceCreated = Box::new(move |s: &Space| {
-            core.fleet().hosting.insert(s.id.clone());
+            core.fleet().hosting.insert(s.id.clone(), origin);
         });
         let space = self
             .create_space_then(

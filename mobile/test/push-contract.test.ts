@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
+  ACTION_ALLOW,
+  ACTION_DENY,
+  CATEGORY_CONFIRM,
+  HOME_PATH,
   MAX_BODY,
   askPresentation,
   classifyResponse,
@@ -151,5 +155,59 @@ describe('small helpers', () => {
     expect(showInForeground(ask, 'other')).toBe(true);
     expect(showInForeground(ask, null)).toBe(true);
     expect(showInForeground({}, 'sp1')).toBe(true);
+  });
+});
+
+describe('confirm pushes (Claude via cloud)', () => {
+  const confirm = {
+    kind: 'confirm',
+    confirm_id: 'req_c1',
+    host_device: 'dev-mac',
+    space: '',
+    ask_id: '',
+    options: [],
+  };
+
+  it('parses the data the cloud sends', () => {
+    expect(parsePushData(confirm)).toEqual({
+      kind: 'confirm',
+      ask_id: '',
+      space: '',
+      host_device: 'dev-mac',
+      options: [],
+      confirm_id: 'req_c1',
+    });
+    expect(parsePushData({ ...confirm, confirm_id: '' })).toBeNull();
+    expect(parsePushData({ ...confirm, host_device: undefined })).toBeNull();
+  });
+
+  it('Allow and Deny answer it; anything else opens Home', () => {
+    expect(
+      classifyResponse({ actionIdentifier: ACTION_ALLOW, data: confirm }),
+    ).toEqual({
+      type: 'confirm',
+      hostDevice: 'dev-mac',
+      confirmId: 'req_c1',
+      allow: true,
+    });
+    expect(
+      classifyResponse({ actionIdentifier: ACTION_DENY, data: confirm }),
+    ).toMatchObject({ type: 'confirm', allow: false });
+    expect(
+      classifyResponse({
+        actionIdentifier: 'expo.modules.notifications.actions.DEFAULT',
+        data: confirm,
+      }),
+    ).toEqual({ type: 'home' });
+    expect(
+      classifyResponse({ actionIdentifier: 'opt0', data: confirm }),
+    ).toEqual({ type: 'home' });
+    expect(HOME_PATH).toBe('/');
+    expect(CATEGORY_CONFIRM).toBe('confirm');
+  });
+
+  it('is always bannered in the foreground', () => {
+    expect(showInForeground(confirm, '')).toBe(true);
+    expect(showInForeground(confirm, null)).toBe(true);
   });
 });

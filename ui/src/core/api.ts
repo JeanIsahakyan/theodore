@@ -7,7 +7,10 @@ import type {
   AccountSignInStart,
   AccountSignInState,
   AccountStatus,
+  AddAgentAccountRequest,
   AddProjectRequest,
+  AgentAccountRequest,
+  AgentAccountStatus,
   AgentId,
   AgentModel,
   AgentStatus,
@@ -30,6 +33,9 @@ import type {
   FileRequest,
   FindSymbolRequest,
   FleetAnswerRequest,
+  FleetAutoRequest,
+  FleetConfirm,
+  FleetConfirmAnswer,
   FleetPresenceRequest,
   FleetRemoteSpace,
   FleetSettingsRequest,
@@ -118,6 +124,7 @@ import type {
   SetTokenRequest,
   SkillBody,
   SkillInfo,
+  SpacePauseRequest,
   SubmitReviewRequest,
   SymbolHit,
   SyncFrame,
@@ -240,9 +247,10 @@ export const api = {
     call<Attachment>('save_attachment', { req }),
   /** A saved attachment as a `data:<mime>;base64,…` URL. */
   attachmentData: (id: string) => call<string>('attachment_data', { id }),
-  /** What's stored of a tool call; `null`: nothing was. */
-  toolPayload: (run: string, callId: string) =>
-    call<ToolPayload | null>('tool_payload', { run, call: callId }),
+  /** What's stored of a tool call; `null`: nothing was. `quiet`: a passive
+   *  read (the Agents panel's models), no toast. */
+  toolPayload: (run: string, callId: string, quiet = false) =>
+    call<ToolPayload | null>('tool_payload', { run, call: callId }, quiet),
   cancelRun: (run: string) => call<null>('cancel_run', { run }),
   submitReview: (req: SubmitReviewRequest) =>
     call<null>('submit_review', { req }),
@@ -251,6 +259,16 @@ export const api = {
     call<AgentStatus[]>('detect_agents', { recheck }),
   agentModels: (agent: AgentId) =>
     call<AgentModel[]>('agent_models', { agent }),
+  /** Every account of every agent, with its sign-in and last limit. */
+  agentAccounts: () => call<AgentAccountStatus[]>('agent_accounts'),
+  /** A new account in its own config dir; sign it in with its command. */
+  addAgentAccount: (req: AddAgentAccountRequest) =>
+    call<AgentAccountStatus>('add_agent_account', { req }),
+  removeAgentAccount: (req: AgentAccountRequest) =>
+    call<null>('remove_agent_account', { req }),
+  /** `recheck`: its sign-in asked again, not read from the cache. */
+  checkAgentAccount: (req: AgentAccountRequest) =>
+    call<AgentAccountStatus>('check_agent_account', { req }),
   appInfo: () => call<AppInfo>('app_info'),
   /** `quiet`: the caller says what failed itself (the update toast). */
   checkUpdate: (quiet = false) =>
@@ -356,6 +374,12 @@ export const api = {
   spaceStopTask: (space: string, task: string) =>
     call<null>('space_stop_task', { space, task }),
   spaceStop: (space: string) => call<null>('space_stop', { space }),
+  /** A space paused on usage limits: continue it now. */
+  spacePauseContinue: (req: SpacePauseRequest) =>
+    call<null>('space_pause_continue', { req }),
+  /** A space paused on usage limits: stop waiting; its queue stays held. */
+  spacePauseCancel: (req: SpacePauseRequest) =>
+    call<null>('space_pause_cancel', { req }),
   spaceSkills: (space: string) => call<SkillInfo[]>('space_skills', { space }),
   projectSkills: (project: string) =>
     call<SkillInfo[]>('project_skills', { project }),
@@ -502,6 +526,16 @@ export const api = {
   fleetStartSpace: (req: FleetStartRequest) =>
     call<FleetRemoteSpace>('fleet_start_space', { req }),
   fleetAnswer: (req: FleetAnswerRequest) => call<null>('fleet_answer', { req }),
+  /** Requests from Claude via the cloud waiting for your yes here: quiet,
+   *  with no fleet there are none. */
+  fleetConfirms: () => call<FleetConfirm[]>('fleet_confirms', undefined, true),
+  /** Allow or Deny one of them. */
+  fleetConfirm: (req: FleetConfirmAnswer) =>
+    call<null>('fleet_confirm', { req }),
+  /** Auto mode for Claude via cloud, here or (`host_device`) on another
+   *  computer you trust. */
+  fleetSetAuto: (req: FleetAutoRequest) =>
+    call<FleetStatus>('fleet_set_auto', { req }),
   fleetSpaces: () => call<FleetRemoteSpace[]>('fleet_spaces', undefined, true),
   /** Where you are, for routing questions: never toasted. */
   fleetPresence: (req: FleetPresenceRequest): Promise<null> =>

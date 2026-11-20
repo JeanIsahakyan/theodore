@@ -300,8 +300,7 @@ describe('AgentMenu', () => {
     const chip = await render(store, 'claude');
     await click(chip);
     await settle();
-    await click(item('Models')!);
-    await settle();
+    await openForItem('Models', 'Fable 5.1');
     expect(item('Fable 5.1')).toBeTruthy();
     expect(item('GPT-6-Luna')).toBeTruthy();
     expect(item('Opus 4.6')).toBeUndefined();
@@ -388,8 +387,7 @@ describe('AgentMenu', () => {
       const chip = await renderOwn(store, 'claude-fable-5-1');
       await click(chip);
       await settle();
-      await click(item('Effort')!);
-      await settle();
+      await openForItem('Effort', 'Max');
       await click(item('Max')!);
       await settle();
       expect(agentEffort(store, 'claude')).toBe('max');
@@ -402,8 +400,7 @@ describe('AgentMenu', () => {
       expect(agentModel(store, 'claude')).toBe('claude-opus-5-5');
       await click(chip);
       await settle();
-      await click(item('Models')!);
-      await settle();
+      await openForItem('Models', 'GPT-6-Luna');
       await click(item('GPT-6-Luna')!);
       await settle();
       expect(pickedModel).toEqual({ agent: 'codex', model: 'gpt-6-luna' });
@@ -417,8 +414,7 @@ describe('AgentMenu', () => {
     const chip = await render(store, 'claude');
     await click(chip);
     await settle();
-    await click(item('Models')!);
-    await settle();
+    await openForItem('Models', 'GPT-6-Luna');
     await click(item('GPT-6-Luna')!);
     await settle();
     expect(agentModel(store, 'codex')).toBe('gpt-6-luna');
@@ -444,8 +440,7 @@ describe('AgentMenu', () => {
 
     await click(chip);
     await settle();
-    await click(item('Models')!);
-    await settle();
+    await openForItem('Models', 'GPT-6-Luna');
     await click(item('GPT-6-Luna')!);
     await settle();
     await settle();
@@ -462,8 +457,7 @@ describe('AgentMenu', () => {
     const chip = await render(store, 'codex');
     await click(chip);
     await settle();
-    await click(item('Effort')!);
-    await settle();
+    await openForItem('Effort', 'Ultra');
     expect(item('Ultra')).toBeTruthy();
     expect(item('Max')).toBeUndefined();
     await click(item('Ultra')!);
@@ -488,8 +482,7 @@ describe('AgentMenu', () => {
     await settle();
     await click(m.host.querySelector('button[aria-label="Model"]'));
     await settle();
-    await click(item('Effort')!);
-    await settle();
+    await openForItem('Effort', 'Ultracode');
     await click(item('Ultracode')!);
     await settle();
     expect(agentEffort(store, 'claude')).toBe('ultracode');
@@ -499,8 +492,7 @@ describe('AgentMenu', () => {
     expect(chip.textContent).toBe('Opus 5.5 Ultracode');
     await click(chip);
     await settle();
-    await click(item('Effort')!);
-    await settle();
+    await openForItem('Effort', 'Max');
     expect(item('Ultracode')).toBeUndefined();
     expect(agentEffort(store, 'claude')).toBe('ultracode');
   });
@@ -585,8 +577,7 @@ describe('AgentMenu', () => {
     await settle();
     // Its settings aren't this device's to edit.
     expect(item('Edit')).toBeUndefined();
-    await click(item('Models')!);
-    await settle();
+    await openForItem('Models', 'GPT Mini');
     await click(item('GPT Mini')!);
     await settle();
     expect(models).toEqual(['gpt-mini']);

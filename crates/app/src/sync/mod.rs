@@ -41,6 +41,7 @@ impl Core {
                     models::PROJECT,
                     models::SPACE,
                     models::REPORT,
+                    models::AGENT_LIMIT,
                 ] {
                     out.extend(store.all(m)?);
                 }

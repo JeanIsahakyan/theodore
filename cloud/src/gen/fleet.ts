@@ -41,7 +41,28 @@ idle_ms: number } |
 /**  This device's push token (phone app); an empty token removes it. */
 { type: "register_push"; provider: PushProvider; token: string } |
 /**  A [`Delegation`] signed by this device as its origin. */
-{ type: "delegate"; envelope: SignedEnvelope };
+{ type: "delegate"; envelope: SignedEnvelope } |
+/**
+ *  A [`RemoteConfirm`] signed by this device as its host: shown on the
+ *  devices it delegates to (protocol 6).
+ */
+{ type: "confirm"; envelope: SignedEnvelope } |
+/**  The confirm was answered (here or elsewhere) or ran out of time. */
+{ type: "confirm_resolved"; confirm_id: string };
+
+/**  What a request waiting for a person would do (`RemoteConfirm::action`). */
+export type ConfirmAction =
+/**  Start a space in `project_name`. */
+"start" |
+/**  Send a message to `space_name`, as its next turn. */
+"send" |
+/**  Approve the plan in `space_name` (its next turn edits). */
+"approve_plan" |
+/**
+ *  Merge sub-space `text` (its title) into `space_name`'s worktree
+ *  (protocol 7; an older delegate drops the prompt).
+ */
+"merge";
 
 /**
  *  An origin lets another of its user's devices follow the spaces it
@@ -81,6 +102,13 @@ export type DeviceInfo = {
 	 *  Kept within [`MAX_INFO_BYTES`] by [`DeviceInfo::fit_agents`].
 	 */
 	agents?: FleetAgentInfo[],
+	/**
+	 *  A host's auto mode for each Claude via the cloud (`mcp`) device it
+	 *  pins (docs/fleet.md "Auto mode"), so another of the user's devices
+	 *  can show it and change it (`RemoteOp::SetMcpAuto`). Empty on other
+	 *  kinds and on hosts older than this field.
+	 */
+	mcp_auto?: McpAutoState[],
 };
 
 export type DeviceKind =
@@ -91,7 +119,14 @@ export type DeviceKind =
 /**  The phone app (docs/mobile.md): a client only, never a target. */
 "mobile" |
 /**  The web app: a client only, never a target. */
-"web";
+"web" |
+/**
+ *  The cloud's MCP endpoint (docs/fleet.md "MCP over the cloud"): a
+ *  client only, never a target. Its key lives in the cloud, so a host
+ *  caps what it may do without a person (`FleetMode::Plan`); an Edit or
+ *  Run from it waits for a yes on the host.
+ */
+"mcp";
 
 export type DeviceOs = "macos" | "linux" | "windows" | "ios" | "android" |
 /**
@@ -158,6 +193,54 @@ export type FleetModelInfo = {
 	default_effort?: string | null,
 };
 
+/**
+ *  Whether a host lets Claude via the cloud (`DeviceKind::Mcp`) edit or run
+ *  without a person's yes (docs/fleet.md "Auto mode"). It never lifts the
+ *  host's `max_mode`; it only skips the prompt.
+ */
+export type McpAuto =
+/**  Every Edit or Run waits for a person (the default). */
+"off" |
+/**
+ *  Edit starts and sends (a plan's approval into Edit too) run at once;
+ *  Run still waits.
+ */
+"edit" |
+/**  Edit and Run run at once, a plan's approval too. */
+"full";
+
+/**  A host's auto mode for one `mcp` device it pins. */
+export type McpAutoState = {
+	device_id: string,
+	auto: McpAuto,
+	/**  Unix ms it ends; `None`: until turned off. */
+	until_ms?: number | null,
+};
+
+/**
+ *  `mirror{sub_space}`'s `data`: a sub-space of a hosted space, as that
+ *  space's followers see it in its tree.
+ */
+export type MirroredSubSpace = {
+	/**  Its local id on the host (what `send_to` and `read_space` take). */
+	space: string,
+	/**
+	 *  Its parent: the hosted space's `rs_` id, or another sub-space's
+	 *  local id.
+	 */
+	parent: string,
+	/**  At most 120 characters. */
+	title: string,
+	/**
+	 *  `setting_up`, `running`, `question`, `waiting`, `idle`, `failed` or
+	 *  `archived`, as `spaces_list` says it.
+	 */
+	status: string,
+	mode: FleetMode,
+	/**  Merged into its parent, or shipped. */
+	done: boolean,
+};
+
 export type ProjectRef = {
 	/**  The project's id on that device. */
 	id: string,
@@ -176,6 +259,30 @@ export type RemoteAsk = {
 	/**  Where the question comes from, for people: "<device> · <space name>". */
 	from: string,
 	questions: RemoteQuestion[],
+};
+
+/**
+ *  A request from Claude via the cloud (`DeviceKind::Mcp`) waiting on its
+ *  host for a person's yes, as the host shows it to the devices it
+ *  delegates to, signed by the host ([`Domain::Confirm`]). They answer with
+ *  a signed [`RemoteOp::Confirm`] to the host; the first answer wins.
+ */
+export type RemoteConfirm = {
+	/**  The waiting request's `req_id`. */
+	confirm_id: string,
+	host_device: string,
+	/**  The `mcp` device that asked. */
+	mcp_device: string,
+	action: ConfirmAction,
+	mode: FleetMode,
+	/**  `start`: the project it starts in, as the host names it. */
+	project_name?: string | null,
+	/**  `send` / `approve_plan`: the space, as the host names it. */
+	space_name?: string | null,
+	/**  The goal or the message, at most [`CONFIRM_TEXT_MAX`] characters. */
+	text: string,
+	/**  Unix ms: refused on the host unless answered before. */
+	expires_at_ms: number,
 };
 
 export type RemoteOp = { op: "start_space"; space: string; project_id: string; goal: string; mode: FleetMode; agent?: string | null; model?: string | null;
@@ -199,7 +306,48 @@ agent?: string | null; model?: string | null; effort?: string | null } | { op: "
  *  the chosen options (several when the question allows), or a free
  *  text as the single entry for "Other".
  */
-{ op: "answer"; space: string; ask_id: string; answers: string[][] };
+{ op: "answer"; space: string; ask_id: string; answers: string[][] } |
+/**
+ *  A person's Allow or Deny, on a device the target delegates to, of a
+ *  request from Claude via the cloud waiting on the target
+ *  ([`RemoteConfirm::confirm_id`]). Never taken from an `mcp` device.
+ */
+{ op: "confirm"; confirm_id: string; allow: boolean } |
+/**
+ *  Sets the target's auto mode for an `mcp` device it pins
+ *  (docs/fleet.md "Auto mode"). Never taken from an `mcp` device.
+ */
+{ op: "set_mcp_auto"; mcp_device: string; auto: McpAuto;
+/**  Unix ms it ends; `None`: until turned off. */
+until_ms?: number | null } |
+/**
+ *  Every space on the target that isn't archived, newest activity
+ *  first (`spaces_list`).
+ */
+{ op: "list_spaces"; project?: string | null } |
+/**
+ *  One space: goal, status, its last `messages` (default 10, at most
+ *  50), the running turn's text, a question, progress, diff stat
+ *  (`space_read`).
+ */
+{ op: "read_space"; space: string; messages?: number | null } |
+/**
+ *  Its own agent answers `question` from a read-only fork of its
+ *  session; the space is left as it was (`space_ask`).
+ */
+{ op: "ask_space"; space: string; question: string } |
+/**
+ *  A message as the space's next turn, in the space's own mode (never
+ *  changed); refused while it runs (`fleet.busy`).
+ */
+{ op: "send_to"; space: string; message: string } |
+/**  Answers question set `ask` waiting in `space`, as `Answer` does. */
+{ op: "answer_space"; space: string; ask: string; answers: string[][] } |
+/**
+ *  Merges sub-space `child` into its parent `parent`'s worktree
+ *  (`space_merge`); counts as Edit.
+ */
+{ op: "merge_child"; parent: string; child: string };
 
 export type RemoteQuestion = {
 	question: string,
@@ -307,7 +455,15 @@ resume: { [key in string]: number } } |
  *  The live delegations naming this device (as origin or delegate), each
  *  as the origin signed it; sent after welcome and on change.
  */
-{ type: "delegations"; list: SignedEnvelope[] };
+{ type: "delegations"; list: SignedEnvelope[] } |
+/**
+ *  A host's signed [`RemoteConfirm`], forwarded unchanged to the
+ *  devices it delegates to (protocol 6), again after their welcome
+ *  while it waits.
+ */
+{ type: "confirm"; envelope: SignedEnvelope } |
+/**  The confirm is no longer waiting on its host. */
+{ type: "confirm_dismissed"; confirm_id: string };
 
 /**
  *  A request body signed by its origin device. `body` is the JSON text of a
@@ -344,3 +500,38 @@ export type StartedSpace = {
 };
 
 export type TurnOutcome = "done" | "stopped" | "failed";
+
+/** Refusal codes (docs/fleet.md), by their Rust name. */
+export const FLEET_CODES = {
+	REMOTE_OFF: "fleet.remote_off",
+	UNTRUSTED_DEVICE: "fleet.untrusted_device",
+	BAD_SIGNATURE: "fleet.bad_signature",
+	STALE_REQUEST: "fleet.stale_request",
+	MODE_NOT_ALLOWED: "fleet.mode_not_allowed",
+	UNKNOWN_PROJECT: "fleet.unknown_project",
+	UNKNOWN_SPACE: "fleet.unknown_space",
+	DEPTH: "fleet.depth",
+	INVALID: "fleet.invalid",
+	AGENT_UNAVAILABLE: "fleet.agent_unavailable",
+	OFFLINE: "fleet.offline",
+	BUSY: "fleet.busy",
+	INTERNAL: "fleet.internal",
+	DENIED: "fleet.denied",
+	TIMEOUT: "fleet.timeout",
+	UNAUTHORIZED: "fleet.unauthorized",
+	NO_ORG: "fleet.no_org",
+	VERSION: "fleet.version",
+	KEY_MISMATCH: "fleet.key_mismatch",
+	TOO_LARGE: "fleet.too_large",
+	RATE_LIMITED: "fleet.rate_limited",
+	NOT_YOURS: "fleet.not_yours",
+	BAD_MESSAGE: "fleet.bad_message",
+	TOO_MANY_DEVICES: "fleet.too_many_devices",
+	REMOVED: "fleet.removed",
+	TOO_MANY_SPACES: "fleet.too_many_spaces",
+	TOO_MANY_CONNECTIONS: "fleet.too_many_connections",
+	UPGRADE_REQUIRED: "fleet.upgrade_required",
+	UNAVAILABLE: "fleet.unavailable",
+	BAD_URL: "fleet.bad_url",
+	TLS: "fleet.tls",
+} as const;

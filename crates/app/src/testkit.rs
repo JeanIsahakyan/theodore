@@ -506,6 +506,17 @@ pub type MirrorEditedCall = (PathBuf, String, Sha, Vec<String>);
 /// `(folder, from, paths)`.
 pub type MirrorRestoreCall = (PathBuf, Sha, Vec<String>);
 
+/// One `space_apply`: into which worktree, the change `from..to`, and the
+/// sides' labels.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ApplyCall {
+    pub worktree: PathBuf,
+    pub from: Sha,
+    pub to: Sha,
+    pub ours: String,
+    pub theirs: String,
+}
+
 pub struct FakeGit {
     pub repo_path: PathBuf,
     /// What `grep` returns for any pattern; `None`: `Unsupported`, like
@@ -576,6 +587,11 @@ pub struct FakeGit {
     /// `abort` with the checkpoint.
     merge_results: Mutex<VecDeque<theodore_ports::SpaceMerge>>,
     pub merge_calls: Mutex<Vec<(&'static str, String, Sha)>>,
+    /// `space_merge` (a sub-space into its parent): what the next
+    /// `space_apply` calls return, in order (empty: one file `merged.txt`,
+    /// +1 −0, no conflicts), and every call.
+    apply_results: Mutex<VecDeque<GitResult<theodore_ports::SpaceApply>>>,
+    pub apply_calls: Mutex<Vec<ApplyCall>>,
     /// The `HEAD` every `space_reset` moved the worktree to.
     pub reset_heads: Mutex<Vec<Sha>>,
     /// A space worktree's own `HEAD` (`SpaceCheckpoint::head`); unset: the
@@ -716,6 +732,8 @@ impl FakeGit {
             resets: Mutex::new(Vec::new()),
             merge_results: Mutex::new(VecDeque::new()),
             merge_calls: Mutex::new(Vec::new()),
+            apply_results: Mutex::new(VecDeque::new()),
+            apply_calls: Mutex::new(Vec::new()),
             reset_heads: Mutex::new(Vec::new()),
             space_heads: Mutex::new(HashMap::new()),
             restored: Mutex::new(Vec::new()),
@@ -929,6 +947,11 @@ impl FakeGit {
     /// The next `space_merge` / `space_merge_finish` returns `r`.
     pub fn push_merge_result(&self, r: theodore_ports::SpaceMerge) {
         self.merge_results.lock().unwrap().push_back(r);
+    }
+
+    /// The next `space_apply` returns `r`.
+    pub fn push_apply_result(&self, r: GitResult<theodore_ports::SpaceApply>) {
+        self.apply_results.lock().unwrap().push_back(r);
     }
 
     fn merge_call(&self, call: &'static str, space: &str, sha: &Sha) -> theodore_ports::SpaceMerge {
@@ -1402,6 +1425,37 @@ impl GitPort for FakeGit {
         _message: &str,
     ) -> GitResult<theodore_ports::SpaceMerge> {
         Ok(self.merge_call("finish", space, tip))
+    }
+
+    async fn space_apply(
+        &self,
+        worktree: &Path,
+        from: &Sha,
+        to: &Sha,
+        ours: &str,
+        theirs: &str,
+    ) -> GitResult<theodore_ports::SpaceApply> {
+        self.apply_calls.lock().unwrap().push(ApplyCall {
+            worktree: worktree.to_path_buf(),
+            from: from.clone(),
+            to: to.clone(),
+            ours: ours.to_string(),
+            theirs: theirs.to_string(),
+        });
+        self.apply_results
+            .lock()
+            .unwrap()
+            .pop_front()
+            .unwrap_or_else(|| {
+                Ok(theodore_ports::SpaceApply {
+                    files: vec![theodore_ports::FileStat {
+                        path: "merged.txt".into(),
+                        additions: 1,
+                        deletions: 0,
+                    }],
+                    conflicts: Vec::new(),
+                })
+            })
     }
 
     async fn space_merge_abort(&self, _worktree: &Path, space: &str, to: &Sha) -> GitResult<()> {
@@ -2138,7 +2192,8 @@ impl HostAdapter for FakeHost {
 // ── agents ────────────────────────────────────────────────────────────────
 
 /// A `push_tagged` entry: matched against a request, then spent.
-type TaggedScript = (Box<dyn Fn(&AgentRequest) -> bool + Send>, Vec<AgentEvent>);
+type RequestMatch = Box<dyn Fn(&AgentRequest) -> bool + Send>;
+type TaggedScript = (RequestMatch, Vec<AgentEvent>);
 
 #[derive(Default)]
 pub struct FakeAgent {
@@ -2148,6 +2203,9 @@ pub struct FakeAgent {
     /// test wants to control without racing a turn's own queued script
     /// (`stream_text: true`, never matched here).
     tagged: Mutex<Vec<TaggedScript>>,
+    /// Checked first: the next call whose request matches hangs until it
+    /// is cancelled, whatever kind it is (a `space_ask` held open).
+    hang_matching: Mutex<Vec<RequestMatch>>,
     hang_next: Mutex<bool>,
     /// The next one-shot utility call (`stream_text: false`) hangs likewise.
     hang_next_utility: Mutex<bool>,
@@ -2180,6 +2238,14 @@ pub struct FakeAgent {
     signed_in: Mutex<std::collections::HashMap<theodore_domain::AgentId, Option<bool>>>,
     /// How many times `recheck_sign_in` ran.
     rechecks: std::sync::atomic::AtomicUsize,
+    /// What each extra account's sign-in says (`set_account_signed_in`),
+    /// by `(agent, account id)`; unknown by default.
+    account_signed_in:
+        Mutex<std::collections::HashMap<(theodore_domain::AgentId, String), Option<bool>>>,
+    /// What `carry_session` answers (`set_carry`); `false` by default.
+    carry: std::sync::atomic::AtomicBool,
+    /// Every `carry_session` call: `(session, from account, to account)`.
+    carried: Mutex<Vec<(String, String, String)>>,
 }
 
 /// What an untagged, unscripted call gets: one plain, successful turn.
@@ -2209,6 +2275,26 @@ impl FakeAgent {
     pub fn set_signed_in(&self, agent: theodore_domain::AgentId, signed_in: Option<bool>) {
         self.signed_in.lock().unwrap().insert(agent, signed_in);
     }
+    /// What an extra account's sign-in says from now on.
+    pub fn set_account_signed_in(
+        &self,
+        agent: theodore_domain::AgentId,
+        account: &str,
+        signed_in: Option<bool>,
+    ) {
+        self.account_signed_in
+            .lock()
+            .unwrap()
+            .insert((agent, account.to_string()), signed_in);
+    }
+    /// Whether `carry_session` succeeds from now on.
+    pub fn set_carry(&self, ok: bool) {
+        self.carry.store(ok, std::sync::atomic::Ordering::SeqCst);
+    }
+    /// Every `carry_session` call so far: `(session, from, to)`.
+    pub fn carried(&self) -> Vec<(String, String, String)> {
+        self.carried.lock().unwrap().clone()
+    }
     /// How many times `recheck_sign_in` ran.
     pub fn rechecks(&self) -> usize {
         self.rechecks.load(std::sync::atomic::Ordering::SeqCst)
@@ -2229,6 +2315,11 @@ impl FakeAgent {
             .lock()
             .unwrap()
             .push((Box::new(matches), events));
+    }
+    /// The next call whose request matches `matches` never emits anything
+    /// and only closes once cancelled.
+    pub fn hang_matching(&self, matches: impl Fn(&AgentRequest) -> bool + Send + 'static) {
+        self.hang_matching.lock().unwrap().push(Box::new(matches));
     }
     /// The next turn / skill / ask `run()` (`stream_text: true`) never
     /// emits anything and only closes once cancelled, as a real agent's
@@ -2313,9 +2404,55 @@ impl AgentPort for FakeAgent {
             .copied()
             .flatten()
     }
+    async fn account_sign_in(
+        &self,
+        agent: theodore_domain::AgentId,
+        account: &theodore_ports::AgentAccountRef,
+        _recheck: bool,
+    ) -> Option<bool> {
+        self.known_account_sign_in(agent, account)
+    }
+    fn known_account_sign_in(
+        &self,
+        agent: theodore_domain::AgentId,
+        account: &theodore_ports::AgentAccountRef,
+    ) -> Option<bool> {
+        if account.is_default() {
+            return self.known_sign_in(agent);
+        }
+        self.account_signed_in
+            .lock()
+            .unwrap()
+            .get(&(agent, account.id.clone()))
+            .copied()
+            .flatten()
+    }
+    async fn carry_session(
+        &self,
+        _agent: theodore_domain::AgentId,
+        session: &str,
+        _cwd: &std::path::Path,
+        from: &theodore_ports::AgentAccountRef,
+        to: &theodore_ports::AgentAccountRef,
+    ) -> bool {
+        self.carried
+            .lock()
+            .unwrap()
+            .push((session.to_string(), from.id.clone(), to.id.clone()));
+        self.carry.load(std::sync::atomic::Ordering::SeqCst)
+    }
     async fn run(&self, req: AgentRequest) -> Result<AgentRun, AgentError> {
         let stream_text = req.stream_text;
-        let tagged = {
+        let held = {
+            let mut held = self.hang_matching.lock().unwrap();
+            held.iter()
+                .position(|matches| matches(&req))
+                .map(|i| held.remove(i))
+                .is_some()
+        };
+        let tagged = if held {
+            None
+        } else {
             let mut tagged = self.tagged.lock().unwrap();
             tagged
                 .iter()
@@ -2330,7 +2467,9 @@ impl AgentPort for FakeAgent {
         let (tx, rx) = tokio::sync::mpsc::channel(64);
         // Only a turn / skill / ask hangs: a background one-shot call
         // (naming, handoff) must not take the hang meant for it.
-        let hang = if stream_text {
+        let hang = if held {
+            true
+        } else if stream_text {
             std::mem::take(&mut *self.hang_next.lock().unwrap())
         } else {
             std::mem::take(&mut *self.hang_next_utility.lock().unwrap())

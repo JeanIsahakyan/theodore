@@ -32,6 +32,7 @@ sha2.workspace = true
 hex.workspace = true
 base64 = "0.22"
 regex.workspace = true
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 tracing.workspace = true
 tempfile = { workspace = true, optional = true }
 

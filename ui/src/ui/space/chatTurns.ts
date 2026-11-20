@@ -5,6 +5,7 @@
  * ```text
  * head   setup stage / note             stays mounted
  * turn   you ─ reply, timeline, cards   keyed by your message's id
+ *        (a notice row: part of the turn it ends, after its reply)
  * turn   …
  * turn   you ─ the live reply
  * tail   queued messages, the question  stays mounted
@@ -89,6 +90,11 @@ export function estimateRowHeight(row: ChatRow): number {
   if (row.kind !== 'turn') return row.kind === 'live' ? 120 : 80;
   let height = GAP + (row.live ? 120 : 0);
   for (const m of row.messages) {
+    // A notice: one short line, no header or footer.
+    if (m.notice) {
+      height += LINE + GAP;
+      continue;
+    }
     const lines = m.text.split('\n').reduce((n, line) => {
       return n + Math.max(1, Math.ceil(line.length / CHARS_PER_LINE));
     }, 0);

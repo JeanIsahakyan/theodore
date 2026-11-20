@@ -14,11 +14,21 @@
  *   ─▶ ask (host-signed) ─▶ active if a follower/host │ followers; 20 s ─▶ followers
  *                          └─ push (Expo) to followers away from a screen
  *   ─▶ delegate (origin-signed) ─▶ delegations{list} ─▶ origin, delegate
+ *   ─▶ confirm (host-signed, protocol 6) ─▶ the host's live delegates on 6,
+ *        again after their welcome │ push (Expo) to those away from a screen
+ *      confirm_resolved (its host) │ expiry │ delegation ended
+ *        ─▶ confirm_dismissed ─▶ where it showed
+ *      a delegate's yes/no: request{op: confirm} ─▶ host (routed as below)
+ *   ─▶ request on any space of the target (protocol 7: list_spaces …
+ *      merge_child, by its local id) ─▶ routed on no cloud space; a target
+ *      below 7 ─▶ refused{fleet.upgrade_required}
  * POST /v1/fleet/request ─▶ routed like a socket request
  * ```
  *
  * A space's followers are its origin and the origin's live delegates
  * (docs/mobile.md "Following a computer's spaces"); its host is never one.
+ * A host's confirms (Claude via the cloud waiting for a person's yes) go to
+ * the host's own live delegates, never to an `mcp` device.
  *
  * The cloud reads signed bodies only to route and checks event, ask and
  * reply signatures against the sender's pinned key (devices check them
@@ -36,6 +46,7 @@ import type {
   DeviceSummary,
   DismissReason,
   RemoteAsk,
+  RemoteConfirm,
   ServerMessage,
   SignedEnvelope,
   SpaceEventBody,
@@ -53,6 +64,7 @@ import {
   MAX_ASKS_PER_SPACE,
   MAX_ASKS_PER_USER,
   MAX_CHILDREN,
+  MAX_CONFIRMS_PER_USER,
   MAX_CONNS_PER_USER,
   MAX_DEPTH,
   MAX_DEVICES_PER_USER,
@@ -75,12 +87,14 @@ import {
 import {
   askPresentation,
   clip,
+  confirmPush,
   type PushMessage,
   type PushSender,
 } from './push';
 import {
   Store,
   type AskRow,
+  type ConfirmRow,
   type DelegationRow,
   type DeviceRow,
   type PendingRow,
@@ -98,11 +112,16 @@ import {
   hosts,
   parseClient,
   peekAsk,
+  peekConfirm,
   peekDelegation,
   peekEvent,
   peekReply,
   peekRequest,
+  onAnySpace,
+  protocolFor,
+  protocolToSee,
   unb64,
+  V6,
   verifyEnvelope,
   verifyHello,
 } from './wire';
@@ -135,6 +154,11 @@ export interface ConnState {
   generation?: number;
   /** The hello's protocol; absent on attachments older than v4 (= 3). */
   protocol?: number;
+  /**
+   * The cloud's own MCP device (src/mcp/), connected in process: the only
+   * connection whose hello may say kind `mcp`. Never set for a socket.
+   */
+  internal?: boolean;
   presence?: Presence;
   /**
    * The last reauth couldn't be checked (signing keys unreachable): when
@@ -215,7 +239,11 @@ export class Hub {
 
   // ── entry points ───────────────────────────────────────────────────────
 
-  open(conn: Conn, caller: FleetCaller): Promise<void> {
+  /**
+   * A new connection: one challenge. `internal`: the cloud's own MCP
+   * device's in-process connection (src/mcp/fleet.ts), never a socket.
+   */
+  open(conn: Conn, caller: FleetCaller, internal = false): Promise<void> {
     return this.run(() => {
       // One challenge per connection: a device signs one nonce per socket.
       if (stateOf(conn)) return;
@@ -231,6 +259,7 @@ export class Hub {
         expMs: caller.expMs,
         phase: 'challenged',
         nonce: b64(nonce),
+        ...(internal ? { internal: true } : {}),
       };
       if (others.length >= MAX_CONNS_PER_USER) {
         conn.save({ ...state, nonce: undefined });
@@ -270,6 +299,7 @@ export class Hub {
         msg = parseClient(
           data,
           s.phase === 'challenged' ? PROTOCOL_VERSION : protocolOf(s),
+          s.internal === true,
         );
       } catch (e) {
         if (!(e instanceof BadMessage)) throw e;
@@ -321,6 +351,10 @@ export class Hub {
           return this.registerPush(r, msg);
         case 'delegate':
           return this.delegate(r, msg.envelope);
+        case 'confirm':
+          return this.confirm(r, msg.envelope);
+        case 'confirm_resolved':
+          return this.confirmResolved(r, msg.confirm_id);
       }
     });
   }
@@ -333,6 +367,44 @@ export class Hub {
       // `closed`: replaced, or failed (cleaned up then).
       if (s.phase === 'ready') this.gone(s);
     });
+  }
+
+  /**
+   * The MCP device's in-process connection stays up until `expMs` (+ the
+   * usual leeway): it is online while an MCP client keeps using it. Sockets
+   * extend theirs only with a verified `reauth`.
+   */
+  extend(conn: Conn, expMs: number): Promise<void> {
+    return this.run(() => {
+      if (!conn.open) return;
+      const s = conn.state();
+      if (!s?.internal || s.phase !== 'ready') return;
+      s.expMs = expMs;
+      conn.save(s);
+      this.store.setDeadline(s.id, s.user, expMs + REAUTH_LEEWAY_MS);
+      this.store.run(
+        'UPDATE devices SET last_seen_ms = ? WHERE device_id = ?',
+        this.env.now(),
+        s.device ?? null,
+      );
+    });
+  }
+
+  /** `user`'s devices as `devices` lists them (every kind, protocol 5). */
+  listDevices(user: string): DeviceSummary[] {
+    const online = new Set(this.ready(user).map((c) => c.state.device));
+    return this.store
+      .rows<DeviceRow>(
+        'SELECT * FROM devices WHERE user_id = ? ORDER BY device_id',
+        user,
+      )
+      .map((d) => ({
+        device_id: d.device_id,
+        info: JSON.parse(d.info) as DeviceInfo,
+        online: online.has(d.device_id),
+        last_seen_ms: d.last_seen_ms,
+        public_key: d.public_key,
+      }));
   }
 
   /** A device's current connection ended: offline, subs dropped. */
@@ -383,9 +455,9 @@ export class Hub {
       }
       for (const p of this.store.rows<PendingRow>(
         `SELECT * FROM pending
-         WHERE (claimed = 0 AND grace_until <= ?) OR created_ms <= ?`,
+         WHERE (claimed = 0 AND grace_until <= ?) OR created_ms + ttl_ms <= ?`,
         now,
-        now - PENDING_TTL_MS,
+        now,
       )) {
         this.store.run('DELETE FROM pending WHERE req_id = ?', p.req_id);
         this.deliver(p.user_id, p.origin_device, p.req_id, {
@@ -404,6 +476,12 @@ export class Hub {
         now - ESCALATE_MS,
       )) {
         this.escalate(a);
+      }
+      for (const c of this.store.rows<ConfirmRow>(
+        'SELECT * FROM confirms WHERE expires_at_ms <= ?',
+        now,
+      )) {
+        this.dropConfirm(c);
       }
       this.pruneStale(now);
       this.pruneDelegations(now);
@@ -526,6 +604,17 @@ export class Hub {
       'SELECT * FROM pending WHERE target_device = ? AND claimed = 0 ORDER BY created_ms',
       deviceId,
     )) {
+      // Sent while it was away, for an op its protocol doesn't have.
+      if (msg.protocol < protocolFor(p.op)) {
+        this.store.run('DELETE FROM pending WHERE req_id = ?', p.req_id);
+        this.deliver(p.user_id, p.origin_device, p.req_id, {
+          type: 'refused',
+          req_id: p.req_id,
+          code: codes.UPGRADE_REQUIRED,
+          message: upgradeWords(p.op),
+        });
+        continue;
+      }
       this.send(conn, {
         type: 'request',
         envelope: JSON.parse(p.envelope),
@@ -554,6 +643,8 @@ export class Hub {
         this.setShown(a.ask_id, [...shown, deviceId]);
       }
     }
+    // Confirms waiting on the hosts it is a delegate of.
+    this.showConfirms(s.user, deviceId);
   }
 
   /**
@@ -633,8 +724,9 @@ export class Hub {
     };
     return this.run(() => {
       const dev = this.store.device(deviceId);
+      // The MCP device's key lives in the cloud: it sends only in process.
       const r: RouteOutcome =
-        !dev || dev.user_id !== caller.userId
+        !dev || dev.user_id !== caller.userId || infoOf(dev).kind === 'mcp'
           ? { kind: 'error', code: codes.NOT_YOURS, message: 'no such device' }
           : this.route(caller.userId, deviceId, envelope);
       out =
@@ -682,20 +774,34 @@ export class Hub {
     if (!hosts(infoOf(target).kind)) {
       return refuse(codes.INVALID, 'that device runs no spaces');
     }
-    // A phone's or the web app's request to a computer on protocol 3: that
-    // computer never lists them, so it can't trust them and would only show
-    // a dead-end prompt. Say so instead.
+    // A phone's or the web app's request to a computer on protocol 3 (the
+    // MCP device's to one below 5): that computer never lists the origin,
+    // so it can't trust it and would only show a dead-end prompt. Say so.
     const origin = this.store.device(sender);
     const targetConn = this.readyDevice(user, route.target_device);
+    // A person's yes (or no), or the auto mode that skips asking: on no
+    // space, and never from Claude via the cloud itself (the host refuses
+    // that too). The ops on any of the target's own spaces are on no space
+    // the cloud tracks either, but anyone may send them (the target decides).
+    const personOnly = route.op === 'confirm' || route.op === 'set_mcp_auto';
+    const onSpace = !personOnly && !onAnySpace(route.op);
+    if (personOnly && (!origin || infoOf(origin).kind === 'mcp')) {
+      return refuse(
+        codes.NOT_YOURS,
+        'Claude via the cloud can’t answer its own requests or set auto mode',
+      );
+    }
+    if (targetConn && protocolOf(targetConn.state) < protocolFor(route.op)) {
+      return refuse(codes.UPGRADE_REQUIRED, upgradeWords(route.op));
+    }
     if (
       origin &&
-      !hosts(infoOf(origin).kind) &&
       targetConn &&
-      protocolOf(targetConn.state) < V4
+      protocolOf(targetConn.state) < protocolToSee(infoOf(origin).kind)
     ) {
       return refuse(
         codes.UPGRADE_REQUIRED,
-        'that computer runs an older Theodore: update it to take requests from a phone or the web',
+        'that computer runs an older Theodore: update it to take requests from a phone, the web or Claude',
       );
     }
     // The target checks this too: a key the cloud doesn't pin for that id
@@ -719,7 +825,7 @@ export class Hub {
     if (open >= MAX_PENDING_PER_USER) {
       return refuse(codes.BUSY, 'too many requests in flight');
     }
-    const space = this.store.space(route.space);
+    const space = onSpace ? this.store.space(route.space) : undefined;
     if (space && space.user_id !== user) {
       return refuse(codes.NOT_YOURS, 'no such space');
     }
@@ -758,8 +864,8 @@ export class Hub {
     this.store.run(
       `INSERT INTO pending (req_id, user_id, origin_device, target_device,
          generation, claimed, created_ms, grace_until, envelope, op, space,
-         parent, depth, ask_id)
-       VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         parent, depth, ask_id, ttl_ms)
+       VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       route.req_id,
       user,
       route.origin_device,
@@ -773,6 +879,11 @@ export class Hub {
       route.parent,
       route.depth,
       route.ask_id,
+      // The MCP device's edits and runs wait on the host for a person's
+      // yes, up to the request window: its requests live that long here.
+      origin && infoOf(origin).kind === 'mcp'
+        ? REQUEST_WINDOW_MS
+        : PENDING_TTL_MS,
     );
     if (to) {
       this.send(to.conn, {
@@ -1394,6 +1505,177 @@ export class Hub {
     }
   }
 
+  // ── confirms ───────────────────────────────────────────────────────────
+
+  /**
+   * A host's signed confirm (`Domain::Confirm`): Claude via the cloud's
+   * request waits on it for a person's yes. Shown on the host's live
+   * delegates (protocol 6), pushed to those away from a screen; they answer
+   * with a signed `confirm` request to the host.
+   */
+  private async confirm(r: Ready, envelope: SignedEnvelope) {
+    let c: RemoteConfirm;
+    try {
+      c = peekConfirm(envelope.body);
+    } catch (e) {
+      if (!(e instanceof BadMessage)) throw e;
+      return this.error(r.conn, e.code, e.message);
+    }
+    const me = r.state.device;
+    const user = r.state.user;
+    if (envelope.device_id !== me || c.host_device !== me) {
+      return this.error(
+        r.conn,
+        codes.NOT_YOURS,
+        'a confirm must come from its host',
+      );
+    }
+    const dev = this.store.device(me);
+    if (!dev || !hosts(infoOf(dev).kind)) {
+      return this.error(r.conn, codes.INVALID, 'only a computer asks this');
+    }
+    const existing = this.store.confirm(c.confirm_id);
+    if (existing) {
+      if (existing.user_id !== user || existing.host_device !== me) {
+        return this.error(r.conn, codes.NOT_YOURS, 'confirm_id taken');
+      }
+      return; // already open
+    }
+    const now = this.env.now();
+    if (c.expires_at_ms <= now) {
+      return this.error(r.conn, codes.INVALID, 'confirm already expired');
+    }
+    const open =
+      this.store.num('SELECT COUNT(*) FROM confirms WHERE user_id = ?', user) ??
+      0;
+    if (open >= MAX_CONFIRMS_PER_USER) {
+      return this.error(r.conn, codes.BUSY, 'too many open confirms');
+    }
+    if (!(await this.signedBySender(r, envelope, 'confirm'))) {
+      return this.error(
+        r.conn,
+        codes.BAD_SIGNATURE,
+        'confirm not signed by its host',
+      );
+    }
+    if (!r.conn.open) return;
+    const forward = forwardOf(envelope);
+    // The host waits at most the request window (the request's ttl here).
+    this.store.run(
+      `INSERT INTO confirms (confirm_id, user_id, host_device, envelope,
+         expires_at_ms, shown_on, pushed, created_ms)
+       VALUES (?, ?, ?, ?, ?, '[]', '[]', ?)`,
+      c.confirm_id,
+      user,
+      me,
+      JSON.stringify(forward),
+      Math.min(c.expires_at_ms, now + REQUEST_WINDOW_MS),
+      now,
+    );
+    const row = this.store.confirm(c.confirm_id)!;
+    const shown: string[] = [];
+    for (const d of this.confirmDelegates(row)) {
+      const to = this.readyDevice(user, d);
+      if (!to || protocolOf(to.state) < V6) continue;
+      this.send(to.conn, { type: 'confirm', envelope: forward });
+      shown.push(d);
+    }
+    this.setConfirmShown(row.confirm_id, shown);
+    this.pushConfirm(row, c);
+  }
+
+  private confirmResolved(r: Ready, confirmId: string) {
+    const c = this.store.confirm(confirmId);
+    if (!c) return;
+    if (c.user_id !== r.state.user || c.host_device !== r.state.device) {
+      return this.error(r.conn, codes.NOT_YOURS, 'not a confirm of yours');
+    }
+    this.dropConfirm(c);
+  }
+
+  /** Where a confirm goes: the host's live delegates, never an `mcp` one. */
+  private confirmDelegates(c: ConfirmRow): string[] {
+    return this.delegatesOf(c.host_device).filter((d) => {
+      const dev = d !== c.host_device ? this.store.device(d) : undefined;
+      return !!dev && dev.user_id === c.user_id && infoOf(dev).kind !== 'mcp';
+    });
+  }
+
+  /** The open confirms `device` is a delegate for, sent to it (protocol 6). */
+  private showConfirms(user: string, device: string) {
+    const to = this.readyDevice(user, device);
+    if (!to || protocolOf(to.state) < V6) return;
+    for (const c of this.store.rows<ConfirmRow>(
+      `SELECT * FROM confirms WHERE user_id = ? AND expires_at_ms > ?
+       ORDER BY created_ms`,
+      user,
+      this.env.now(),
+    )) {
+      if (!this.confirmDelegates(c).includes(device)) continue;
+      this.send(to.conn, {
+        type: 'confirm',
+        envelope: JSON.parse(c.envelope) as SignedEnvelope,
+      });
+      const shown = confirmShown(c);
+      if (!shown.includes(device)) {
+        this.setConfirmShown(c.confirm_id, [...shown, device]);
+      }
+    }
+  }
+
+  /** Answered, lapsed or its host gone: dismissed where it showed, dropped. */
+  private dropConfirm(c: ConfirmRow) {
+    this.dismissConfirm(c.user_id, c.confirm_id, [
+      ...confirmShown(c),
+      ...this.confirmDelegates(c),
+    ]);
+    this.store.run('DELETE FROM confirms WHERE confirm_id = ?', c.confirm_id);
+  }
+
+  /** `confirm_dismissed` to those of `devices` online on protocol 6. */
+  private dismissConfirm(user: string, confirmId: string, devices: string[]) {
+    if (devices.length === 0) return;
+    for (const c of this.ready(user)) {
+      if (!devices.includes(c.state.device) || protocolOf(c.state) < V6) {
+        continue;
+      }
+      this.send(c.conn, { type: 'confirm_dismissed', confirm_id: confirmId });
+    }
+  }
+
+  private setConfirmShown(confirmId: string, devices: string[]) {
+    this.store.run(
+      'UPDATE confirms SET shown_on = ? WHERE confirm_id = ?',
+      JSON.stringify(devices),
+      confirmId,
+    );
+  }
+
+  /**
+   * A new confirm, pushed once to each of the host's delegates away from a
+   * screen (not one online on an older protocol: it couldn't answer).
+   */
+  private pushConfirm(row: ConfirmRow, c: RemoteConfirm) {
+    const pushed = JSON.parse(row.pushed) as string[];
+    const to = this.confirmDelegates(row).filter((d) => {
+      if (pushed.includes(d) || this.attending(row.user_id, d)) return false;
+      const live = this.readyDevice(row.user_id, d);
+      return !live || protocolOf(live.state) >= V6;
+    });
+    if (to.length === 0) return;
+    const host = this.store.device(row.host_device);
+    const hostName = host ? infoOf(host).name : 'Theodore';
+    const sent = this.sendPushes(row.user_id, to, () =>
+      confirmPush(hostName, c),
+    );
+    if (sent.length === 0) return;
+    this.store.run(
+      'UPDATE confirms SET pushed = ? WHERE confirm_id = ?',
+      JSON.stringify([...pushed, ...sent]),
+      row.confirm_id,
+    );
+  }
+
   // ── devices and storage ────────────────────────────────────────────────
 
   /**
@@ -1419,6 +1701,12 @@ export class Hub {
       );
     }
     this.store.run('DELETE FROM devices WHERE device_id = ?', deviceId);
+    for (const c of this.store.rows<ConfirmRow>(
+      'SELECT * FROM confirms WHERE host_device = ?',
+      deviceId,
+    )) {
+      this.dropConfirm(c);
+    }
     this.forgetSpaces(
       this.store
         .rows<{
@@ -1561,6 +1849,7 @@ export class Hub {
     );
     if (d.revoke) this.unfollow(user, me, d.delegate_device);
     this.pushDelegations(user, [me, d.delegate_device]);
+    if (!d.revoke) this.showConfirms(user, d.delegate_device);
   }
 
   /** Expired grants go (both devices told); old tombstones are dropped. */
@@ -1614,6 +1903,20 @@ export class Hub {
       this.dismiss(a, [delegate], 'resolved');
       this.setShown(
         a.ask_id,
+        shown.filter((x) => x !== delegate),
+      );
+    }
+    // The origin's confirms, if it is a host: no longer the delegate's.
+    for (const c of this.store.rows<ConfirmRow>(
+      'SELECT * FROM confirms WHERE user_id = ? AND host_device = ?',
+      user,
+      origin,
+    )) {
+      const shown = confirmShown(c);
+      if (!shown.includes(delegate)) continue;
+      this.dismissConfirm(user, c.confirm_id, [delegate]);
+      this.setConfirmShown(
+        c.confirm_id,
         shown.filter((x) => x !== delegate),
       );
     }
@@ -1858,15 +2161,16 @@ export class Hub {
     const due = [
       s.num('SELECT MIN(deadline_ms) FROM conns'),
       s.num('SELECT MIN(grace_until) FROM pending WHERE claimed = 0'),
-      s.num('SELECT MIN(created_ms) FROM pending'),
+      s.num('SELECT MIN(created_ms + ttl_ms) FROM pending'),
       s.num('SELECT MIN(created_ms) FROM replies'),
       s.num('SELECT MIN(created_ms) FROM asks WHERE escalated = 0'),
       s.num(
         `SELECT MIN(expires_at_ms) FROM delegations
          WHERE revoked = 0 AND expires_at_ms > 0`,
       ),
+      s.num('SELECT MIN(expires_at_ms) FROM confirms'),
     ];
-    const ttl = [0, 0, PENDING_TTL_MS, PENDING_TTL_MS, ESCALATE_MS, 0];
+    const ttl = [0, 0, 0, PENDING_TTL_MS, ESCALATE_MS, 0, 0];
     const at = due
       .map((v, i) => (v === null ? null : v + ttl[i]!))
       .filter((v): v is number => v !== null);
@@ -1932,32 +2236,30 @@ export class Hub {
   private pushDevices(user: string, except?: string) {
     const conns = this.ready(user, except);
     const online = new Set(conns.map((c) => c.state.device));
-    const devices: DeviceSummary[] = this.store
-      .rows<DeviceRow>(
-        'SELECT * FROM devices WHERE user_id = ? ORDER BY device_id',
-        user,
-      )
-      .map((d) => ({
-        device_id: d.device_id,
-        info: JSON.parse(d.info),
-        online: online.has(d.device_id),
-        last_seen_ms: d.last_seen_ms,
-        public_key: d.public_key,
-      }));
-    // Protocol 3 can't read a `mobile` / `web` kind (it never sees them)
-    // nor an OS past `macos` / `linux` (a Windows computer reads as Linux).
-    const hostsOnly = devices
-      .filter((d) => hosts(d.info.kind))
-      .map((d) =>
-        d.info.os === 'macos' || d.info.os === 'linux'
-          ? d
-          : { ...d, info: { ...d.info, os: 'linux' as const } },
-      );
+    const devices = this.listDevices(user).map((d) => ({
+      ...d,
+      online: online.has(d.device_id),
+    }));
+    // A connection sees only the kinds its protocol can read: protocol 3
+    // computers only (and no OS past `macos` / `linux`: a Windows computer
+    // reads as Linux), protocol 4 no `mcp`.
+    const seen = (p: number) =>
+      devices
+        .filter((d) => protocolToSee(d.info.kind) <= p)
+        .map((d) =>
+          p >= V4 || d.info.os === 'macos' || d.info.os === 'linux'
+            ? d
+            : { ...d, info: { ...d.info, os: 'linux' as const } },
+        );
+    const byProtocol = new Map<number, DeviceSummary[]>();
     for (const c of conns) {
-      this.send(c.conn, {
-        type: 'devices',
-        devices: protocolOf(c.state) >= V4 ? devices : hostsOnly,
-      });
+      const p = protocolOf(c.state);
+      let list = byProtocol.get(p);
+      if (!list) {
+        list = seen(p);
+        byProtocol.set(p, list);
+      }
+      this.send(c.conn, { type: 'devices', devices: list });
     }
   }
 
@@ -1997,6 +2299,13 @@ export class Hub {
  */
 function badToken(e: unknown): boolean {
   return e instanceof CloudError && e.code === 'cloud.unauthorized';
+}
+
+/** Why a target too old for `op` is refused (static words). */
+function upgradeWords(op: string): string {
+  return onAnySpace(op)
+    ? 'that computer runs an older Theodore: update it to reach all its spaces'
+    : 'that computer runs an older Theodore: update it to take approvals and auto mode from another device';
 }
 
 /** A `mirror` model the cloud keeps (the latest per id), not just relays. */
@@ -2057,4 +2366,8 @@ function forwardOf(env: SignedEnvelope): SignedEnvelope {
 
 function shownOn(a: AskRow): string[] {
   return JSON.parse(a.shown_on) as string[];
+}
+
+function confirmShown(c: ConfirmRow): string[] {
+  return JSON.parse(c.shown_on) as string[];
 }

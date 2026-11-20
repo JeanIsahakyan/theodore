@@ -396,6 +396,116 @@ impl SpaceToolsBackend for CoreTools {
     ) -> Result<theodore_ports::FleetToolSpace, SpaceToolError> {
         self.space_core()?.fleet_tool_stop(space, target).await
     }
+
+    async fn sub_spaces_enabled(&self) -> bool {
+        match self.core.get() {
+            Some(c) => c.sub_spaces_enabled().await,
+            None => false,
+        }
+    }
+
+    async fn local_list(
+        &self,
+        space: &str,
+        project: Option<&str>,
+        include_done: bool,
+    ) -> Result<theodore_ports::LocalSpaceList, SpaceToolError> {
+        self.space_core()?
+            .sub_space_list(space, project, include_done)
+            .await
+    }
+
+    async fn local_read(
+        &self,
+        space: &str,
+        target: &str,
+        messages: usize,
+    ) -> Result<theodore_ports::LocalSpaceRead, SpaceToolError> {
+        self.space_core()?
+            .sub_space_read(space, target, messages)
+            .await
+    }
+
+    async fn local_ask(
+        &self,
+        space: &str,
+        target: &str,
+        question: &str,
+    ) -> Result<theodore_ports::LocalSpaceAsk, SpaceToolError> {
+        self.space_core()?
+            .sub_space_ask(space, target, question)
+            .await
+    }
+
+    async fn local_start(
+        &self,
+        space: &str,
+        turn: TurnMode,
+        req: theodore_ports::LocalSpaceStart,
+    ) -> Result<theodore_ports::LocalSpaceItem, SpaceToolError> {
+        self.space_core()?
+            .sub_space_start(space, space_mode(turn), req)
+            .await
+    }
+
+    async fn local_send(
+        &self,
+        space: &str,
+        turn: TurnMode,
+        target: &str,
+        message: &str,
+        mode: Option<&str>,
+    ) -> Result<theodore_ports::LocalSpaceItem, SpaceToolError> {
+        self.space_core()?
+            .sub_space_send(space, space_mode(turn), target, message, mode)
+            .await
+    }
+
+    async fn local_wait(
+        &self,
+        space: &str,
+        targets: &[String],
+        timeout_ms: u64,
+    ) -> Result<theodore_ports::LocalSpaceWait, SpaceToolError> {
+        self.space_core()?
+            .sub_space_wait(space, targets, timeout_ms)
+            .await
+    }
+
+    async fn local_stop(
+        &self,
+        space: &str,
+        turn: TurnMode,
+        target: &str,
+    ) -> Result<theodore_ports::LocalSpaceItem, SpaceToolError> {
+        self.space_core()?
+            .sub_space_stop(space, space_mode(turn), target)
+            .await
+    }
+
+    async fn local_answer(
+        &self,
+        space: &str,
+        turn: TurnMode,
+        target: &str,
+        ask: &str,
+        answers: Vec<theodore_ports::LocalAnswer>,
+    ) -> Result<theodore_ports::LocalSpaceItem, SpaceToolError> {
+        self.space_core()?
+            .sub_space_answer(space, space_mode(turn), target, ask, answers)
+            .await
+    }
+
+    async fn local_merge(
+        &self,
+        space: &str,
+        turn: TurnMode,
+        target: &str,
+    ) -> Result<theodore_ports::LocalSpaceMerge, SpaceToolError> {
+        self.space_core()?
+            .sub_space_merge(space, space_mode(turn), target)
+            .await
+    }
 }
 
 /// The worktree a run's code tools work on: its space's on a space turn,

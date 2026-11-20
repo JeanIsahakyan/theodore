@@ -263,8 +263,14 @@ fn fake(hits: usize) -> Arc<FakeCode> {
 async fn code_tools_are_listed_only_when_the_run_has_them() {
     // Every Theodore server also lists the CLI's permission-prompt tool.
     const APPROVE: &[&str] = &[theodore_ports::APPROVE_TOOL];
-    // A space turn is a chat: it may draft a problem report.
-    const REPORT: &[&str] = &[theodore_mcp::REPORT_TOOL];
+    // A space turn is a chat: it may draft a problem report, and it
+    // reads the other spaces here.
+    const REPORT: &[&str] = &[
+        theodore_mcp::REPORT_TOOL,
+        theodore_mcp::LOCAL_SPACE_READ_TOOL_NAMES[0],
+        theodore_mcp::LOCAL_SPACE_READ_TOOL_NAMES[1],
+        theodore_mcp::LOCAL_SPACE_READ_TOOL_NAMES[2],
+    ];
     let handle = server(fake(0)).await;
     for (run, want) in [
         (

@@ -164,6 +164,10 @@ pub struct UserAnswer {
     /// What you typed under "Other".
     #[serde(skip_serializing_if = "Option::is_none")]
     pub other: Option<String>,
+    /// Set when another space's agent answered (`space_answer`), not the
+    /// user: who, in words the asking agent reads.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub answered_by: Option<String>,
 }
 
 /// Why a set of questions can't be asked, `None` when it can.

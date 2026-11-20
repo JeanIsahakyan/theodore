@@ -21,16 +21,16 @@ import {
   useEffect,
   useMemo,
   useRef,
+  useState,
   type ComponentType,
   type ReactNode,
 } from 'react';
 import { countUse } from '../core/useCounts';
 import {
   Bulb,
-  ChevronRight,
-  CircleXmarkFill,
   Cpu,
   FileText,
+  Layers,
   LogoMcp,
   Magnifier,
   Pencil,
@@ -41,11 +41,18 @@ import { observer } from 'mobx-react-lite';
 import type { AgentId, TurnFile, TurnStep } from '../gen/contract';
 import { useRootStore } from '../stores/context';
 import { Md } from '../highlight';
-import { Spinner } from './bits';
 import { useFileHover } from './FileHoverPreview';
 import { FileTypeIcon } from './FileTypeIcon';
-import { useKeptOpen, useSteadyChange } from './rowState';
+import {
+  revealDone,
+  useKeptOpen,
+  useReveal,
+  useSteadyChange,
+} from './rowState';
 import { toolRow, type ToolKind } from './toolSummary';
+import { Chevron, Failed, LineCounts, ROW, StepIcon } from './turnBits';
+import { SpaceToolRow } from './SpaceToolRow';
+import { spaceToolOf } from './spaceTools';
 import { AgentDetails, ToolDetails } from './ToolDetails';
 import { toolKey, useToolRun } from './toolPayload';
 import { useRunningBackgroundCall } from './backgroundCalls';
@@ -70,38 +77,13 @@ const KIND_ICON: Record<ToolKind, ComponentType<{ className?: string }>> = {
   search: Magnifier,
   agent: Cpu,
   mcp: LogoMcp,
+  space: Layers,
   other: Wrench,
 };
 
 const NO_STEPS: readonly TurnStep[] = [];
-const ROW = 'flex min-w-0 items-center gap-1.5 text-[13px]';
 
 export { formatDuration };
-
-function StepIcon({ busy, children }: { busy: boolean; children: ReactNode }) {
-  return (
-    <span className="grid size-4 shrink-0 place-items-center text-muted">
-      {busy ? <Spinner /> : children}
-    </span>
-  );
-}
-
-function Chevron({ open }: { open: boolean }) {
-  return (
-    <ChevronRight
-      className={`size-3.5 shrink-0 text-muted ${open ? 'rotate-90' : ''}`}
-    />
-  );
-}
-
-function Failed() {
-  return (
-    <span className="turn-tool-failed inline-flex shrink-0 items-center gap-1 text-xs text-danger">
-      <CircleXmarkFill className="size-3.5" />
-      failed
-    </span>
-  );
-}
 
 function Chip({ text, file = false }: { text: string; file?: boolean }) {
   const hover = useFileHover<HTMLSpanElement>(file ? text : null);
@@ -117,29 +99,6 @@ function Chip({ text, file = false }: { text: string; file?: boolean }) {
         <span className="min-w-0 truncate">{text}</span>
       </span>
       {hover.popover}
-    </>
-  );
-}
-
-function LineCounts({
-  added,
-  removed,
-}: {
-  added: number | null | undefined;
-  removed: number | null | undefined;
-}) {
-  return (
-    <>
-      {added != null && (
-        <span className="turn-added shrink-0 font-mono text-[11px] text-success">
-          +{added}
-        </span>
-      )}
-      {removed != null && (
-        <span className="turn-removed shrink-0 font-mono text-[11px] text-danger">
-          −{removed}
-        </span>
-      )}
     </>
   );
 }
@@ -333,6 +292,24 @@ const AgentRow = memo(
       step.id ? `agent:${step.id}` : keptAs && `agent:${keptAs}`,
     );
     const steady = useSteadyChange();
+    // Asked for by the Agents panel: into view, with a short glow.
+    const line = useRef<HTMLDivElement>(null);
+    const [glow, setGlow] = useState(false);
+    useEffect(() => {
+      if (!glow) return;
+      const t = window.setTimeout(() => setGlow(false), 1600);
+      return () => window.clearTimeout(t);
+    }, [glow]);
+    useReveal(step.id ?? null, (call) => {
+      revealDone(call);
+      setGlow(true);
+      // After the fold above it opened and the chat measured it.
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() =>
+          line.current?.scrollIntoView?.({ block: 'center' }),
+        ),
+      );
+    });
     // A background launch answers at once, its report comes later or never.
     const waiting = !!step.background && !step.summary;
     const stillRunning = useRunningBackgroundCall(step.id);
@@ -342,7 +319,12 @@ const AgentRow = memo(
       ? (latestOf(own) ?? (waiting ? 'running in background' : null))
       : (step.summary ?? (step.background ? 'ran in background' : null));
     return (
-      <div data-kind="agent" className="turn-agent min-w-0">
+      <div
+        ref={line}
+        data-kind="agent"
+        data-call={step.id ?? undefined}
+        className={`turn-agent min-w-0 ${glow ? 'reveal-flash' : ''}`}
+      >
         <button
           type="button"
           aria-expanded={open}
@@ -394,6 +376,15 @@ const AgentRow = memo(
 
 const NOTHING_UNDER = new Map<string, TurnStep[]>();
 
+/** The subagent calls among `items`, folds included. */
+function agentCalls(items: readonly TurnItem[]): string[] {
+  return items.flatMap((it) => {
+    if (it.kind === 'fold') return agentCalls(it.items);
+    if (it.kind !== 'step' || it.step.kind !== 'tool' || !it.step.id) return [];
+    return toolRow(it.step.name).kind === 'agent' ? [it.step.id] : [];
+  });
+}
+
 /** Rows that fold away: muted, no border, chevron on the left, then how much
  *  is in it and the kinds of tools. */
 const FoldRow = memo(function FoldRow({
@@ -407,6 +398,11 @@ const FoldRow = memo(function FoldRow({
 }) {
   const [open, setOpen] = useKeptOpen(keptAs && `fold:${keptAs}:${item.index}`);
   const steady = useSteadyChange();
+  // A subagent in here was asked for: open, so its row can show itself.
+  const calls = useMemo(() => agentCalls(item.items).join('\n'), [item.items]);
+  useReveal(calls || null, () => {
+    if (!open) setOpen(true);
+  });
   return (
     <div className="turn-fold min-w-0">
       <button
@@ -501,6 +497,9 @@ function Items({
               keptAs={keptAs && `${keptAs}:${index}`}
             />
           );
+        }
+        if (spaceToolOf(step.name)) {
+          return <SpaceToolRow key={index} step={step} running={running} />;
         }
         return <ToolRow key={index} step={step} running={running} />;
       })}
