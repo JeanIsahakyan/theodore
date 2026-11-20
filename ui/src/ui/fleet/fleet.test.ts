@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { confirmRequest, device, thisDevice } from '../../test/fleet';
 import {
+  autoOn,
+  autoUntil,
+  autoWarning,
   canFollow,
   capMode,
   confirmAction,
@@ -13,6 +16,7 @@ import {
   startableDevices,
   toWireAnswers,
   typeOther,
+  untilLabel,
 } from './fleet';
 
 describe('modes', () => {
@@ -68,6 +72,8 @@ describe('kinds', () => {
     expect(kindLabel(device({ kind: 'mcp' }))).toBe('Claude via cloud (MCP)');
     expect(canFollow(device({ kind: 'mcp' }))).toBe(false);
     expect(canFollow(device({ kind: 'mobile' }))).toBe(true);
+    expect(canFollow(device({ kind: 'desktop' }))).toBe(true);
+    expect(canFollow(device({ kind: 'daemon' }))).toBe(false);
     expect(startableDevices([device({ kind: 'mcp', trusted: true })])).toEqual(
       [],
     );
@@ -164,5 +170,38 @@ describe('confirmAction', () => {
         }),
       ),
     ).toBe('approve the plan in Fix login (Run)');
+  });
+});
+
+describe('auto mode', () => {
+  const noon = new Date(2026, 10, 19, 12, 0, 0).getTime();
+
+  it('lasts an hour, to the end of today, or until turned off', () => {
+    expect(autoUntil('hour', noon)).toBe(noon + 3_600_000);
+    expect(autoUntil('day', noon)).toBe(
+      new Date(2026, 10, 19, 23, 59, 59, 999).getTime(),
+    );
+    expect(autoUntil('off', noon)).toBeNull();
+  });
+
+  it('reads its end today, another day, or none', () => {
+    expect(untilLabel(null, noon)).toBe('until turned off');
+    expect(untilLabel(noon + 3_600_000, noon)).toMatch(/^until \d/);
+    expect(untilLabel(noon + 2 * 86_400_000, noon)).toMatch(/^until \D+.*, /);
+  });
+
+  it('is on until its end passes', () => {
+    expect(autoOn('edit', null, noon)).toBe(true);
+    expect(autoOn('full', noon + 1, noon)).toBe(true);
+    expect(autoOn('full', noon, noon)).toBe(false);
+    expect(autoOn('off', null, noon)).toBe(false);
+    expect(autoOn(undefined, null, noon)).toBe(false);
+  });
+
+  it('warns about running commands only for full auto', () => {
+    expect(autoWarning('edit')).toBe(
+      'Its key is held by the Theodore cloud: with auto on, the cloud could make this computer edit without you.',
+    );
+    expect(autoWarning('full')).toContain('edit and run commands without you');
   });
 });

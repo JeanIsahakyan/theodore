@@ -33,7 +33,9 @@ The cloud never makes a device run anything on its own word.
 | A device accepts requests, events and questions only from devices it trusts: their public key pinned locally (`fleet.trusted_devices`), trust given on that device, for exactly the key whose fingerprint (128 bits, 8 groups) the user compared | every core | yes |
 | Only trusted devices are targets: the start dialog, `fleet_devices` and `fleet_start_space` list and reach only devices pinned here, and no request (start, send, stop, answer) is signed for a device that isn't pinned | origin core | yes |
 | Phones, the web app and Claude via the cloud (`kind` `mobile` / `web` / `mcp`) are never targets: the start dialog, `fleet_devices` and `fleet_start_space` skip them whatever they list, and no request is signed for one | origin core + UI | yes |
-| Claude via the cloud (`kind` `mcp`) holds no key of its own: the cloud does. It is trusted like a phone (fingerprint compared, pinned here with its kind), and a request from it that edits or runs (a start or send in Edit or Run, so a plan's approval too) runs only after a person on this device says Allow; Deny, or no answer before `issued_at` + 5 min ─▶ `fleet.denied`; a daemon (nobody there) refuses it outright. Ask, Plan, answers and stop need no yes | target core + UI | yes: the cloud can sign as that device, never say yes for you |
+| Claude via the cloud (`kind` `mcp`) holds no key of its own: the cloud does. It is trusted like a phone (fingerprint compared, pinned here with its kind), and a request from it that edits or runs (a start or send in Edit or Run, so a plan's approval too) runs only after a person says Allow, on this device or on a device it delegates to; Deny, or no answer before `issued_at` + 5 min ─▶ `fleet.denied`; a daemon (nobody there) refuses it outright. Ask, Plan, answers and stop need no yes | target core + UI | yes: the cloud can sign as that device, never say yes for you |
+| Auto mode (opt-in, per `mcp` pin, on this device only): `edit` lets its Edit through without the yes, `full` Edit and Run; with an end (`auto_until_ms`) or until turned off. It skips only the yes: `accept_remote`, `max_mode`, the pin and freshness still hold, and it's read again right before the request runs. Set here (`fleet_set_auto`) or by a signed `set_mcp_auto` from a trusted device that isn't `mcp` | target core + UI | no, while on: the cloud can make this device edit (and with `full` run) without you; the Devices row and a notice that stays say so |
+| A yes from elsewhere is a signed `confirm{confirm_id, allow}` request: taken only from a device pinned here, delegated to (`fleet.delegates`), not `mcp`, while that prompt waits; the first answer wins. The prompt it answers went out signed by this device (`Domain::Confirm`) | target core | yes |
 | The `mcp` cap follows the pin's kind or the cloud's listing, whichever is `mcp`: a listing can add the cap, never lift it | target core | yes |
 | A delegation (this device's spaces' questions also go to a phone) is signed by this device (`Domain::Delegate`), only for a phone or web app pinned here; one the cloud lists counts only if it verifies (this device's own against its key, another's against that origin's pin) | origin core | yes |
 | `issued_at` within 5 min, `req_id` never seen in the last 10 min — kept in the store (`fleet_seen`), so a request that ran is a replay after a restart too; a request the store couldn't record as done doesn't run (`fleet.internal`) | target core | yes |
@@ -112,7 +114,7 @@ Two kinds of refusal, told apart on the wire:
 | `fleet.agent_unavailable` | target | a start or send names an agent, model or effort the target doesn't list (`DeviceInfo.agents`): not installed, turned off, not signed in ("Sign-in"), or not that model's ("Agent, model and effort") |
 | `fleet.busy` | target, cloud | a send to a space whose turn is running |
 | `fleet.internal` | target | the target couldn't record the request, so it didn't run it |
-| `fleet.denied` | target | from an `mcp` device, an edit or run the person on the target denied, or didn't allow before `issued_at` + 5 min; a daemon's at once |
+| `fleet.denied` | target | from an `mcp` device, an edit or run the person on the target (or on a device it delegates to) denied, or didn't allow before `issued_at` + 5 min; a daemon's at once, unless auto mode covers it |
 | `fleet.offline` | cloud | target not connected within 10 s grace |
 | `fleet.too_many_spaces` | cloud | the user's 200 spaces |
 
@@ -280,14 +282,14 @@ still ship a hosted space from its page here.
 | `fleet.enabled` | `false` | connect to the cloud at all |
 | `fleet.accept_remote` | `false` | let trusted devices start and steer spaces here |
 | `fleet.max_mode` | `edit` | highest mode a remote request may use (`ask`, `plan`, `edit`, `run`) |
-| `fleet.trusted_devices` | `[]` | `[{device_id, public_key, name, kind}]`, changed only on this device; `name` sanitized when pinned (and when read, for older pins); `kind` as listed when pinned (absent on older pins) |
-| `fleet.delegates` | `[]` | device ids of the phones / web apps this device sends its spaces' questions to ("Phones and the web app") |
+| `fleet.trusted_devices` | `[]` | `[{device_id, public_key, name, kind, auto, auto_until_ms}]`, changed only on this device; `name` sanitized when pinned (and when read, for older pins); `kind` as listed when pinned (absent on older pins); `auto` (`off` / `edit` / `full`, absent = `off`) and `auto_until_ms` (absent = until turned off) only on an `mcp` pin, reset to off when trusted again ("Auto mode and remote prompts") |
+| `fleet.delegates` | `[]` | device ids of the phones / web apps / desktop computers this device sends its spaces' questions and Claude via cloud prompts to ("Phones and the web app") |
 | `fleet.name` | the Mac's computer name | how other devices list this one |
 
 Kept in the local store (kv `fleet.settings`), not as synced `setting`
 rows: only `fleet_set_settings`, `fleet_trust_device`,
-`fleet_remove_device` and `fleet_delegate` change them, never a UI
-transaction.
+`fleet_remove_device`, `fleet_delegate` and `fleet_set_auto` (or a
+trusted device's `set_mcp_auto`) change them, never a UI transaction.
 
 ```
 Devices page / "Trust <device>?" notice ─▶ Trust ─▶ confirm: the full
@@ -368,10 +370,14 @@ it: the host caps it (`crates/app/src/usecases/fleet_confirm.rs`).
 gate passes, origin pinned (or listed) as mcp
   ├─ Ask / Plan start or send, answer, stop ─▶ claim ─▶ run, as any client
   └─ start or send in Edit / Run (a plan's approval is a send in Edit / Run)
+       ├─ auto mode covers the mode, not expired ─▶ claim ─▶ auto read
+       │    again ─▶ recheck ─▶ run, logged "auto" (a daemon too)
        ├─ daemon ─▶ reply{fleet.denied}, nothing claimed
        └─ claim ─▶ claimed ─▶ FleetConfirm prompt, in its own task
-            Allow ─▶ recheck ─▶ run ─▶ reply
+            ├─ delegates? ─▶ confirm{RemoteConfirm, signed} ─▶ cloud ─▶ them
+            Allow (here, or a delegate's signed confirm op) ─▶ recheck ─▶ run
             Deny, or issued_at + 5 min ─▶ reply{fleet.denied}
+            either way ─▶ confirm_resolved ─▶ dismissed on the delegates
 ```
 
 | | |
@@ -380,7 +386,58 @@ gate passes, origin pinned (or listed) as mcp
 | UI | `fleet_confirm` / `fleet_confirm_done` ephemerals, `fleet_confirms` (what waits, after a reload), `fleet_confirm{id, allow}`; a system notification while the window is in the background |
 | Memory | pending prompts live in memory only and hold up nothing else; a restart forgets them (their requests are out of time by then) |
 | Hosted | a space started this way is hosted like any other (no user MCP servers, no `approve_tool`, `run_check` only in Run) |
-| Devices | listed as "Claude via cloud (MCP)" with a cloud icon and the warning that its key is held by the cloud; never a target, never a delegate |
+| Devices | listed as "Claude via cloud (MCP)" with a cloud icon and the warning that its key is held by the cloud; never a target, never a delegate; trusted, its row has the auto mode control |
+| Auto | "Auto mode and remote prompts" below |
+
+#### Auto mode and remote prompts
+
+Auto mode is the user's opt-in, per `mcp` pin, on this computer
+(`crates/app/src/usecases/fleet_auto.rs`); remote prompts let the yes come
+from a phone, the web app or another computer this one delegates to.
+
+| Auto | Edit start / send, plan approval into Edit | Run start / send, plan approval into Run |
+| --- | --- | --- |
+| `off` (default) | prompt | prompt |
+| `edit` | runs | prompt |
+| `full` | runs | runs |
+
+Either way within `max_mode`: auto never lifts the cap, nor `accept_remote`.
+
+```
+Devices ─▶ Claude via cloud row ─▶ Off / Auto Edit / Full auto
+  on ─▶ how long: 1 hour │ until end of day │ until I turn it off
+  ─▶ fleet_set_auto{device_id, auto, until_ms} ─▶ pin.auto, auto_until_ms
+  ─▶ announce: DeviceInfo.mcp_auto ─▶ fleet_status (FleetStatus.autos)
+until_ms passes ─▶ reads as off at once; a timer (and the next start) clears
+  it ─▶ announce ─▶ fleet_status
+another computer's row ─▶ its Claude via cloud ─▶ fleet_set_auto{…, host_device}
+  ─▶ signed set_mcp_auto ─▶ there: pinned, not mcp, the target is an mcp pin
+  ─▶ applied ─▶ its next devices list shows it
+```
+
+| | |
+| --- | --- |
+| Notice | while any auto is on: "Claude via cloud: full auto until 18:00 · Turn off" in the fleet notices; Turn off is one click |
+| Warning | on the control: "Its key is held by the Theodore cloud: with auto on, the cloud could make this computer edit [and run commands] without you." |
+| Log | an auto-allowed request is logged like an allowed one, info line `auto` (`req_id`, origin, auto and mode); every change, `fleet auto mode changed` with who asked |
+| Contract | `fleet_set_auto(FleetAutoRequest{device_id, auto, until_ms, host_device})` ─▶ `FleetStatus`; refused unless `device_id` is an `mcp` pin (here), or for an end in the past; `FleetDevice.auto`, `auto_until_ms` (this computer's, on the `mcp` row), `FleetDevice.mcp_auto` (another computer's, as it lists it), `FleetStatus.autos` |
+
+```
+prompt here ─▶ RemoteConfirm{confirm_id = req_id, host_device, mcp_device,
+  action, mode, project / space name ≤ 200, text ≤ 500, expires_at_ms}
+  sealed with this device's key (Domain::Confirm) ─▶ confirm{envelope}
+  ─▶ cloud ─▶ this device's live delegates on protocol 6 (push to phones)
+delegate: host pinned there, signature, not expired ─▶ the same card,
+  "… on <host>" ─▶ Allow / Deny ─▶ signed confirm{confirm_id, allow} ─▶ host
+host: pinned, not mcp, in fleet.delegates, still waiting ─▶ the person's
+  answer, logged with the delegate's id; else fleet.invalid
+answered anywhere / timed out ─▶ confirm_resolved ─▶ confirm_dismissed there
+```
+
+A desktop computer may be a delegate too (`fleet_delegate`, not a daemon
+or an `mcp` device): it gets this device's prompts and its spaces'
+questions. Prompts shown for another computer live in memory and are
+dropped at each welcome (the cloud sends those still waiting again).
 
 ### Hosted spaces: events and journal
 
@@ -482,8 +539,9 @@ run step (live)                  ─▶ mirror{turn_step}     ─▶ relay only 
 
 The phone and web app (docs/mobile.md) join as devices of kind `mobile` /
 `web`. Here they are listed (phone / globe icon, "Phone" / "Web app"),
-trusted like any device, and never a target. Only they can be delegates
-("Send my spaces' questions here"); an `mcp` device can't.
+trusted like any device, and never a target. They and desktop computers
+can be delegates ("Send my spaces' questions here", which also brings this
+device's Claude via cloud prompts); a daemon or an `mcp` device can't.
 
 ```
 trusted phone ─signs─▶ start / send / stop / answer ─▶ this device's gate,
@@ -497,7 +555,7 @@ questions here" on a trusted phone's row lets it follow the spaces this
 device started:
 
 ```
-switch on  ─▶ fleet_delegate(id, true): a phone / web app, pinned with its
+switch on  ─▶ fleet_delegate(id, true): a phone / web app / desktop, pinned with its
   listed key ─▶ fleet.delegates += id
   ─▶ delegate{seal_as(Delegation{me, id, now, expires 0, revoke: false}, Delegate)}
 switch off / Untrust / Remove ─▶ fleet.delegates -= id ─▶ the same, revoke: true
@@ -599,8 +657,9 @@ after each tool call, and is a client only: never a target.
 Its key lives in the cloud, so whoever runs the cloud can sign as it. The
 computers make up for that: they take nothing from it until the user
 trusted it there by its fingerprint, and an Edit or Run from it (a plan's
-approval too) waits for a person's Allow there, up to 5 min; Deny or no
-answer is `fleet.denied`. The hub keeps its pending requests that long
+approval too) waits for a person's yes on the computer (or on a phone or
+computer it sends its prompts to), up to 5 min, unless the user turned on
+auto mode there; Deny or no answer is `fleet.denied`. The hub keeps its pending requests that long
 (others: 2 min), so a late Allow still reaches it.
 
 ### Trust, both ways
@@ -618,7 +677,7 @@ space_start{mac, …} ────▶ pinned? key unchanged? ─▶ seal(MCP key
                           target_key = the pin) ──────────▶ pin, target_key, fresh,
                                                               accept_remote, max_mode
                                                               Ask / Plan ─▶ runs
-                                                              Edit / Run ─▶ Allow? (≤ 5 min)
+                                                              Edit / Run ─▶ auto? else Allow? (≤ 5 min)
                                                                 Deny / none ─▶ fleet.denied
 result: code only ◀──── reply opened with mac's pin ◀────── signed reply
 events, questions ◀──── opened with mac's pin, else dropped ◀── signed events
@@ -658,8 +717,13 @@ events and replies a pinned computer signed, refusals as codes
 
 ### On the wire
 
-- Protocol 5. Hub: protocols 3 to 5; `mcp` hidden from connections below 5
-  (`devices`); never accepted as a socket's kind (hello, `announce`).
+- Protocol 6 (5 added `mcp`; 6 adds `confirm` / `confirm_resolved` /
+  `confirm_dismissed`, the `confirm` and `set_mcp_auto` ops and
+  `DeviceInfo.mcp_auto`). Hub: protocols 3 to 6; `mcp` hidden from
+  connections below 5 (`devices`); the confirm frames never sent below 6,
+  and the new ops to a computer below 6 are
+  `refused{fleet.upgrade_required}`; never accepted as a socket's kind
+  (hello, `announce`).
 - Its requests are ordinary `SignedEnvelope`s (`Domain::Request`, the
   Rust field order), checked against `src/gen/fleet-vectors.json`.
 - To a computer below protocol 5: `refused{fleet.upgrade_required}` (it

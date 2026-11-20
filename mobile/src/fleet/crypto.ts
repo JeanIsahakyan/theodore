@@ -12,6 +12,7 @@
 import type {
   Delegation,
   RemoteAsk,
+  RemoteConfirm,
   RemoteOp,
   RemoteRequest,
   ReplyBody,
@@ -23,7 +24,7 @@ import { verifySignature } from '../keys/ed25519';
 import type { DeviceKey } from '../keys/types';
 
 export type Domain =
-  'hello' | 'request' | 'event' | 'ask' | 'reply' | 'delegate';
+  'hello' | 'request' | 'event' | 'ask' | 'reply' | 'delegate' | 'confirm';
 
 /** `Domain::tag` in Rust; a signature for one never verifies as another. */
 export const TAGS: Record<Domain, string> = {
@@ -33,6 +34,7 @@ export const TAGS: Record<Domain, string> = {
   ask: 'theodore-fleet-ask-v3\0',
   reply: 'theodore-fleet-reply-v3\0',
   delegate: 'theodore-fleet-delegate-v3\0',
+  confirm: 'theodore-fleet-confirm-v3\0',
 };
 
 /** The bytes signed for `msg` in `domain`. */
@@ -62,6 +64,7 @@ interface Bodies {
   ask: RemoteAsk;
   reply: ReplyBody;
   delegate: Delegation;
+  confirm: RemoteConfirm;
 }
 export type SignedDomain = keyof Bodies;
 
@@ -76,6 +79,7 @@ function signerOf(
       return body.origin_device;
     case 'event':
     case 'ask':
+    case 'confirm':
       return body.host_device;
     case 'reply':
       return body.target_device;
@@ -119,6 +123,15 @@ function opInOrder(op: RemoteOp): RemoteOp {
         space: op.space,
         ask_id: op.ask_id,
         answers: op.answers,
+      };
+    case 'confirm':
+      return { op: 'confirm', confirm_id: op.confirm_id, allow: op.allow };
+    case 'set_mcp_auto':
+      return {
+        op: 'set_mcp_auto',
+        mcp_device: op.mcp_device,
+        auto: op.auto,
+        until_ms: op.until_ms ?? null,
       };
   }
 }

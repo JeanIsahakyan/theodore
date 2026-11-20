@@ -30,14 +30,35 @@ data: {
 `categoryId` is the Expo Push API name; on the device it is the notification's
 category. Total payload stays under 4 KiB.
 
+### Confirm (Claude via cloud waits on a computer)
+
+| Field        | Value                                     |
+| ------------ | ----------------------------------------- |
+| `title`      | `"Claude via cloud · <host>"`             |
+| `body`       | `"wants to <what>: <text>"` (≤ 180 chars) |
+| `categoryId` | `"confirm"`                               |
+| `data`       | below                                     |
+
+```
+data: {
+  kind:        "confirm",
+  confirm_id:  string,        // the RemoteConfirm's confirm_id
+  host_device: string,        // the computer it waits on (pinned here)
+  space:       "",
+  ask_id:      "",
+  options:     []
+}
+```
+
 ## Categories (registered at startup by `setupNotifications`)
 
-| `categoryId` | Buttons                | Use when                                 |
-| ------------ | ---------------------- | ---------------------------------------- |
-| `ask_opt2`   | `1`, `2`, Reply (text) | exactly 2 options                        |
-| `ask_opt3`   | `1`, `2`, `3`          | exactly 3 options                        |
-| `ask_text`   | Reply (text), Open     | 0, 1 or 4 options, or options too long   |
-| none         | tap only               | `finished`, multi-question, multi-select |
+| `categoryId` | Buttons                   | Use when                                 |
+| ------------ | ------------------------- | ---------------------------------------- |
+| `ask_opt2`   | `1`, `2`, Reply (text)    | exactly 2 options                        |
+| `ask_opt3`   | `1`, `2`, `3`             | exactly 3 options                        |
+| `ask_text`   | Reply (text), Open        | 0, 1 or 4 options, or options too long   |
+| `confirm`    | Deny (destructive), Allow | a `confirm` push                         |
+| none         | tap only                  | `finished`, multi-question, multi-select |
 
 Body for `ask_optN`: `<question>\n1) <opt>  2) <opt> ...` (options cut to fit,
 question cut to keep 180).
@@ -64,9 +85,15 @@ tap body / Open        ─▶ navigate(/space/<space>)
 button 1..3            ─▶ fleet.answerOverHttp(space, ask_id, [[options[i]]], host_device)
 Reply (text)           ─▶ fleet.answerOverHttp(space, ask_id, [[text]], host_device)
 answer fails           ─▶ local notification "Couldn't send your answer", tap opens the space
+confirm: Allow / Deny  ─▶ fleet.confirmOverHttp(host_device, confirm_id, allow)
+confirm: tap body      ─▶ navigate(/)  (Home, where the card waits)
+confirm fails          ─▶ the same local notification, tap opens Home
 ```
 
-Button and Reply actions do not open the app (`opensAppToForeground: false`).
+Button and Reply actions do not open the app (`opensAppToForeground: false`),
+Allow and Deny neither. A confirm push is bannered even while a space is on
+screen. A late Allow / Deny (answered elsewhere, or expired) is refused by the
+computer later; the phone shows nothing for it.
 
 ## Background and killed state
 

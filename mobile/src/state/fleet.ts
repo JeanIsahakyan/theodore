@@ -15,6 +15,7 @@ export const initialFleet: FleetSnapshot = {
   lines: {},
   mirrors: {},
   questions: [],
+  confirms: [],
 };
 
 export const useFleetState = create<FleetSnapshot>(() => initialFleet);

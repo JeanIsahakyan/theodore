@@ -11,13 +11,14 @@
  * Only what the phone shows travels: names the cloud verified or stored, a
  * question cut to 180 chars, its option labels. Never a token in a log.
  */
+import type { FleetMode, RemoteConfirm } from '../gen/fleet';
 
 export const EXPO_PUSH_URL = 'https://exp.host/--/api/v2/push/send';
 
 /**
  * One notification for one device, in Expo's message shape, as the app's
  * push contract wants it (mobile/src/push/README.md): no sound, Android
- * channel `default`, `data.kind` `ask` or `finished`.
+ * channel `default`, `data.kind` `ask`, `finished` or `confirm`.
  */
 export interface PushMessage {
   to: string;
@@ -28,13 +29,17 @@ export interface PushMessage {
   channelId: 'default';
   priority?: 'high';
   data: {
-    kind: 'ask' | 'finished';
+    kind: 'ask' | 'finished' | 'confirm';
+    /** '' unless `ask`. */
     ask_id: string;
+    /** '' for `confirm`. */
     space: string;
     host_device: string;
     /** The question's options (≤ 4); `opt<i>` answers `options[i]`. */
     options: string[];
     status?: string;
+    /** `confirm`: the host's `RemoteConfirm.confirm_id`. */
+    confirm_id?: string;
   };
 }
 
@@ -104,6 +109,64 @@ function ticketResult(t: unknown): PushResult {
   return ticket.details?.error === 'DeviceNotRegistered'
     ? 'unregistered'
     : 'failed';
+}
+
+const MODE_LABEL: Record<FleetMode, string> = {
+  ask: 'Ask',
+  plan: 'Plan',
+  edit: 'Edit',
+  run: 'Run',
+};
+
+/** "an Edit", "a Plan": the mode label with its article. */
+const withArticle = (mode: FleetMode) =>
+  `${mode === 'ask' || mode === 'edit' ? 'an' : 'a'} ${MODE_LABEL[mode]}`;
+
+/**
+ * The push for a request from Claude via the cloud waiting on its host
+ * (docs/cloud.md "Push notifications"). The phone app registers category
+ * `confirm` with two buttons, Allow and Deny: each sends a signed
+ * `RemoteOp::Confirm{confirm_id, allow}` to `data.host_device`. Keep this
+ * shape exactly:
+ *
+ * ```text
+ * title       "Claude via cloud · <host name>"
+ * body        "wants to <what>: <text>", ≤ 180 chars
+ * categoryId  confirm      priority high      channelId default
+ * data        {kind: confirm, confirm_id, host_device, space: "", ask_id: "", options: []}
+ * ```
+ */
+export function confirmPush(
+  hostName: string,
+  c: RemoteConfirm,
+): Omit<PushMessage, 'to'> {
+  const mode = MODE_LABEL[c.mode];
+  const space = c.space_name ?? 'a space';
+  const what =
+    c.action === 'start'
+      ? `start ${withArticle(c.mode)} space in ${c.project_name ?? 'a project'}`
+      : c.action === 'send'
+        ? `send to ${space} in ${mode}`
+        : `approve the plan in ${space} (${mode})`;
+  const text = c.text.trim();
+  return {
+    title: clip(`Claude via cloud · ${hostName}`, 120),
+    body: clip(
+      text ? `wants to ${what}: ${text}` : `wants to ${what}`,
+      MAX_BODY,
+    ),
+    categoryId: 'confirm',
+    channelId: 'default',
+    priority: 'high',
+    data: {
+      kind: 'confirm',
+      confirm_id: c.confirm_id,
+      host_device: c.host_device,
+      space: '',
+      ask_id: '',
+      options: [],
+    },
+  };
 }
 
 /** On one line, at most `max` chars, an ellipsis when cut. */

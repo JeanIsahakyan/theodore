@@ -241,22 +241,26 @@ device ─GET /v1/fleet/ws, Upgrade: websocket, Bearer JWT─▶ Worker
   ─▶ acceptWebSocket(tag u:<user>) ─▶ challenge ─▶ hello ─▶ welcome ...
 ```
 
-Protocols 3 to 5 (`fleet.version`, close 4003, for anything else). The
+Protocols 3 to 6 (`fleet.version`, close 4003, for anything else). The
 hello's protocol is kept per connection:
 
-| | Protocol 3 | Protocol 4 | Protocol 5 |
-| --- | --- | --- | --- |
-| `devices` list | computers only (`desktop`, `daemon`): it can't read `mobile` / `web` | no `mcp` device | every device |
-| its own kind | `desktop` / `daemon` (else `fleet.bad_message`) | also `mobile`, `web` | same as 4 |
-| `register_push`, `delegate` | unknown (`fleet.bad_message`) | accepted | accepted |
-| `delegations` | never sent | after welcome and on change | same |
-| `mirror` space events | never sent, live or history | sent | sent |
+| | Protocol 3 | Protocol 4 | Protocol 5 | Protocol 6 |
+| --- | --- | --- | --- | --- |
+| `devices` list | computers only (`desktop`, `daemon`): it can't read `mobile` / `web` | no `mcp` device | every device | same as 5 |
+| its own kind | `desktop` / `daemon` (else `fleet.bad_message`) | also `mobile`, `web` | same as 4 | same as 4 |
+| `register_push`, `delegate` | unknown (`fleet.bad_message`) | accepted | accepted | accepted |
+| `delegations` | never sent | after welcome and on change | same | same |
+| `mirror` space events | never sent, live or history | sent | sent | sent |
+| `confirm`, `confirm_resolved` (from a host) | unknown (`fleet.bad_message`) | same | same | accepted |
+| `confirm`, `confirm_dismissed` (to a delegate) | never sent | never sent | never sent | sent |
+| `DeviceInfo.mcp_auto` | dropped | dropped | dropped | kept and listed |
 
 Kind `mcp` is the cloud's own device ("MCP" below): only its in-process
 connection says it, and says nothing else; a socket's hello or `announce`
 with `mcp` is `fleet.bad_message`. A request whose origin's kind the
 target's protocol can't list (a phone's to protocol 3, the MCP device's to
-3 or 4) is `refused{fleet.upgrade_required}`.
+3 or 4), and a `confirm` / `set_mcp_auto` op to a target online below 6,
+is `refused{fleet.upgrade_required}`.
 
 `DeviceInfo.os` is `macos`, `linux`, `windows`, `ios` or `android` (a
 browser: the OS it runs on). A protocol-3 device gets `linux` for any but
@@ -266,8 +270,8 @@ browser: the OS it runs on). A protocol-3 device gets `linux` for any but
   attachment (user, org, token expiry, device, generation, presence); the
   rest is SQLite, so a woken hub rebuilds nothing.
 - **One alarm** for every deadline (hello due, token expiry + 60 s, 10 s
-  grace, 2 min pending, 20 s escalation, a delegation's expiry), set only
-  when it moves earlier.
+  grace, 2 min pending, 20 s escalation, a delegation's or a confirm's
+  expiry), set only when it moves earlier.
 - **Heartbeat**: the device pings (WebSocket ping frames); the runtime
   answers without waking the hub. The hub doesn't ping.
 - Messages run one at a time, in arrival order. Everything is scoped to the
@@ -285,6 +289,7 @@ never verifies as another):
 | space event: `event` tag ‖ `SpaceEventBody` | host | verifies against the sender's pinned key; `device_id` = `host_device` = sender = the space's host; stores and forwards unchanged |
 | ask: `ask` tag ‖ `RemoteAsk` | host | same as an event |
 | delegation: `delegate` tag ‖ `Delegation` | origin | verifies against the sender's pinned key; `device_id` = `origin_device` = sender (below) |
+| confirm: `confirm` tag ‖ `RemoteConfirm` | host | verifies against the sender's pinned key; `device_id` = `host_device` = sender, a computer (below) |
 
 A failed event, ask or reply check is `error{fleet.bad_signature}`, nothing
 stored or forwarded (a refused reply leaves its request pending).
@@ -339,6 +344,7 @@ connected now? ─▶ fleet.invalid (nothing changes)
 ─▶ delete its row, the spaces it hosts (events, subs; their questions dismissed `resolved`)
 ─▶ requests waiting for it ─▶ origin: refused{fleet.offline};  replies held for it dropped
 ─▶ its push token and every delegation naming it dropped (the other side told)
+─▶ its confirms dismissed where they showed, dropped
 ─▶ devices pushed to the rest
 ```
 
@@ -371,6 +377,49 @@ revoke ─▶ kept as a tombstone 5 min (an older grant can't come back),
 - A delegate gains nothing on hosts: its requests (answers, too) still
   need the host's own trust in its key.
 
+### Confirms
+
+An Edit or Run from Claude via the cloud (the MCP device) waits on its host
+for a person's yes (`docs/fleet.md` "Requests from Claude via the cloud"),
+unless the user turned on auto mode there. The host shows it on its own
+screen and, through the cloud, on the devices it delegates to (a phone, the
+web app, another computer):
+
+```
+host ─ confirm{envelope: RemoteConfirm{confirm_id, host_device, mcp_device,
+                 action, mode, project_name, space_name, text, expires_at_ms}}
+  every field bounded (text ≤ 500 chars, names ≤ 200)?  no ─▶ error fleet.bad_message
+  device_id = host_device = sender?                 no ─▶ error fleet.not_yours
+  the sender a computer?                            no ─▶ error fleet.invalid
+  confirm_id open: the same host's ─▶ ignored;  another's ─▶ error fleet.not_yours
+  expires_at_ms past?                                  ─▶ error fleet.invalid
+  20 open for the user?                                ─▶ error fleet.busy
+  signed (`confirm` tag) by the sender's pinned key? no ─▶ error fleet.bad_signature
+─▶ kept until expires_at_ms (at most 5 min)
+─▶ confirm{envelope} ─▶ the host's live delegates online on protocol 6
+   (never an `mcp` one); again after their welcome, and to a new delegate
+─▶ push to those away from a screen, once each
+delegate ─ request{op: confirm{confirm_id, allow}} ─▶ host (any request route)
+host ─ confirm_resolved{confirm_id}  (answered anywhere, or timed out)
+  not its host? ─▶ error fleet.not_yours      unknown id ─▶ nothing
+─▶ confirm_dismissed{confirm_id} ─▶ where it showed and the host's delegates;
+   dropped
+expiry │ delegation revoked or expired (that delegate) │ host removed
+─▶ confirm_dismissed the same way
+```
+
+- A protocol-5 connection never gets `confirm` / `confirm_dismissed`: it
+  can't read them.
+- `confirm` and `set_mcp_auto{mcp_device, auto, until_ms}` (a host's auto
+  mode for an `mcp` device it pins) are requests on no space (`space` ''):
+  routed and claimed like any other, pending 2 min, nothing about spaces
+  checked. From the MCP device itself: `refused{fleet.not_yours}` (the host
+  refuses it too). To a target online below 6:
+  `refused{fleet.upgrade_required}`.
+- A host lists its auto modes in `DeviceInfo.mcp_auto` (≤ 8,
+  `{device_id, auto: off | edit | full, until_ms}`), relayed in `devices`
+  so another device can show and change them.
+
 ### Push notifications
 
 The phone registers its Expo token over the socket; the hub sends through
@@ -385,6 +434,8 @@ register_push{provider: expo, token}   (a `mobile` device only, else error fleet
 question from a host ─▶ followers ─▶ each with a token and not looking at it
   (offline, or connected but not focused / locked) ─▶ one push per question
   while you're at the host: none now; at the 20 s escalation, then
+confirm from a host ─▶ its delegates the same way (not one online on an
+  older protocol), one push per confirm
 space status running/waiting ─▶ idle | failed | stopped (from the host's
   signed events) ─▶ one push to each such follower
 send ─▶ ctx.waitUntil (routing never waits) ─▶ tickets:
@@ -395,13 +446,13 @@ What a push carries (the app's contract, `mobile/src/push/README.md`;
 `askPresentation` is ported in `src/fleet/push.ts` and a test checks both
 give the same output):
 
-| Field | Question | Finished |
-| --- | --- | --- |
-| `title` | `<host> · <space>` | same |
-| `body` | the question, and `\n1) A  2) B` for 2–3 options, ≤ 180 chars | `<space> finished` / `failed` / `stopped` |
-| `categoryId` | `ask_opt2`, `ask_opt3`, else `ask_text`; none for several questions or multi-select | none |
-| `channelId` / `priority` | `default` / `high` | `default` / — |
-| `data` | `{kind: ask, ask_id, space, host_device, options}` (≤ 4; `[]` for several questions or multi-select) | `{kind: finished, ask_id: "", space, host_device, options: [], status}` |
+| Field | Question | Finished | Confirm |
+| --- | --- | --- | --- |
+| `title` | `<host> · <space>` | same | `Claude via cloud · <host>` |
+| `body` | the question, and `\n1) A  2) B` for 2–3 options, ≤ 180 chars | `<space> finished` / `failed` / `stopped` | `wants to <what>: <text>`, ≤ 180 chars; `<what>`: `start an Edit space in <project>`, `send to <space> in Run`, `approve the plan in <space> (Edit)` |
+| `categoryId` | `ask_opt2`, `ask_opt3`, else `ask_text`; none for several questions or multi-select | none | `confirm` (Allow / Deny: a signed `confirm` request to `host_device`) |
+| `channelId` / `priority` | `default` / `high` | `default` / — | `default` / `high` |
+| `data` | `{kind: ask, ask_id, space, host_device, options}` (≤ 4; `[]` for several questions or multi-select) | `{kind: finished, ask_id: "", space, host_device, options: [], status}` | `{kind: confirm, confirm_id, host_device, space: "", ask_id: "", options: []}` |
 
 `<host>` is the host's own name (its hello), `<space>` the name in its
 host-signed `started` event (else the space id); the question and options
@@ -439,11 +490,12 @@ Storage (DO SQLite):
 | `pending` | a routed request until its reply: target, generation, claimed, envelope, `ask_id` of an answer, how long it may wait (`ttl_ms`: 2 min, 5 min from the MCP device) |
 | `replies` | a signed reply or a `refused` held for an origin that's offline (2 min), as the frame to send |
 | `asks` | an open question (the host's envelope): where it shows, via, escalated, which devices were pushed about it |
+| `confirms` | an open confirm (the host's envelope): when it lapses, where it shows, which devices were pushed about it |
 | `subs` | (device, space) live subscriptions, dropped with the connection |
 | `conns` | per-connection deadline (hello, token expiry) |
 | `push_tokens` | device ─ its Expo token, this minute's push count |
 | `delegations` | (origin, delegate) ─ the latest signed delegation, issued/expiry, revoked (tombstone) |
-| `meta` | `schema` = 7; on any other value every table but `devices`, `conns`, `push_tokens` and `delegations` is dropped (older rows carry older signatures). `mcp_schema` = 2 for the MCP device's own tables ("MCP" below) |
+| `meta` | `schema` = 7; on any other value every table but `devices`, `conns`, `push_tokens` and `delegations` is dropped (older rows carry older signatures); a new table (`confirms`) needs no bump. `mcp_schema` = 2 for the MCP device's own tables ("MCP" below) |
 
 Limits:
 
@@ -456,6 +508,7 @@ Limits:
 | requests in flight per user | 100 | `refused{fleet.busy}` |
 | spaces per user (pending starts count) | 200 | the oldest finished (stopped/failed) one is forgotten; none: `refused{fleet.too_many_spaces}` |
 | open questions | 20 per space, 100 per user | `error{fleet.busy}` (the host's own card stays) |
+| open confirms | 20 per user, 5 min each | `error{fleet.busy}` (the host's own prompt stays) |
 | a space whose host is offline | 30 days | forgotten with its events and questions (checked on any hello and alarm) |
 | device info | 8 KiB | `fleet.too_large` |
 | one space event | 64 KiB | `fleet.too_large` |
@@ -576,7 +629,7 @@ One per (user, org), in the org's `OrgHub`, next to the fleet tables:
 | --- | --- |
 | online after the last tool call | 15 min (then the alarm takes it offline; the next call says hello again and resubscribes) |
 | a start, send, stop, answer waits for the computer's reply | 15 s, then `result: pending` (the reply still lands) |
-| a pending request from the MCP device, in the hub | 5 min (`REQUEST_WINDOW_MS`, other origins 2 min): an Edit or Run waits on the computer for a person's Allow that long |
+| a pending request from the MCP device, in the hub | 5 min (`REQUEST_WINDOW_MS`, other origins 2 min): an Edit or Run waits that long for a person's yes on the computer (or on a phone or computer it sends its approvals to), unless the user turned on auto mode there |
 | `space_wait` | ≤ 25 s per call |
 | goal, message | 20 000 characters |
 

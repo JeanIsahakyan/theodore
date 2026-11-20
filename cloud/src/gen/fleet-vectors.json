@@ -11,6 +11,7 @@
   "seed_b64": "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=",
   "tags": {
     "ask": "theodore-fleet-ask-v3\u0000",
+    "confirm": "theodore-fleet-confirm-v3\u0000",
     "delegate": "theodore-fleet-delegate-v3\u0000",
     "event": "theodore-fleet-event-v3\u0000",
     "hello": "theodore-fleet-hello-v3\u0000",

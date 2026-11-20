@@ -72,6 +72,7 @@ export const info = (name = 'mac', over: Partial<DeviceInfo> = {}) =>
     accepts_remote: true,
     max_mode: 'edit',
     agents: [],
+    mcp_auto: [],
     ...over,
   }) satisfies DeviceInfo;
 

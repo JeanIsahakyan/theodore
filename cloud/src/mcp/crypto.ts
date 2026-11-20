@@ -188,6 +188,15 @@ function opInOrder(op: RemoteOp): RemoteOp {
         ask_id: op.ask_id,
         answers: op.answers,
       };
+    case 'confirm':
+      return { op: 'confirm', confirm_id: op.confirm_id, allow: op.allow };
+    case 'set_mcp_auto':
+      return {
+        op: 'set_mcp_auto',
+        mcp_device: op.mcp_device,
+        auto: op.auto,
+        until_ms: op.until_ms ?? null,
+      };
   }
 }
 

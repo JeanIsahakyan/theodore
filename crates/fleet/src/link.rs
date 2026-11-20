@@ -493,7 +493,9 @@ fn closed(frame: Option<tokio_tungstenite::tungstenite::protocol::CloseFrame>) -
 fn outboxed(msg: &ClientMessage) -> bool {
     matches!(
         msg,
-        ClientMessage::Reply { .. } | ClientMessage::AskResolved { .. }
+        ClientMessage::Reply { .. }
+            | ClientMessage::AskResolved { .. }
+            | ClientMessage::ConfirmResolved { .. }
     )
 }
 
@@ -514,6 +516,8 @@ fn kind(msg: &ClientMessage) -> &'static str {
         ClientMessage::RemoveDevice { .. } => "remove_device",
         ClientMessage::RegisterPush { .. } => "register_push",
         ClientMessage::Delegate { .. } => "delegate",
+        ClientMessage::Confirm { .. } => "confirm",
+        ClientMessage::ConfirmResolved { .. } => "confirm_resolved",
     }
 }
 
@@ -532,5 +536,7 @@ fn server_kind(msg: &ServerMessage) -> &'static str {
         ServerMessage::Dismiss { .. } => "dismiss",
         ServerMessage::Error { .. } => "error",
         ServerMessage::Delegations { .. } => "delegations",
+        ServerMessage::Confirm { .. } => "confirm",
+        ServerMessage::ConfirmDismissed { .. } => "confirm_dismissed",
     }
 }

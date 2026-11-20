@@ -124,6 +124,7 @@ fn summary(id: &str, key: &DeviceKey, name: &str, projects: Vec<ProjectRef>) -> 
             projects,
             max_mode: FleetMode::Edit,
             agents: vec![],
+            mcp_auto: vec![],
         },
         online: true,
         last_seen_ms: 0,
@@ -3332,7 +3333,7 @@ async fn a_trusted_phone_starts_and_answers_here_like_a_computer() {
 }
 
 /// "Send my spaces' questions here": signed by this device for a trusted
-/// phone only, kept, signed again after a welcome, and revoked when
+/// phone (never a server), kept, signed again after a welcome, and revoked when
 /// turned off, untrusted or removed.
 #[tokio::test]
 async fn a_delegation_is_signed_kept_resent_and_revoked() {
@@ -3342,8 +3343,9 @@ async fn a_delegation_is_signed_kept_resent_and_revoked() {
         DeviceKey::generate().unwrap(),
         DeviceKey::generate().unwrap(),
     );
+    // A server nobody sits at follows nothing (a desktop computer may).
     let devices = vec![
-        summary(TARGET, &mac, "mac1", vec![app_project()]),
+        client(TARGET, &mac, "mac1", DeviceKind::Daemon),
         client(PHONE, &phone, "iPhone", DeviceKind::Mobile),
     ];
     connect(&f, &core, false, devices.clone()).await;
@@ -3352,7 +3354,7 @@ async fn a_delegation_is_signed_kept_resent_and_revoked() {
     assert!(e.to_string().contains("trust iPhone first"), "{e}");
     trust(&core, TARGET).await;
     let e = core.fleet_delegate(TARGET, true).await.unwrap_err();
-    assert!(e.to_string().contains("is a computer"), "{e}");
+    assert!(e.to_string().contains("is a server nobody sits at"), "{e}");
     assert!(delegations_sent(&f).is_empty());
 
     trust(&core, PHONE).await;
@@ -4315,3 +4317,6 @@ mod follow;
 
 #[path = "fleet_confirm_tests.rs"]
 mod confirm;
+
+#[path = "fleet_auto_tests.rs"]
+mod auto;

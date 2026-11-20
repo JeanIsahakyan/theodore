@@ -5,11 +5,19 @@
 //!
 //! ```text
 //! gate: origin pinned as mcp (or listed as mcp now) + start/send in Edit|Run
+//!   auto mode covers it (fleet_auto) ─▶ claim ─▶ runs, logged "auto"
 //!   daemon (nobody here) ─▶ fleet.denied, nothing claimed
 //!   else ─▶ claim ─▶ claimed ─▶ FleetConfirm prompt (Allow / Deny)
-//!            Allow ─▶ recheck ─▶ run ─▶ reply
+//!            ├─ to the devices this one delegates to: confirm{RemoteConfirm}
+//!            Allow (here, or a delegate's signed confirm op) ─▶ recheck ─▶ run
 //!            Deny | issued_at + REQUEST_WINDOW_MS passes ─▶ reply{fleet.denied}
+//!            either way ─▶ confirm_resolved (the cloud dismisses it there)
 //! answer (ask reply), stop, Ask, Plan ─▶ no prompt
+//!
+//! a host's confirm{RemoteConfirm} here (this device is its delegate)
+//!   ─▶ host pinned, signature (Domain::Confirm) ─▶ the same prompt, "on <host>"
+//!   Allow / Deny ─▶ signed confirm{confirm_id, allow} ─▶ host; first wins
+//!   confirm_dismissed ─▶ gone
 //! ```
 //!
 //! Each prompt waits in its own task (the claim's), so it never holds up
@@ -18,18 +26,41 @@
 use std::time::Duration;
 
 use theodore_contract::{Ephemeral, FleetConfirm, FleetConfirmAction, FleetConfirmAnswer};
-use theodore_fleet_protocol::{DeviceKind, FleetMode, REQUEST_WINDOW_MS, RemoteOp, codes};
+use theodore_fleet_protocol::{
+    CONFIRM_TEXT_MAX, ClientMessage, ConfirmAction, DeviceKind, Domain, FleetMode,
+    REQUEST_WINDOW_MS, RemoteConfirm, RemoteOp, SignedEnvelope, codes,
+};
 use tokio::sync::oneshot;
 
 use crate::core::Core;
 use crate::error::{AppError, AppResult};
-use crate::usecases::fleet::{Claimed, PendingConfirm, TrustedDevice, kind_str, space_mode};
+use crate::usecases::fleet::{
+    Answer, Claimed, PendingConfirm, TrustedDevice, fleet_mode, kind_str, pin_name, space_mode,
+};
 use crate::usecases::fleet_host::{Refusal, space_label};
-use crate::usecases::fleet_origin::truncate;
+use crate::usecases::fleet_origin::{FleetFail, REPLY_WAIT, truncate};
 use crate::usecases::space_plan::APPROVED_TEXT;
 
-/// Most characters of the goal or message a prompt shows.
-const CONFIRM_TEXT_MAX: usize = 500;
+/// Most prompts from other computers kept here at once.
+const REMOTE_CONFIRMS_KEPT: usize = 20;
+/// Most characters of a project or space name in a prompt sent elsewhere.
+const NAME_MAX: usize = 200;
+
+fn wire_action(a: FleetConfirmAction) -> ConfirmAction {
+    match a {
+        FleetConfirmAction::Start => ConfirmAction::Start,
+        FleetConfirmAction::Send => ConfirmAction::Send,
+        FleetConfirmAction::ApprovePlan => ConfirmAction::ApprovePlan,
+    }
+}
+
+fn ui_action(a: ConfirmAction) -> FleetConfirmAction {
+    match a {
+        ConfirmAction::Start => FleetConfirmAction::Start,
+        ConfirmAction::Send => FleetConfirmAction::Send,
+        ConfirmAction::ApprovePlan => FleetConfirmAction::ApprovePlan,
+    }
+}
 
 /// Whether `op` edits or runs here: a start or a send in Edit or Run (a
 /// send's mode already resolved by the gate). Approving a plan is a send
@@ -40,7 +71,10 @@ pub(crate) fn needs_person(op: &RemoteOp) -> bool {
     match op {
         RemoteOp::StartSpace { mode, .. } => writes(*mode),
         RemoteOp::Send { mode, .. } => mode.is_some_and(writes),
-        RemoteOp::Stop { .. } | RemoteOp::Answer { .. } => false,
+        RemoteOp::Stop { .. }
+        | RemoteOp::Answer { .. }
+        | RemoteOp::Confirm { .. }
+        | RemoteOp::SetMcpAuto { .. } => false,
     }
 }
 
@@ -61,15 +95,51 @@ impl Core {
                 .any(|d| d.device_id == pin.device_id && d.info.kind == DeviceKind::Mcp)
     }
 
-    /// The gate's word on a verified request that needs a person: a daemon
-    /// has nobody to ask, so it's refused before any claim.
-    pub(crate) fn fleet_confirm_gate(&self) -> Result<(), Refusal> {
+    /// The gate's word on a verified request that needs a person: auto
+    /// mode passes it on; else a daemon has nobody to ask, so it's refused
+    /// before any claim.
+    pub(crate) fn fleet_confirm_gate(
+        &self,
+        pin: &TrustedDevice,
+        op: &RemoteOp,
+    ) -> Result<(), Refusal> {
+        if self.fleet_auto_covers(pin, op) {
+            return Ok(());
+        }
         if self.fleet_kind() == DeviceKind::Daemon {
             return Err(denied(
                 "nobody sits at this device to allow an edit or run from Claude via the cloud",
             ));
         }
         Ok(())
+    }
+
+    /// After the claim, right before a request that needs a person runs:
+    /// auto mode (read again now, from the pin it verified against) lets it
+    /// through, logged like an allowed one; else a person's yes, or a
+    /// daemon's no.
+    pub(crate) async fn fleet_confirm_or_auto(&self, c: &Claimed) -> Result<(), Refusal> {
+        let pin = self
+            .fleet_pinned(&c.req.origin_device)
+            .await
+            .filter(|p| p.public_key == c.key);
+        if let Some(pin) = pin
+            && self.fleet_auto_covers(&pin, &c.req.op)
+        {
+            tracing::info!(
+                req_id = %c.req.req_id,
+                origin = %c.req.origin_device,
+                mode = %self.fleet_auto_note(&pin, &c.req.op),
+                "auto"
+            );
+            return Ok(());
+        }
+        if self.fleet_kind() == DeviceKind::Daemon {
+            return Err(denied(
+                "nobody sits at this device to allow an edit or run from Claude via the cloud",
+            ));
+        }
+        self.fleet_confirm_wait(c).await
     }
 
     /// Shows the prompt for claimed request `c` and waits for Allow, Deny
@@ -87,7 +157,10 @@ impl Core {
             },
         );
         tracing::info!(req_id = %id, origin = %c.req.origin_device, "a fleet request waits for a person here");
-        self.emit(Ephemeral::FleetConfirm { request: view });
+        self.emit(Ephemeral::FleetConfirm {
+            request: view.clone(),
+        });
+        let published = self.fleet_publish_confirm(&view).await;
         let clock = self.0.deps.clock.clone();
         let left = (deadline as i64).saturating_sub(clock.now()).max(0) as u64;
         let answer = tokio::select! {
@@ -97,6 +170,11 @@ impl Core {
         };
         self.fleet().confirms.remove(&id);
         self.emit(Ephemeral::FleetConfirmDone { id: id.clone() });
+        if published {
+            self.fleet_send_msg(ClientMessage::ConfirmResolved {
+                confirm_id: id.clone(),
+            });
+        }
         match answer {
             Some(true) => {
                 tracing::info!(req_id = %id, "allowed here");
@@ -123,6 +201,8 @@ impl Core {
             local_space: None,
             text: String::new(),
             expires_at_ms: deadline,
+            host_device: None,
+            host_name: None,
         };
         match &c.req.op {
             RemoteOp::StartSpace {
@@ -169,35 +249,200 @@ impl Core {
                     ..base
                 }
             }
-            RemoteOp::Stop { .. } | RemoteOp::Answer { .. } => base,
+            _ => base,
         }
     }
 
-    /// The person's answer to a waiting request (`fleet_confirm`).
-    pub async fn fleet_confirm(&self, req: FleetConfirmAnswer) -> AppResult<()> {
-        let tx = self
-            .fleet()
+    /// Shows a prompt waiting here on the devices this one delegates to
+    /// (a phone, the web app, another computer), signed as its host; the
+    /// cloud routes it. `true` when it went out.
+    async fn fleet_publish_confirm(&self, view: &FleetConfirm) -> bool {
+        if self.fleet_settings().await.delegates.is_empty() {
+            return false;
+        }
+        let Some(me) = self.fleet().device_id.clone() else {
+            return false;
+        };
+        let key = match self.fleet_key().await {
+            Ok(k) => k,
+            Err(e) => {
+                tracing::warn!(error.code = e.code(), error = %e, "no fleet device key to sign a prompt");
+                return false;
+            }
+        };
+        let body = RemoteConfirm {
+            confirm_id: view.id.clone(),
+            host_device: me,
+            mcp_device: view.device_id.clone(),
+            action: wire_action(view.action),
+            mode: fleet_mode(view.mode),
+            project_name: view.project_name.as_deref().map(|n| truncate(n, NAME_MAX)),
+            space_name: view.space_name.as_deref().map(|n| truncate(n, NAME_MAX)),
+            text: truncate(&view.text, CONFIRM_TEXT_MAX),
+            expires_at_ms: view.expires_at_ms,
+        };
+        let envelope = SignedEnvelope::seal_as(&body, &key, Domain::Confirm);
+        self.fleet_send_msg(ClientMessage::Confirm { envelope })
+    }
+
+    /// Whether request `id` waits for a person here (a delegate's answer
+    /// counts only then).
+    pub(crate) fn fleet_confirm_waiting(&self, id: &str) -> bool {
+        self.fleet()
             .confirms
-            .get_mut(&req.id)
-            .and_then(|p| p.tx.take());
+            .get(id)
+            .is_some_and(|p| p.tx.is_some())
+    }
+
+    /// Allow or Deny of a request waiting here; `by`: where it was said,
+    /// for the log. The first answer wins.
+    pub(crate) fn fleet_confirm_here(&self, id: &str, allow: bool, by: &str) -> AppResult<()> {
+        let tx = self.fleet().confirms.get_mut(id).and_then(|p| p.tx.take());
         let Some(tx) = tx else {
             return Err(AppError::NotFound(
                 "that request isn't waiting any more".into(),
             ));
         };
-        tracing::info!(req_id = %req.id, allow = req.allow, "a person answered a fleet request");
-        let _ = tx.send(req.allow);
+        tracing::info!(req_id = %id, allow, by, "a person answered a fleet request");
+        let _ = tx.send(allow);
         Ok(())
     }
 
-    /// Requests waiting for a person here, oldest window first.
-    pub fn fleet_confirms(&self) -> Vec<FleetConfirm> {
-        let mut out: Vec<FleetConfirm> = self
+    /// The person's answer to a waiting request (`fleet_confirm`): one
+    /// waiting here, or one shown here for another computer, signed and
+    /// sent there.
+    pub async fn fleet_confirm(&self, req: FleetConfirmAnswer) -> AppResult<()> {
+        if self.fleet_confirm_waiting(&req.id) {
+            return self.fleet_confirm_here(&req.id, req.allow, "here");
+        }
+        let remote = self.fleet().remote_confirms.get(&req.id).cloned();
+        let Some(view) = remote else {
+            return Err(AppError::NotFound(
+                "that request isn't waiting any more".into(),
+            ));
+        };
+        let host = view.host_device.clone().unwrap_or_default();
+        let rx = self
+            .fleet_request(
+                &host,
+                RemoteOp::Confirm {
+                    confirm_id: req.id.clone(),
+                    allow: req.allow,
+                },
+                false,
+            )
+            .await?;
+        // Sent: the prompt goes here whatever the host answers.
+        self.fleet_drop_remote_confirm(&req.id);
+        tracing::info!(req_id = %req.id, host = %host, allow = req.allow, "answered another computer's prompt");
+        match Self::fleet_await(rx, REPLY_WAIT).await {
+            Ok(_) => Ok(()),
+            // Answered there or elsewhere first: nothing to tell.
+            Err(FleetFail::Refused(Answer::Err { code, .. })) if code == codes::INVALID => Ok(()),
+            Err(e) => Err(e.for_ui()),
+        }
+    }
+
+    fn fleet_drop_remote_confirm(&self, id: &str) {
+        if self.fleet().remote_confirms.remove(id).is_some() {
+            self.emit(Ephemeral::FleetConfirmDone { id: id.to_string() });
+        }
+    }
+
+    /// A host's prompt, shown here as its delegate: only as a computer
+    /// pinned here signed it, and only until it runs out.
+    pub(crate) async fn fleet_on_remote_confirm(&self, envelope: SignedEnvelope) {
+        let Some(host) = self.fleet_pinned(&envelope.device_id).await else {
+            tracing::debug!("dropped a prompt from a device not trusted here");
+            return;
+        };
+        if self.fleet_origin_mcp(&host) {
+            tracing::debug!("dropped a prompt from Claude via the cloud");
+            return;
+        }
+        let c = match envelope.open_as::<RemoteConfirm>(&host.public_key, Domain::Confirm) {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::debug!(error = %e, "dropped a prompt that doesn't verify");
+                return;
+            }
+        };
+        let now = self.0.deps.clock.now().max(0) as u64;
+        if c.expires_at_ms <= now {
+            return;
+        }
+        // Who asks: the pin here, else the cloud's listing, cut like a pin.
+        let device_name = match self.fleet_pinned(&c.mcp_device).await {
+            Some(p) => p.name,
+            None => self
+                .fleet()
+                .devices
+                .iter()
+                .find(|d| d.device_id == c.mcp_device)
+                .map_or_else(|| "Claude".to_string(), |d| pin_name(&d.info.name)),
+        };
+        let view = FleetConfirm {
+            id: c.confirm_id.clone(),
+            device_id: c.mcp_device.clone(),
+            device_name,
+            action: ui_action(c.action),
+            mode: space_mode(c.mode),
+            project_name: c.project_name.map(|n| truncate(&n, NAME_MAX)),
+            space_name: c.space_name.map(|n| truncate(&n, NAME_MAX)),
+            local_space: None,
+            text: truncate(&c.text, CONFIRM_TEXT_MAX),
+            expires_at_ms: c.expires_at_ms,
+            host_device: Some(c.host_device.clone()),
+            host_name: Some(host.name.clone()),
+        };
+        {
+            let mut mem = self.fleet();
+            if mem.remote_confirms.len() >= REMOTE_CONFIRMS_KEPT
+                && !mem.remote_confirms.contains_key(&view.id)
+            {
+                tracing::debug!("dropped a prompt: too many waiting here");
+                return;
+            }
+            mem.remote_confirms.insert(view.id.clone(), view.clone());
+        }
+        self.emit(Ephemeral::FleetConfirm { request: view });
+    }
+
+    /// The cloud's word that a host's prompt isn't waiting any more.
+    pub(crate) fn fleet_on_confirm_dismissed(&self, id: &str) {
+        self.fleet_drop_remote_confirm(id);
+    }
+
+    /// Prompts from other computers, forgotten when the link restarts (the
+    /// cloud sends those still waiting again after the welcome).
+    pub(crate) fn fleet_clear_remote_confirms(&self) {
+        let ids: Vec<String> = self
             .fleet()
+            .remote_confirms
+            .drain()
+            .map(|(k, _)| k)
+            .collect();
+        for id in ids {
+            self.emit(Ephemeral::FleetConfirmDone { id });
+        }
+    }
+
+    /// Requests waiting for a person here, then those shown here for
+    /// another computer, oldest window first.
+    pub fn fleet_confirms(&self) -> Vec<FleetConfirm> {
+        let now = self.0.deps.clock.now().max(0) as u64;
+        let mem = self.fleet();
+        let mut out: Vec<FleetConfirm> = mem
             .confirms
             .values()
             .filter(|p| p.tx.is_some())
             .map(|p| p.view.clone())
+            .chain(
+                mem.remote_confirms
+                    .values()
+                    .filter(|v| v.expires_at_ms > now)
+                    .cloned(),
+            )
             .collect();
         out.sort_by_key(|v| v.expires_at_ms);
         out

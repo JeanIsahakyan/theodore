@@ -1276,6 +1276,8 @@ pub fn types() -> specta::Types {
         .register::<FleetTrustNeeded>()
         .register::<FleetConfirm>()
         .register::<FleetConfirmAnswer>()
+        .register::<FleetAutoRequest>()
+        .register::<FleetAutoOn>()
         .register::<ClientLog>()
         .register::<ClientLogLevel>()
         .register::<UiEvent>()

@@ -241,3 +241,95 @@ describe('a request from Claude via the cloud', () => {
     expect(calls('fleet_confirm')).toEqual([]);
   });
 });
+
+describe('auto mode on', () => {
+  beforeEach(() => {
+    transport.onCall('fleet_set_auto', () => status({ autos: [] }));
+  });
+
+  it('stays as a notice until turned off in one click', async () => {
+    store.fleet.setStatus(
+      status({
+        autos: [
+          {
+            device_id: 'cl',
+            device_name: 'Claude',
+            auto: 'full',
+            until_ms: Date.now() + 3_600_000,
+          },
+        ],
+      }),
+    );
+    await render();
+    const banner = q('.fleet-auto-on')!;
+    expect(banner.textContent).toMatch(/^Claude via cloud: full auto until /);
+    await click(q('.fleet-auto-off'));
+    await settle();
+    expect(calls('fleet_set_auto')).toEqual([
+      {
+        req: {
+          device_id: 'cl',
+          auto: 'off',
+          until_ms: null,
+          host_device: null,
+        },
+      },
+    ]);
+    expect(q('.fleet-auto-on')).toBeNull();
+  });
+
+  it('says until turned off, and shows nothing once its end passed', async () => {
+    store.fleet.setStatus(
+      status({
+        autos: [
+          {
+            device_id: 'cl',
+            device_name: 'Claude',
+            auto: 'edit',
+            until_ms: null,
+          },
+          {
+            device_id: 'c2',
+            device_name: 'Claude 2',
+            auto: 'full',
+            until_ms: Date.now() - 1,
+          },
+        ],
+      }),
+    );
+    await render();
+    const banners = m!.host.querySelectorAll('.fleet-auto-on');
+    expect(banners).toHaveLength(1);
+    expect(banners[0]!.textContent).toContain(
+      'Claude via cloud: auto edit until turned off',
+    );
+  });
+});
+
+describe('a prompt waiting on another computer', () => {
+  beforeEach(() => {
+    transport.onCall('fleet_confirm', () => null);
+  });
+
+  it('names that computer and sends the answer the same way', async () => {
+    store.fleet.handle({
+      type: 'fleet_confirm',
+      request: confirmRequest({
+        id: 'c9',
+        host_device: 'd2',
+        host_name: 'Studio Mac',
+      }),
+    });
+    await render();
+    const card = q('.fleet-request-confirm')!;
+    expect(card.textContent).toContain(
+      'Claude via cloud wants to start an Edit space in app on Studio Mac',
+    );
+    expect(card.textContent).toContain('Your answer goes to Studio Mac.');
+    await click(q('.fleet-request-allow'));
+    await settle();
+    expect(calls('fleet_confirm')).toEqual([
+      { req: { id: 'c9', allow: true } },
+    ]);
+  });
+});

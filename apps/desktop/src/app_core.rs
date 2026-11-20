@@ -1377,6 +1377,12 @@ impl CoreApi for AppCore {
     ) -> Result<(), CommandError> {
         self.core.fleet_confirm(req).await.map_err(err)
     }
+    async fn fleet_set_auto(
+        &self,
+        req: theodore_contract::FleetAutoRequest,
+    ) -> Result<theodore_contract::FleetStatus, CommandError> {
+        self.core.fleet_set_auto(req).await.map_err(err)
+    }
 }
 
 #[cfg(test)]

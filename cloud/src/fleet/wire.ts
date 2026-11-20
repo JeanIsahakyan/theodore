@@ -3,7 +3,7 @@
  * checked field by field into the generated types (src/gen/fleet.ts) before
  * the hub looks at it. A signed request's body is read only for routing;
  * event, ask and reply bodies are read, checked against their signer's
- * pinned key, and forwarded as the bytes received.
+ * pinned key, and forwarded as the bytes received; so is a host's confirm.
  */
 import type {
   ClientMessage,
@@ -11,7 +11,9 @@ import type {
   DeviceInfo,
   FleetAgentInfo,
   FleetModelInfo,
+  McpAutoState,
   RemoteAsk,
+  RemoteConfirm,
   RemoteQuestion,
   RemoteSpaceEvent,
   ReplyBody,
@@ -21,6 +23,7 @@ import type {
 } from '../gen/fleet';
 import {
   codes,
+  CONFIRM_TEXT_MAX,
   MAX_AGENT_ID_CHARS,
   MAX_AGENT_LABEL_CHARS,
   MAX_AGENT_MODELS,
@@ -31,6 +34,7 @@ import {
   MAX_MODEL_ID_CHARS,
   MAX_FRAME_BYTES,
   MAX_INFO_BYTES,
+  MAX_MCP_AUTO,
   MAX_MIRROR_ID_CHARS,
   MAX_PUSH_TOKEN_CHARS,
   MIN_PROTOCOL_VERSION,
@@ -80,6 +84,27 @@ function uint(o: Obj, k: string): number {
   return v;
 }
 
+/** Absent or null: null; else a non-negative integer. */
+function optUint(o: Obj, k: string): number | null {
+  return o[k] === undefined || o[k] === null ? null : uint(o, k);
+}
+
+/**
+ * A string of at most `max` characters (code points, as Rust counts
+ * `chars`); non-empty unless `empty`.
+ */
+function chars(o: Obj, k: string, max: number, empty = false): string {
+  const v = str(o, k, 2 * max, empty);
+  if ([...v].length > max) {
+    throw bad(`${k} must be a string of at most ${max} characters`);
+  }
+  return v;
+}
+
+function optChars(o: Obj, k: string, max: number): string | null {
+  return o[k] === undefined || o[k] === null ? null : chars(o, k, max);
+}
+
 function bool(o: Obj, k: string): boolean {
   if (typeof o[k] !== 'boolean') throw bad(`${k} must be a boolean`);
   return o[k];
@@ -102,6 +127,10 @@ function oneOf<T extends string>(o: Obj, k: string, allowed: readonly T[]): T {
 }
 
 const MODES = ['ask', 'plan', 'edit', 'run'] as const;
+const MCP_AUTOS = ['off', 'edit', 'full'] as const;
+
+/** Protocol 6: confirms and auto mode (frames, ops, `mcp_auto`). */
+export const V6 = 6;
 
 /** Device kinds requests may target (`DeviceKind::hosts`). */
 export const HOST_KINDS: readonly DeviceInfo['kind'][] = ['desktop', 'daemon'];
@@ -173,6 +202,16 @@ function agentInfo(v: unknown): FleetAgentInfo {
   };
 }
 
+/** One host's auto mode for an `mcp` device it pins (`McpAutoState`). */
+function mcpAuto(v: unknown): McpAutoState {
+  const o = obj(v, 'mcp_auto entry');
+  return {
+    device_id: str(o, 'device_id', 64),
+    auto: oneOf(o, 'auto', MCP_AUTOS),
+    until_ms: optUint(o, 'until_ms'),
+  };
+}
+
 function deviceInfo(
   v: unknown,
   protocol: number,
@@ -195,6 +234,11 @@ function deviceInfo(
       o.agents === undefined || o.agents === null
         ? []
         : arr(o, 'agents', MAX_AGENTS).map(agentInfo),
+    // Protocol 6; older hosts send none.
+    mcp_auto:
+      protocol < V6 || o.mcp_auto === undefined || o.mcp_auto === null
+        ? []
+        : arr(o, 'mcp_auto', MAX_MCP_AUTO).map(mcpAuto),
   };
   if (JSON.stringify(info).length > MAX_INFO_BYTES) {
     throw new BadMessage(codes.TOO_LARGE, 'device info too large');
@@ -386,6 +430,12 @@ export function parseClient(
     case 'delegate':
       if (protocol < 4) break;
       return { type: 'delegate', envelope: envelope(o.envelope) };
+    case 'confirm':
+      if (protocol < V6) break;
+      return { type: 'confirm', envelope: envelope(o.envelope) };
+    case 'confirm_resolved':
+      if (protocol < V6) break;
+      return { type: 'confirm_resolved', confirm_id: str(o, 'confirm_id') };
     default:
       break;
   }
@@ -420,7 +470,8 @@ export interface Routing {
   target_device: string;
   /** The target's key as the origin pinned it. */
   target_key: string;
-  op: 'start_space' | 'send' | 'stop' | 'answer';
+  op: 'start_space' | 'send' | 'stop' | 'answer' | 'confirm' | 'set_mcp_auto';
+  /** '' for an op on no space (`confirm`, `set_mcp_auto`). */
   space: string;
   /** start_space */
   parent: string | null;
@@ -442,7 +493,14 @@ function parseBody(body: string, what: string): Obj {
 export function peekRequest(body: string): Routing {
   const o = parseBody(body, 'request body');
   const op = obj(o.op, 'op');
-  const kind = oneOf(op, 'op', ['start_space', 'send', 'stop', 'answer']);
+  const kind = oneOf(op, 'op', [
+    'start_space',
+    'send',
+    'stop',
+    'answer',
+    'confirm',
+    'set_mcp_auto',
+  ]);
   // Not read for routing, only bounded: the target checks them against
   // what it lists.
   if (kind === 'start_space' || kind === 'send') {
@@ -450,13 +508,23 @@ export function peekRequest(body: string): Routing {
     optStr(op, 'model', MAX_MODEL_ID_CHARS);
     optStr(op, 'effort', MAX_EFFORT_CHARS);
   }
+  if (kind === 'confirm') {
+    str(op, 'confirm_id');
+    bool(op, 'allow');
+  }
+  if (kind === 'set_mcp_auto') {
+    str(op, 'mcp_device', 64);
+    oneOf(op, 'auto', MCP_AUTOS);
+    optUint(op, 'until_ms');
+  }
+  const onSpace = kind !== 'confirm' && kind !== 'set_mcp_auto';
   return {
     req_id: str(o, 'req_id'),
     origin_device: str(o, 'origin_device', 64),
     target_device: str(o, 'target_device', 64),
     target_key: str(o, 'target_key', 64),
     op: kind,
-    space: str(op, 'space'),
+    space: onSpace ? str(op, 'space') : '',
     parent: kind === 'start_space' ? optStr(op, 'parent') : null,
     depth: kind === 'start_space' ? uint(op, 'depth') : 0,
     ask_id: kind === 'answer' ? str(op, 'ask_id') : null,
@@ -501,12 +569,28 @@ export function peekAsk(body: string): RemoteAsk {
   return remoteAsk(parseBody(body, 'ask body'));
 }
 
+/** A host's confirm: every field, all of it is shown (and pushed). */
+export function peekConfirm(body: string): RemoteConfirm {
+  const o = parseBody(body, 'confirm body');
+  return {
+    confirm_id: str(o, 'confirm_id'),
+    host_device: str(o, 'host_device', 64),
+    mcp_device: str(o, 'mcp_device', 64),
+    action: oneOf(o, 'action', ['start', 'send', 'approve_plan']),
+    mode: oneOf(o, 'mode', MODES),
+    project_name: optChars(o, 'project_name', 200),
+    space_name: optChars(o, 'space_name', 200),
+    text: chars(o, 'text', CONFIRM_TEXT_MAX, true),
+    expires_at_ms: uint(o, 'expires_at_ms'),
+  };
+}
+
 /**
  * What a signature is for (`fleet_protocol::Domain`): each kind signs
  * `"theodore-fleet-<kind>-v3\0" ‖ bytes`, so one never verifies as another.
  */
 export type Domain =
-  'hello' | 'request' | 'event' | 'ask' | 'reply' | 'delegate';
+  'hello' | 'request' | 'event' | 'ask' | 'reply' | 'delegate' | 'confirm';
 
 /** The exact bytes signed for `msg` in `domain`. */
 export function signedBytes(domain: Domain, msg: Uint8Array): Uint8Array {

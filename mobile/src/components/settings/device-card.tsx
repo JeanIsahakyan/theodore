@@ -9,6 +9,8 @@
  * │ 1a2b 3c4d 5e6f 7a8b 9c0d 1e2f 3a4b 5c6d  │   monospace, small, selectable
  * │ ✓ Trusted                     (Untrust)  │   or: Not trusted   [ Trust ]
  * │ <error, if the last trust / untrust failed>
+ * │ Claude via cloud          until 18:00    │   a computer's mcp_auto, one
+ * │ [ Off | Auto Edit | Full auto ]          │   McpAutoControl per entry
  * ╰──────────────────────────────────────────╯
  * Trust ─▶ system confirm (fingerprint, what trust allows) ─▶ pinned
  * ```
@@ -23,11 +25,13 @@ import {
   deviceLine,
   deviceSummary,
   fingerprintLabel,
+  isComputer,
 } from '../../ui/deviceView';
 import { Button } from '../../ui/native';
 import { mono, usePalette } from '../../ui/theme';
 import { useTrust } from '../../ui/TrustConfirm';
 import { SymbolImage, type SymbolName } from '../symbol-image';
+import { McpAutoControl } from './mcp-auto';
 
 const android = process.env.EXPO_OS === 'android';
 
@@ -156,6 +160,18 @@ export function DeviceCard({ device }: { device: FleetDeviceView }) {
           {error}
         </Text>
       ) : null}
+
+      {isComputer(device.kind)
+        ? device.mcpAuto.map((m) => (
+            <McpAutoControl
+              key={m.deviceId}
+              host={device.deviceId}
+              hostName={device.name}
+              entry={m}
+              trusted={device.trusted}
+            />
+          ))
+        : null}
     </View>
   );
 }
