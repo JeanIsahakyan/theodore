@@ -5,7 +5,9 @@
  * ```text
  * running    every step its own row, in order, growing
  * finished   always a row: a failed tool, a question, a plan, the last text
- *                          (a stopped or failed turn: all its text)
+ *                          (a stopped or failed turn: all its text), what
+ *                          it did with other spaces (start, wait, merge,
+ *                          ask, send, answer, stop)
  *            the rest between them:
  *              3 or more items ─▶ one line: 3 tool calls, 5 messages, 2 agents
  *              fewer           ─▶ flat
@@ -13,6 +15,7 @@
  * ```
  */
 import type { TurnFile, TurnStep } from '../gen/contract';
+import { spaceToolOf, spaceToolPinned } from './spaceTools';
 import { mcpServer, toolRow, type ToolKind } from './toolSummary';
 
 export type ToolStep = Extract<TurnStep, { kind: 'tool' }>;
@@ -265,7 +268,13 @@ export function turnItems(
   const pinned = (step: TurnStep, index: number) => {
     if (step.kind === 'text') return !!options.keepText || index === lastText;
     if (!isTool(step)) return false;
-    return stepFailed(step) || step.name === ASK || step.name === PLAN;
+    const space = spaceToolOf(step.name);
+    return (
+      stepFailed(step) ||
+      step.name === ASK ||
+      step.name === PLAN ||
+      (space != null && spaceToolPinned(space))
+    );
   };
   const items: TurnItem[] = [];
   let run: { step: TurnStep; index: number }[] = [];

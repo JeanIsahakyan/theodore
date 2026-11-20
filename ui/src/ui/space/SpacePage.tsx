@@ -98,7 +98,7 @@ import {
 import { setTerminalOpenFor, terminalOpenFor } from './terminalOpen';
 import { runControl, settingUp } from './commands';
 import { GlobalConfigSection, SpaceSetupAssistHint } from './ConfigSection';
-import { ParentLink, SpaceAgents } from './SpaceAgents';
+import { SpaceAgents, SubSpaceBanner } from './SpaceAgents';
 import { SpaceProgress } from './SpaceProgress';
 import { BaseMoved, UpdatingBanner } from './BaseUpdate';
 import { MergedBanner, SpaceMergeButton, SpacePrPane } from './SpacePr';
@@ -395,6 +395,7 @@ export const SpacePage = observer(function SpacePage({ id }: { id: string }) {
         showChanges={showChanges}
         onToggleChanges={toggleChanges}
       />
+      <SubSpaceBanner space={space} />
       {!remote && <UpdatingBanner space={space} />}
       {/* The panes clip to this row, so a drawer below never sits under them;
           the drawer is capped by the room left, so the chat keeps a usable
@@ -607,7 +608,6 @@ const SpaceHeader = observer(function SpaceHeader({
         >
           {spaceTitle(space)}
         </Typography.Heading>
-        <ParentLink space={space} />
         {stage !== 'drafting' && (
           <span
             className="space-stage shrink-0 rounded-full bg-default px-2 py-0.5 text-xs"

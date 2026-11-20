@@ -28,10 +28,9 @@ import {
 import { countUse } from '../core/useCounts';
 import {
   Bulb,
-  ChevronRight,
-  CircleXmarkFill,
   Cpu,
   FileText,
+  Layers,
   LogoMcp,
   Magnifier,
   Pencil,
@@ -42,7 +41,6 @@ import { observer } from 'mobx-react-lite';
 import type { AgentId, TurnFile, TurnStep } from '../gen/contract';
 import { useRootStore } from '../stores/context';
 import { Md } from '../highlight';
-import { Spinner } from './bits';
 import { useFileHover } from './FileHoverPreview';
 import { FileTypeIcon } from './FileTypeIcon';
 import {
@@ -52,6 +50,9 @@ import {
   useSteadyChange,
 } from './rowState';
 import { toolRow, type ToolKind } from './toolSummary';
+import { Chevron, Failed, LineCounts, ROW, StepIcon } from './turnBits';
+import { SpaceToolRow } from './SpaceToolRow';
+import { spaceToolOf } from './spaceTools';
 import { AgentDetails, ToolDetails } from './ToolDetails';
 import { toolKey, useToolRun } from './toolPayload';
 import { useRunningBackgroundCall } from './backgroundCalls';
@@ -76,38 +77,13 @@ const KIND_ICON: Record<ToolKind, ComponentType<{ className?: string }>> = {
   search: Magnifier,
   agent: Cpu,
   mcp: LogoMcp,
+  space: Layers,
   other: Wrench,
 };
 
 const NO_STEPS: readonly TurnStep[] = [];
-const ROW = 'flex min-w-0 items-center gap-1.5 text-[13px]';
 
 export { formatDuration };
-
-function StepIcon({ busy, children }: { busy: boolean; children: ReactNode }) {
-  return (
-    <span className="grid size-4 shrink-0 place-items-center text-muted">
-      {busy ? <Spinner /> : children}
-    </span>
-  );
-}
-
-function Chevron({ open }: { open: boolean }) {
-  return (
-    <ChevronRight
-      className={`size-3.5 shrink-0 text-muted ${open ? 'rotate-90' : ''}`}
-    />
-  );
-}
-
-function Failed() {
-  return (
-    <span className="turn-tool-failed inline-flex shrink-0 items-center gap-1 text-xs text-danger">
-      <CircleXmarkFill className="size-3.5" />
-      failed
-    </span>
-  );
-}
 
 function Chip({ text, file = false }: { text: string; file?: boolean }) {
   const hover = useFileHover<HTMLSpanElement>(file ? text : null);
@@ -123,29 +99,6 @@ function Chip({ text, file = false }: { text: string; file?: boolean }) {
         <span className="min-w-0 truncate">{text}</span>
       </span>
       {hover.popover}
-    </>
-  );
-}
-
-function LineCounts({
-  added,
-  removed,
-}: {
-  added: number | null | undefined;
-  removed: number | null | undefined;
-}) {
-  return (
-    <>
-      {added != null && (
-        <span className="turn-added shrink-0 font-mono text-[11px] text-success">
-          +{added}
-        </span>
-      )}
-      {removed != null && (
-        <span className="turn-removed shrink-0 font-mono text-[11px] text-danger">
-          −{removed}
-        </span>
-      )}
     </>
   );
 }
@@ -544,6 +497,9 @@ function Items({
               keptAs={keptAs && `${keptAs}:${index}`}
             />
           );
+        }
+        if (spaceToolOf(step.name)) {
+          return <SpaceToolRow key={index} step={step} running={running} />;
         }
         return <ToolRow key={index} step={step} running={running} />;
       })}

@@ -1238,7 +1238,8 @@ A's turn (Edit/Run) ─▶ space_send {B, message}  ─▶ B's chat: "From <A>" 
   resumes B's own session. Codex can't fork: it is never resumed for an
   ask.
 - Neither space's chat shows the ask while it runs (`stream_text` off);
-  A's timeline has its `space_ask` row ("Ask a space").
+  A's timeline has its `space_ask` row ("Asked <B>: <question>", § "Seeing
+  sub-spaces and agents").
 
 ```
 parent turn (Edit/Run) ─▶ space_start {goal} ─▶ create_space (the usual path)
@@ -1852,18 +1853,61 @@ space's agent started on this computer (`Space::parent`, § "Sub-spaces").
 
 ```
 sidebar        Spaces
-                 Fix the login redirect   2 ›      a parent: count, hide/show
-                   ◌ Fix the flaky test             one step in per level
-                   ✎ Update the docs
-                 Old follow-up   from Old work      parent archived / elsewhere
+                 Fix the login redirect      3 ›   a parent: count, hide/show
+                   ◌ Fix the flaky test     ◌      one step in per level; after the
+                   ◌ Port the parser        •        name: running, waiting for you,
+                   ✎ Add the endpoint       ✓        done, merged
+                   ✓ Update the docs        ✓      merged: muted, last of its siblings
+                 Old follow-up   from Old work     parent archived / elsewhere
 
-space page     header   Fix the flaky test   from Fix the login redirect  ─▶ parent
-               composer ◌ 2 agents running · 2 sub-spaces, 1 running · 1 command running ▾
-                          This turn   ◌ Explore auth  Sonnet 5  running                32s          ─▶ its row
+space page     header   Fix the flaky test
+(a child)      strip    Sub-space of Fix the login redirect · started by its agent · not merged yet
+                                     └─▶ opens the parent      (or: merged back ✓,
+                                                                changed since its last merge)
+
+space page     composer ◌ 2 agents running · 2 sub-spaces, 1 running, 1 of 2 merged · 1 command running ▾
+(a parent)                This turn   ◌ Explore auth  Sonnet 5  running                32s          ─▶ its row
                                       ◌ Review tests  Opus 5.5  running in background  1m   [Stop]  ─▶ its row
                           Background  ⌘ pnpm dev                                       4m   [Stop]
-                          Sub-spaces  ◌ Update docs  ?  claude · Edit · 3 turns                     ─▶ opens
+                          Sub-spaces  ◌ Fix the flaky test  claude · Edit · 3 turns  running        ─▶ opens
+                                      ✓ Update the docs     claude · Edit · 2 turns  merged  (muted, last)
 ```
+
+What the parent's chat shows while its agent works with other spaces: one
+row per call, by the other space's name (from the store by id; the
+result's title, then the id, when it isn't here), live while the turn
+runs. The name opens that space; the rest of the row opens the call.
+
+```
+parent's turn
+  ⑂ Starting a sub-space: Port the parser to the new API     ◌      the goal, until it exists
+  ⑂ Sub-space started: Port the parser   ◌ running   Edit    ›      its stage, live:
+  ⑂ Sub-space started: Add the endpoint  waiting for you  Edit ›      starting → running → done
+  ⧗ Waiting for 2 sub-spaces   1 done · 1 waiting for you    ◌        → merged, or waiting for
+       └ when it returns: Waited for 2 sub-spaces   Port the parser done   you, failed
+  ✉ Sent to Add the endpoint: use the v2 schema              ›
+  ⑃ Merged Port the parser   3 files  +120 −8  1 conflict to resolve ›  opened: each file
+  ? Asked Fix login: which store holds sessions?             ›  opened: the answer, who gave it
+  ▸ 3 tool calls  (Read a space, Listed spaces, …)                fold like any other call
+```
+
+| Tool | Row (running → done) |
+| --- | --- |
+| `space_start` | Starting a sub-space: <goal> → Sub-space started: <child> + stage + mode |
+| `space_wait` | Waiting for N sub-spaces + done / running / waiting for you → Waited for N sub-spaces + what settled |
+| `space_merge` | Merging <child> → Merged <child> + files, +/−, N conflicts to resolve |
+| `space_ask` | Asking <space>: <question> → Asked <space>: <question>; the answer when opened |
+| `space_send` | Sending to → Sent to <space>: <message> |
+| `space_answer` | Answering → Answered <space>'s question |
+| `space_read`, `spaces_list`, `space_stop` | Read <space>, Listed spaces, Stopped <child> |
+
+- A finished turn keeps start, wait, merge, ask, send, answer and stop as
+  rows of their own; reads and lists fold with the other calls.
+- The words come from the call's input and result (`tool_payload`), read
+  as the row shows; a turn from before those were stored names the tool
+  only.
+- The asked space keeps no trace of a `space_ask`: it gets no message, so
+  its chat shows nothing. A `space_send` shows there as "From <space>".
 
 One strip, everything the space set going, each thing once:
 
@@ -1877,14 +1921,16 @@ sub-spaces ───────────────────────
 
 | Where | Rule |
 | --- | --- |
-| sidebar | a child goes under its parent when the parent is listed; else at the top with `from <parent>` (`from a removed space` when it's gone). A mirrored space's parent is its host's: not named. Loops never nest |
+| sidebar | a child goes under its parent when the parent is listed, merged ones after their live siblings (muted); else at the top with `from <parent>` (`from a removed space` when it's gone). A mirrored space's parent is its host's: not named. Loops never nest |
 | sidebar, collapsed | the count, a spinner while a hidden one runs, a dot while one waits for you; hide/show from the row's hover button or its right-click menu, kept per machine (`ui/space/collapsed.ts`) |
+| a child's stage | `childStage`: waiting for you (a question), running, failed, merged (its parent's `space_merge`, no turn since), done (a turn ended), starting (none yet). Merged, then more turns: done again, and its strip says "changed since its last merge" |
 | strip | the running turn's live steps, else the last reply with steps; top-level subagents only (a subagent's own stay in its row); background tasks as in § "Background tasks"; sub-spaces. Hidden with nothing to show |
 | strip line | agents (background ones included), sub-spaces, commands; a spinner while any of them runs; open or closed per space for the window's life |
 | a subagent's model | read from its call's payload once the strip shows it, quietly; none for a mirrored space. Named as the model chip names it (`agent_models`: `claude-opus-5-5` → `Opus 5.5`, an alias as its newest), else the id as given |
 | a subagent's time | from when this window saw its call start and end (`EphemeralStore.stepTimes`), or its background task; a turn from before the window opened has none |
 | click a subagent | its turn's chat row comes into view, the fold holding it opens, the row glows (`revealCall`, `rowState.ts`) |
 
-Pure rules: `ui/space/subspaces.ts` (the tree), `ui/space/agents.ts` (subagents,
-the turn read, de-duplication, the line), `ui/space/backgroundTaskRows.ts`
+Pure rules: `ui/space/subspaces.ts` (the tree, a child's stage),
+`ui/spaceTools.ts` (the parent's rows), `ui/space/agents.ts` (subagents, the
+turn read, de-duplication, the line), `ui/space/backgroundTaskRows.ts`
 (which tasks show).
