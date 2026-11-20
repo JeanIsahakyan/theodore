@@ -184,6 +184,12 @@ describe('MCP device', () => {
     expect(early.v.settled).toBe(false);
     expect(early.v.spaces[0].status).toBe('running');
     await mac.emit(space, 3, { kind: 'turn_started', turn: 1, text: 'fix' });
+    // The turn began a moment before the host says `running`: still owed.
+    const begun = await tool(h, 'space_wait', {
+      spaces: [space],
+      timeout_ms: 300,
+    });
+    expect(begun.v.settled).toBe(false);
     await mac.emit(space, 4, { kind: 'reply', turn: 1, text: 'done' });
     await mac.emit(space, 5, { kind: 'turn_ended', turn: 1, outcome: 'done' });
     await mac.emit(space, 6, { kind: 'status', status: 'idle' });
