@@ -550,9 +550,10 @@ pins down what this doc leaves open:
   first, then their mirrors, else `error{fleet.busy}` and the host keeps
   the event in its journal). Only ring loss is a `space_gap`; seq holes
   from compaction or relayed `turn_step`s are not.
-- Protocols 3 and 4 are accepted. A protocol-3 connection never sees
-  `mobile` / `web` devices in `devices` nor gets `delegations`; a request
-  to a `mobile` / `web` device is `refused{fleet.invalid}`.
+- Protocols 3 to 5 are accepted. A protocol-3 connection never sees
+  `mobile` / `web` devices in `devices` nor gets `delegations`, one below 5
+  never sees the `mcp` device ("MCP over the cloud"); a request to a
+  `mobile` / `web` / `mcp` device is `refused{fleet.invalid}`.
 - A space's followers are its origin and the origin's live delegates
   (`docs/mobile.md`): they may subscribe, and its questions reach them as
   they reach the origin (escalation too). A delegation is signed by the
@@ -566,6 +567,108 @@ pins down what this doc leaves open:
   `fleet.too_many_devices` (20 per user), `fleet.too_many_connections` (10
   sockets per user), `fleet.too_many_spaces` (200 per user),
   `fleet.upgrade_required` (HTTP 426).
+
+## MCP over the cloud
+
+Claude Code or a claude.ai connector adds Theodore as a remote MCP server
+by URL. Its tools start, steer and answer spaces on the user's computers
+through the fleet, as the phone does. Cloud side (OAuth, transport,
+storage, deploy checklist): `docs/cloud.md` "MCP". Host side (the Allow
+prompt): "Requests from Claude via the cloud" above.
+
+```
+Claude Code:  claude mcp add --transport http theodore https://<cloud>/mcp
+              /mcp ─▶ theodore ─▶ Authenticate ─▶ browser: Allow, Theodore sign-in
+claude.ai:    Settings ─▶ Connectors ─▶ Add custom connector
+              ─▶ URL https://<cloud>/mcp ─▶ Connect ─▶ the same sign-in
+then:         theodore_status ─▶ trust both ways (below) ─▶ space_start …
+```
+
+`<cloud>` is the channel's Worker (`docs/cloud.md` "Environments"). MCP is
+off there until the checklist in `docs/cloud.md` "MCP" is done.
+
+### The MCP device
+
+One per (user, org), made when the user first authorizes an MCP client:
+an ed25519 key made in the cloud, its private half kept only wrapped
+under the `MCP_KEY_WRAP` secret, registered in the org as a device of
+kind `mcp` named "Claude (MCP)". It connects to the org's hub in process
+(no socket) with a signed hello like any device, is online for 15 min
+after each tool call, and is a client only: never a target.
+
+Its key lives in the cloud, so whoever runs the cloud can sign as it. The
+computers make up for that: they take nothing from it until the user
+trusted it there by its fingerprint, and an Edit or Run from it (a plan's
+approval too) waits for a person's Allow there, up to 5 min; Deny or no
+answer is `fleet.denied`. The hub keeps its pending requests that long
+(others: 2 min), so a late Allow still reaches it.
+
+### Trust, both ways
+
+```
+Claude                   cloud: MCP device                   computer (Theodore)
+theodore_status ───────▶ its id + fingerprint F_mcp ───────▶ user compares F_mcp:
+                                                              Devices ─▶ "Claude (MCP)"
+                                                              ─▶ Trust ─▶ pinned there
+user reads F_mac on the computer (Devices, "This device")
+device_trust{mac, F_mac} ─▶ F_mac = fingerprint(mac's listed key)?
+                            no ─▶ mcp.fingerprint_mismatch
+                            yes ─▶ mac's key pinned here
+space_start{mac, …} ────▶ pinned? key unchanged? ─▶ seal(MCP key,
+                          target_key = the pin) ──────────▶ pin, target_key, fresh,
+                                                              accept_remote, max_mode
+                                                              Ask / Plan ─▶ runs
+                                                              Edit / Run ─▶ Allow? (≤ 5 min)
+                                                                Deny / none ─▶ fleet.denied
+result: code only ◀──── reply opened with mac's pin ◀────── signed reply
+events, questions ◀──── opened with mac's pin, else dropped ◀── signed events
+```
+
+- Computer fingerprints are never listed by a tool: `device_trust` needs
+  the one the user reads on the computer.
+- A pinned computer whose listed key changed is refused here
+  (`mcp.key_changed`) until trusted again.
+
+### Tools
+
+| Tool | Does |
+| --- | --- |
+| `theodore_status` | the MCP device's id, name and fingerprint; the org; the computers, online, trusted here |
+| `devices_list` | computers only: id, sanitized name, kind, OS, online, last seen, trusted here (`yes` / `no` / `key_changed`), takes remote spaces, `max_mode` |
+| `device_trust {device, fingerprint}` | pins the computer if the fingerprint matches its listed key |
+| `projects_list {device}` | its project ids (strict pattern, names sanitized), agents, models, efforts, `max_mode` |
+| `spaces_list` | spaces this MCP device started, newest first |
+| `space_start {device, project, goal, mode, agent?, model?, effort?}` | signed `start_space` to a pinned computer; its `rs_` id; waits ≤ 15 s for the reply, then `result: pending` |
+| `space_send {space, message, mode?}` | the next turn; `fleet.busy` while one runs |
+| `space_read {space, since?}` | status, name, branch, last reply, open question (`ask` id), plan to approve and its build mode, `waiting_for`, last refusal code, last 50 lines after `since` |
+| `space_wait {spaces[], timeout_ms ≤ 25 000}` | until each is idle, waiting for an answer, waiting for approval, stopped or failed |
+| `space_stop {space}` | stops its turn |
+| `ask_answer {space, ask, answer}` | `answer`: a string (one question) or one entry per question, a string or a list of options |
+| `plan_approve {space}` | the last turn's plan, from the host's mirrored space row: sends "Plan approved, implement it." in its build mode (Edit, or Run) |
+
+An Edit or Run start or send the computer hasn't answered yet shows as
+`waiting_for: "waiting for approval on <computer>"` (in the pending
+result, `space_read`, `space_wait`) until its reply or the 5 min end.
+
+Every tool that names a space works only on spaces this MCP device
+started. What reaches the model: device ids as issued, names cut to
+`[A-Za-z0-9 ._()-]`, project ids that pass the agents' pattern, texts from
+events and replies a pinned computer signed, refusals as codes
+(`fleet.*`, `mcp.*`), never a computer's or the cloud's words.
+
+### On the wire
+
+- Protocol 5. Hub: protocols 3 to 5; `mcp` hidden from connections below 5
+  (`devices`); never accepted as a socket's kind (hello, `announce`).
+- Its requests are ordinary `SignedEnvelope`s (`Domain::Request`, the
+  Rust field order), checked against `src/gen/fleet-vectors.json`.
+- To a computer below protocol 5: `refused{fleet.upgrade_required}` (it
+  can't list the MCP device, so can't trust it).
+- `POST /v1/fleet/request` never takes the MCP device as the origin.
+- Its inbox: replies, refusals, events, questions and dismissals are kept
+  in the hub's SQLite until a tool reads them; read, each is verified
+  against the pin of the computer that signed it (a reply against the key
+  pinned when its request went out).
 
 ## Not yet
 

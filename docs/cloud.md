@@ -19,6 +19,8 @@ Why it exists:
 | `GET /v1/orgs` | bearer access JWT | the caller's active organizations, personal first: `{ organizations: [{ id, name, role, personal }] }` |
 | `POST /v1/orgs/personal` | bearer access JWT | the caller's personal org, created once: `{ organization_id, created }` |
 | `POST /v1/auth/select-organization` | none (the pending token is the credential) | finishes a sign-in that needs an org picked: `{ user, organization_id, access_token, refresh_token }` |
+| `POST /mcp` | MCP OAuth access token (scope `fleet`) | MCP over Streamable HTTP for Claude ("MCP" below) |
+| `/.well-known/oauth-protected-resource/mcp`, `/.well-known/oauth-authorization-server`, `/oauth/register`, `/oauth/authorize`, `/oauth/callback`, `/oauth/org`, `/oauth/token` | none (OAuth itself) | the authorization server for `/mcp` ("MCP" below) |
 | `GET /v1/fleet/ws` | bearer access JWT with `org_id`; from a browser, the subprotocol `bearer.<JWT>` (below) | WebSocket upgrade to the org's fleet hub (below, and `docs/fleet.md`) |
 | `POST /v1/fleet/request` | bearer access JWT with `org_id` | a one-shot signed fleet request, no socket (a phone's notification action): `{ device_id, envelope }` ─▶ `202 { accepted: true, req_id }` or `409 { accepted: false, req_id, refused: { code, message } }` (`400` for `fleet.bad_message`) |
 
@@ -239,16 +241,22 @@ device ─GET /v1/fleet/ws, Upgrade: websocket, Bearer JWT─▶ Worker
   ─▶ acceptWebSocket(tag u:<user>) ─▶ challenge ─▶ hello ─▶ welcome ...
 ```
 
-Protocols 3 and 4 (`fleet.version`, close 4003, for anything else). The
+Protocols 3 to 5 (`fleet.version`, close 4003, for anything else). The
 hello's protocol is kept per connection:
 
-| | Protocol 3 | Protocol 4 |
-| --- | --- | --- |
-| `devices` list | computers only (`desktop`, `daemon`): it can't read `mobile` / `web` | every device |
-| its own kind | `desktop` / `daemon` (else `fleet.bad_message`) | also `mobile`, `web` |
-| `register_push`, `delegate` | unknown (`fleet.bad_message`) | accepted |
-| `delegations` | never sent | after welcome and on change |
-| `mirror` space events | never sent, live or history | sent |
+| | Protocol 3 | Protocol 4 | Protocol 5 |
+| --- | --- | --- | --- |
+| `devices` list | computers only (`desktop`, `daemon`): it can't read `mobile` / `web` | no `mcp` device | every device |
+| its own kind | `desktop` / `daemon` (else `fleet.bad_message`) | also `mobile`, `web` | same as 4 |
+| `register_push`, `delegate` | unknown (`fleet.bad_message`) | accepted | accepted |
+| `delegations` | never sent | after welcome and on change | same |
+| `mirror` space events | never sent, live or history | sent | sent |
+
+Kind `mcp` is the cloud's own device ("MCP" below): only its in-process
+connection says it, and says nothing else; a socket's hello or `announce`
+with `mcp` is `fleet.bad_message`. A request whose origin's kind the
+target's protocol can't list (a phone's to protocol 3, the MCP device's to
+3 or 4) is `refused{fleet.upgrade_required}`.
 
 `DeviceInfo.os` is `macos`, `linux`, `windows`, `ios` or `android` (a
 browser: the OS it runs on). A protocol-3 device gets `linux` for any but
@@ -428,14 +436,14 @@ Storage (DO SQLite):
 | `spaces` | space, user, host, origin, parent, depth, last seq, status, last activity, its `started` envelope, stored event and mirror bytes, `lost_to` (holes at or below it are gaps), the start request (`req_id`) that made it |
 | `events` | the host's signed envelope and its body's bytes, the newest 500 per space, within its byte budget |
 | `mirrors` | (space, model, id) ─ the latest `space` / `chat_message` mirror (a tombstone too): seq, the host's signed envelope, its body's bytes |
-| `pending` | a routed request until its reply: target, generation, claimed, envelope, `ask_id` of an answer |
+| `pending` | a routed request until its reply: target, generation, claimed, envelope, `ask_id` of an answer, how long it may wait (`ttl_ms`: 2 min, 5 min from the MCP device) |
 | `replies` | a signed reply or a `refused` held for an origin that's offline (2 min), as the frame to send |
 | `asks` | an open question (the host's envelope): where it shows, via, escalated, which devices were pushed about it |
 | `subs` | (device, space) live subscriptions, dropped with the connection |
 | `conns` | per-connection deadline (hello, token expiry) |
 | `push_tokens` | device ─ its Expo token, this minute's push count |
 | `delegations` | (origin, delegate) ─ the latest signed delegation, issued/expiry, revoked (tombstone) |
-| `meta` | `schema` = 6; on any other value every table but `devices`, `conns`, `push_tokens` and `delegations` is dropped (older rows carry older signatures) |
+| `meta` | `schema` = 7; on any other value every table but `devices`, `conns`, `push_tokens` and `delegations` is dropped (older rows carry older signatures). `mcp_schema` = 2 for the MCP device's own tables ("MCP" below) |
 
 Limits:
 
@@ -492,3 +500,126 @@ Logs name the error kind only: never a token, a nonce or an envelope body.
 
 Tests (`test/fleet-*.test.ts`) drive `Hub` with node:sqlite, fake sockets
 and a fake clock; the DO shell (`org-hub.ts`) itself runs only in Workers.
+
+## MCP
+
+Claude Code or a claude.ai connector adds Theodore as a remote MCP server
+by URL (`https://<cloud>/mcp`); the tools drive the user's computers
+through the fleet, as the phone does. What it means for the fleet and the
+tools: `docs/fleet.md` "MCP over the cloud". Code: `src/mcp/`.
+
+```
+client ─POST /mcp─▶ 401 WWW-Authenticate: Bearer resource_metadata=…
+  ─▶ /.well-known/oauth-protected-resource/mcp ─▶ authorization server = this Worker
+  ─▶ /.well-known/oauth-authorization-server
+  ─▶ POST /oauth/register (dynamic client registration, RFC 7591)
+  ─▶ browser: /oauth/authorize (PKCE S256, resource …/mcp) ─▶ consent page ─▶ Allow
+       ─▶ AuthKit sign-in (state bound to this browser by a __Host- cookie)
+       ─▶ /oauth/callback?code ─▶ WorkOS code exchange (API key as client secret)
+          2+ orgs ─▶ pick one (/oauth/org) ─▶ organization-selection grant
+          no org  ─▶ the personal org (as /v1/orgs/personal), refresh into it
+       ─▶ grant {user, org, WorkOS refresh token (encrypted)} ─▶ the MCP device made
+       ─▶ back to the client with a code
+  ─▶ POST /oauth/token (code + verifier) ─▶ access token (1 h) + refresh token (30 d)
+  refresh ─▶ WorkOS refreshes the same session into the same org
+             refused (signed out, left the org) ─▶ invalid_grant, grant revoked
+POST /mcp + Bearer ─▶ scope fleet ─▶ Origin ─▶ RL_USER ─▶ JSON-RPC (src/mcp/rpc.ts)
+  tools/call ─▶ OrgHub(org) POST /mcp/call {name, arguments} ─▶ McpFleet
+```
+
+### Auth: Cloudflare's OAuth provider
+
+`@cloudflare/workers-oauth-provider` (MIT, Cloudflare's, 1.2.x) is the
+authorization server; the cloud writes only the consent page, the AuthKit
+hop and the refresh callback.
+
+| | Library | Own |
+| --- | --- | --- |
+| Metadata (RFC 8414, 9728), DCR, PKCE, code and refresh rotation, token hashing, RFC 8707 audience | done, tested against the MCP conformance suite | ~1 500 lines of security code to write and keep current |
+| Confused-deputy rules for a proxy to another IdP (consent per client, browser-bound `state`, no framing) | `beginConsent` / `beginUpstream` helpers | to build |
+| Storage | a KV namespace (`OAUTH_KV`): one new binding | a DO or KV anyway |
+| Fit | wraps only `/mcp`, `/oauth/*`, `/.well-known/oauth-*`; every other route is untouched | — |
+| Cost | imports `cloudflare:workers` (tests alias it to a stub) | — |
+
+Off unless both `OAUTH_KV` and `MCP_KEY_WRAP` are there: those paths
+answer `404 cloud.not_found` and nothing else changes.
+
+### Transport
+
+Streamable HTTP, both eras, no sessions (`src/mcp/rpc.ts`):
+
+| | Modern (`2026-07-28`) | Legacy (`2025-03-26` … `2025-11-25`) |
+| --- | --- | --- |
+| Opens with | any request with `_meta["io.modelcontextprotocol/protocolVersion"]` | `initialize` (answered with the client's version if known, else `2025-11-25`) |
+| Headers | `MCP-Protocol-Version`, `Mcp-Method`, `Mcp-Name` (tools/call, base64 sentinel decoded) must match the body, else `400 -32020`; another version `400 -32022 {supported, requested}` | `MCP-Protocol-Version` one of these if present |
+| Methods | `server/discover`, `tools/list`, `tools/call`, `ping`; results carry `resultType: "complete"` | `initialize`, `tools/list`, `tools/call`, `ping` |
+| Unknown method | `404 -32601` | `200 -32601` |
+
+Every answer is `application/json`; notifications `202`; `GET` / `DELETE`
+`405`; batches `400`. A browser `Origin` other than the Worker's own,
+`https://claude.ai`, `https://claude.com` or one in `MCP_ORIGINS` is `403`.
+
+### The MCP device in the hub
+
+One per (user, org), in the org's `OrgHub`, next to the fleet tables:
+
+| Table | Holds |
+| --- | --- |
+| `mcp_devices` | user ─ device id, public key, the private key wrapped (AES-256-GCM, key = HKDF-SHA-256(`MCP_KEY_WRAP`), AAD = org, user, public key), the in-process connection: open, its `ConnState` |
+| `mcp_pins` | (user, device) ─ a computer's key confirmed with `device_trust`, its sanitized name |
+| `mcp_inbox` | frames the hub sent it (`reply`, `refused`, `space_event`, `space_gap`, `ask`, `dismiss`) until a tool reads them; 5 000 per user, oldest out |
+| `mcp_requests` | req id ─ target, the key pinned when sent, op, mode, space, the outcome once verified; 500 per user |
+| `mcp_spaces` | a space it started ─ host, status, name, branch, last seq, last reply, open question, plan, last refusal code; finished ones past 100 per user go |
+| `mcp_lines` | (space, seq, kind) ─ history from verified events, 200 per space |
+
+| Limit | Value |
+| --- | --- |
+| online after the last tool call | 15 min (then the alarm takes it offline; the next call says hello again and resubscribes) |
+| a start, send, stop, answer waits for the computer's reply | 15 s, then `result: pending` (the reply still lands) |
+| a pending request from the MCP device, in the hub | 5 min (`REQUEST_WINDOW_MS`, other origins 2 min): an Edit or Run waits on the computer for a person's Allow that long |
+| `space_wait` | ≤ 25 s per call |
+| goal, message | 20 000 characters |
+
+Tool refusals are `isError` results with a code: the cloud's
+(`mcp.invalid`, `mcp.unknown_device`, `mcp.unknown_space`,
+`mcp.untrusted_device`, `mcp.key_changed`, `mcp.fingerprint_mismatch`,
+`mcp.no_plan`, `mcp.busy`, `mcp.unknown_tool`) with fixed words, a
+computer's or the fleet's (`fleet.*`) as the code only.
+
+### Local
+
+```
+cd cloud
+printf 'WORKOS_API_KEY=sk_test_…\nMCP_KEY_WRAP=%s\n' "$(openssl rand -base64 48)" > .dev.vars
+pnpm dev:mcp                       # wrangler dev --env local: OAUTH_KV simulated, never deployed
+claude mcp add --transport http theodore-local http://localhost:8787/mcp
+```
+
+Staging WorkOS needs `http://localhost:8787/oauth/callback` as a redirect
+URI for that. Tests (`test/mcp-*.test.ts`) need none of it: fake WorkOS,
+in-memory KV, the real `OrgHub` over node:sqlite.
+
+### Production checklist (not done)
+
+Per environment (staging first), by the owner:
+
+- [ ] `pnpm -C cloud exec wrangler kv namespace create OAUTH_KV --env staging`
+      (then `--env production`), and add to that env in `wrangler.toml`:
+      `kv_namespaces = [{ binding = "OAUTH_KV", id = "<id>" }]`.
+- [ ] `wrangler secret put MCP_KEY_WRAP --env staging|production`: ≥ 32
+      random characters (`openssl rand -base64 48`). Never in git. Changing
+      it makes every MCP device key unreadable: those devices must be made
+      again (and trusted again on the computers).
+- [ ] WorkOS dashboard, that environment ─▶ Redirects: add
+      `https://<worker host>/oauth/callback` (the staging and production
+      `workers.dev` hosts, and a custom domain's when one comes).
+- [ ] Nothing new for WorkOS keys: the code exchange and refresh use the
+      `WORKOS_API_KEY` already set.
+- [ ] Ship the desktop (and phone) builds that speak protocol 5 first: a
+      computer on protocol 4 can't see the MCP device and answers
+      `fleet.upgrade_required`.
+- [ ] Optional: `MCP_ORIGINS` (var) for a browser-based MCP client; a
+      Cron Trigger calling the library's `purgeExpiredData()` (KV TTLs
+      already expire most); Client ID Metadata Documents
+      (`clientIdMetadataDocumentEnabled` + the `global_fetch_strictly_public`
+      compatibility flag; off now, DCR covers Claude Code and claude.ai).
