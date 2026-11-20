@@ -99,6 +99,7 @@ import { setTerminalOpenFor, terminalOpenFor } from './terminalOpen';
 import { runControl, settingUp } from './commands';
 import { GlobalConfigSection, SpaceSetupAssistHint } from './ConfigSection';
 import { SpaceAgents, SubSpaceBanner } from './SpaceAgents';
+import { SpacePaused } from './SpacePaused';
 import { SpaceProgress } from './SpaceProgress';
 import { BaseMoved, UpdatingBanner } from './BaseUpdate';
 import { MergedBanner, SpaceMergeButton, SpacePrPane } from './SpacePr';
@@ -1108,6 +1109,7 @@ export const SpaceChat = observer(function SpaceChat({
       <SpaceLog space={space} onRevise={onRevise} control={log} />
       <div className="px-4">
         <div className="mx-auto w-full max-w-[860px]">
+          <SpacePaused space={space} />
           <SpaceSetupAssistHint space={space} config={config} />
         </div>
       </div>

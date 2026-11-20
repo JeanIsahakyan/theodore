@@ -20,6 +20,7 @@ import type {
   AgentId,
   Attachment,
   ChatMessage as Message,
+  ChatNotice,
   MessageVote,
 } from '../gen/contract';
 import { api } from '../core/api';
@@ -28,6 +29,7 @@ import { reportChat } from './reportChat';
 import { Md, rich } from '../highlight';
 import { MessageAttachments } from './attachments';
 import { RunIndicator, TurnEndMark } from './AgentMark';
+import { noticeText } from './agentLimit';
 import { AgentTag, Btn } from './bits';
 import { LiveText } from './RunLive';
 import { ToolCalls } from './ToolCalls';
@@ -271,6 +273,23 @@ export function UserBubble({
   );
 }
 
+/** A system row, not a reply (an account switch on a usage limit): one
+ *  muted, centered line; no tag, actions or activity. */
+export function NoticeRow({ id, notice }: { id: string; notice: ChatNotice }) {
+  // Read once: "today" in the reset time is when the row was shown.
+  const [now] = useState(() => Date.now());
+  return (
+    <div
+      data-msg={id}
+      data-variant="notice"
+      role="note"
+      className="chat-notice flex justify-center px-4 text-center text-xs text-muted"
+    >
+      {noticeText(notice, now)}
+    </div>
+  );
+}
+
 /** `ChatMessage.failed` of a run you stopped (the core's "stopped"). */
 const STOPPED = 'stopped';
 
@@ -318,6 +337,7 @@ export function ChatMessage({
   // message is shown with the app around it.
   const store = useRootStoreOrNull();
   const onReport = store ? () => void reportChat(store, m.pr, m.id) : undefined;
+  if (m.notice) return <NoticeRow id={m.id} notice={m.notice} />;
   if (m.author.kind === 'me') {
     return (
       <UserBubble

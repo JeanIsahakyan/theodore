@@ -7,6 +7,7 @@
  * `grouping` rows are keyed by the PR id; threads live inside `pr_detail`.
  */
 import type {
+  AgentLimitRow,
   ChatMessage,
   CheckTick,
   Draft,
@@ -42,6 +43,7 @@ export const MODEL_NAMES = [
   'project',
   'space',
   'report',
+  'agent_limit',
 ] as const;
 
 export type ModelName = (typeof MODEL_NAMES)[number];
@@ -69,6 +71,8 @@ export interface ModelRows {
   project: WithId<Project>;
   space: WithId<Space>;
   report: WithId<TrackedReport>;
+  /** Keyed `<agent>:<account>`. */
+  agent_limit: WithId<AgentLimitRow>;
 }
 
 /**
