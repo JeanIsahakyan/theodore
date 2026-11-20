@@ -7,7 +7,8 @@
  * ```text
  * <data storage>
  *   theodore.fleet.spaces.<user>.<org>        index {v, device, spaces: [ids, list order]}
- *   theodore.fleet.space.<user>.<org>.<rs_…>  record {v, view, lastSeq, seenAt, lines, mirror}
+ *   theodore.fleet.space.<user>.<org>.<rs_…>  record {v, view, lastSeq, seenAt, lines,
+ *                                                     mirror {space, messages, subSpaces}}
  *
  * write: the SAVED_MAX most recently active, records of the others removed
  * load:  index.device ≠ this org's device id now (backup on another phone,
@@ -16,12 +17,20 @@
  * ```
  *
  * A record keeps the list's view, the last seq seen (the resubscribe's
- * `since`), the newest lines and mirrored messages, and the space row: the
- * list and the chat show at once, the cloud replays what came after.
+ * `since`), the newest lines and mirrored messages, the space row and its
+ * sub-spaces: the list and the chat show at once, the cloud replays what
+ * came after.
  */
+import type { MirroredSubSpace } from '../gen/fleet';
 import type { ChatMessage, Space } from './contract';
 import type { DataStorage } from './data';
-import { cleanMessage, cleanSpace, sortMessages } from './mirror';
+import {
+  SUB_SPACES_KEPT,
+  cleanMessage,
+  cleanSpace,
+  cleanSubSpace,
+  sortMessages,
+} from './mirror';
 import { isMode, truncate, validDeviceId } from './rules';
 import type {
   LineKind,
@@ -51,7 +60,12 @@ export interface SavedSpace {
   /** Last time something of it arrived (or it was started / followed). */
   seenAt: number;
   lines: SpaceLine[];
-  mirror: { space: Space | null; messages: ChatMessage[] };
+  mirror: {
+    space: Space | null;
+    messages: ChatMessage[];
+    /** Its sub-spaces, in the order first seen; absent in older records. */
+    subSpaces?: MirroredSubSpace[];
+  };
 }
 
 /** Ids that may name a file: what a host issues (`rs_` + hex) and alike. */
@@ -177,6 +191,14 @@ export function cleanSaved(v: unknown, space: string): SavedSpace | null {
         .map((x) => cleanMessage(x, space))
         .filter((x): x is ChatMessage => x !== null)
     : [];
+  const subSpaces = Array.isArray(m.subSpaces)
+    ? m.subSpaces
+        .slice(0, SUB_SPACES_KEPT)
+        .map((x) =>
+          isObj(x) ? cleanSubSpace(x, String(x.space), space) : null,
+        )
+        .filter((x): x is MirroredSubSpace => x !== null)
+    : [];
   return {
     view,
     lastSeq: num(v.lastSeq),
@@ -184,7 +206,11 @@ export function cleanSaved(v: unknown, space: string): SavedSpace | null {
       typeof v.startedName === 'string' ? truncate(v.startedName, 200) : null,
     seenAt: num(v.seenAt),
     lines: cleanLines(v.lines),
-    mirror: { space: m.space ? cleanSpace(m.space, space) : null, messages },
+    mirror: {
+      space: m.space ? cleanSpace(m.space, space) : null,
+      messages,
+      subSpaces,
+    },
   };
 }
 
@@ -193,6 +219,7 @@ export function recordText(s: SavedSpace): string {
   let messages = sortMessages(s.mirror.messages).slice(-SAVED_MESSAGES);
   let lines = s.lines.slice(-SAVED_LINES);
   let space = s.mirror.space;
+  let subSpaces = (s.mirror.subSpaces ?? []).slice(0, SUB_SPACES_KEPT);
   const text = () =>
     JSON.stringify({
       v: VERSION,
@@ -201,7 +228,7 @@ export function recordText(s: SavedSpace): string {
       startedName: s.startedName,
       seenAt: s.seenAt,
       lines,
-      mirror: { space, messages },
+      mirror: { space, messages, subSpaces },
     });
   let out = text();
   while (out.length > SAVED_CHARS && messages.length > 0) {
@@ -214,6 +241,7 @@ export function recordText(s: SavedSpace): string {
   }
   if (out.length > SAVED_CHARS) {
     space = null;
+    subSpaces = [];
     out = text();
   }
   return out;

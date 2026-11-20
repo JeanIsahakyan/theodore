@@ -278,7 +278,8 @@ const msg = (
   ...m,
 });
 
-/** Mirrored rows: sp-idle ends in a plan to approve, sp-running is mid-turn. */
+/** Mirrored rows: sp-idle ends in a plan to approve, sp-running is mid-turn
+ *  with sub-spaces. */
 export const mockMirrors: Record<string, SpaceMirror> = {
   'sp-idle': {
     space: {
@@ -365,6 +366,7 @@ export const mockMirrors: Record<string, SpaceMirror> = {
       }),
     },
     steps: {},
+    subSpaces: {},
   },
   'sp-running': {
     space: null,
@@ -406,6 +408,32 @@ export const mockMirrors: Record<string, SpaceMirror> = {
           added: 3,
           removed: 1,
         },
+      },
+    },
+    subSpaces: {
+      a1b2c3d4e5f6: {
+        space: 'a1b2c3d4e5f6',
+        parent: 'sp-running',
+        title: 'Split the grouping crate',
+        status: 'running',
+        mode: 'edit',
+        done: false,
+      },
+      b2c3d4e5f6a1: {
+        space: 'b2c3d4e5f6a1',
+        parent: 'a1b2c3d4e5f6',
+        title: 'Move the eval types',
+        status: 'idle',
+        mode: 'edit',
+        done: true,
+      },
+      c3d4e5f6a1b2: {
+        space: 'c3d4e5f6a1b2',
+        parent: 'sp-running',
+        title: 'Cache the tree-sitter grammars',
+        status: 'question',
+        mode: 'plan',
+        done: false,
       },
     },
   },

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   MESSAGES_KEPT,
+  SUB_SPACES_KEPT,
   applyMirror,
   emptyMirror,
   latestReply,
@@ -59,7 +60,62 @@ const reply = (over: object = {}) =>
 const apply = (m: SpaceMirror, model: string, id: string, data: unknown) =>
   applyMirror(m, SP, model, id, data);
 
+const child = (id: string, over: object = {}) => ({
+  space: id,
+  parent: SP,
+  title: `Child ${id}`,
+  status: 'running',
+  mode: 'edit',
+  done: false,
+  ...over,
+});
+
 describe('mirror reducer', () => {
+  it('keeps sub-spaces, latest per id, and drops them on null', () => {
+    let m = apply(emptyMirror(), 'sub_space', 'c1', child('c1'));
+    m = apply(m, 'sub_space', 'c2', child('c2', { parent: 'c1' }));
+    m = apply(
+      m,
+      'sub_space',
+      'c1',
+      child('c1', { status: 'idle', done: true }),
+    );
+    // Updates keep the order first seen.
+    expect(Object.keys(m.subSpaces)).toEqual(['c1', 'c2']);
+    expect(m.subSpaces.c1).toEqual({
+      space: 'c1',
+      parent: SP,
+      title: 'Child c1',
+      status: 'idle',
+      mode: 'edit',
+      done: true,
+    });
+    // Not a sub-space row: another id inside, no mode, its own parent, the
+    // space itself, an unsafe id.
+    const before = m;
+    m = apply(m, 'sub_space', 'c3', child('c4'));
+    m = apply(m, 'sub_space', 'c3', child('c3', { mode: 'god' }));
+    m = apply(m, 'sub_space', 'c3', child('c3', { parent: 'c3' }));
+    m = apply(m, 'sub_space', SP, child(SP));
+    m = apply(m, 'sub_space', 'a/b', child('a/b'));
+    expect(m).toBe(before);
+    expect(apply(m, 'sub_space', 'nope', null)).toBe(m);
+    m = apply(m, 'sub_space', 'c1', null);
+    expect(Object.keys(m.subSpaces)).toEqual(['c2']);
+    // A sub-space alone doesn't make the chat the mirror's.
+    expect(mirrored(m)).toBe(false);
+  });
+
+  it(`keeps at most ${SUB_SPACES_KEPT} sub-spaces, updates still land`, () => {
+    let m = emptyMirror();
+    for (let i = 0; i < SUB_SPACES_KEPT; i++)
+      m = apply(m, 'sub_space', `c${i}`, child(`c${i}`));
+    const full = m;
+    expect(apply(m, 'sub_space', 'extra', child('extra'))).toBe(full);
+    m = apply(m, 'sub_space', 'c0', child('c0', { status: 'failed' }));
+    expect(m.subSpaces.c0!.status).toBe('failed');
+  });
+
   it('keeps the space row, shape-checked, and deletes it on null', () => {
     const m = apply(emptyMirror(), 'space', SP, spaceRow({ mode: 'bogus' }));
     expect(m.space).toMatchObject({

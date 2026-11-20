@@ -11,6 +11,8 @@
  * mirror{chat_message, id, ChatMessage}  ─▶ messages[id] (null: deleted)
  *   an agent reply of run R              ─▶ R's live steps dropped
  * mirror{turn_step, <run>:<n>, TurnStep} ─▶ steps[id] while R has no reply
+ * mirror{sub_space, <child id>, MirroredSubSpace}
+ *                                        ─▶ subSpaces[id] (null: gone), latest wins
  * ```
  */
 import type {
@@ -26,6 +28,7 @@ import type {
   TurnFile,
   TurnStep,
 } from './contract';
+import type { MirroredSubSpace } from '../gen/fleet';
 import { truncate } from './rules';
 import type { SpaceStatus } from './types';
 
@@ -40,13 +43,24 @@ export interface SpaceMirror {
   messages: Record<string, ChatMessage>;
   /** The running turn's steps by `<run>:<n>`, until its reply lands. */
   steps: Record<string, LiveStep>;
+  /**
+   * Its sub-spaces on the host (`mirror{sub_space}`), children and theirs,
+   * by local id, in the order first seen.
+   */
+  subSpaces: Record<string, MirroredSubSpace>;
 }
 
 export const emptyMirror = (): SpaceMirror => ({
   space: null,
   messages: {},
   steps: {},
+  subSpaces: {},
 });
+
+/** The `mirror` model of a hosted space's sub-space (protocol 7). */
+export const SUB_SPACE_MODEL = 'sub_space';
+/** Most sub-spaces kept per space (the cloud's MCP keeps as many). */
+export const SUB_SPACES_KEPT = 50;
 
 /** Most messages kept per space (oldest go first). */
 export const MESSAGES_KEPT = 2000;
@@ -256,6 +270,30 @@ export function cleanSpace(v: unknown, space: string): Space | null {
   };
 }
 
+/** An id a host gives a space: its 12-hex local id, an `rs_` id, alike. */
+const spaceId = (v: unknown): v is string =>
+  typeof v === 'string' && /^[A-Za-z0-9_-]{1,100}$/.test(v);
+
+/** A sub-space row of `space`'s tree; `null` when it isn't child `id`. */
+export function cleanSubSpace(
+  v: unknown,
+  id: string,
+  space: string,
+): MirroredSubSpace | null {
+  if (!isObj(v) || v.space !== id || id === space || !spaceId(id)) return null;
+  if (!spaceId(v.parent) || v.parent === id) return null;
+  const m = mode(v.mode);
+  if (!m) return null;
+  return {
+    space: id,
+    parent: v.parent,
+    title: str(v.title, 120),
+    status: typeof v.status === 'string' ? truncate(v.status, 20) : 'unknown',
+    mode: m,
+    done: v.done === true,
+  };
+}
+
 /** `<run>:<n>` → its run and place; `null` when it isn't one of `space`'s. */
 export function stepId(
   id: string,
@@ -361,6 +399,21 @@ export function applyMirror(
         steps = without(steps, (_, k) => old.has(k));
       }
       return { ...m, steps };
+    }
+    case SUB_SPACE_MODEL: {
+      if (data == null) {
+        if (!(id in m.subSpaces)) return m;
+        return {
+          ...m,
+          subSpaces: without(m.subSpaces, (_, k) => k === id),
+        };
+      }
+      const sub = cleanSubSpace(data, id, space);
+      if (!sub) return m;
+      const known = id in m.subSpaces;
+      if (!known && Object.keys(m.subSpaces).length >= SUB_SPACES_KEPT)
+        return m;
+      return { ...m, subSpaces: { ...m.subSpaces, [id]: sub } };
     }
     default:
       return m;

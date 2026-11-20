@@ -445,6 +445,7 @@ export function createFleetClient(
     mirror: {
       space: x.mirror.space,
       messages: Object.values(x.mirror.messages),
+      subSpaces: Object.values(x.mirror.subSpaces),
     },
   });
 
@@ -535,6 +536,9 @@ export function createFleetClient(
           space: r.mirror.space,
           messages: Object.fromEntries(r.mirror.messages.map((m) => [m.id, m])),
           steps: {},
+          subSpaces: Object.fromEntries(
+            (r.mirror.subSpaces ?? []).map((c) => [c.space, c]),
+          ),
         },
         subscribed: !followed,
         awaiting: followed,
