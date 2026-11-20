@@ -77,14 +77,18 @@ const SpaceName = observer(function SpaceName({
   const id = space.id;
   if (!space.known || !id) {
     return (
-      <span className="turn-space-name min-w-0 truncate" title={space.title}>
+      <span
+        className="turn-space-name min-w-0 max-w-[50%] shrink-0 truncate"
+        title={space.title}
+      >
         {space.title}
         {after}
       </span>
     );
   }
   return (
-    <span className="turn-space-name inline-flex min-w-0 items-center">
+    // The name keeps up to half the row; the text after it gives way first.
+    <span className="turn-space-name inline-flex min-w-0 max-w-[50%] shrink-0 items-center">
       <button
         type="button"
         className="min-w-0 truncate font-medium hover:underline"
@@ -282,7 +286,7 @@ export const SpaceToolRow = observer(function SpaceToolRow({
         {view.text && (
           <span
             title={view.text}
-            className="turn-space-text min-w-0 truncate text-xs text-muted"
+            className="turn-space-text min-w-0 flex-1 truncate text-xs text-muted"
           >
             {view.text}
           </span>

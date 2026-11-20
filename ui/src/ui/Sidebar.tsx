@@ -2,7 +2,6 @@ import {
   Archive,
   ArrowRightFromSquare,
   BranchesRight,
-  Check,
   ChevronDown,
   CircleExclamation,
   CircleFill,
@@ -19,6 +18,7 @@ import {
   Plus,
   Sparkles,
   Tray,
+  CodeMerge,
 } from '@gravity-ui/icons';
 import {
   Button,
@@ -230,33 +230,6 @@ function SubCount({
   );
 }
 
-/** After a sub-space's name: running, waiting for you, done or merged.
- *  Failed says it with the row's own mark; one not started yet, nothing. */
-export function ChildMark({ stage }: { stage: ChildStage }) {
-  const label = CHILD_STAGE_LABEL[stage];
-  const mark =
-    stage === 'running' ? (
-      <span className="inline-flex size-3 items-center justify-center">
-        <Spinner />
-      </span>
-    ) : stage === 'asking' ? (
-      <span className="size-1.5 rounded-full bg-accent" />
-    ) : stage === 'done' || stage === 'merged' ? (
-      <Check className="size-3" />
-    ) : null;
-  if (!mark) return null;
-  return (
-    <span
-      data-stage={stage}
-      className="space-child-stage inline-flex shrink-0 items-center text-muted"
-      title={label}
-      aria-label={label}
-    >
-      {mark}
-    </span>
-  );
-}
-
 function DeviceBadge({ label, title }: { label: string; title: string }) {
   return (
     <span
@@ -423,7 +396,14 @@ export const Sidebar = observer(function Sidebar() {
                     <SpaceMark
                       spaceId={s.id}
                       fallback={
-                        s.pr && g === 'idle' ? (
+                        // A sub-space merged into its parent: done, and
+                        // where it went, in the row's own mark.
+                        parentId(s) && childStage(s) === 'merged' ? (
+                          <CodeMerge
+                            className="size-3.5 text-muted"
+                            aria-label="Merged into its parent"
+                          />
+                        ) : s.pr && g === 'idle' ? (
                           <PrGlyph pr={pr} />
                         ) : (
                           glyphIcon(g)
@@ -574,7 +554,6 @@ export const Sidebar = observer(function Sidebar() {
                       {i.from}
                     </span>
                   )}
-                  {i.child && <ChildMark stage={i.child} />}
                   {i.sub && (
                     <SubCount stats={i.sub.stats} collapsed={i.sub.collapsed} />
                   )}

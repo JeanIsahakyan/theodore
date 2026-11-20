@@ -116,17 +116,14 @@ describe('sub-spaces in the sidebar', () => {
     expect(spaceRows()).toContain('>kid');
   });
 
-  it("marks each child's stage; a merged one goes last, muted", async () => {
+  it('a merged child shows the merge mark, goes last, muted', async () => {
     const put = (s: Space) => store.sync.pool.put('space', s.id, s);
-    const stageOf = (name: string) =>
-      rows()
+    const mergedMark = (name: string) =>
+      !!rows()
         .find((r) => label(r) === name)
-        ?.querySelector('.space-child-stage')
-        ?.getAttribute('data-stage') ?? null;
-    // A running one spins; one not started yet says nothing.
-    expect(stageOf('kid')).toBe('running');
-    expect(stageOf('grandkid')).toBeNull();
-    expect(stageOf('parent')).toBeNull();
+        ?.querySelector('[aria-label="Merged into its parent"]');
+    // No mark after the name: the row's own mark says the state.
+    expect(document.querySelector('.space-child-stage')).toBeNull();
     put(
       space({
         id: 'asks',
@@ -162,9 +159,9 @@ describe('sub-spaces in the sidebar', () => {
       }),
     );
     await settle();
-    expect(stageOf('asks')).toBe('asking');
-    expect(stageOf('finished')).toBe('done');
-    expect(stageOf('merged')).toBe('merged');
+    expect(mergedMark('merged')).toBe(true);
+    expect(mergedMark('finished')).toBe(false);
+    expect(mergedMark('asks')).toBe(false);
     // Newest first, but the merged one after its live siblings.
     expect(spaceRows()).toEqual([
       'top',
