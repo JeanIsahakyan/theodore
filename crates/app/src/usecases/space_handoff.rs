@@ -92,10 +92,7 @@ fn render(older: &[ChatMessage]) -> String {
     let bounded = &older[older.len().saturating_sub(SUMMARY_INPUT_MESSAGES)..];
     let mut out = String::new();
     for m in bounded {
-        let who = match m.author {
-            theodore_domain::Author::Me => "user".to_string(),
-            theodore_domain::Author::Agent(a) => a.as_str().to_string(),
-        };
+        let who = crate::usecases::spaces::author_word(m);
         let body: String = m.text.chars().take(SUMMARY_INPUT_CHARS).collect();
         out.push_str(&format!("[{who}]\n{body}\n\n"));
     }
@@ -129,6 +126,7 @@ mod tests {
             vote: None,
             effort: None,
             mode: None,
+            from_space: None,
         }
     }
 

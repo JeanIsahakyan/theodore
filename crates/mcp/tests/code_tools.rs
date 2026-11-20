@@ -269,6 +269,7 @@ async fn code_tools_are_listed_only_when_the_run_has_them() {
         theodore_mcp::REPORT_TOOL,
         theodore_mcp::LOCAL_SPACE_READ_TOOL_NAMES[0],
         theodore_mcp::LOCAL_SPACE_READ_TOOL_NAMES[1],
+        theodore_mcp::LOCAL_SPACE_READ_TOOL_NAMES[2],
     ];
     let handle = server(fake(0)).await;
     for (run, want) in [

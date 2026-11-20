@@ -1033,6 +1033,19 @@ pub struct ChatMessage {
     /// The mode of the space turn that wrote this reply.
     #[serde(default)]
     pub mode: Option<SpaceMode>,
+    /// A space message another space's agent sent (`space_send`,
+    /// docs/spaces.md "Sub-spaces"), not you: which space. `author` stays
+    /// `Me` (it is a turn's ask, like yours).
+    #[serde(default)]
+    pub from_space: Option<FromSpace>,
+}
+
+/// The space whose agent sent a message, as it was named then.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct FromSpace {
+    /// `Space::id`, local.
+    pub space: String,
+    pub title: String,
 }
 
 /// A thumbs up or down on an agent's reply.
@@ -1086,6 +1099,7 @@ pub fn types() -> specta::Types {
         .register::<CheckTick>()
         .register::<SkillRun>()
         .register::<ChatMessage>()
+        .register::<FromSpace>()
         .register::<MessageVote>()
         .register::<SetMessageVoteRequest>()
         .register::<TurnStep>()

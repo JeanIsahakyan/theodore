@@ -8,10 +8,10 @@ use theodore_domain::{AgentId, Commit, FileStatus, FindingId, Group, Hunk, PrId,
 pub use theodore_ports::{
     Answer, AppStatus, BaseChange, CheckOutcome, CodeHit, CodeSymbol, CodeSymbolKind, Diagnostic,
     FleetToolDevice, FleetToolRead, FleetToolSpace, FleetToolWait, LanguageStatus, LocalAnswer,
-    LocalSpaceItem, LocalSpaceList, LocalSpaceMerge, LocalSpaceRead, LocalSpaceStart,
-    LocalSpaceWait, LogTail, NewReviewComment, Position, ProgressStep, ProgressStepState,
-    ReviewItem, ShipOutcome, ShipToolAction, SpaceCommandName, SpaceDiff, SpaceInfo,
-    SpaceToolError, TerminalTail, UserAnswer, UserQuestion,
+    LocalSpaceAsk, LocalSpaceItem, LocalSpaceList, LocalSpaceMerge, LocalSpaceRead,
+    LocalSpaceStart, LocalSpaceWait, LogTail, NewReviewComment, Position, ProgressStep,
+    ProgressStepState, ReviewItem, ShipOutcome, ShipToolAction, SpaceCommandName, SpaceDiff,
+    SpaceInfo, SpaceToolError, TerminalTail, UserAnswer, UserQuestion,
 };
 
 /// Which server a run talks to, and so which tools it sees.
@@ -75,7 +75,9 @@ pub const FLEET_STEER_TOOL_NAMES: &[&str] = &["fleet_start_space", "fleet_send",
 
 /// The local-space tools that only read (docs/spaces.md "Sub-spaces"):
 /// every space turn of a space of this device's own, whatever its mode.
-pub const LOCAL_SPACE_READ_TOOL_NAMES: &[&str] = &["spaces_list", "space_read"];
+/// `space_ask` runs an agent in the other space, read only, and changes
+/// nothing there.
+pub const LOCAL_SPACE_READ_TOOL_NAMES: &[&str] = &["spaces_list", "space_read", "space_ask"];
 
 /// The sub-space tools: listed only while
 /// [`SpaceToolsBackend::sub_spaces_enabled`] (`spaces.sub_spaces`).
@@ -657,6 +659,17 @@ pub trait SpaceToolsBackend: Send + Sync {
         let _ = (space, target, messages);
         Err(no_local())
     }
+    /// `target`'s answer to `question`, from its own agent's context,
+    /// read only; `space` is the caller.
+    async fn local_ask(
+        &self,
+        space: &str,
+        target: &str,
+        question: &str,
+    ) -> Result<LocalSpaceAsk, SpaceToolError> {
+        let _ = (space, target, question);
+        Err(no_local())
+    }
     /// A sub-space of `space`, whose turn runs in `turn`.
     async fn local_start(
         &self,
@@ -667,7 +680,8 @@ pub trait SpaceToolsBackend: Send + Sync {
         let _ = (space, turn, req);
         Err(no_local())
     }
-    /// A message to `target`, a sub-space of `space`; at most `turn`'s mode.
+    /// A message to `target`, any other local space, from `space`'s agent;
+    /// at most `turn`'s mode.
     async fn local_send(
         &self,
         space: &str,
@@ -698,8 +712,8 @@ pub trait SpaceToolsBackend: Send + Sync {
         let _ = (space, turn, target);
         Err(no_local())
     }
-    /// Answers question set `ask` waiting in `target`, a sub-space of
-    /// `space`.
+    /// Answers question set `ask` waiting in `target`, any other local
+    /// space, as `space`'s agent.
     async fn local_answer(
         &self,
         space: &str,

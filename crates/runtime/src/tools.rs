@@ -426,6 +426,17 @@ impl SpaceToolsBackend for CoreTools {
             .await
     }
 
+    async fn local_ask(
+        &self,
+        space: &str,
+        target: &str,
+        question: &str,
+    ) -> Result<theodore_ports::LocalSpaceAsk, SpaceToolError> {
+        self.space_core()?
+            .sub_space_ask(space, target, question)
+            .await
+    }
+
     async fn local_start(
         &self,
         space: &str,

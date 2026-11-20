@@ -352,6 +352,12 @@ export type ChatMessage = {
 	effort_resolved?: boolean,
 	/**  The mode of the space turn that wrote this reply. */
 	mode?: SpaceMode | null,
+	/**
+	 *  A space message another space's agent sent (`space_send`,
+	 *  docs/spaces.md "Sub-spaces"), not you: which space. `author` stays
+	 *  `Me` (it is a turn's ask, like yours).
+	 */
+	from_space?: FromSpace | null,
 };
 
 export type Check = {
@@ -1290,6 +1296,13 @@ export type FleetTrustRequest = {
 	 *  another key for the device.
 	 */
 	public_key?: string | null,
+};
+
+/**  The space whose agent sent a message, as it was named then. */
+export type FromSpace = {
+	/**  `Space::id`, local. */
+	space: string,
+	title: string,
 };
 
 export type GetBlobRequest = {

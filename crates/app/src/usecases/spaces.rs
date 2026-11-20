@@ -9,9 +9,9 @@
 use std::path::{Path, PathBuf};
 
 use theodore_contract::{
-    ChatMessage, CreateSpaceRequest, Ephemeral, OpenPrResponse, Project, SetSpaceSettingsRequest,
-    Space, SpaceMode, SpaceReviewRequest, SpaceSendRequest, SpaceStatus, SpaceTurn, ToastLevel,
-    models,
+    ChatMessage, CreateSpaceRequest, Ephemeral, FromSpace, OpenPrResponse, Project,
+    SetSpaceSettingsRequest, Space, SpaceMode, SpaceReviewRequest, SpaceSendRequest, SpaceStatus,
+    SpaceTurn, ToastLevel, models,
 };
 use theodore_domain::{AgentId, Author, PrId, PrRef};
 use theodore_ports::{
@@ -365,10 +365,21 @@ impl Core {
         if let Some(r) = self.space_remote_of(&req.space).await {
             return self.remote_space_send(&r, req).await;
         }
+        self.space_send_with(req, None).await
+    }
+
+    /// [`space_send`](Self::space_send) of a local space; `from`, when
+    /// set, is the space whose agent sent it (`space_send`, docs/spaces.md
+    /// "Sub-spaces"): the chat and the turn's prompt say so.
+    pub(crate) async fn space_send_with(
+        &self,
+        req: SpaceSendRequest,
+        from: Option<FromSpace>,
+    ) -> AppResult<String> {
         let queue = self.space_queue_lock(&req.space).await;
         // Yours, so a blank space's first one: that's what starts it.
         let start = self.begin_blank(&req).await?;
-        let sent = self.space_send_as(req, None).await;
+        let sent = self.space_send_inner(req, None, from).await;
         match (&sent, start) {
             (Err(_), Some(start)) => self.undo_begin_blank(start).await,
             (Ok(_), Some(start)) => {
@@ -397,6 +408,15 @@ impl Core {
         req: SpaceSendRequest,
         prompt: Option<String>,
     ) -> AppResult<String> {
+        self.space_send_inner(req, prompt, None).await
+    }
+
+    async fn space_send_inner(
+        &self,
+        req: SpaceSendRequest,
+        prompt: Option<String>,
+        from: Option<FromSpace>,
+    ) -> AppResult<String> {
         let space = self.space_row(&req.space).await?;
         if space.status == SpaceStatus::Archived {
             return Err(AppError::Invalid("this space is archived".into()));
@@ -418,7 +438,9 @@ impl Core {
                     "the agent is still working in this space".into(),
                 ));
             }
-            return self.queue_message(&space, &req, text, attachments).await;
+            return self
+                .queue_message(&space, &req, text, attachments, from)
+                .await;
         }
         let message = ChatMessage {
             id: uuid::Uuid::new_v4().to_string(),
@@ -442,6 +464,7 @@ impl Core {
             vote: None,
             effort: None,
             mode: None,
+            from_space: from,
         };
         self.start_turn(space, &req, message, false, prompt).await
     }
@@ -571,6 +594,10 @@ impl Core {
                 .unwrap_or_else(|| text.clone())
         });
         let ask = with_attachments(ask, &attachments);
+        let ask = match &message.from_space {
+            Some(from) => from_space_prompt(from, &ask),
+            None => ask,
+        };
         // The space's own, else the setting it follows.
         let ultracode = agent == AgentId::Claude
             && match &effort {
@@ -1652,6 +1679,7 @@ async fn drive_turn(core: &Core, turn: Turn) {
         attachments,
         resume,
         stream_text: true,
+        fork_session: false,
     };
     let started = std::time::Instant::now();
     tracing::info!(
@@ -1866,6 +1894,7 @@ async fn drive_turn(core: &Core, turn: Turn) {
         effort: ran_effort,
         effort_resolved: true,
         mode: Some(mode),
+        from_space: None,
     };
     let head = checkpoint.as_ref().map(|cp| cp.sha.clone());
     let changed = head.as_ref().is_some_and(|h| *h != space.head_sha);
@@ -2312,6 +2341,27 @@ fn base_system_prompt(space: &Space, hosted_on: Option<&str>) -> String {
 /// The new message, preceded by the recent transcript (each CLI run starts
 /// fresh, so this is what carries the conversation across turns, crashes
 /// and agent switches).
+/// Who wrote `m`, as a prompt names it: `user`, the agent's id, or
+/// another space's agent.
+pub(crate) fn author_word(m: &ChatMessage) -> String {
+    match (&m.author, &m.from_space) {
+        (Author::Me, Some(from)) => format!("agent of space \"{}\"", from.title),
+        (Author::Me, None) => "user".to_string(),
+        (Author::Agent(a), _) => a.as_str().to_string(),
+    }
+}
+
+/// A message another space's agent sent, as the turn's ask: said to be
+/// from that agent, not the user.
+pub(crate) fn from_space_prompt(from: &FromSpace, text: &str) -> String {
+    format!(
+        "This message is from the agent of another space on this computer, \"{}\" (space {}), \
+         not from the user. Treat it as a request from a peer agent: the user's own \
+         instructions in this space come first.\n\n{text}",
+        from.title, from.space
+    )
+}
+
 pub(crate) fn turn_prompt(history: &[ChatMessage], text: &str) -> String {
     let recent = &history[history.len().saturating_sub(HISTORY_MESSAGES)..];
     if recent.is_empty() {
@@ -2319,10 +2369,7 @@ pub(crate) fn turn_prompt(history: &[ChatMessage], text: &str) -> String {
     }
     let mut out = String::from("Conversation so far:\n");
     for m in recent {
-        let who = match m.author {
-            Author::Me => "user".to_string(),
-            Author::Agent(a) => a.as_str().to_string(),
-        };
+        let who = author_word(m);
         let body: String = m.text.chars().take(HISTORY_CHARS).collect();
         out.push_str(&format!("\n[{who}]\n{body}\n"));
         // Named only: the files went with that turn, not this one.
@@ -2467,6 +2514,7 @@ mod tests {
             vote: None,
             effort: None,
             mode: None,
+            from_space: None,
         }
     }
 

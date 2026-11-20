@@ -137,6 +137,7 @@ impl Core {
             vote: None,
             effort: None,
             mode: None,
+            from_space: None,
         };
         let data = serde_json::to_value(&question).map_err(|e| AppError::Invalid(e.to_string()))?;
         self.apply(vec![NewAction {
@@ -479,6 +480,7 @@ async fn drive_skill_run(
             attachments: vec![],
             resume: None,
             stream_text: true,
+            fork_session: false,
         };
         let _guard = ToolsGuard { core, mcp };
         let mut live = LiveRun::new(run_id.as_str(), agent).with_thinking();
@@ -651,6 +653,7 @@ async fn persist_failed_run(
         effort,
         effort_resolved: resolved,
         mode: None,
+        from_space: None,
     };
     if let Ok(data) = serde_json::to_value(&message) {
         let _ = core
@@ -700,7 +703,9 @@ pub(crate) fn tool_target(input: &serde_json::Value) -> Option<String> {
             .or_else(|| s("branch"))
             .or_else(|| s("action"))
             // `read_terminal`'s terminal id, when the agent named one.
-            .or_else(|| s("terminal"))?
+            .or_else(|| s("terminal"))
+            // The local-space tools' other space (its id).
+            .or_else(|| s("space"))?
             .trim()
             .to_string()
     };
@@ -757,6 +762,15 @@ pub(crate) fn tool_label(name: &str) -> &str {
         "replace_symbol_body" => "replace a symbol",
         "insert_after_symbol" => "insert after a symbol",
         "rename_symbol" => "rename a symbol",
+        "spaces_list" => "list the spaces",
+        "space_read" => "read a space",
+        "space_ask" => "ask a space",
+        "space_start" => "start a sub-space",
+        "space_send" => "message a space",
+        "space_wait" => "wait for sub-spaces",
+        "space_stop" => "stop a sub-space",
+        "space_answer" => "answer a space",
+        "space_merge" => "merge a sub-space",
         _ => name,
     }
 }
@@ -863,6 +877,7 @@ async fn drive_ask(
         attachments: question.attachments,
         resume: None,
         stream_text: true,
+        fork_session: false,
     };
     let _guard = ToolsGuard { core, mcp };
     let mut live = LiveRun::new(run_id.as_str(), agent);
@@ -988,6 +1003,7 @@ async fn drive_ask(
         effort,
         effort_resolved: true,
         mode: None,
+        from_space: None,
     };
     if let Ok(data) = serde_json::to_value(&reply) {
         let _ = core

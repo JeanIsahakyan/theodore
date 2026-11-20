@@ -1,8 +1,9 @@
 //! Sub-spaces (docs/spaces.md "Sub-spaces") against `Core` and the
 //! testkit fakes: a space's agent lists and reads the spaces here, starts
 //! children through the normal creation path within the limits (mode,
-//! depth, children, setting, hosted), and steers, waits for, answers and
-//! merges only its own.
+//! depth, children, setting, hosted), and stops, waits for and merges
+//! only its own. Asking, messaging and answering any space:
+//! `space_ask_tests`.
 
 use std::time::Duration;
 
@@ -18,7 +19,7 @@ use theodore_ports::{
 use crate::space_commands_tests::{Env, done, start_env, wait_until};
 use crate::testkit::ApplyCall;
 
-fn put_setting(e: &Env, key: &str, value: serde_json::Value) {
+pub(crate) fn put_setting(e: &Env, key: &str, value: serde_json::Value) {
     let setting = Setting {
         key: key.into(),
         scope: "user".into(),
@@ -34,14 +35,14 @@ fn put_setting(e: &Env, key: &str, value: serde_json::Value) {
         .unwrap();
 }
 
-fn goal(text: &str) -> LocalSpaceStart {
+pub(crate) fn goal(text: &str) -> LocalSpaceStart {
     LocalSpaceStart {
         goal: text.into(),
         ..Default::default()
     }
 }
 
-fn code(r: Result<impl std::fmt::Debug, SpaceToolError>) -> String {
+pub(crate) fn code(r: Result<impl std::fmt::Debug, SpaceToolError>) -> String {
     match r {
         Err(SpaceToolError::Unavailable(m)) => m.split(':').next().unwrap_or_default().to_string(),
         other => panic!("not refused: {other:?}"),
@@ -49,13 +50,13 @@ fn code(r: Result<impl std::fmt::Debug, SpaceToolError>) -> String {
 }
 
 /// A top-level space whose first turn is over.
-async fn parent(e: &Env) -> Space {
+pub(crate) async fn parent(e: &Env) -> Space {
     e.f.agents.push_script(done("ok"));
     let s = e.create("Split the work").await;
     e.until(&s.id, |s| s.turns == 1 && s.run.is_none()).await
 }
 
-async fn settle(e: &Env, id: &str) -> Space {
+pub(crate) async fn settle(e: &Env, id: &str) -> Space {
     e.until(id, |s| s.status != SpaceStatus::Running && s.turns >= 1)
         .await
 }
@@ -219,7 +220,7 @@ async fn a_space_hosted_for_another_device_sees_and_starts_nothing() {
     );
 }
 
-fn send(space: &str, text: &str) -> SpaceSendRequest {
+pub(crate) fn send(space: &str, text: &str) -> SpaceSendRequest {
     SpaceSendRequest {
         space: space.into(),
         text: text.into(),
@@ -232,7 +233,7 @@ fn send(space: &str, text: &str) -> SpaceSendRequest {
 }
 
 #[tokio::test]
-async fn only_own_children_are_steered() {
+async fn only_own_children_are_stopped_and_waited_for() {
     let e = start_env(true).await;
     let p = parent(&e).await;
     e.f.agents.push_script(done("ok"));
@@ -240,24 +241,10 @@ async fn only_own_children_are_steered() {
     settle(&e, &other.id).await;
     let turn = SpaceMode::Edit;
     let not_child = "sub_spaces.not_child";
-    assert_eq!(
-        code(
-            e.core
-                .sub_space_send(&p.id, turn, &other.id, "hi", None)
-                .await
-        ),
-        not_child
-    );
+    // Messaging and answering reach any space (space_ask_tests.rs); stopping
+    // and waiting only one's own.
     assert_eq!(
         code(e.core.sub_space_stop(&p.id, turn, &other.id).await),
-        not_child
-    );
-    assert_eq!(
-        code(
-            e.core
-                .sub_space_answer(&p.id, turn, &other.id, "q", vec![])
-                .await
-        ),
         not_child
     );
     assert_eq!(
