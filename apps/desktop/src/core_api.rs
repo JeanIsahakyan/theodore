@@ -370,6 +370,46 @@ pub trait CoreApi: Send + Sync {
     ) -> Result<theodore_contract::Space, CommandError> {
         Err(not_ready())
     }
+    /// Every agent account with its sign-in and latest usage limit
+    /// (docs/plan.md "Agent accounts and limits").
+    async fn agent_accounts(
+        &self,
+    ) -> Result<Vec<theodore_contract::AgentAccountStatus>, CommandError> {
+        Err(not_ready())
+    }
+    async fn add_agent_account(
+        &self,
+        _req: theodore_contract::AddAgentAccountRequest,
+    ) -> Result<theodore_contract::AgentAccountStatus, CommandError> {
+        Err(not_ready())
+    }
+    async fn remove_agent_account(
+        &self,
+        _req: theodore_contract::AgentAccountRequest,
+    ) -> Result<(), CommandError> {
+        Err(not_ready())
+    }
+    /// One account's row again; `recheck` checks its sign-in anew.
+    async fn check_agent_account(
+        &self,
+        _req: theodore_contract::AgentAccountRequest,
+    ) -> Result<theodore_contract::AgentAccountStatus, CommandError> {
+        Err(not_ready())
+    }
+    /// "Continue now" on a space paused for usage limits.
+    async fn space_pause_continue(
+        &self,
+        _req: theodore_contract::SpacePauseRequest,
+    ) -> Result<(), CommandError> {
+        Err(not_ready())
+    }
+    /// "Cancel" on a space paused for usage limits.
+    async fn space_pause_cancel(
+        &self,
+        _req: theodore_contract::SpacePauseRequest,
+    ) -> Result<(), CommandError> {
+        Err(not_ready())
+    }
     /// What a space's next turn runs with, for that space only.
     async fn set_space_settings(
         &self,

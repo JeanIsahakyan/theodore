@@ -1201,6 +1201,44 @@ impl CoreApi for AppCore {
             .await
             .map_err(err)
     }
+    async fn agent_accounts(
+        &self,
+    ) -> Result<Vec<theodore_contract::AgentAccountStatus>, CommandError> {
+        self.core.agent_accounts().await.map_err(err)
+    }
+    async fn add_agent_account(
+        &self,
+        req: theodore_contract::AddAgentAccountRequest,
+    ) -> Result<theodore_contract::AgentAccountStatus, CommandError> {
+        self.core.add_agent_account(req).await.map_err(err)
+    }
+    async fn remove_agent_account(
+        &self,
+        req: theodore_contract::AgentAccountRequest,
+    ) -> Result<(), CommandError> {
+        self.core.remove_agent_account(req).await.map_err(err)
+    }
+    async fn check_agent_account(
+        &self,
+        req: theodore_contract::AgentAccountRequest,
+    ) -> Result<theodore_contract::AgentAccountStatus, CommandError> {
+        self.core.check_agent_account(req).await.map_err(err)
+    }
+    async fn space_pause_continue(
+        &self,
+        req: theodore_contract::SpacePauseRequest,
+    ) -> Result<(), CommandError> {
+        self.core
+            .space_pause_continue(&req.space)
+            .await
+            .map_err(err)
+    }
+    async fn space_pause_cancel(
+        &self,
+        req: theodore_contract::SpacePauseRequest,
+    ) -> Result<(), CommandError> {
+        self.core.space_pause_cancel(&req.space).await.map_err(err)
+    }
     async fn space_send_feedback(
         &self,
         req: theodore_contract::SpaceFeedbackRequest,

@@ -2238,6 +2238,14 @@ pub struct FakeAgent {
     signed_in: Mutex<std::collections::HashMap<theodore_domain::AgentId, Option<bool>>>,
     /// How many times `recheck_sign_in` ran.
     rechecks: std::sync::atomic::AtomicUsize,
+    /// What each extra account's sign-in says (`set_account_signed_in`),
+    /// by `(agent, account id)`; unknown by default.
+    account_signed_in:
+        Mutex<std::collections::HashMap<(theodore_domain::AgentId, String), Option<bool>>>,
+    /// What `carry_session` answers (`set_carry`); `false` by default.
+    carry: std::sync::atomic::AtomicBool,
+    /// Every `carry_session` call: `(session, from account, to account)`.
+    carried: Mutex<Vec<(String, String, String)>>,
 }
 
 /// What an untagged, unscripted call gets: one plain, successful turn.
@@ -2266,6 +2274,26 @@ impl FakeAgent {
     /// What `detect` (and `known_sign_in`) says of `agent`'s sign-in.
     pub fn set_signed_in(&self, agent: theodore_domain::AgentId, signed_in: Option<bool>) {
         self.signed_in.lock().unwrap().insert(agent, signed_in);
+    }
+    /// What an extra account's sign-in says from now on.
+    pub fn set_account_signed_in(
+        &self,
+        agent: theodore_domain::AgentId,
+        account: &str,
+        signed_in: Option<bool>,
+    ) {
+        self.account_signed_in
+            .lock()
+            .unwrap()
+            .insert((agent, account.to_string()), signed_in);
+    }
+    /// Whether `carry_session` succeeds from now on.
+    pub fn set_carry(&self, ok: bool) {
+        self.carry.store(ok, std::sync::atomic::Ordering::SeqCst);
+    }
+    /// Every `carry_session` call so far: `(session, from, to)`.
+    pub fn carried(&self) -> Vec<(String, String, String)> {
+        self.carried.lock().unwrap().clone()
     }
     /// How many times `recheck_sign_in` ran.
     pub fn rechecks(&self) -> usize {
@@ -2375,6 +2403,43 @@ impl AgentPort for FakeAgent {
             .get(&agent)
             .copied()
             .flatten()
+    }
+    async fn account_sign_in(
+        &self,
+        agent: theodore_domain::AgentId,
+        account: &theodore_ports::AgentAccountRef,
+        _recheck: bool,
+    ) -> Option<bool> {
+        self.known_account_sign_in(agent, account)
+    }
+    fn known_account_sign_in(
+        &self,
+        agent: theodore_domain::AgentId,
+        account: &theodore_ports::AgentAccountRef,
+    ) -> Option<bool> {
+        if account.is_default() {
+            return self.known_sign_in(agent);
+        }
+        self.account_signed_in
+            .lock()
+            .unwrap()
+            .get(&(agent, account.id.clone()))
+            .copied()
+            .flatten()
+    }
+    async fn carry_session(
+        &self,
+        _agent: theodore_domain::AgentId,
+        session: &str,
+        _cwd: &std::path::Path,
+        from: &theodore_ports::AgentAccountRef,
+        to: &theodore_ports::AgentAccountRef,
+    ) -> bool {
+        self.carried
+            .lock()
+            .unwrap()
+            .push((session.to_string(), from.id.clone(), to.id.clone()));
+        self.carry.load(std::sync::atomic::Ordering::SeqCst)
     }
     async fn run(&self, req: AgentRequest) -> Result<AgentRun, AgentError> {
         let stream_text = req.stream_text;

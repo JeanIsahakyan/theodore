@@ -136,6 +136,15 @@ pub struct AgentAccountRef {
     pub dir: Option<PathBuf>,
 }
 
+/// A run's `Limit` event, with the account it ran on
+/// ([`AgentPort::limits_seen`]).
+#[derive(Debug, Clone, PartialEq)]
+pub struct LimitSeen {
+    pub agent: AgentId,
+    pub account: String,
+    pub limit: AgentLimit,
+}
+
 /// The id of each agent's own account: the CLI's default config.
 pub const DEFAULT_ACCOUNT: &str = "default";
 
@@ -650,6 +659,12 @@ pub trait AgentPort: Send + Sync {
     async fn models_in(&self, agent: AgentId, account: Option<&AgentAccountRef>) -> Vec<ModelInfo> {
         let _ = account;
         self.models(agent).await
+    }
+    /// The usage limits runs report on the accounts this port picked for
+    /// them (`AgentRequest::account` unset): a caller that picked its own
+    /// account reads its run's `Limit` events itself.
+    fn limits_seen(&self) -> Option<tokio::sync::broadcast::Receiver<LimitSeen>> {
+        None
     }
     /// Makes session `session` (run in `cwd` on account `from`) resumable
     /// on account `to`: Claude Code's session file is copied between the

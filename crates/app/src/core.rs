@@ -222,6 +222,20 @@ impl Core {
                 core.run_pause_loop().await;
             });
         }
+        // Limits of runs whose account the agent layer picked (chat,
+        // skills, fixes, grouping): kept like a space turn's.
+        if let Some(mut seen) = core.0.deps.agents.limits_seen() {
+            let core = core.clone();
+            tokio::spawn(async move {
+                loop {
+                    match seen.recv().await {
+                        Ok(s) => core.note_agent_limit(s.agent, &s.account, s.limit).await,
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                        Err(_) => return,
+                    }
+                }
+            });
+        }
         // Host traffic waits for the account gate (`account_hold`): the
         // outbox and the poller hold on every tick, the start-up inbox
         // refresh and clones before they begin. Free when sign-in isn't
