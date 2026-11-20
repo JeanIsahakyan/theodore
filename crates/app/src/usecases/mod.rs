@@ -37,6 +37,7 @@ pub mod skills;
 pub mod space_agent_tools;
 pub mod space_blank;
 pub mod space_checkpoints;
+pub mod space_children;
 pub mod space_commands;
 pub mod space_feedback;
 pub mod space_fix_ci;
