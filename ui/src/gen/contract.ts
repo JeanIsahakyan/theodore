@@ -462,7 +462,13 @@ export type ChatNotice =
  */
 { kind: "account_switch"; from: string; to: string; resets_at: number | null; continued: boolean } |
 /**  `account` hit its limit and nothing else could take over. */
-{ kind: "limit_hit"; account: string; resets_at: number | null };
+{ kind: "limit_hit"; account: string; resets_at: number | null } |
+/**
+ *  A message another device queued here was dropped before it ran:
+ *  that device's trust, or the mode it may use, changed meanwhile
+ *  (docs/fleet.md "Sends queue"). `from`: the device's name as pinned.
+ */
+{ kind: "remote_dropped"; from: string; reason: string };
 
 export type Check = {
 	id: string,

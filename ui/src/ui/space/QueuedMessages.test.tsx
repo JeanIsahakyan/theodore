@@ -66,6 +66,18 @@ describe('the queue under a running turn', () => {
     });
   });
 
+  it('shows a mirrored space’s queue as its host’s, with nothing to change here', async () => {
+    const remote = {
+      ...space('running'),
+      remote: { space: 'rs_1', host_device: 'dev_2', host_name: 'mac2' },
+    } as Space;
+    m = await mount(<QueuedMessages space={remote} queued={[queued('q1')]} />);
+    expect(m.host.textContent).toContain('queued on mac2');
+    expect(button('Cancel')).toBeNull();
+    expect(button('Edit')).toBeNull();
+    expect(button('Send')).toBeNull();
+  });
+
   it('edits the text in place', async () => {
     const transport = new FakeTransport();
     setTransport(transport);

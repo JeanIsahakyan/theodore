@@ -2721,60 +2721,6 @@ async fn starts_in_flight_count_against_the_cap_and_the_space_id() {
     wait_until("claimed", || claimed(&f, &next)).await;
 }
 
-/// L8: a send to a running hosted space is refused (`fleet.busy`), at the
-/// gate and again right before it runs; nothing waits in its queue.
-#[tokio::test]
-async fn a_send_to_a_running_hosted_space_is_refused_as_busy() {
-    let f = fixtures();
-    let (core, _recv, project, origin) = target(&f).await;
-    f.agents.push_script(done("one"));
-    run(&f, &origin, start_op(&project.id, "rs_1")).await;
-    let local = local_of(&f, "rs_1");
-    wait_until("idle", || space(&f, &local).status == SpaceStatus::Idle).await;
-    let send = || RemoteOp::Send {
-        space: "rs_1".into(),
-        text: "next".into(),
-        mode: None,
-        agent: None,
-        model: None,
-        effort: None,
-    };
-
-    // Idle at the gate, running by the time it's claimed.
-    let (id, env) = sealed(&f, &origin, send(), now(&f));
-    deliver(&f, env);
-    wait_until("the claim", || claimed(&f, &id)).await;
-    f.agents.hang_next_run();
-    core.space_send(theodore_contract::SpaceSendRequest {
-        space: local.clone(),
-        text: "mine".into(),
-        agent: None,
-        model: None,
-        mode: None,
-        attachments: None,
-        effort: None,
-    })
-    .await
-    .unwrap();
-    wait_until("running", || {
-        space(&f, &local).status == SpaceStatus::Running
-    })
-    .await;
-    claim_result(&f, &id, true);
-    assert_eq!(refusal(&f, &id).await, codes::BUSY);
-
-    // Running at the gate: refused before any claim.
-    let (id, env) = sealed(&f, &origin, send(), now(&f));
-    deliver(&f, env);
-    assert_eq!(refusal(&f, &id).await, codes::BUSY);
-    assert!(!claimed(&f, &id));
-    assert!(
-        core.queued_messages(&local).await.unwrap().is_empty(),
-        "nothing queued"
-    );
-    core.space_stop(&local).await.unwrap();
-}
-
 // ── round 3 ───────────────────────────────────────────────────────────────
 
 /// Nothing read before a request verifies goes into a reply this device

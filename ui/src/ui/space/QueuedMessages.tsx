@@ -68,13 +68,21 @@ function QueuedMessage({ space, m }: { space: Space; m: ChatMessage }) {
     else act({ kind: 'edit', text });
   };
   if (cancelled) return null;
-  const actionable = !isSending(m);
+  // A mirrored space's queue is its host's: shown here, changed there.
+  const host = space.remote?.host_name;
+  const actionable = !isSending(m) && !host;
   return (
     <div className="queued-message flex flex-col gap-1 opacity-70">
       <span className="flex items-center gap-1.5 text-xs text-muted">
         you
         <span className="rounded-full bg-default px-1.5 text-[10px]">
-          {sendingNow || !actionable ? 'sending' : held ? 'held' : 'queued'}
+          {host
+            ? `${held ? 'held' : 'queued'} on ${host}`
+            : sendingNow || !actionable
+              ? 'sending'
+              : held
+                ? 'held'
+                : 'queued'}
         </span>
         <span className="flex-1" />
         {editing === null && !archived && actionable && (

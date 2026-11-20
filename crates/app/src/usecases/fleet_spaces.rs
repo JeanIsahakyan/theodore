@@ -9,8 +9,8 @@
 //!   ─▶ space: a local id, or an rs_ id hosted here for this origin
 //!   ─▶ reach: not a mirror, not archived, not hosted for another device
 //!   list_spaces / read_space / ask_space ─▶ Ask: read only, any origin
-//!   send_to      ─▶ the space's own mode (never changed) ≤ max_mode,
-//!                   not running (fleet.busy)
+//!   send_to      ─▶ the space's own mode (never changed) ≤ max_mode;
+//!                   queued while it runs (fleet_queue), busy when full
 //!   answer_space ─▶ the question set waits, the answers fit it
 //!   merge_child  ─▶ Edit ≤ max_mode, the parent not running
 //!   mode ≥ Edit from an mcp origin ─▶ auto, else a person's yes
@@ -33,17 +33,11 @@ use crate::core::Core;
 use crate::usecases::fleet::{FleetSettings, fleet_mode, mode_str};
 use crate::usecases::fleet_host::{Refusal, answer_items, space_label};
 use crate::usecases::fleet_mirror::{floor_boundary, longest_string};
+use crate::usecases::fleet_queue::RemoteQueued;
 use crate::usecases::space_children::refuse as tool_refuse;
 
 fn refuse(code: &'static str, message: impl Into<String>) -> Refusal {
     (code, message.into())
-}
-
-fn busy() -> Refusal {
-    refuse(
-        codes::BUSY,
-        "the space is still working: wait until it settles, then send",
-    )
 }
 
 /// A sub-space tool's refusal (`sub_spaces.<code>: <why>`) as a fleet one.
@@ -188,10 +182,8 @@ impl Core {
                 if message.trim().is_empty() {
                     return Err(refuse(codes::INVALID, "empty message"));
                 }
-                // Never queued: as a send to a hosted space.
-                if row.status == SpaceStatus::Running {
-                    return Err(busy());
-                }
+                // Queued while it runs, as a send to a hosted space.
+                self.fleet_check_queue(&row).await?;
                 // Its own mode, never changed: what the cap and the yes
                 // are checked against.
                 let m = fleet_mode(row.mode);
@@ -249,6 +241,7 @@ impl Core {
         &self,
         req: &RemoteRequest,
         mode: Option<FleetMode>,
+        from: RemoteQueued,
     ) -> Result<Value, Refusal> {
         let origin = req.origin_device.as_str();
         let json = |v: Result<Value, serde_json::Error>| {
@@ -298,16 +291,23 @@ impl Core {
                         "the space's mode changed since the request was allowed",
                     ));
                 }
-                self.fleet_host_send_any(SpaceSendRequest {
-                    space: row.id,
-                    text: message,
-                    agent: None,
-                    model: None,
-                    // Never changed from another device.
-                    mode: None,
-                    attachments: None,
-                    effort: None,
-                })
+                let from = RemoteQueued {
+                    space: row.id.clone(),
+                    ..from
+                };
+                self.fleet_send_or_queue(
+                    SpaceSendRequest {
+                        space: row.id,
+                        text: message,
+                        agent: None,
+                        model: None,
+                        // Never changed from another device.
+                        mode: None,
+                        attachments: None,
+                        effort: None,
+                    },
+                    from,
+                )
                 .await?
             }
             RemoteOp::AnswerSpace {
@@ -402,23 +402,6 @@ impl Core {
         self.fleet_confirm_hosted(pin, mode, view)
             .await
             .map_err(|(_, why)| tool_refuse("denied", why))
-    }
-
-    /// A send to any space here: never queued behind a running turn (as
-    /// `fleet_host_send`), its mode never changed.
-    async fn fleet_host_send_any(&self, req: SpaceSendRequest) -> Result<Value, Refusal> {
-        let _queue = self.space_queue_lock(&req.space).await;
-        let row = self
-            .space_row(&req.space)
-            .await
-            .map_err(|e| refuse(codes::UNKNOWN_SPACE, e.user_message()))?;
-        if row.status == SpaceStatus::Running {
-            return Err(busy());
-        }
-        self.space_send_as(req, None)
-            .await
-            .map(|id| serde_json::json!({ "message": id }))
-            .map_err(|e| refuse(codes::INVALID, e.user_message()))
     }
 }
 
