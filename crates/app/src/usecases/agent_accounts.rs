@@ -258,7 +258,7 @@ impl Core {
             .apply(vec![NewAction {
                 model: models::AGENT_LIMIT.into(),
                 model_id: key,
-                action: SyncActionCode::I,
+                action: SyncActionCode::U,
                 data: Some(data),
             }])
             .await;
@@ -311,8 +311,7 @@ impl Core {
             .unwrap_or_else(|| default_account(agent))
     }
 
-    /// The earliest time one of `agents`' limited accounts resets, of the
-    /// ones not signed out.
+    /// The earliest time one of `agents`' limited accounts resets.
     pub(crate) async fn earliest_reset(&self, agents: &[AgentId]) -> Option<Millis> {
         let now = self.0.deps.clock.now();
         let mut best: Option<Millis> = None;
@@ -562,7 +561,7 @@ impl Core {
         self.apply(vec![NewAction {
             model: models::SETTING.into(),
             model_id: format!("{SCOPE_USER}:{key}"),
-            action: SyncActionCode::I,
+            action: SyncActionCode::U,
             data: Some(to_json(&setting)?),
         }])
         .await?;
@@ -574,8 +573,9 @@ fn to_json<T: Serialize>(v: &T) -> AppResult<serde_json::Value> {
     serde_json::to_value(v).map_err(|e| AppError::Invalid(e.to_string()))
 }
 
-/// The accounts a run of `agent` could take, for a caller without a `Core`
-/// (`AgentDefaults`): `(account, usable)` in pick order, read off `store`.
+/// `Core::pick_account` for a caller without a `Core` (`AgentDefaults`): the
+/// first account in pick order not limited and not known signed out, read off
+/// `store` (sign-ins only as already known: nothing is checked here).
 pub(crate) fn pick_from_store(
     store: &Arc<dyn Store>,
     agents: &dyn theodore_ports::AgentPort,

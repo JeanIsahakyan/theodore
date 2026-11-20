@@ -439,4 +439,119 @@ mod tests {
         let r = sent(store, req(AgentId::Claude, None)).await;
         assert_eq!(r.model, None);
     }
+
+    fn two_claude_accounts(store: &FakeStore) {
+        set(
+            store,
+            "user",
+            agent_accounts::ACCOUNTS_KEY,
+            serde_json::json!([
+                {"id": "w", "agent": "claude", "label": "work", "config_dir": "/d/w"},
+                {"id": "p", "agent": "claude", "label": "personal", "config_dir": "/d/p"},
+            ]),
+        );
+    }
+
+    #[tokio::test]
+    async fn a_run_gets_the_preferred_account_unless_it_is_limited() {
+        let store = FakeStore::new();
+        two_claude_accounts(&store);
+        set(&store, "user", "agents.claude.account", "w".into());
+        let r = sent(store.clone(), req(AgentId::Claude, None)).await;
+        let account = r.account.unwrap();
+        assert_eq!(account.id, "w");
+        assert_eq!(account.dir.as_deref(), Some(std::path::Path::new("/d/w")));
+
+        // Limited for another hour: the next account in the list, the
+        // default one.
+        let in_an_hour = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64
+            + 3_600_000;
+        let row = theodore_contract::AgentLimitRow {
+            agent: AgentId::Claude,
+            account: "w".into(),
+            limit: theodore_domain::AgentLimit::limited(Some(in_an_hour)),
+            at: 0,
+        };
+        store
+            .apply(vec![NewAction {
+                model: models::AGENT_LIMIT.into(),
+                model_id: "claude:w".into(),
+                action: SyncActionCode::I,
+                data: Some(serde_json::to_value(row).unwrap()),
+            }])
+            .unwrap();
+        let r = sent(store.clone(), req(AgentId::Claude, None)).await;
+        assert_eq!(r.account.unwrap(), AgentAccountRef::default_account());
+
+        // A caller's own account is kept.
+        let mut own = req(AgentId::Claude, None);
+        own.account = Some(AgentAccountRef {
+            id: "p".into(),
+            dir: Some("/d/p".into()),
+        });
+        assert_eq!(sent(store, own).await.account.unwrap().id, "p");
+    }
+
+    #[tokio::test]
+    async fn a_picked_runs_limits_are_told() {
+        let store = FakeStore::new();
+        let agent = FakeAgent::new();
+        let limit = theodore_domain::AgentLimit {
+            status: theodore_domain::LimitStatus::Warning,
+            resets_at: None,
+            window: Some("seven_day".into()),
+            used_pct: Some(91.0),
+        };
+        agent.push_script(vec![
+            AgentEvent::Limit {
+                limit: limit.clone(),
+            },
+            AgentEvent::Done {
+                final_text: "ok".into(),
+                usage: Default::default(),
+            },
+        ]);
+        let port = AgentDefaults::new(agent.clone(), store);
+        let mut seen = port.limits_seen().unwrap();
+        let mut run = port.run(req(AgentId::Claude, None)).await.unwrap();
+        let mut events = Vec::new();
+        while let Some(e) = run.events.recv().await {
+            events.push(e);
+        }
+        assert_eq!(events.len(), 2, "every event passes through");
+        assert_eq!(
+            seen.recv().await.unwrap(),
+            LimitSeen {
+                agent: AgentId::Claude,
+                account: DEFAULT_ACCOUNT.into(),
+                limit,
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn an_agent_is_signed_in_when_any_of_its_accounts_is() {
+        let store = FakeStore::new();
+        two_claude_accounts(&store);
+        let agent = FakeAgent::new();
+        agent.set_signed_in(AgentId::Claude, Some(false));
+        let port = AgentDefaults::new(agent.clone(), store);
+        let claude = |infos: Vec<AgentInfo>| {
+            infos
+                .into_iter()
+                .find(|i| i.id == AgentId::Claude)
+                .unwrap()
+                .signed_in
+        };
+        agent.set_account_signed_in(AgentId::Claude, "w", Some(false));
+        agent.set_account_signed_in(AgentId::Claude, "p", Some(false));
+        assert_eq!(claude(port.detect().await), Some(false));
+        assert_eq!(port.known_sign_in(AgentId::Claude), Some(false));
+        agent.set_account_signed_in(AgentId::Claude, "p", Some(true));
+        assert_eq!(claude(port.detect().await), Some(true));
+        assert_eq!(port.known_sign_in(AgentId::Claude), Some(true));
+    }
 }

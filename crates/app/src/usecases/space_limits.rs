@@ -251,6 +251,11 @@ impl Core {
     pub async fn space_pause_continue(&self, space_id: &str) -> AppResult<()> {
         let _queue = self.space_queue_lock(space_id).await;
         let space = self.space_row(space_id).await?;
+        if space.remote.is_some() {
+            return Err(AppError::Invalid(
+                "this space runs on another device: continue it there".into(),
+            ));
+        }
         let Some(pause) = space.paused.clone() else {
             return Ok(());
         };

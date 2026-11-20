@@ -692,6 +692,68 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_run_on_an_extra_account_gets_its_config_dir_and_no_key() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("claude");
+        std::fs::write(
+            &path,
+            "#!/bin/sh\nprintf '{\"type\":\"result\",\"is_error\":false,\"result\":\"%s|%s\"}\\n' \"$CLAUDE_CONFIG_DIR\" \"$ANTHROPIC_API_KEY\"\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let cli = AgentCli::new().with_config(
+            AgentId::Claude,
+            AgentBinaryConfig {
+                path: Some(path),
+                ..Default::default()
+            },
+        );
+        let run_on = |account: Option<AgentAccountRef>| {
+            let cli = cli.clone();
+            let cwd = dir.path().to_path_buf();
+            async move {
+                let req = AgentRequest {
+                    agent: AgentId::Claude,
+                    prompt: "p".into(),
+                    system: None,
+                    cwd,
+                    mode: theodore_ports::AgentMode::ReadOnly,
+                    mcp: None,
+                    model: None,
+                    effort: None,
+                    stall_after_ms: 30_000,
+                    env: vec![("ANTHROPIC_API_KEY".into(), "space-key".into())],
+                    user_mcp: false,
+                    attachments: vec![],
+                    resume: None,
+                    fork_session: false,
+                    stream_text: false,
+                    account,
+                };
+                let mut run = cli.run(req).await.unwrap();
+                let mut last = None;
+                while let Some(e) = run.events.recv().await {
+                    last = Some(e);
+                }
+                match last {
+                    Some(theodore_ports::AgentEvent::Done { final_text, .. }) => final_text,
+                    other => panic!("{other:?}"),
+                }
+            }
+        };
+        let work = AgentAccountRef {
+            id: "work".into(),
+            dir: Some("/accounts/work".into()),
+        };
+        assert_eq!(run_on(Some(work)).await, "/accounts/work|");
+        // The default account overrides nothing.
+        let own = run_on(None).await;
+        assert!(own.ends_with("|space-key"), "{own}");
+        assert!(!own.starts_with("/accounts/"), "{own}");
+    }
+
+    #[tokio::test]
     async fn a_missing_codex_is_not_looked_for_again_on_every_call() {
         use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
