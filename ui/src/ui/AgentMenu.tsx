@@ -21,6 +21,7 @@ import {
   agentModel,
   effortKey,
   effortLabel,
+  findModel,
   nextEffort,
   setAgentEffort,
   setAgentModel,
@@ -81,12 +82,9 @@ export function running(
       }
     : null;
   // An alias (`opus`, `fable`) is the newest model of its family.
-  const listedModel =
-    list.find((m) => m.id === id) ??
-    (id
-      ? (list.find((m) => !m.older && m.id.includes(id)) ??
-        list.find((m) => m.id.includes(id)))
-      : (list.find((m) => !m.older) ?? list[0]));
+  const listedModel = id
+    ? findModel(list, id)
+    : (list.find((m) => !m.older) ?? list[0]);
   const model = listedModel ?? typed ?? null;
   const efforts = takesEffort(agent) ? (model?.efforts ?? []) : [];
   const set = boxEffort ?? (host ? host.effort : rawEffort(store, agent));

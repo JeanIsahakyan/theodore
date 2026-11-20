@@ -5,10 +5,13 @@ import type {
   Space,
   TurnStep,
 } from '../../gen/contract';
+import { modelName } from '../agentModel';
 import {
-  agentsHeadline,
+  backgroundRows,
   spaceBusy,
+  stripHeadline,
   subagentElapsed,
+  subagentStatusLabel,
   subagentsOf,
   turnSource,
 } from './agents';
@@ -96,18 +99,106 @@ describe('subagents of a turn', () => {
     expect(subagentElapsed(untimed[0]!, 999)).toBeNull();
   });
 
-  it('says it in one line', () => {
+  it("a background one's row says how its task ended", () => {
+    const [bg] = subagentsOf([agent('bg', { ok: true, background: true })], {
+      running: false,
+      tasks: [task({ call: 'bg', status: 'lost', ended_at: 200 })],
+    });
+    expect(bg!.task?.status).toBe('lost');
+    expect(subagentStatusLabel(bg!)).toBe('lost');
+    const [live] = subagentsOf([agent('bg', { background: true })], {
+      running: false,
+      tasks: [task({ call: 'bg' })],
+    });
+    expect(subagentStatusLabel(live!)).toBe('running in background');
+    const [plain] = subagentsOf([agent('a1', { ok: false })], {
+      running: false,
+    });
+    expect(subagentStatusLabel(plain!)).toBe('failed');
+  });
+});
+
+describe('the strip', () => {
+  const cmd = (over: Partial<BackgroundTask>) =>
+    task({ kind: 'command', description: 'pnpm dev', ...over });
+  const steps: TurnStep[] = [
+    agent('a1', { ok: true }),
+    agent('bg', { background: true }),
+  ];
+
+  it('lists a background subagent of the turn once: as its turn row', () => {
+    const tasks = [
+      task({ id: 't1', call: 'bg' }),
+      task({ id: 't2', call: 'old', description: 'an earlier turn' }),
+      cmd({ id: 't3', call: 'c1' }),
+    ];
+    const agents = subagentsOf(steps, { running: false, tasks });
+    expect(agents.map((a) => [a.call, a.task?.id ?? null])).toEqual([
+      ['a1', null],
+      ['bg', 't1'],
+    ]);
+    expect(backgroundRows(tasks, agents).map((t) => t.id)).toEqual([
+      't2',
+      't3',
+    ]);
+    // With no turn listed, every task is a Background row.
+    expect(backgroundRows(tasks, []).map((t) => t.id)).toEqual([
+      't1',
+      't2',
+      't3',
+    ]);
+  });
+
+  it('says it all in one line', () => {
     const subs = [{ status: 'running' }, { status: 'idle' }] as Pick<
       Space,
       'status'
     >[];
-    expect(agentsHeadline(subagentsOf(steps, { running: true }), subs)).toBe(
-      '2 agents running · 2 sub-spaces, 1 running',
+    const turn = subagentsOf(steps, { running: false });
+    expect(turn.map((a) => a.status)).toEqual(['done', 'done']);
+    expect(stripHeadline(turn, [], [])).toBe('2 agents');
+    expect(stripHeadline(turn, [cmd({})], subs.slice(1))).toBe(
+      '2 agents · 1 sub-space · 1 command running',
     );
-    expect(agentsHeadline(subagentsOf(steps, { running: false }), [])).toBe(
-      '4 agents',
+    // A background subagent counts as an agent; a running one runs.
+    expect(
+      stripHeadline(turn, [task({}), cmd({}), cmd({ id: 'c2' })], subs),
+    ).toBe('1 agent running · 2 sub-spaces, 1 running · 2 commands running');
+    expect(stripHeadline([], [], [{ status: 'idle' }])).toBe('1 sub-space');
+    // Ended commands: the worst outcome, else that they ended.
+    expect(
+      stripHeadline([], [cmd({ status: 'lost' }), cmd({ status: 'cut' })], []),
+    ).toBe('1 command lost');
+    expect(stripHeadline([], [cmd({ status: 'cut' })], [])).toBe(
+      '1 command cut off',
     );
-    expect(agentsHeadline([], [{ status: 'idle' }])).toBe('1 sub-space');
+    expect(stripHeadline([], [cmd({ status: 'completed' })], [])).toBe(
+      '1 command ended',
+    );
+  });
+});
+
+describe("a model's name", () => {
+  const m = (id: string, label: string, older = false) => ({
+    id,
+    label,
+    description: null,
+    efforts: [],
+    default_effort: null,
+    older,
+  });
+  const catalog = [
+    m('claude-opus-5-5', 'Opus 5.5'),
+    m('claude-sonnet-5', 'Sonnet 5'),
+    m('claude-opus-5', 'Opus 5', true),
+  ];
+
+  it('reads the catalog, an alias as its newest, else the id', () => {
+    expect(modelName(catalog, 'claude-opus-5-5')).toBe('Opus 5.5');
+    expect(modelName(catalog, 'claude-opus-5')).toBe('Opus 5');
+    expect(modelName(catalog, 'opus')).toBe('Opus 5.5');
+    expect(modelName(catalog, 'claude-haiku-5-5')).toBe('claude-haiku-5-5');
+    expect(modelName(undefined, 'claude-opus-5-5')).toBe('claude-opus-5-5');
   });
 });
 

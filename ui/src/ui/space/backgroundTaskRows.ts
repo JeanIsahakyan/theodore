@@ -1,7 +1,8 @@
 /**
- * What the composer's background-task line shows (docs/spaces.md "Background
- * tasks"). Running tasks always; one that ended a moment ago, briefly, so its
- * outcome is seen; a cut or lost one stays until the next turn clears it.
+ * Which background tasks the strip above the composer shows (docs/spaces.md
+ * "Background tasks"). Running tasks always; one that ended a moment ago,
+ * briefly, so its outcome is seen; a cut or lost one stays until the next
+ * turn clears it.
  */
 import type {
   BackgroundTask,
@@ -55,17 +56,4 @@ export function endedLabel(status: BackgroundTaskStatus): string {
     case 'running':
       return '';
   }
-}
-
-/** The compact line, from what's shown. */
-export function headline(shown: BackgroundTask[]): string {
-  const running = shown.filter((t) => t.status === 'running').length;
-  if (running > 0) return `${running} running in background`;
-  const lost = shown.filter((t) => t.status === 'lost').length;
-  if (lost > 0) {
-    return `${lost} background task${lost === 1 ? '' : 's'} lost`;
-  }
-  const cut = shown.filter((t) => t.status === 'cut').length;
-  if (cut > 0) return `${cut} background task${cut === 1 ? '' : 's'} cut off`;
-  return `${shown.length} background task${shown.length === 1 ? '' : 's'} ended`;
 }

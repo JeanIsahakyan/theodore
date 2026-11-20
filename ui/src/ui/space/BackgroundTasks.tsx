@@ -1,23 +1,20 @@
 /**
- * The agent's background tasks, above the composer: a compact "2 running in
- * background" that opens to a list, each with its kind, what it is, how long
- * it has run, and Stop (docs/spaces.md "Background tasks").
+ * A background task's row in the strip above the composer (`SpaceAgents`,
+ * docs/spaces.md "Background tasks"): its kind, what it is, how it ended,
+ * how long it has run, and Stop.
  *
  * ```text
- * ◌ 2 running in background ▾
- *   ▸ ⌘ pnpm test --watch     1m 12s   [Stop]
- *   ▸ ⚙ refactor auth         12s      [Stop]
+ *   ⌘ pnpm test --watch            1m 12s   [Stop]
+ *   ⚙ refactor auth       lost        12s
  * ```
  */
 import { useEffect, useState } from 'react';
-import { ChevronDown, Cpu, Terminal } from '@gravity-ui/icons';
+import { Cpu, Terminal } from '@gravity-ui/icons';
 import { Button } from '@heroui/react';
-import type { BackgroundTask, Space } from '../../gen/contract';
+import type { BackgroundTask } from '../../gen/contract';
 import { api } from '../../core/api';
-import { Spinner } from '../bits';
 import { formatDuration } from '../turnRows';
-import { endedLabel, headline, shownTasks } from './backgroundTaskRows';
-import { remoteOf } from './spaces';
+import { endedLabel } from './backgroundTaskRows';
 
 /** A running clock, while something on screen is timed or is about to go. */
 export function useNow(active: boolean): number {
@@ -30,53 +27,38 @@ export function useNow(active: boolean): number {
   return now;
 }
 
-export function BackgroundTasks({ space }: { space: Space }) {
-  const [open, setOpen] = useState(false);
-  const any = (space.background_tasks?.length ?? 0) > 0;
-  const now = useNow(any);
-  const tasks = shownTasks(space, now);
-  if (!tasks.length) return null;
-  const running = tasks.some((t) => t.status === 'running');
+/** Stop for one running task; a refusal is toasted by api.ts and the
+ *  button comes back to try again. */
+export function StopTask({
+  space,
+  task,
+}: {
+  space: string;
+  task: Pick<BackgroundTask, 'id' | 'description'>;
+}) {
+  const [stopping, setStopping] = useState(false);
+  const stop = () => {
+    setStopping(true);
+    void api
+      .spaceStopTask(space, task.id)
+      .catch(() => {})
+      .finally(() => setStopping(false));
+  };
   return (
-    <div
-      className="background-tasks flex min-w-0 flex-col gap-1 rounded-lg border border-separator px-3 py-1.5 text-xs"
-      aria-label="Background tasks"
+    <Button
+      size="sm"
+      variant="ghost"
+      className="background-task-stop h-5 min-w-0 shrink-0 px-1.5 text-xs"
+      isDisabled={stopping}
+      aria-label={`Stop ${task.description}`}
+      onPress={stop}
     >
-      <button
-        type="button"
-        aria-expanded={open}
-        className="flex min-w-0 items-center gap-2 text-left text-muted"
-        onClick={() => setOpen(!open)}
-      >
-        {running && (
-          <span className="inline-flex size-3 items-center justify-center">
-            <Spinner />
-          </span>
-        )}
-        <span className="min-w-0 truncate">{headline(tasks)}</span>
-        <ChevronDown
-          className={`ml-auto size-3 shrink-0 transition-transform ${open ? 'rotate-180' : ''}`}
-        />
-      </button>
-      {open && (
-        <ul className="flex flex-col gap-0.5">
-          {tasks.map((t) => (
-            <TaskRow
-              key={t.id}
-              space={space.id}
-              task={t}
-              now={now}
-              // A remote space's tasks run on its host: shown, not stopped.
-              canStop={!remoteOf(space)}
-            />
-          ))}
-        </ul>
-      )}
-    </div>
+      Stop
+    </Button>
   );
 }
 
-function TaskRow({
+export function BackgroundTaskRow({
   space,
   task,
   now,
@@ -85,28 +67,21 @@ function TaskRow({
   space: string;
   task: BackgroundTask;
   now: number;
+  /** A remote space's tasks run on its host: shown, not stopped. */
   canStop: boolean;
 }) {
-  const [stopping, setStopping] = useState(false);
   const running = task.status === 'running';
   const Icon = task.kind === 'subagent' ? Cpu : Terminal;
   const elapsed = (task.ended_at ?? now) - task.started_at;
-  const stop = () => {
-    setStopping(true);
-    void api
-      .spaceStopTask(space, task.id)
-      .catch(() => {
-        // Toasted by api.ts; the row stays live to try again.
-      })
-      .finally(() => setStopping(false));
-  };
   return (
     <li
       data-status={task.status}
-      className="background-task flex min-w-0 items-center gap-2"
+      className="background-task flex min-w-0 items-center gap-2 px-1 py-0.5"
       title={task.note ?? task.description}
     >
-      <Icon className="size-3 shrink-0 text-muted" />
+      <span className="grid size-3.5 shrink-0 place-items-center text-muted">
+        <Icon className="size-3" />
+      </span>
       <span className="min-w-0 flex-1 truncate">{task.description}</span>
       {!running && (
         <span
@@ -118,18 +93,7 @@ function TaskRow({
       <span className="shrink-0 font-mono text-[11px] tabular-nums text-muted">
         {formatDuration(Math.max(0, elapsed))}
       </span>
-      {running && canStop && (
-        <Button
-          size="sm"
-          variant="ghost"
-          className="background-task-stop h-5 min-w-0 shrink-0 px-1.5 text-xs"
-          isDisabled={stopping}
-          aria-label={`Stop ${task.description}`}
-          onPress={stop}
-        >
-          Stop
-        </Button>
-      )}
+      {running && canStop && <StopTask space={space} task={task} />}
     </li>
   );
 }
