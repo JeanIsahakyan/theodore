@@ -46,7 +46,7 @@ impl Drop for TempIndex {
     }
 }
 
-async fn git_dir(git: &SpaceGit<'_>) -> GitResult<PathBuf> {
+pub(crate) async fn git_dir(git: &SpaceGit<'_>) -> GitResult<PathBuf> {
     let dir = git.run_text(&["rev-parse", "--absolute-git-dir"]).await?;
     Ok(PathBuf::from(dir.trim()))
 }
@@ -60,7 +60,7 @@ async fn rev(git: &SpaceGit<'_>, spec: &str) -> GitResult<Option<String>> {
     Ok((out.status == 0 && !text.is_empty()).then_some(text))
 }
 
-async fn must_rev(git: &SpaceGit<'_>, spec: &str) -> GitResult<String> {
+pub(crate) async fn must_rev(git: &SpaceGit<'_>, spec: &str) -> GitResult<String> {
     rev(git, spec)
         .await?
         .ok_or_else(|| GitError::Parse(format!("{spec} names no object")))
@@ -69,7 +69,7 @@ async fn must_rev(git: &SpaceGit<'_>, spec: &str) -> GitResult<String> {
 /// The whole worktree as a tree: tracked and untracked files, `.gitignore`
 /// honored. Staged in a copy of the worktree's index, so `add` reuses its
 /// stat cache and the index itself is never written.
-async fn worktree_tree(git: &SpaceGit<'_>, git_dir: &Path) -> GitResult<String> {
+pub(crate) async fn worktree_tree(git: &SpaceGit<'_>, git_dir: &Path) -> GitResult<String> {
     exclude_junk(git).await?;
     let index = TempIndex::new(git_dir, "theodore-snapshot.index");
     let real = git_dir.join("index");
@@ -95,7 +95,7 @@ async fn worktree_tree(git: &SpaceGit<'_>, git_dir: &Path) -> GitResult<String> 
 /// A commit of Theodore's own: a fixed identity, never the user's hooks or
 /// signing. `date` (git's `@<secs> <tz>`) pins both dates, so the same
 /// tree on the same parent is the same commit.
-async fn commit_tree(
+pub(crate) async fn commit_tree(
     git: &SpaceGit<'_>,
     tree: &str,
     parent: &str,
@@ -145,7 +145,7 @@ fn safe_rel(path: &str) -> GitResult<PathBuf> {
 
 /// Whether a directory on the way to `rel` is a symlink: writing or
 /// removing through it would leave the worktree.
-fn through_symlink(root: &Path, rel: &Path) -> bool {
+pub(crate) fn through_symlink(root: &Path, rel: &Path) -> bool {
     let mut at = root.to_path_buf();
     let mut parts = rel.components().peekable();
     while let Some(c) = parts.next() {
@@ -162,7 +162,7 @@ fn through_symlink(root: &Path, rel: &Path) -> bool {
 
 /// Removes the file (or symlink) at `rel`, then the directories it leaves
 /// empty. A directory there is left alone.
-fn remove_file(root: &Path, rel: &Path) -> GitResult<()> {
+pub(crate) fn remove_file(root: &Path, rel: &Path) -> GitResult<()> {
     if through_symlink(root, rel) {
         return Ok(());
     }
@@ -183,7 +183,7 @@ fn remove_file(root: &Path, rel: &Path) -> GitResult<()> {
 
 /// Writes `paths` from `tree` into the worktree with `checkout-index`,
 /// through a temporary index: the worktree's own index stays as it is.
-async fn write_paths(
+pub(crate) async fn write_paths(
     git: &SpaceGit<'_>,
     git_dir: &Path,
     tree: &str,
@@ -214,7 +214,7 @@ async fn write_paths(
 
 /// The paths `diff-tree -r` lists between two trees, split into the ones
 /// `to` has (written) and the ones it lacks (removed). Submodules skipped.
-async fn changed_paths(
+pub(crate) async fn changed_paths(
     git: &SpaceGit<'_>,
     from: &str,
     to: &str,

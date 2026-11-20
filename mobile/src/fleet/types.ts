@@ -4,7 +4,7 @@
  * `FleetClient` is implemented in `src/fleet/client.ts`; screens read the
  * zustand store in `src/state/fleet.ts` and call the client's methods.
  */
-import type { FleetMode } from '../gen/fleet';
+import type { ConfirmAction, FleetMode, McpAuto } from '../gen/fleet';
 import type { SpaceMirror } from './mirror';
 
 export type ConnectionState = 'off' | 'connecting' | 'connected' | 'error';
@@ -43,10 +43,25 @@ export interface AgentPicks {
   effort?: string | null;
 }
 
+/**
+ * A computer's auto mode for one Claude via the cloud (`mcp`) device it
+ * pins (`DeviceInfo.mcp_auto`, docs/fleet.md "Auto mode"), shape-checked.
+ */
+export interface McpAutoView {
+  /** The `mcp` device. */
+  deviceId: string;
+  /** Its listed name, else "Claude via cloud". */
+  name: string;
+  /** `off` once `untilMs` has passed. */
+  auto: McpAuto;
+  /** Unix ms it ends; `null`: until turned off. */
+  untilMs: number | null;
+}
+
 export interface FleetDeviceView {
   deviceId: string;
   name: string;
-  /** desktop | daemon | mobile | web */
+  /** desktop | daemon | mobile | web | mcp */
   kind: string;
   os: string;
   online: boolean;
@@ -62,6 +77,30 @@ export interface FleetDeviceView {
   /** Pinned on this device. */
   trusted: boolean;
   thisDevice: boolean;
+  /** A computer's auto mode per `mcp` device it pins; empty elsewhere. */
+  mcpAuto: McpAutoView[];
+}
+
+/**
+ * A request from Claude via the cloud waiting on a pinned computer for a
+ * person's Allow / Deny (`RemoteConfirm`, verified with the host's pin).
+ */
+export interface ConfirmView {
+  confirmId: string;
+  hostDevice: string;
+  /** The host's pinned name. */
+  hostName: string;
+  mcpDevice: string;
+  action: ConfirmAction;
+  mode: FleetMode;
+  /** `start`: the project, as the host names it; else "". */
+  projectName: string;
+  /** `send` / `approve_plan`: the space, as the host names it; else "". */
+  spaceName: string;
+  /** The goal or the message. */
+  text: string;
+  /** Unix ms: refused on the host unless answered before. */
+  expiresAtMs: number;
 }
 
 export type SpaceStatus =
@@ -126,6 +165,8 @@ export interface FleetSnapshot {
   mirrors: Record<string, SpaceMirror>;
   /** Questions routed to this device that aren't answered yet. */
   questions: QuestionView[];
+  /** Claude via cloud's requests waiting on a computer for Allow / Deny. */
+  confirms: ConfirmView[];
 }
 
 export interface FleetClient {
@@ -164,5 +205,27 @@ export interface FleetClient {
     askId: string,
     answers: string[][],
     hostDevice: string,
+  ): Promise<void>;
+  /**
+   * Allow or Deny a confirm waiting on `hostDevice`. The card goes once
+   * sent, whatever the host says; a late answer (`fleet.invalid`: answered
+   * elsewhere, or expired) resolves quietly, other refusals throw.
+   */
+  confirm(hostDevice: string, confirmId: string, allow: boolean): Promise<void>;
+  /** `confirm` without the socket (notification action). */
+  confirmOverHttp(
+    hostDevice: string,
+    confirmId: string,
+    allow: boolean,
+  ): Promise<void>;
+  /**
+   * Sets a pinned computer's auto mode for an `mcp` device it pins; the new
+   * state comes back in the next devices list.
+   */
+  setMcpAuto(
+    hostDevice: string,
+    mcpDevice: string,
+    auto: McpAuto,
+    untilMs: number | null,
   ): Promise<void>;
 }

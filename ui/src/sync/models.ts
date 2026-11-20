@@ -168,6 +168,12 @@ export function modelAccessors(pool: ObjectPool) {
     projects: of('project'),
     spaces: of('space'),
     reports: of('report'),
+    /** The latest usage limit each agent account reported. */
+    agentLimits: {
+      ...of('agent_limit'),
+      of: (agent: string, account: string) =>
+        pool.get('agent_limit', `${agent}:${account}`),
+    },
   };
 }
 

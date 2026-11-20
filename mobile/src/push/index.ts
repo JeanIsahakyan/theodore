@@ -11,9 +11,13 @@ import * as SecureStore from 'expo-secure-store';
 import { Platform } from 'react-native';
 import type { FleetClient } from '../fleet/types';
 import {
+  ACTION_ALLOW,
+  ACTION_DENY,
   ACTION_OPEN,
   ACTION_REPLY,
+  CATEGORY_CONFIRM,
   CATEGORY_TEXT,
+  HOME_PATH,
   classifyResponse,
   optionAction,
   optionCategory,
@@ -71,6 +75,14 @@ async function registerCategories(): Promise<void> {
       option(0),
       option(1),
       option(2),
+    ]),
+    Notifications.setNotificationCategoryAsync(CATEGORY_CONFIRM, [
+      {
+        identifier: ACTION_DENY,
+        buttonTitle: 'Deny',
+        options: { ...noForeground, isDestructive: true },
+      },
+      { identifier: ACTION_ALLOW, buttonTitle: 'Allow', options: noForeground },
     ]),
   ]);
 }
@@ -183,19 +195,32 @@ async function handle(
     navigate(spacePath(action.space));
     return;
   }
+  if (action.type === 'home') {
+    navigate(HOME_PATH);
+    return;
+  }
   try {
-    await fleet.answerOverHttp(
-      action.space,
-      action.askId,
-      action.answers,
-      action.hostDevice,
-    );
+    if (action.type === 'confirm') {
+      await fleet.confirmOverHttp(
+        action.hostDevice,
+        action.confirmId,
+        action.allow,
+      );
+    } else {
+      await fleet.answerOverHttp(
+        action.space,
+        action.askId,
+        action.answers,
+        action.hostDevice,
+      );
+    }
     await Notifications.dismissNotificationAsync(
       notification.request.identifier,
     );
   } catch (e) {
     console.warn('push: answering from the notification failed', e);
-    // Never lose the question silently: a local notification that opens it.
+    // Never lose the question silently: a local notification that opens it
+    // (a confirm's opens Home, where it waits).
     await Notifications.scheduleNotificationAsync({
       content: {
         title: notification.request.content.title ?? 'Theodore',

@@ -1,8 +1,10 @@
 //! Fleet, delegations (docs/mobile.md "Following a computer's spaces"):
-//! this device lets a phone or web app it trusts follow the spaces it
-//! started (subscribe to them, get their questions) by signing a
-//! `Delegation` for the cloud. A delegation grants nothing on hosts: a
-//! delegate's answer runs there only if the host trusts the delegate's key.
+//! this device lets a phone, the web app or another desktop computer it
+//! trusts follow the spaces it started (subscribe to them, get their
+//! questions) and get its Claude via cloud prompts (docs/fleet.md "Auto
+//! mode and remote prompts") by signing a `Delegation` for the cloud. A
+//! delegation grants nothing on hosts: a delegate's answer runs there only
+//! if the host trusts the delegate's key.
 //!
 //! ```text
 //! Devices → "Send my spaces' questions here" ─▶ fleet_delegate(id, on)
@@ -19,15 +21,15 @@
 //! ```
 
 use theodore_contract::{Ephemeral, FleetStatus};
-use theodore_fleet_protocol::{ClientMessage, Delegation, Domain, SignedEnvelope};
+use theodore_fleet_protocol::{ClientMessage, Delegation, DeviceKind, Domain, SignedEnvelope};
 
 use crate::core::Core;
 use crate::error::{AppError, AppResult};
-use crate::usecases::fleet::wants_delegate;
+use crate::usecases::fleet::{follows, wants_delegate};
 
 impl Core {
-    /// Sends this device's spaces' questions to `device_id` (a phone or
-    /// web app trusted here), or stops. Kept in the settings, so it's
+    /// Sends this device's spaces' questions and prompts to `device_id` (a
+    /// phone, the web app or a computer trusted here), or stops. Kept in the settings, so it's
     /// signed again after every welcome; off goes out as a revocation.
     pub async fn fleet_delegate(&self, device_id: &str, on: bool) -> AppResult<FleetStatus> {
         if on {
@@ -42,9 +44,15 @@ impl Core {
                         "device {device_id} isn't in this organization's fleet"
                     ))
                 })?;
-            if listed.info.kind.hosts() {
+            if !follows(listed.info.kind) {
+                let what = if listed.info.kind == DeviceKind::Daemon {
+                    "is a server nobody sits at"
+                } else {
+                    "isn't a phone, the web app or a computer"
+                };
                 return Err(AppError::Invalid(format!(
-                    "{} is a computer: only a phone or the web app follows this device's spaces",
+                    "{} {what}: only a phone, the web app or another computer follows this \
+                     device's spaces",
                     listed.info.name
                 )));
             }

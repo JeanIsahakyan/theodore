@@ -1003,6 +1003,7 @@ gone?  ─▶ "No conversation found" / "no rollout found"
 | --- | --- |
 | same agent, same worktree | yes; the model and mode may change (flags are per run) |
 | another agent | no: new session from the replayed transcript (last 12 messages) |
+| same agent, another account | Claude: yes, its session file is copied to that account first; Codex, or a copy that fails: no, replayed ("Usage limits") |
 | Gemini | never: it has no resume, every turn replays the transcript |
 | after Undo or Back to here | no: the session holds the undone turns; the replay leaves them out |
 | after unarchive | yes (the worktree path is the same); no if the checkpoints were gone |
@@ -1033,6 +1034,51 @@ history > 12 messages, can't resume
 ```
 
 A short space (≤ 12 messages total) never asks for one.
+
+### Usage limits
+
+A turn runs on one of its agent's accounts (docs/plan.md §8.6): the
+preferred one, else the space's own, else the next one signed in and not
+limited. The session records its account (`agent_session.account`). A turn
+on another account than the session's moves the session first (Claude Code:
+its file is copied, then `--resume`d), else replays the transcript.
+
+When a turn hits its account's usage limit (a `Limit` with status
+`limited`, from the CLI's own event or its error text), the account is marked
+limited until its reset and the space goes on:
+
+```
+turn on Claude · personal ─▶ Limit{limited, resets 18:00} + Error
+  │   reply kept, "failed: You've hit your session limit · resets 6pm"
+  │
+  ├─ another Claude account free? ──yes──▶ row "Claude · personal hit its limit
+  │                                         (resets 18:00): continuing on Claude · work"
+  │                                         └▶ "Continue from where you stopped (the
+  │                                             previous account hit its usage limit)."
+  │                                             on work, same session (copied) or replay
+  ├─ agents.fallback_agents, in order: an agent with a free account?
+  │                                  ──yes──▶ same row and message, on that agent (replay)
+  └─ none ──▶ row "Claude · personal hit its limit (resets 18:00)"
+              Space::paused {until: earliest reset of those accounts}
+                ├─ until passes ──▶ the continue message, on whichever account is free
+                ├─ Continue now ──▶ the same, at once (on the preferred one if none is free)
+                ├─ Cancel ────────▶ paused cleared; queued messages held for you
+                └─ you send ──────▶ pause cleared; that turn picks its account as usual
+```
+
+| Row | Where | Says |
+| --- | --- | --- |
+| switch | chat, a small system row (`ChatMessage::notice`, never in a prompt) | "Claude · personal hit its limit (resets 18:00): continuing on Claude · work"; with `agents.auto_continue` off: "…: the next turn runs on Claude · work" |
+| limit hit | chat, same kind of row | "Claude · work hit its limit (resets 18:00)" |
+| paused | above the composer, while `Space::paused` is set | "Paused: limits reset at 18:00 · continues automatically" · Continue now / Cancel; no reset known: "Paused: usage limits reached" |
+
+- `agents.auto_continue` (default on): off, nothing is sent by itself: the
+  row says which account the next turn takes, and queued messages are held.
+- The pause is stored on the space; a 30-second tick (and one at start) by
+  the core's clock continues the ones whose time came, so a pause survives a
+  restart.
+- While the switch or pause is decided, queued messages stay queued; they
+  go after the continued turn.
 
 ### Background tasks
 
@@ -1134,10 +1180,16 @@ status, ended_at, note, the turn and call it links to) is synced like the rest o
 the row, so it survives a UI reload; a restart turns running tasks `lost`. Ended
 rows are dropped when the next turn starts, or when more than 20 pile up.
 
-**The UI.** Above the composer: "2 running in background", opening to a list
-with an icon by kind, description, elapsed time, Stop, and a row's outcome for a
-few seconds after it ends (a cut or lost one stays until the next turn). Tool
-rows read `running in background` until their task ends, then the real output.
+**The UI.** Background tasks show in the one strip above the composer, with
+the turn's subagents and the sub-spaces (§ "Seeing sub-spaces and agents"). A
+command counts in its line (`1 command running`, else `lost`, `cut off`,
+`ended`) and is a row under "Background": an icon by kind, description,
+elapsed time, Stop, and its outcome for a few seconds after it ends (a cut or
+lost one stays until the next turn). A background subagent is one row too:
+under "This turn"/"Last turn" when that turn lists it, with the task's status
+and Stop; else under "Background". A remote space's tasks show without Stop.
+Tool rows read `running in background` until their task ends, then the real
+output.
 The sidebar's agent indicator counts turns only, not background tasks: a space
 waiting on a long build isn't "the agent working".
 
@@ -1163,6 +1215,9 @@ configured commands, never a shell of the agent's choosing.
 | `report_problem` | drafts a problem report about Theodore from this turn (title, description, scope, logs) and opens the report window on it; you review and send it, never the agent (docs/telemetry.md "Report from a chat") |
 | `fleet_devices`, `fleet_wait`, `fleet_read` | spaces on your other devices trusted here: list the devices, wait for and read the spaces this space started. Only while the fleet is on and connected (docs/fleet.md "Agents use it too") |
 | `fleet_start_space`, `fleet_send`, `fleet_stop` | start one (this space is its parent, mode at most the turn's), message it (at most the turn's mode), stop it — only spaces this space started. Only in an Edit or Run turn, and never in a space hosted here for another device |
+| `spaces_list`, `space_read`, `space_ask` | the other spaces on this computer: list, read, ask a question its own agent answers, read only (below, "Sub-spaces"). Never in a space hosted here for another device |
+| `space_send`, `space_answer` | any other space here: a message, an answer to its question, marked as from this space (below). While `spaces.sub_spaces` is on |
+| `space_start`, `space_wait`, `space_stop`, `space_merge` | sub-spaces of this one: start, wait for, stop, bring their work back (below). While `spaces.sub_spaces` is on |
 
 ```
 turn ─▶ token for this space ─▶ agent ─▶ run_check ─▶ check ─▶ result ─▶ agent fixes ─▶ …
@@ -1199,6 +1254,133 @@ turn ─▶ token for this space ─▶ agent ─▶ run_check ─▶ check ─�
 
 Details, limits and errors: `docs/config.md` §7.
 
+### Sub-spaces, and asking other spaces
+
+A space's agent sees the other spaces on this computer, asks them, messages
+and answers them, and may split clearly independent work into sub-spaces:
+normal spaces, each with its own branch and worktree, `Space::parent`
+naming the space that started it.
+
+```
+A's turn (any mode) ─▶ space_ask {B, question}        B: no message, no turn,
+   B has a Claude session in its worktree?               no checkpoint, same session
+   ├─ yes ─▶ claude -p <question> --resume <B's session> --fork-session
+   │           --no-session-persistence, read only, no MCP, cwd = B's worktree
+   │           └─ fails ─┐
+   └─ no (none, Codex, Gemini) ─┴─▶ B's agent, fresh: read only, no MCP, in B's worktree,
+                                    told B's goal, last 12 messages (≤ 1500 chars each),
+                                    diff stat, then the question
+   ─▶ {answer, agent, model, how: fork | fresh, note}  (the answer is data)
+
+A's turn (Edit/Run) ─▶ space_send {B, message}  ─▶ B's chat: "From <A>" (links to A)
+                                                   B's prompt: "from the agent of another
+                                                   space <A> (id), not from the user"
+                   ─▶ space_answer {B, ask, …}  ─▶ B's ask_user result: answered_by <A>
+```
+
+- B mid-turn is fine: the fork starts from B's last saved session; a
+  message waits in B's queue as yours would, and keeps its sender.
+- The fork is a copy under a new id that isn't saved; B's next turn
+  resumes B's own session. Codex can't fork: it is never resumed for an
+  ask.
+- Neither space's chat shows the ask while it runs (`stream_text` off);
+  A's timeline has its `space_ask` row ("Asked <B>: <question>", § "Seeing
+  sub-spaces and agents").
+
+```
+parent turn (Edit/Run) ─▶ space_start {goal} ─▶ create_space (the usual path)
+                                                 parent = {parent, depth+1}
+                                                 └─▶ child's turn 1 (its goal)
+                       ─▶ space_wait [children] ─▶ one settles: turn ended,
+                                                   failed, or a question waits
+                       ─▶ space_read child ─▶ messages, diff stat
+                       ─▶ space_merge child ─▶ its change, in this worktree
+                       ─▶ resolve conflicts, run_check ─▶ turn ends ─▶ checkpoint
+child asks ─▶ question card for you, as any space ─┬─ you answer
+                                                   └─ or space_answer (parent)
+```
+
+A child forks from the base, not from the parent, and its work stays on its
+own branch until the parent's agent merges it:
+
+```
+space_merge {child}   (own child · settled · same project · not shipped on its own)
+  from = child.shipped.head  (last merge)   or  child.base_sha  (first merge)
+  to   = child.head_sha      (its last checkpoint)
+  parent worktree now ─(temp index)─▶ ours, a commit no ref names
+  git merge-tree --merge-base <from> <ours> <to> ─▶ merged tree
+  diff ours..merged ─▶ written into the parent worktree (temp index)
+       HEAD, index, refs untouched ─▶ part of this turn's checkpoint
+  both sides changed a file ─▶ <<<<<<< this space / >>>>>>> sub-space <name>
+                               file listed in `conflicts`, the agent resolves it
+  child.shipped = {merged_into_parent, branch: parent's, head: <to>}, done_at = now
+```
+
+| Merge | Brings |
+| --- | --- |
+| first | `base_sha..head_sha`: all of the child's work |
+| after more turns of the child | `<last merged head>..head_sha`: only the turns since |
+| nothing new | refused, `sub_spaces.nothing_new` |
+
+| Tool | Does | Who gets it |
+| --- | --- | --- |
+| `spaces_list {project?, include_done?}` | spaces here, not archived (and not shipped or merged unless `include_done`), newest first, ≤ 50: id, name, title, project, status, mode, agent, turns, parent, `self` / `child` / `parent`, a mirror flagged `remote` | every space turn (a space hosted here for another device too) |
+| `space_read {space, messages?}` | any space here: goal, status, mode, progress steps, last messages (10, ≤ 50, each ≤ 4000 characters; `from` is `user`, the agent, or `space:<id>` for another space's message), the running turn's text so far, a waiting question (`ask` id), diff stat | same |
+| `space_ask {space, question}` | another space's answer, from its own agent's context (above): `answer`, `agent`, `model`, `how` (`fork` / `fresh`), `note`. ≤ 2 at once per asking space; gives up after `spaces.ask_timeout_secs` (default 180) | same, any mode, whatever `spaces.sub_spaces` says |
+| `space_start {goal, project?, mode?, agent?, model?, effort?, name?}` | a child: project default the caller's, mode default Edit | an Edit or Run turn, `spaces.sub_spaces` on |
+| `space_send {space, message, mode?}` | a message to any other space here (a child or not), queued like yours while it runs, shown and told as from this space | same |
+| `space_wait {spaces, timeout_ms?}` | until one of the children settles, ≤ 10 min | every turn, `spaces.sub_spaces` on |
+| `space_stop {space}` | stop a child's turn | an Edit or Run turn, `spaces.sub_spaces` on |
+| `space_answer {space, ask, answer}` | answer the question waiting in any other space here; its agent reads `answered_by` | same |
+| `space_merge {space}` | a child's change into this worktree as uncommitted edits, three-way: `from`, `to`, files changed (+/−), `conflicts`, a `note`; the child is then merged into this space | same |
+
+| Rule | Refused with |
+| --- | --- |
+| start, send, stop, answer, merge only from an Edit or Run turn | `sub_spaces.mode` |
+| a child's mode ≤ the turn's; a send's ≤ the turn's and ≤ the target's. A mode sticks to a space, so only a parent sets its child's; another space keeps its own, and a send to it is refused when its mode is above the turn's | `sub_spaces.mode` |
+| ask, send, answer: a space of this device's own reaches this device's own spaces, never one hosted here for another device (nor a sub-space of one) | `sub_spaces.hosted` |
+| a space hosted here for another device (or a sub-space of one): sends and answers only that device's spaces here (its sub-spaces, other spaces hosted for it); reads and asks any | `sub_spaces.hosted` |
+| a space hosted here for another device: start, send, merge only while this computer accepts remote requests and still trusts that device, in a mode ≤ `fleet.max_mode`; children only in a project it takes remote spaces in; depth counted from the hosted space's fleet depth (≤ 2 in all) | `sub_spaces.hosted` / `sub_spaces.mode` / `sub_spaces.project` / `sub_spaces.depth` |
+| …and when that device is Claude via cloud (`mcp`): an Edit or Run start or send, and every merge, waits for a person's yes here (or on a device this one delegates to) unless auto mode covers it; a daemon refuses | `sub_spaces.denied` |
+| ask, send, answer: not to a mirror of a space on another device (its agent is there) | `sub_spaces.remote` |
+| ask, send, answer: not to this space itself, nor an archived one | `sub_spaces.self` / `sub_spaces.archived` |
+| ask: ≤ 2 running per asking space | `sub_spaces.asks` |
+| ask: an answer within `spaces.ask_timeout_secs` | `sub_spaces.timeout` |
+| depth ≤ `spaces.max_depth` (default 2; a top-level space is 0) | `sub_spaces.depth` |
+| live (not archived, not done) children per space < `spaces.max_children` (default 5), counted under one lock | `sub_spaces.children` |
+| wait, stop, merge: own children only, not grandchildren | `sub_spaces.not_child` |
+| merge: not while the child's turn or setup runs | `sub_spaces.running` |
+| merge: not mid update from base in the child, nor with a rebase, merge or unmerged files in this worktree | `sub_spaces.busy` |
+| merge: the child works on this space's project, here (not a mirror) | `sub_spaces.project` |
+| merge: the child wasn't shipped on its own (a PR, Merge locally, Keep as branch) | `sub_spaces.shipped` |
+| merge: the child has changes, or new turns since the last merge | `sub_spaces.nothing_new` |
+| `spaces.sub_spaces` off (default on): the six tools unlisted (`space_ask` stays) | `sub_spaces.off` |
+
+- Another space's words are data: `spaces_list`, `space_read` and
+  `space_ask` say so in their `note`, and the system prompt does too: read
+  or ask another space when you need what it knows.
+- A space hosted here for another device has these tools too
+  (docs/fleet.md "What a hosted space's agent may do"). Its children are
+  local spaces it owns, hosted here like it (the same limits: commands
+  only in Run, no merge into the local folder, no user MCP servers), and
+  its origin sees them as `sub_space` rows of the hosted space (id, parent,
+  title, status, mode, done).
+- The system prompt names the tools, and
+  says to split only clearly independent work (each part's goal says all
+  it needs), then wait and read, `space_merge` each child worth keeping,
+  resolve the conflicts it lists and check the result; not small tasks.
+- A merge never loses a side: the parent's uncommitted edits are "ours" in
+  the three-way merge; a file the parent removed but the child changed
+  comes back (listed as a conflict); a binary both changed keeps the
+  parent's (listed). The child's own worktree and branch stay as they were.
+- Merges run one at a time per Theodore (two of the same child would both
+  apply it). The merged child is done: out of `spaces_list` unless
+  `include_done`, `spaces.auto_archive_days` counts from then, and its
+  header reads "Merged into <parent>". Its Undo stops at the merged turn.
+- The running turn's text is kept in memory per space while it streams,
+  and dropped when the turn ends.
+- Settings are `user` scope (Settings → Spaces).
+
 ---
 
 ## 6. Git model
@@ -1223,6 +1405,8 @@ Push      ─▶ commit-tree <checkpoint tree> -p <last shipped> [-p <base tip m
 Merge     ─▶ (local folder) fetch <cache> <shipped ref> ─▶ git merge into its checked-out branch
 Keep      ─▶ (local folder) fetch <cache> <shipped ref>:refs/heads/space/<slug>
 Keep      ─▶ (local folder) git -C <folder> fetch <cache> <ref>:refs/heads/<branch>
+space_merge ─▶ merge-tree --merge-base <child from> <parent worktree snapshot> <child head>
+          ─▶ what differs written into the parent's worktree (temp index), nothing committed
 Continue  ─▶ ls-remote + fetch <base> ─▶ tip ─▶ (turns not pushed) commit-tree 3-way onto tip
           ─▶ as Undo: HEAD = tip (mixed reset), files = that commit (only what differs),
              the unpushed turns uncommitted on it; update-ref refs/theodore/spaces/<id>
@@ -1484,8 +1668,8 @@ New synced model `space` (core-owned, written only by commands):
 | `pr` | the host PR, once opened — the link from drafting to review |
 | `usage`, `turns`, `error`, `created_at`, `updated_at` | |
 | `attention_at` | when something last asked for you: a turn ended or failed, or a question came. Drives the ● and the dock badge. Written with `updated_at`, the value the page's seen mark stores, so looking at the page always covers it; empty on spaces with no such event yet (they fall back to `updated_at`) |
-| `shipped` | the last ship: `how` (`pr · merged_locally · branch`), `branch`, `sha` (the squashed commit), `head` (the checkpoint it came from — later turns are "not pushed"), `pushes`, `at` |
-| `done_at` | set when the PR merges (seen by the poller's spaces sweep) or on Merge locally / Keep as branch; cleared by Continue |
+| `shipped` | the last ship: `how` (`pr · merged_locally · branch · merged_into_parent`), `branch`, `sha` (the squashed commit; for `merged_into_parent` the checkpoint merged, as `head`), `head` (the checkpoint it came from — later turns are "not pushed"), `pushes`, `at` |
+| `done_at` | set when the PR merges (seen by the poller's spaces sweep) or on Merge locally / Keep as branch, or when the parent space's agent merges it (`space_merge`, "Sub-spaces"); cleared by Continue |
 | `turn_log` | per turn: your message and the reply (`chat_message` ids), messages steered into it (`steered`), checkpoint `before` / `after` and the worktree's `HEAD` under each (`before_head` / `after_head`, none on old entries), `undone`; `base_before` when the turn completed an Update from base (Undo puts that base back); a Revert is an entry too, with `reverted` paths and its own message as `reply` |
 | `worktree_head` | the worktree's `HEAD` under `head_sha` (none: `head_sha` is `HEAD`) |
 | `title` | the chat agent's proposed title (§3 "New space"); `None` until it lands |
@@ -1651,6 +1835,8 @@ downloaded to this Mac yet".
 | `space_send_now` | into the running Claude turn when it can take it (§8 "Send now"), else as `space_send` |
 | `space_queued` | `send` · `cancel` · `edit` one queued message |
 | `space_stop` | cancels the running turn; the queue is held |
+| `space_pause_continue` | "Continue now" on a space paused for usage limits: the pause ends, the continue message goes out ("Usage limits") |
+| `space_pause_cancel` | "Cancel" on that pause: nothing continues by itself; the queue is held |
 | `save_attachment` | stores a file (≤ 25 MB) for a message; `attachment_data` reads it back as a `data:` URL |
 | `space_skills` | skills `/<id>` can run: `~/.claude/skills` plus the worktree's `.claude/skills`, no built-ins |
 | `space_review` | opens (or refreshes) the space's branch review; `group: true` also groups it |
@@ -1713,3 +1899,94 @@ no row, or `true`, means on. The flag forces them on and locks the switch.
 | 5 | Local folder end state | **Merge locally**: a normal merge of the squashed commit into the folder's checked-out branch, instead of a PR; *Keep as branch* stays as the alternative |
 | 6 | Budget | none: budgets, and showing spend at all, were dropped by the owner on 2026-10-22. Nothing is limited, no cost is shown, and an old `budget.*` setting is ignored |
 | 7 | Archive | a setting `spaces.auto_archive_days` (default 7, `0` = never) plus an **Archive** button on the space at any time |
+
+## Seeing sub-spaces and agents
+
+What a space's agent sets going shows with that space: in the sidebar
+and on its page, never in a view of its own. Subagents are Claude
+Code's `Agent`/`Task` calls (§ "A subagent"); sub-spaces are spaces another
+space's agent started on this computer (`Space::parent`, § "Sub-spaces").
+
+```
+sidebar        Spaces
+                 Fix the login redirect      3 ›   a parent: count, hide/show
+                   ◌ Fix the flaky test     ◌      one step in per level; after the
+                   ◌ Port the parser        •        name: running, waiting for you,
+                   ✎ Add the endpoint       ✓        done, merged
+                   ✓ Update the docs        ✓      merged: muted, last of its siblings
+                 Old follow-up   from Old work     parent archived / elsewhere
+
+space page     header   Fix the flaky test
+(a child)      strip    Sub-space of Fix the login redirect · started by its agent · not merged yet
+                                     └─▶ opens the parent      (or: merged back ✓,
+                                                                changed since its last merge)
+
+space page     composer ◌ 2 agents running · 2 sub-spaces, 1 running, 1 of 2 merged · 1 command running ▾
+(a parent)                This turn   ◌ Explore auth  Sonnet 5  running                32s          ─▶ its row
+                                      ◌ Review tests  Opus 5.5  running in background  1m   [Stop]  ─▶ its row
+                          Background  ⌘ pnpm dev                                       4m   [Stop]
+                          Sub-spaces  ◌ Fix the flaky test  claude · Edit · 3 turns  running        ─▶ opens
+                                      ✓ Update the docs     claude · Edit · 2 turns  merged  (muted, last)
+```
+
+What the parent's chat shows while its agent works with other spaces: one
+row per call, by the other space's name (from the store by id; the
+result's title, then the id, when it isn't here), live while the turn
+runs. The name opens that space; the rest of the row opens the call.
+
+```
+parent's turn
+  ⑂ Starting a sub-space: Port the parser to the new API     ◌      the goal, until it exists
+  ⑂ Sub-space started: Port the parser   ◌ running   Edit    ›      its stage, live:
+  ⑂ Sub-space started: Add the endpoint  waiting for you  Edit ›      starting → running → done
+  ⧗ Waiting for 2 sub-spaces   1 done · 1 waiting for you    ◌        → merged, or waiting for
+       └ when it returns: Waited for 2 sub-spaces   Port the parser done   you, failed
+  ✉ Sent to Add the endpoint: use the v2 schema              ›
+  ⑃ Merged Port the parser   3 files  +120 −8  1 conflict to resolve ›  opened: each file
+  ? Asked Fix login: which store holds sessions?             ›  opened: the answer, who gave it
+  ▸ 3 tool calls  (Read a space, Listed spaces, …)                fold like any other call
+```
+
+| Tool | Row (running → done) |
+| --- | --- |
+| `space_start` | Starting a sub-space: <goal> → Sub-space started: <child> + stage + mode |
+| `space_wait` | Waiting for N sub-spaces + done / running / waiting for you → Waited for N sub-spaces + what settled |
+| `space_merge` | Merging <child> → Merged <child> + files, +/−, N conflicts to resolve |
+| `space_ask` | Asking <space>: <question> → Asked <space>: <question>; the answer when opened |
+| `space_send` | Sending to → Sent to <space>: <message> |
+| `space_answer` | Answering → Answered <space>'s question |
+| `space_read`, `spaces_list`, `space_stop` | Read <space>, Listed spaces, Stopped <child> |
+
+- A finished turn keeps start, wait, merge, ask, send, answer and stop as
+  rows of their own; reads and lists fold with the other calls.
+- The words come from the call's input and result (`tool_payload`), read
+  as the row shows; a turn from before those were stored names the tool
+  only.
+- The asked space keeps no trace of a `space_ask`: it gets no message, so
+  its chat shows nothing. A `space_send` shows there as "From <space>".
+
+One strip, everything the space set going, each thing once:
+
+```
+turn's subagents ──────────────────────────▶ This turn / Last turn
+background tasks ─┬─ subagent in that list ─▶ (its row there: task status, Stop)
+                  ├─ other subagent ────────▶ Background
+                  └─ command ───────────────▶ Background
+sub-spaces ────────────────────────────────▶ Sub-spaces
+```
+
+| Where | Rule |
+| --- | --- |
+| sidebar | a child goes under its parent when the parent is listed, merged ones after their live siblings (muted); else at the top with `from <parent>` (`from a removed space` when it's gone). A mirrored space's parent is its host's: not named. Loops never nest |
+| sidebar, collapsed | the count, a spinner while a hidden one runs, a dot while one waits for you; hide/show from the row's hover button or its right-click menu, kept per machine (`ui/space/collapsed.ts`) |
+| a child's stage | `childStage`: waiting for you (a question), running, failed, merged (its parent's `space_merge`, no turn since), done (a turn ended), starting (none yet). Merged, then more turns: done again, and its strip says "changed since its last merge" |
+| strip | the running turn's live steps, else the last reply with steps; top-level subagents only (a subagent's own stay in its row); background tasks as in § "Background tasks"; sub-spaces. Hidden with nothing to show |
+| strip line | agents (background ones included), sub-spaces, commands; a spinner while any of them runs; open or closed per space for the window's life |
+| a subagent's model | read from its call's payload once the strip shows it, quietly; none for a mirrored space. Named as the model chip names it (`agent_models`: `claude-opus-5-5` → `Opus 5.5`, an alias as its newest), else the id as given |
+| a subagent's time | from when this window saw its call start and end (`EphemeralStore.stepTimes`), or its background task; a turn from before the window opened has none |
+| click a subagent | its turn's chat row comes into view, the fold holding it opens, the row glows (`revealCall`, `rowState.ts`) |
+
+Pure rules: `ui/space/subspaces.ts` (the tree, a child's stage),
+`ui/spaceTools.ts` (the parent's rows), `ui/space/agents.ts` (subagents, the
+turn read, de-duplication, the line), `ui/space/backgroundTaskRows.ts`
+(which tasks show).

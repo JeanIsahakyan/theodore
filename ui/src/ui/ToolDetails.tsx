@@ -28,9 +28,9 @@ import { useToolPayload, type ToolPayloadState } from './toolPayload';
 import { toolRow } from './toolSummary';
 import { formatDuration, withoutReportStep, type ToolStep } from './turnRows';
 
-const BLOCK =
+export const BLOCK =
   'turn-detail-text max-h-72 select-text overflow-auto whitespace-pre-wrap rounded-md bg-default/50 p-2 font-mono text-[11px] leading-relaxed [overflow-wrap:anywhere]';
-const NOTE = 'text-xs text-muted';
+export const NOTE = 'text-xs text-muted';
 
 type Input = Record<string, unknown>;
 
@@ -115,7 +115,7 @@ function CopyButton({ value, label }: { value: string; label: string }) {
   );
 }
 
-function Section({
+export function Section({
   title,
   copy,
   children,

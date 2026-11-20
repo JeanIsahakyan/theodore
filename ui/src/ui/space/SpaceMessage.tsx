@@ -9,14 +9,15 @@ import { Button, Tooltip } from '@heroui/react';
 import { compareStructural, computed } from 'mobx';
 import { observer } from 'mobx-react-lite';
 import { api } from '../../core/api';
-import type { ChatMessage as Message } from '../../gen/contract';
-import { useRootStore } from '../../stores/context';
+import type { ChatMessage as Message, FromSpace } from '../../gen/contract';
+import { useRootStore, useUi } from '../../stores/context';
 import { ChatMessage } from '../ChatTurn';
 import { FilePreviewScope } from '../FileHoverPreview';
 import { CheckChip } from './SpaceCommands';
 import { PlanActions } from './SpacePlan';
 import { BackToHere } from './SpaceRewind';
 import { messageView, type MessageView } from './messageView';
+import { spaceTitle } from './spaces';
 
 const NOTHING: MessageView = {
   undone: false,
@@ -70,8 +71,9 @@ export const SpaceMessage = memo(
           onOpenFile={onOpenFile}
           className={v.undone ? 'space-undone opacity-50' : ''}
           badges={
-            undoneReply || v.undoHere || v.back || v.plan ? (
+            undoneReply || v.undoHere || v.back || v.plan || m.from_space ? (
               <>
+                {m.from_space && <FromSpaceLink from={m.from_space} />}
                 {v.plan && (
                   <span className="space-plan-badge rounded-full bg-default px-1.5 text-[10px] text-accent">
                     plan
@@ -106,6 +108,32 @@ export const SpaceMessage = memo(
     );
   }),
 );
+
+/** Above a message another space's agent sent (`space_send`): "From <that
+ *  space>", opening it; plain text once it is gone. */
+const FromSpaceLink = observer(function FromSpaceLink({
+  from,
+}: {
+  from: FromSpace;
+}) {
+  const store = useRootStore();
+  const ui = useUi();
+  const space = store.models.spaces.get(from.space);
+  const label = `From ${space ? spaceTitle(space) : from.title}`;
+  if (!space) {
+    return <span className="space-from text-muted">{label}</span>;
+  }
+  return (
+    <button
+      type="button"
+      className="space-from truncate text-muted hover:text-foreground hover:underline"
+      title={`Sent by the agent of ${spaceTitle(space)}, not you`}
+      onClick={() => ui.go({ name: 'space', id: space.id })}
+    >
+      {label}
+    </button>
+  );
+});
 
 /** These two read the whole space, so they are the ones to re-render with it. */
 const SpaceBackToHere = observer(function SpaceBackToHere({

@@ -3,7 +3,7 @@
  * `agents.<id>.effort`, `user` scope. Unset = the CLI's own default. The
  * core fills them into every run that doesn't name its own model.
  */
-import type { AgentId } from '../gen/contract';
+import type { AgentId, AgentModel } from '../gen/contract';
 import { setSetting } from '../actions';
 import type { RootStore } from '../stores/RootStore';
 
@@ -92,6 +92,28 @@ export function modelLabel(agent: AgentId, model: string | null): string {
   if (!model) return 'default model';
   if (!hasModelAliases(agent)) return model;
   return CLAUDE_MODELS.find((m) => m.id === model)?.label ?? model;
+}
+
+/** The catalog's entry for `id`: that model, else (an alias like `opus`)
+ *  the newest of its family, else any that holds it. */
+export function findModel(
+  list: readonly AgentModel[],
+  id: string,
+): AgentModel | undefined {
+  return (
+    list.find((m) => m.id === id) ??
+    list.find((m) => !m.older && m.id.includes(id)) ??
+    list.find((m) => m.id.includes(id))
+  );
+}
+
+/** A model id as people read it (`claude-opus-5-5` → `Opus 5.5`), from the
+ *  agent's catalog (`agent_models`); the id itself when it isn't listed. */
+export function modelName(
+  list: readonly AgentModel[] | undefined,
+  id: string,
+): string {
+  return findModel(list ?? [], id)?.label ?? id;
 }
 
 export function effortLabel(effort: string): string {

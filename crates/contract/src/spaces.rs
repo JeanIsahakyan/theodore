@@ -93,6 +93,11 @@ pub enum ShipKind {
     MergedLocally,
     /// Written as a branch in a local folder.
     Branch,
+    /// A sub-space's change brought into its parent's worktree by the
+    /// parent's agent (`space_merge`, docs/spaces.md "Sub-spaces"): the
+    /// parent is `Space::parent`, `branch` its branch, and `sha` = `head`
+    /// the checkpoint merged, so a later merge brings only the turns since.
+    MergedIntoParent,
 }
 
 /// The space's last ship: the squashed commit and where it went.
@@ -193,6 +198,10 @@ pub struct Space {
     /// fleet; local-only parts (worktree, diff, terminal) are the host's.
     #[serde(default)]
     pub remote: Option<SpaceRemote>,
+    /// Set when another space's agent started this one on this device
+    /// (docs/spaces.md "Sub-spaces"): shown under that space.
+    #[serde(default)]
+    pub parent: Option<SpaceParent>,
     pub created_at: Millis,
     pub updated_at: Millis,
     /// When the space last had something for you: a turn ended or failed
@@ -270,6 +279,10 @@ pub struct Space {
     /// words in it ends this: it becomes the goal and names the space.
     #[serde(default)]
     pub blank: bool,
+    /// Waiting for usage limits to reset (docs/spaces.md "Usage limits"):
+    /// continues on its own at `until`, unless cancelled.
+    #[serde(default)]
+    pub paused: Option<crate::SpacePause>,
 }
 
 /// A merge of the base into the space, left in progress on conflicts
@@ -358,10 +371,22 @@ pub struct AgentSession {
     /// The worktree it ran in. Claude Code keeps sessions per directory, so
     /// one from another path can't be resumed.
     pub cwd: String,
+    /// The agent account it ran on (`AgentAccount::id`); `None`: the
+    /// default one. A session lives in its account's config dir.
+    #[serde(default)]
+    pub account: Option<String>,
 }
 
-/// One agent turn of a space: the messages it answered and the checkpoint
-/// it moved the space from and to.
+/// The space whose agent started this one.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct SpaceParent {
+    /// `Space::id` of the parent (local).
+    pub space: String,
+    /// 1 for a child of a top-level space, 2 for its child; at most
+    /// `spaces.max_depth`.
+    pub depth: u32,
+}
+
 /// Where a mirrored space runs.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 pub struct SpaceRemote {
@@ -376,6 +401,8 @@ pub struct SpaceRemote {
     pub started_here: bool,
 }
 
+/// One agent turn of a space: the messages it answered and the checkpoint
+/// it moved the space from and to.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
 pub struct SpaceTurn {
     /// The `chat_message` id of your message that started it; the reply's

@@ -52,8 +52,24 @@ pub(crate) async fn run(
         attachments: Vec::new(),
         resume: None,
         stream_text: false,
+        fork_session: false,
+        account: None,
     };
-    let mut run = core.0.deps.agents.run(req).await.ok()?;
+    run_to_text(core, req).await.ok()
+}
+
+/// Runs `req` to completion: its final text, trimmed, or why it gave
+/// none (the CLI's error, or an empty answer). Dropping the future stops
+/// the run (`space_ask`'s timeout, its caller gone).
+pub(crate) async fn run_to_text(core: &Core, req: AgentRequest) -> Result<String, String> {
+    let mut run = core
+        .0
+        .deps
+        .agents
+        .run(req)
+        .await
+        .map_err(|e| e.to_string())?;
+    let stop = run.cancel.clone().drop_guard();
     let mut text = String::new();
     loop {
         match run.events.recv().await {
@@ -64,11 +80,19 @@ pub(crate) async fn run(
                 }
                 break;
             }
-            Some(AgentEvent::Error { .. }) => return None,
+            Some(AgentEvent::Error { message, .. }) => {
+                stop.disarm();
+                return Err(message);
+            }
             Some(_) => {}
             None => break,
         }
     }
+    stop.disarm();
     let text = text.trim();
-    (!text.is_empty()).then(|| text.to_string())
+    if text.is_empty() {
+        Err("the agent gave no answer".into())
+    } else {
+        Ok(text.to_string())
+    }
 }

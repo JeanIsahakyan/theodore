@@ -12,6 +12,7 @@
 import type {
   Delegation,
   RemoteAsk,
+  RemoteConfirm,
   RemoteOp,
   RemoteRequest,
   ReplyBody,
@@ -23,7 +24,7 @@ import { verifySignature } from '../keys/ed25519';
 import type { DeviceKey } from '../keys/types';
 
 export type Domain =
-  'hello' | 'request' | 'event' | 'ask' | 'reply' | 'delegate';
+  'hello' | 'request' | 'event' | 'ask' | 'reply' | 'delegate' | 'confirm';
 
 /** `Domain::tag` in Rust; a signature for one never verifies as another. */
 export const TAGS: Record<Domain, string> = {
@@ -33,6 +34,7 @@ export const TAGS: Record<Domain, string> = {
   ask: 'theodore-fleet-ask-v3\0',
   reply: 'theodore-fleet-reply-v3\0',
   delegate: 'theodore-fleet-delegate-v3\0',
+  confirm: 'theodore-fleet-confirm-v3\0',
 };
 
 /** The bytes signed for `msg` in `domain`. */
@@ -62,6 +64,7 @@ interface Bodies {
   ask: RemoteAsk;
   reply: ReplyBody;
   delegate: Delegation;
+  confirm: RemoteConfirm;
 }
 export type SignedDomain = keyof Bodies;
 
@@ -76,6 +79,7 @@ function signerOf(
       return body.origin_device;
     case 'event':
     case 'ask':
+    case 'confirm':
       return body.host_device;
     case 'reply':
       return body.target_device;
@@ -120,6 +124,36 @@ function opInOrder(op: RemoteOp): RemoteOp {
         ask_id: op.ask_id,
         answers: op.answers,
       };
+    case 'confirm':
+      return { op: 'confirm', confirm_id: op.confirm_id, allow: op.allow };
+    case 'set_mcp_auto':
+      return {
+        op: 'set_mcp_auto',
+        mcp_device: op.mcp_device,
+        auto: op.auto,
+        until_ms: op.until_ms ?? null,
+      };
+    case 'list_spaces':
+      return { op: 'list_spaces', project: op.project ?? null };
+    case 'read_space':
+      return {
+        op: 'read_space',
+        space: op.space,
+        messages: op.messages ?? null,
+      };
+    case 'ask_space':
+      return { op: 'ask_space', space: op.space, question: op.question };
+    case 'send_to':
+      return { op: 'send_to', space: op.space, message: op.message };
+    case 'answer_space':
+      return {
+        op: 'answer_space',
+        space: op.space,
+        ask: op.ask,
+        answers: op.answers,
+      };
+    case 'merge_child':
+      return { op: 'merge_child', parent: op.parent, child: op.child };
   }
 }
 

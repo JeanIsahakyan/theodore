@@ -1,6 +1,7 @@
 //! Use cases (plan §2.1): each is `impl Core` in its own file.
 
 pub mod account;
+pub mod agent_accounts;
 pub mod agents;
 pub mod attachments;
 pub mod code_intel;
@@ -8,11 +9,14 @@ pub mod config_editor;
 pub mod file_preview;
 pub mod fleet;
 pub(crate) mod fleet_agents;
+mod fleet_auto;
+mod fleet_confirm;
 mod fleet_delegate;
 mod fleet_follow;
 pub(crate) mod fleet_host;
 mod fleet_mirror;
 mod fleet_origin;
+mod fleet_spaces;
 mod fleet_tools;
 pub mod grouping;
 pub mod host;
@@ -37,11 +41,13 @@ pub mod skills;
 pub mod space_agent_tools;
 pub mod space_blank;
 pub mod space_checkpoints;
+pub mod space_children;
 pub mod space_commands;
 pub mod space_feedback;
 pub mod space_fix_ci;
 pub(crate) mod space_handoff;
 pub mod space_hooks;
+pub mod space_limits;
 pub(crate) mod space_live_diff;
 pub(crate) mod space_naming;
 pub mod space_plan;

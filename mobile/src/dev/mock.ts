@@ -86,6 +86,7 @@ export const mockDevices: FleetDeviceView[] = [
     fingerprint: FINGERPRINT_ME,
     trusted: false,
     thisDevice: true,
+    mcpAuto: [],
   },
   {
     deviceId: 'dev-mac',
@@ -104,6 +105,7 @@ export const mockDevices: FleetDeviceView[] = [
     fingerprint: 'a1b2 c3d4 e5f6 0718 293a 4b5c 6d7e 8f90',
     trusted: true,
     thisDevice: false,
+    mcpAuto: [],
   },
   {
     deviceId: 'dev-box',
@@ -120,6 +122,7 @@ export const mockDevices: FleetDeviceView[] = [
     fingerprint: '0f1e 2d3c 4b5a 6978 8796 a5b4 c3d2 e1f0',
     trusted: true,
     thisDevice: false,
+    mcpAuto: [],
   },
   {
     deviceId: 'dev-work',
@@ -135,6 +138,7 @@ export const mockDevices: FleetDeviceView[] = [
     fingerprint: '9988 7766 5544 3322 1100 ffee ddcc bbaa',
     trusted: false,
     thisDevice: false,
+    mcpAuto: [],
   },
   {
     deviceId: 'dev-new',
@@ -150,6 +154,7 @@ export const mockDevices: FleetDeviceView[] = [
     fingerprint: 'dead beef cafe f00d 1234 5678 9abc def0',
     trusted: false,
     thisDevice: false,
+    mcpAuto: [],
   },
 ];
 
@@ -453,6 +458,7 @@ export function mockSnapshot(over: Partial<FleetSnapshot> = {}): FleetSnapshot {
     lines: { ...mockLines },
     mirrors: { ...mockMirrors },
     questions: [{ ...mockQuestion, questions: [...mockQuestion.questions] }],
+    confirms: [],
     ...over,
   };
 }
@@ -555,6 +561,32 @@ export function createMock(options: MockOptions = {}): Mock {
     },
     async answerOverHttp(space, askId, answers, hostDevice) {
       await call('answerOverHttp', space, askId, answers, hostDevice);
+    },
+    async confirm(hostDevice, confirmId, allow) {
+      await call('confirm', hostDevice, confirmId, allow);
+      useFleetState.setState((s) => ({
+        confirms: s.confirms.filter((c) => c.confirmId !== confirmId),
+      }));
+    },
+    async confirmOverHttp(hostDevice, confirmId, allow) {
+      await call('confirmOverHttp', hostDevice, confirmId, allow);
+    },
+    async setMcpAuto(hostDevice, mcpDevice, auto, untilMs) {
+      await call('setMcpAuto', hostDevice, mcpDevice, auto, untilMs);
+      useFleetState.setState((s) => ({
+        devices: s.devices.map((d) =>
+          d.deviceId === hostDevice
+            ? {
+                ...d,
+                mcpAuto: d.mcpAuto.map((m) =>
+                  m.deviceId === mcpDevice
+                    ? { ...m, auto, untilMs: auto === 'off' ? null : untilMs }
+                    : m,
+                ),
+              }
+            : d,
+        ),
+      }));
     },
   };
 

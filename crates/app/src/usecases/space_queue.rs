@@ -51,6 +51,10 @@ pub(crate) enum TurnEnd {
     /// Stopped or failed: the queue is held for you, for this reason
     /// (`ProductEvent::QueueHeld`).
     Interrupted(&'static str),
+    /// Cut off by its account's usage limit: the queue waits, unheld,
+    /// for what comes next (`space_limits::after_limit`): a turn on another
+    /// account, a pause, or held there.
+    Limited,
 }
 
 impl Core {
@@ -76,6 +80,7 @@ impl Core {
         req: &SpaceSendRequest,
         text: String,
         attachments: Vec<theodore_contract::Attachment>,
+        from: Option<theodore_contract::FromSpace>,
     ) -> AppResult<String> {
         let queue = self.queued_messages(&space.id).await?;
         let seq = queue
@@ -115,6 +120,8 @@ impl Core {
             vote: None,
             effort: None,
             mode: None,
+            from_space: from,
+            notice: None,
         };
         self.apply(vec![NewAction {
             model: models::CHAT_MESSAGE.into(),
@@ -448,6 +455,8 @@ impl Core {
             vote: None,
             effort: None,
             mode: None,
+            from_space: None,
+            notice: None,
         };
         self.apply(vec![NewAction {
             model: models::CHAT_MESSAGE.into(),

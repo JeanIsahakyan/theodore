@@ -2,7 +2,7 @@
  *  and the page staying hidden where there is no fleet. */
 import { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import type { FleetStatus } from '../../gen/contract';
+import type { FleetAuto, FleetStatus } from '../../gen/contract';
 import { setTransport } from '../../core/transport';
 import { RootStore } from '../../stores/RootStore';
 import { RootStoreProvider } from '../../stores/context';
@@ -53,6 +53,26 @@ beforeEach(() => {
     };
     return current;
   });
+  transport.onCall(
+    'fleet_set_auto',
+    reply(
+      (
+        s,
+        req: { device_id: string; auto: FleetAuto; until_ms: number | null },
+      ) => ({
+        ...s,
+        devices: s.devices.map((d) =>
+          d.device_id === req.device_id
+            ? {
+                ...d,
+                auto: req.auto,
+                auto_until_ms: req.auto === 'off' ? null : req.until_ms,
+              }
+            : d,
+        ),
+      }),
+    ),
+  );
   transport.onCall('fleet_remove_device', (args) => {
     current = {
       ...current,
@@ -414,6 +434,33 @@ describe('the device list', () => {
     expect(row('ph').querySelector('.fleet-trust')).not.toBeNull();
   });
 
+  it('Claude via the cloud is labelled, warned about, and never followed', async () => {
+    await render(
+      status({
+        devices: [
+          thisDevice(),
+          device({
+            device_id: 'cl',
+            name: 'Claude',
+            kind: 'mcp',
+            trusted: true,
+          }),
+        ],
+      }),
+    );
+    const row = q('.fleet-device[data-device="cl"]')!;
+    expect(row.querySelector('[data-kind="mcp"]')).not.toBeNull();
+    expect(row.querySelector('.fleet-device-meta')!.textContent).toContain(
+      'Claude via cloud (MCP)',
+    );
+    expect(row.textContent).toContain('Edit and Run wait for your yes');
+    expect(row.querySelector('.fleet-mcp-warning')!.textContent).toContain(
+      'held by the Theodore cloud',
+    );
+    expect(row.querySelector('.fleet-delegate')).toBeNull();
+    expect(button('Run on another device…')!.disabled).toBe(true);
+  });
+
   it('Run on another device is off when the only trusted one is a phone', async () => {
     await render(
       status({
@@ -423,12 +470,13 @@ describe('the device list', () => {
     expect(button('Run on another device…')!.disabled).toBe(true);
   });
 
-  it('the delegation switch shows only on a trusted phone or web app', async () => {
+  it('the delegation switch shows only on a trusted phone, web app or desktop', async () => {
     await render(
       status({
         devices: [
           thisDevice(),
           device({ device_id: 'mac', trusted: true }),
+          device({ device_id: 'srv', kind: 'daemon', trusted: true }),
           device({ device_id: 'ph', kind: 'mobile', trusted: false }),
           device({ device_id: 'wb', kind: 'web', trusted: true }),
         ],
@@ -437,9 +485,11 @@ describe('the device list', () => {
     const sw = (id: string) =>
       q(`.fleet-device[data-device="${id}"] .fleet-delegate`);
     expect(sw('d1')).toBeNull();
-    expect(sw('mac')).toBeNull();
+    expect(sw('mac')).not.toBeNull();
+    expect(sw('srv')).toBeNull();
     expect(sw('ph')).toBeNull();
     expect(sw('wb')).not.toBeNull();
+    expect(sw('wb')!.textContent).toContain('Claude via cloud');
     expect(sw('wb')!.textContent).toContain('Its answers still run only');
   });
 
@@ -481,5 +531,151 @@ describe('the device list', () => {
       status({ devices: [thisDevice(), device({ trusted: false })] }),
     );
     expect(button('Run on another device…')!.disabled).toBe(true);
+  });
+});
+
+describe('auto mode for Claude via cloud', () => {
+  const claude = (over = {}) =>
+    device({
+      device_id: 'cl',
+      name: 'Claude',
+      kind: 'mcp',
+      trusted: true,
+      ...over,
+    });
+  const autoButton = (label: string, host = '') =>
+    [
+      ...m!.host.querySelectorAll(
+        `.fleet-auto${host ? `[data-host="${host}"]` : ':not([data-host])'} button`,
+      ),
+    ].find((b) => b.textContent === label) as HTMLButtonElement;
+
+  it('turning it on asks how long, warns, then sends fleet_set_auto', async () => {
+    await render(status({ devices: [thisDevice(), claude()] }));
+    expect(q('.fleet-auto-warning')).toBeNull();
+    await click(autoButton('Full auto'));
+    await settle();
+    // Nothing sent before a duration is picked.
+    expect(req('fleet_set_auto')).toEqual([]);
+    expect(q('.fleet-auto-warning')!.textContent).toBe(
+      'Its key is held by the Theodore cloud: with auto on, the cloud could make this computer edit and run commands without you.',
+    );
+    const before = Date.now();
+    await click(button('1 hour')!);
+    await settle();
+    const sent = req('fleet_set_auto') as {
+      device_id: string;
+      auto: FleetAuto;
+      until_ms: number;
+      host_device: string | null;
+    }[];
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toMatchObject({
+      device_id: 'cl',
+      auto: 'full',
+      host_device: null,
+    });
+    expect(sent[0]!.until_ms - before).toBeGreaterThanOrEqual(3_600_000);
+    expect(sent[0]!.until_ms - before).toBeLessThan(3_660_000);
+    expect(q('.fleet-auto-duration')).toBeNull();
+    expect(q('.fleet-auto-until')!.textContent).toMatch(/^Full auto until /);
+    expect(q('.fleet-device[data-device="cl"]')!.textContent).toContain(
+      'asks and plans; Full auto until',
+    );
+  });
+
+  it('Auto Edit until I turn it off warns about edits only; Off turns it off', async () => {
+    await render(status({ devices: [thisDevice(), claude()] }));
+    await click(autoButton('Auto Edit'));
+    await settle();
+    expect(q('.fleet-auto-warning')!.textContent).toContain('edit without you');
+    expect(q('.fleet-auto-warning')!.textContent).not.toContain('run commands');
+    await click(button('Until I turn it off')!);
+    await settle();
+    expect(req('fleet_set_auto')).toEqual([
+      { device_id: 'cl', auto: 'edit', until_ms: null, host_device: null },
+    ]);
+    expect(q('.fleet-auto-until')!.textContent).toBe(
+      'Auto Edit until turned off',
+    );
+    await click(autoButton('Off'));
+    await settle();
+    expect(req('fleet_set_auto')).toHaveLength(2);
+    expect(req('fleet_set_auto')[1]).toEqual({
+      device_id: 'cl',
+      auto: 'off',
+      until_ms: null,
+      host_device: null,
+    });
+    expect(q('.fleet-auto-warning')).toBeNull();
+  });
+
+  it('Cancel drops the pick; an untrusted Claude has no control', async () => {
+    await render(
+      status({
+        devices: [
+          thisDevice(),
+          claude(),
+          device({ device_id: 'c2', kind: 'mcp', trusted: false }),
+        ],
+      }),
+    );
+    expect(q('.fleet-device[data-device="c2"] .fleet-auto')).toBeNull();
+    await click(autoButton('Auto Edit'));
+    await settle();
+    await click(q('.fleet-auto-cancel')!);
+    await settle();
+    expect(q('.fleet-auto-duration')).toBeNull();
+    expect(q('.fleet-auto-warning')).toBeNull();
+    expect(req('fleet_set_auto')).toEqual([]);
+  });
+
+  it('another computer lists its auto mode, changed there', async () => {
+    await render(
+      status({
+        devices: [
+          thisDevice(),
+          device({
+            trusted: true,
+            mcp_auto: [
+              {
+                device_id: 'cl',
+                name: 'Claude (MCP)',
+                auto: 'edit',
+                until_ms: null,
+              },
+            ],
+          }),
+        ],
+      }),
+    );
+    const row = q('.fleet-device[data-device="d2"] .fleet-remote-auto')!;
+    expect(row.textContent).toContain(
+      'Claude via cloud (Claude (MCP)) on Studio Mac',
+    );
+    expect(row.textContent).toContain('Auto Edit until turned off');
+    await click(autoButton('Off', 'd2'));
+    await settle();
+    expect(req('fleet_set_auto')).toEqual([
+      { device_id: 'cl', auto: 'off', until_ms: null, host_device: 'd2' },
+    ]);
+  });
+
+  it('an untrusted computer shows its auto mode but takes no change', async () => {
+    await render(
+      status({
+        devices: [
+          thisDevice(),
+          device({
+            mcp_auto: [
+              { device_id: 'cl', name: 'Claude', auto: 'off', until_ms: null },
+            ],
+          }),
+        ],
+      }),
+    );
+    const row = q('.fleet-device[data-device="d2"] .fleet-remote-auto')!;
+    expect(row.textContent).toContain('Trust Studio Mac to change it.');
+    expect(autoButton('Full auto', 'd2').disabled).toBe(true);
   });
 });

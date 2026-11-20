@@ -7,6 +7,8 @@
  * Worker (verified JWT) ─▶ fetch + x-theodore-fleet-caller ─▶ acceptWebSocket(tag u:<user>)
  *                        └─ POST /v1/fleet/request ─▶ Hub.requestOverHttp ─▶ 202 │ 200 refused
  * webSocketMessage / webSocketClose / alarm ─▶ Hub ─▶ pushes (Expo) via ctx.waitUntil
+ * Worker /mcp (OAuth grant: user, org) ─▶ POST /mcp/call ─▶ McpFleet: the
+ *   user's MCP device, connected to the same Hub in process (src/mcp/)
  * ```
  *
  * Not reachable from the internet: only the Worker holds the binding, and it
@@ -18,6 +20,8 @@
  * hibernation).
  */
 import { verifierFor } from '../auth';
+import { McpFleet } from '../mcp/fleet';
+import { MCP_CALL_PATH, MCP_ENABLE_PATH, answerMcp } from '../mcp/route';
 import { Hub, type Conn, type ConnState, type FleetCaller } from './hub';
 import { expoSender } from './push';
 import {
@@ -34,6 +38,8 @@ export interface OrgHubEnv {
   WORKOS_API_BASE?: string;
   /** Expo's access token, if the project has "enhanced push security" on. */
   EXPO_ACCESS_TOKEN?: string;
+  /** Wraps the MCP devices' keys at rest; absent: MCP is off. */
+  MCP_KEY_WRAP?: string;
 }
 
 const userTag = (userId: string) => `u:${userId}`;
@@ -74,6 +80,7 @@ export function readCaller(header: string | null): FleetCaller | null {
 
 export class OrgHub implements DurableObject {
   private hub: Hub;
+  private mcp: McpFleet | null;
   /** The alarm as last set; undefined until read after a wake. */
   private alarmAt: number | null | undefined;
 
@@ -85,16 +92,27 @@ export class OrgHub implements DurableObject {
       env.WORKOS_API_BASE ?? 'https://api.workos.com',
       env.WORKOS_CLIENT_ID,
     );
+    const sql = {
+      exec: (q: string, ...b: (string | number | null)[]) =>
+        ctx.storage.sql.exec(q, ...b).toArray() as Record<string, unknown>[],
+    };
+    this.mcp = env.MCP_KEY_WRAP
+      ? new McpFleet({
+          sql,
+          now: () => Date.now(),
+          hub: () => this.hub,
+          secret: env.MCP_KEY_WRAP,
+        })
+      : null;
     this.hub = new Hub({
-      sql: {
-        exec: (q, ...b) =>
-          ctx.storage.sql.exec(q, ...b).toArray() as Record<string, unknown>[],
-      },
+      sql,
       now: () => Date.now(),
-      conns: (user) =>
-        ctx
+      conns: (user) => [
+        ...ctx
           .getWebSockets(user === undefined ? undefined : userTag(user))
           .map(wrap),
+        ...(this.mcp?.conns(user) ?? []),
+      ],
       verify,
       schedule: (at) => this.schedule(at),
       push: expoSender(
@@ -108,11 +126,15 @@ export class OrgHub implements DurableObject {
   async fetch(request: Request): Promise<Response> {
     const caller = readCaller(request.headers.get(CALLER_HEADER));
     if (!caller) return new Response('no caller', { status: 400 });
+    const path = new URL(request.url).pathname;
+    if (request.method === 'POST' && path === REQUEST_PATH) {
+      return answerRequest(this.hub, caller, request);
+    }
     if (
       request.method === 'POST' &&
-      new URL(request.url).pathname === REQUEST_PATH
+      (path === MCP_CALL_PATH || path === MCP_ENABLE_PATH)
     ) {
-      return answerRequest(this.hub, caller, request);
+      return answerMcp(this.mcp, caller, request);
     }
     if (request.headers.get('upgrade')?.toLowerCase() !== 'websocket') {
       return new Response('expected a WebSocket upgrade', { status: 426 });

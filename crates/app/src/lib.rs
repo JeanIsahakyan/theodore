@@ -42,6 +42,8 @@ mod fleet_tests;
 mod git_integration_tests;
 
 #[cfg(test)]
+mod agent_accounts_tests;
+#[cfg(test)]
 mod config_editor_tests;
 #[cfg(test)]
 mod diff_media_integration_tests;
@@ -70,7 +72,11 @@ mod ship_tests;
 #[cfg(test)]
 mod space_agent_tools_tests;
 #[cfg(test)]
+mod space_ask_tests;
+#[cfg(test)]
 mod space_checkpoints_tests;
+#[cfg(test)]
+mod space_children_tests;
 #[cfg(test)]
 mod space_commands_tests;
 #[cfg(test)]

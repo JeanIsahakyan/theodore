@@ -98,7 +98,8 @@ import {
 import { setTerminalOpenFor, terminalOpenFor } from './terminalOpen';
 import { runControl, settingUp } from './commands';
 import { GlobalConfigSection, SpaceSetupAssistHint } from './ConfigSection';
-import { BackgroundTasks } from './BackgroundTasks';
+import { SpaceAgents, SubSpaceBanner } from './SpaceAgents';
+import { SpacePaused } from './SpacePaused';
 import { SpaceProgress } from './SpaceProgress';
 import { BaseMoved, UpdatingBanner } from './BaseUpdate';
 import { MergedBanner, SpaceMergeButton, SpacePrPane } from './SpacePr';
@@ -120,7 +121,7 @@ import {
   AUTO_ARCHIVE_KEY,
   BUILD_MODE_KEY,
   NOTIFY_KEY,
-  STAGE_LABEL,
+  stageLabel,
   autoArchiveDays,
   shipTitle,
   diffStat,
@@ -395,6 +396,7 @@ export const SpacePage = observer(function SpacePage({ id }: { id: string }) {
         showChanges={showChanges}
         onToggleChanges={toggleChanges}
       />
+      <SubSpaceBanner space={space} />
       {!remote && <UpdatingBanner space={space} />}
       {/* The panes clip to this row, so a drawer below never sits under them;
           the drawer is capped by the room left, so the chat keeps a usable
@@ -583,6 +585,11 @@ const SpaceHeader = observer(function SpaceHeader({
   const pr =
     space.pr && !remote ? store.models.prSummaries.get(space.pr) : undefined;
   const stage = spaceStage(space, pr?.state);
+  // A sub-space merged by its parent's agent names that parent.
+  const mergedInto =
+    stage === 'merged_into_parent' && space.parent
+      ? store.models.spaces.get(space.parent.space)
+      : undefined;
   const days = autoArchiveDays(store.models.settings.all());
   return (
     // Just what you act on: the name, and the stage only once it says
@@ -611,7 +618,7 @@ const SpaceHeader = observer(function SpaceHeader({
                 : undefined
             }
           >
-            {STAGE_LABEL[stage]}
+            {stageLabel(stage, mergedInto ? spaceTitle(mergedInto) : null)}
             {pr ? ` · #${pr.pr.number}` : ''}
           </span>
         )}
@@ -1102,6 +1109,7 @@ export const SpaceChat = observer(function SpaceChat({
       <SpaceLog space={space} onRevise={onRevise} control={log} />
       <div className="px-4">
         <div className="mx-auto w-full max-w-[860px]">
+          <SpacePaused space={space} />
           <SpaceSetupAssistHint space={space} config={config} />
         </div>
       </div>
@@ -1321,7 +1329,7 @@ const SpaceComposer = observer(function SpaceComposer({
           </span>
         )}
         <SpaceProgress space={space} />
-        <BackgroundTasks space={space} />
+        <SpaceAgents space={space} log={log} />
         <Composer
           inputRef={input}
           value={text}

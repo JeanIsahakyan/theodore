@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { setTransport } from '../core/transport';
 import { FakeTransport } from '../test/fakeTransport';
 import {
+  confirmRequest,
   device,
   question,
   remoteSpace,
@@ -23,6 +24,20 @@ beforeEach(() => {
 });
 
 describe('ephemerals', () => {
+  it('fleet_confirm holds a request until fleet_confirm_done, soonest first', () => {
+    fleet.handle({
+      type: 'fleet_confirm',
+      request: confirmRequest({ id: 'late', expires_at_ms: 2 }),
+    });
+    fleet.handle({
+      type: 'fleet_confirm',
+      request: confirmRequest({ id: 'soon', expires_at_ms: 1 }),
+    });
+    expect(fleet.confirmList.map((c) => c.id)).toEqual(['soon', 'late']);
+    expect(fleet.handle({ type: 'fleet_confirm_done', id: 'soon' })).toBe(true);
+    expect(fleet.confirmList.map((c) => c.id)).toEqual(['late']);
+  });
+
   it('fleet_status replaces the status', () => {
     expect(fleet.handle({ type: 'fleet_status', status: status() })).toBe(true);
     expect(fleet.available).toBe(true);
@@ -102,12 +117,14 @@ describe('ephemerals', () => {
 });
 
 describe('loading', () => {
-  it('reads the status and the spaces', async () => {
+  it('reads the status, the spaces and the requests waiting here', async () => {
     transport.onCall('fleet_status', () => status());
     transport.onCall('fleet_spaces', () => [remoteSpace()]);
+    transport.onCall('fleet_confirms', () => [confirmRequest()]);
     await fleet.load();
     expect(fleet.available).toBe(true);
     expect(fleet.spaces.size).toBe(1);
+    expect(fleet.confirmList.map((c) => c.id)).toEqual(['req1']);
   });
 
   it('reads no spaces where there is no fleet', async () => {

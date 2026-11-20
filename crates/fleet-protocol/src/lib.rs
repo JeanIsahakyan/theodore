@@ -6,10 +6,11 @@
 //! ```text
 //! device ─▶ cloud   ClientMessage   hello, reauth, presence, announce, request,
 //!                                   claim, reply, space_event, ask, ask_resolved,
-//!                                   subscribe, unsubscribe
+//!                                   subscribe, unsubscribe, confirm,
+//!                                   confirm_resolved
 //! cloud  ─▶ device  ServerMessage   challenge, welcome, devices, request,
 //!                                   claim_result, reply, space_event, ask,
-//!                                   dismiss, error
+//!                                   dismiss, error, confirm, confirm_dismissed
 //! ```
 //!
 //! Requests are signed by the origin device ([`SignedEnvelope`]); the cloud
@@ -28,9 +29,12 @@ pub use keys::{DeviceKey, KeyError, fingerprint, verify};
 
 /// Protocol version sent in `hello`; the cloud refuses others with
 /// `fleet.version`.
-pub const PROTOCOL_VERSION: u32 = 4;
+pub const PROTOCOL_VERSION: u32 = 7;
 /// The oldest protocol the cloud still accepts (it hides `mobile` / `web`
-/// devices from those connections, whose `DeviceKind` can't read them).
+/// devices from protocol-3 connections and `mcp` ones from protocol < 5,
+/// whose `DeviceKind` can't read them; `confirm` / `confirm_dismissed` and
+/// the `confirm` / `set_mcp_auto` ops need protocol 6; the ops on any
+/// space of a computer ([`RemoteOp::on_any_space`]) need protocol 7).
 pub const MIN_PROTOCOL_VERSION: u32 = 3;
 /// A signed request older or newer than this is refused (`fleet.stale_request`).
 pub const REQUEST_WINDOW_MS: u64 = 5 * 60 * 1000;
@@ -93,6 +97,11 @@ pub enum DeviceKind {
     Mobile,
     /// The web app: a client only, never a target.
     Web,
+    /// The cloud's MCP endpoint (docs/fleet.md "MCP over the cloud"): a
+    /// client only, never a target. Its key lives in the cloud, so a host
+    /// caps what it may do without a person (`FleetMode::Plan`); an Edit or
+    /// Run from it waits for a yes on the host.
+    Mcp,
 }
 
 impl DeviceKind {
@@ -143,6 +152,49 @@ pub struct DeviceInfo {
     /// Kept within [`MAX_INFO_BYTES`] by [`DeviceInfo::fit_agents`].
     #[serde(default)]
     pub agents: Vec<FleetAgentInfo>,
+    /// A host's auto mode for each Claude via the cloud (`mcp`) device it
+    /// pins (docs/fleet.md "Auto mode"), so another of the user's devices
+    /// can show it and change it (`RemoteOp::SetMcpAuto`). Empty on other
+    /// kinds and on hosts older than this field.
+    #[serde(default)]
+    pub mcp_auto: Vec<McpAutoState>,
+}
+
+/// Whether a host lets Claude via the cloud (`DeviceKind::Mcp`) edit or run
+/// without a person's yes (docs/fleet.md "Auto mode"). It never lifts the
+/// host's `max_mode`; it only skips the prompt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum McpAuto {
+    /// Every Edit or Run waits for a person (the default).
+    #[default]
+    Off,
+    /// Edit starts and sends (a plan's approval into Edit too) run at once;
+    /// Run still waits.
+    Edit,
+    /// Edit and Run run at once, a plan's approval too.
+    Full,
+}
+
+impl McpAuto {
+    /// Whether a request in `mode` runs without a person under this auto.
+    pub fn covers(self, mode: FleetMode) -> bool {
+        match self {
+            McpAuto::Off => false,
+            McpAuto::Edit => mode <= FleetMode::Edit,
+            McpAuto::Full => true,
+        }
+    }
+}
+
+/// A host's auto mode for one `mcp` device it pins.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct McpAutoState {
+    pub device_id: DeviceId,
+    pub auto: McpAuto,
+    /// Unix ms it ends; `None`: until turned off.
+    #[serde(default)]
+    pub until_ms: Option<u64>,
 }
 
 /// One agent a host runs for remote spaces (docs/fleet.md "Agent, model
@@ -351,18 +403,107 @@ pub enum RemoteOp {
         ask_id: String,
         answers: Vec<Vec<String>>,
     },
+    /// A person's Allow or Deny, on a device the target delegates to, of a
+    /// request from Claude via the cloud waiting on the target
+    /// ([`RemoteConfirm::confirm_id`]). Never taken from an `mcp` device.
+    Confirm {
+        confirm_id: String,
+        allow: bool,
+    },
+    /// Sets the target's auto mode for an `mcp` device it pins
+    /// (docs/fleet.md "Auto mode"). Never taken from an `mcp` device.
+    SetMcpAuto {
+        mcp_device: DeviceId,
+        auto: McpAuto,
+        /// Unix ms it ends; `None`: until turned off.
+        #[serde(default)]
+        until_ms: Option<u64>,
+    },
+    // ── protocol 7: any space on the target (docs/fleet.md "Any space on a
+    // computer"). `space`, `parent` and `child` name the target's own local
+    // space ids, or an `rs_` id the target hosts for this origin. Results
+    // are the target's local tool results (docs/spaces.md "Sub-spaces"),
+    // kept within `REPLY_VALUE_MAX_BYTES`.
+    /// Every space on the target that isn't archived, newest activity
+    /// first (`spaces_list`).
+    ListSpaces {
+        #[serde(default)]
+        project: Option<String>,
+    },
+    /// One space: goal, status, its last `messages` (default 10, at most
+    /// 50), the running turn's text, a question, progress, diff stat
+    /// (`space_read`).
+    ReadSpace {
+        space: String,
+        #[serde(default)]
+        messages: Option<u32>,
+    },
+    /// Its own agent answers `question` from a read-only fork of its
+    /// session; the space is left as it was (`space_ask`).
+    AskSpace {
+        space: String,
+        question: String,
+    },
+    /// A message as the space's next turn, in the space's own mode (never
+    /// changed); refused while it runs (`fleet.busy`).
+    SendTo {
+        space: String,
+        message: String,
+    },
+    /// Answers question set `ask` waiting in `space`, as `Answer` does.
+    AnswerSpace {
+        space: String,
+        ask: String,
+        answers: Vec<Vec<String>>,
+    },
+    /// Merges sub-space `child` into its parent `parent`'s worktree
+    /// (`space_merge`); counts as Edit.
+    MergeChild {
+        parent: String,
+        child: String,
+    },
 }
 
 impl RemoteOp {
+    /// The cloud space (`rs_` id) it acts on; empty for an op on no space
+    /// (`confirm`, `set_mcp_auto`) and for one on any of the target's own
+    /// spaces ([`RemoteOp::on_any_space`]), which the cloud doesn't track.
     pub fn space(&self) -> &str {
         match self {
             RemoteOp::StartSpace { space, .. }
             | RemoteOp::Send { space, .. }
             | RemoteOp::Stop { space }
             | RemoteOp::Answer { space, .. } => space,
+            RemoteOp::Confirm { .. }
+            | RemoteOp::SetMcpAuto { .. }
+            | RemoteOp::ListSpaces { .. }
+            | RemoteOp::ReadSpace { .. }
+            | RemoteOp::AskSpace { .. }
+            | RemoteOp::SendTo { .. }
+            | RemoteOp::AnswerSpace { .. }
+            | RemoteOp::MergeChild { .. } => "",
         }
     }
+
+    /// An op on any space of the target, by its local id (protocol 7).
+    pub fn on_any_space(&self) -> bool {
+        matches!(
+            self,
+            RemoteOp::ListSpaces { .. }
+                | RemoteOp::ReadSpace { .. }
+                | RemoteOp::AskSpace { .. }
+                | RemoteOp::SendTo { .. }
+                | RemoteOp::AnswerSpace { .. }
+                | RemoteOp::MergeChild { .. }
+        )
+    }
 }
+
+/// The largest `reply.value` a target sends for an op on any space, as its
+/// JSON sits in the signed reply (escaped once more): well within
+/// [`MAX_FRAME_BYTES`]. A longer result drops its oldest items and cuts its
+/// longest texts first.
+pub const REPLY_VALUE_MAX_BYTES: usize = 128 * 1024;
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum EnvelopeError {
@@ -391,6 +532,8 @@ pub enum Domain {
     Reply,
     /// A [`Delegation`] from the origin device.
     Delegate,
+    /// A [`RemoteConfirm`] from the host the request waits on.
+    Confirm,
 }
 
 impl Domain {
@@ -402,6 +545,7 @@ impl Domain {
             Domain::Ask => b"theodore-fleet-ask-v3\0",
             Domain::Reply => b"theodore-fleet-reply-v3\0",
             Domain::Delegate => b"theodore-fleet-delegate-v3\0",
+            Domain::Confirm => b"theodore-fleet-confirm-v3\0",
         }
     }
 
@@ -458,6 +602,12 @@ impl Signer for ReplyBody {
 }
 
 impl Signer for RemoteAsk {
+    fn signer(&self) -> &str {
+        &self.host_device
+    }
+}
+
+impl Signer for RemoteConfirm {
     fn signer(&self) -> &str {
         &self.host_device
     }
@@ -601,6 +751,13 @@ pub mod codes {
     pub const OFFLINE: &str = "fleet.offline";
     pub const BUSY: &str = "fleet.busy";
     pub const INTERNAL: &str = "fleet.internal";
+    /// A request from a device whose key the cloud holds (`DeviceKind::Mcp`)
+    /// that needs a person on the target: denied there, not answered within
+    /// the request window, or refused outright by a daemon (nobody there).
+    pub const DENIED: &str = "fleet.denied";
+    /// A slow op (`ask_space`'s answer) didn't finish on the target in
+    /// time.
+    pub const TIMEOUT: &str = "fleet.timeout";
     // the cloud's own
     pub const UNAUTHORIZED: &str = "fleet.unauthorized";
     pub const NO_ORG: &str = "fleet.no_org";
@@ -625,6 +782,41 @@ pub mod codes {
     // the device adapter's own
     pub const BAD_URL: &str = "fleet.bad_url";
     pub const TLS: &str = "fleet.tls";
+
+    /// Every code by its name here, for the generated TS (`FLEET_CODES`).
+    pub const ALL: &[(&str, &str)] = &[
+        ("REMOTE_OFF", REMOTE_OFF),
+        ("UNTRUSTED_DEVICE", UNTRUSTED_DEVICE),
+        ("BAD_SIGNATURE", BAD_SIGNATURE),
+        ("STALE_REQUEST", STALE_REQUEST),
+        ("MODE_NOT_ALLOWED", MODE_NOT_ALLOWED),
+        ("UNKNOWN_PROJECT", UNKNOWN_PROJECT),
+        ("UNKNOWN_SPACE", UNKNOWN_SPACE),
+        ("DEPTH", DEPTH),
+        ("INVALID", INVALID),
+        ("AGENT_UNAVAILABLE", AGENT_UNAVAILABLE),
+        ("OFFLINE", OFFLINE),
+        ("BUSY", BUSY),
+        ("INTERNAL", INTERNAL),
+        ("DENIED", DENIED),
+        ("TIMEOUT", TIMEOUT),
+        ("UNAUTHORIZED", UNAUTHORIZED),
+        ("NO_ORG", NO_ORG),
+        ("VERSION", VERSION),
+        ("KEY_MISMATCH", KEY_MISMATCH),
+        ("TOO_LARGE", TOO_LARGE),
+        ("RATE_LIMITED", RATE_LIMITED),
+        ("NOT_YOURS", NOT_YOURS),
+        ("BAD_MESSAGE", BAD_MESSAGE),
+        ("TOO_MANY_DEVICES", TOO_MANY_DEVICES),
+        ("REMOVED", REMOVED),
+        ("TOO_MANY_SPACES", TOO_MANY_SPACES),
+        ("TOO_MANY_CONNECTIONS", TOO_MANY_CONNECTIONS),
+        ("UPGRADE_REQUIRED", UPGRADE_REQUIRED),
+        ("UNAVAILABLE", UNAVAILABLE),
+        ("BAD_URL", BAD_URL),
+        ("TLS", TLS),
+    ];
 }
 
 // ── space events ────────────────────────────────────────────────────────────
@@ -723,8 +915,33 @@ pub enum RemoteSpaceEvent {
 /// The largest mirrored row a host sends (its JSON); longer texts are cut
 /// with a note, the host's copy stays whole.
 pub const MIRROR_ROW_MAX_BYTES: usize = 48 * 1024;
-/// Models a host mirrors to the origin and its delegates.
-pub const MIRROR_MODELS: &[&str] = &["space", "chat_message", "turn_step"];
+/// Models a host mirrors to the origin and its delegates. A follower drops
+/// a model it doesn't know (`sub_space` is protocol 7's).
+pub const MIRROR_MODELS: &[&str] = &["space", "chat_message", "turn_step", SUB_SPACE_MODEL];
+/// The `mirror` model of a sub-space of a hosted space: `id` is the
+/// child's local id on the host, `data` a [`MirroredSubSpace`] (`None`:
+/// gone). Sent on the hosted space at the top of the tree, for every
+/// sub-space under it.
+pub const SUB_SPACE_MODEL: &str = "sub_space";
+
+/// `mirror{sub_space}`'s `data`: a sub-space of a hosted space, as that
+/// space's followers see it in its tree.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct MirroredSubSpace {
+    /// Its local id on the host (what `send_to` and `read_space` take).
+    pub space: String,
+    /// Its parent: the hosted space's `rs_` id, or another sub-space's
+    /// local id.
+    pub parent: String,
+    /// At most 120 characters.
+    pub title: String,
+    /// `setting_up`, `running`, `question`, `waiting`, `idle`, `failed` or
+    /// `archived`, as `spaces_list` says it.
+    pub status: String,
+    pub mode: FleetMode,
+    /// Merged into its parent, or shipped.
+    pub done: bool,
+}
 
 /// One event of a hosted space, as its host signs it ([`Domain::Event`]).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
@@ -759,6 +976,49 @@ pub enum AskVia {
     /// You moved to another device; it followed you.
     Moved,
 }
+
+/// What a request waiting for a person would do (`RemoteConfirm::action`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum ConfirmAction {
+    /// Start a space in `project_name`.
+    Start,
+    /// Send a message to `space_name`, as its next turn.
+    Send,
+    /// Approve the plan in `space_name` (its next turn edits).
+    ApprovePlan,
+    /// Merge sub-space `text` (its title) into `space_name`'s worktree
+    /// (protocol 7; an older delegate drops the prompt).
+    Merge,
+}
+
+/// A request from Claude via the cloud (`DeviceKind::Mcp`) waiting on its
+/// host for a person's yes, as the host shows it to the devices it
+/// delegates to, signed by the host ([`Domain::Confirm`]). They answer with
+/// a signed [`RemoteOp::Confirm`] to the host; the first answer wins.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct RemoteConfirm {
+    /// The waiting request's `req_id`.
+    pub confirm_id: String,
+    pub host_device: DeviceId,
+    /// The `mcp` device that asked.
+    pub mcp_device: DeviceId,
+    pub action: ConfirmAction,
+    pub mode: FleetMode,
+    /// `start`: the project it starts in, as the host names it.
+    #[serde(default)]
+    pub project_name: Option<String>,
+    /// `send` / `approve_plan`: the space, as the host names it.
+    #[serde(default)]
+    pub space_name: Option<String>,
+    /// The goal or the message, at most [`CONFIRM_TEXT_MAX`] characters.
+    pub text: String,
+    /// Unix ms: refused on the host unless answered before.
+    pub expires_at_ms: u64,
+}
+
+/// Most characters of a [`RemoteConfirm`]'s text.
+pub const CONFIRM_TEXT_MAX: usize = 500;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "snake_case")]
@@ -845,6 +1105,15 @@ pub enum ClientMessage {
     Delegate {
         envelope: SignedEnvelope,
     },
+    /// A [`RemoteConfirm`] signed by this device as its host: shown on the
+    /// devices it delegates to (protocol 6).
+    Confirm {
+        envelope: SignedEnvelope,
+    },
+    /// The confirm was answered (here or elsewhere) or ran out of time.
+    ConfirmResolved {
+        confirm_id: String,
+    },
 }
 
 /// Device ⇄ cloud, cloud side.
@@ -920,6 +1189,16 @@ pub enum ServerMessage {
     Delegations {
         list: Vec<SignedEnvelope>,
     },
+    /// A host's signed [`RemoteConfirm`], forwarded unchanged to the
+    /// devices it delegates to (protocol 6), again after their welcome
+    /// while it waits.
+    Confirm {
+        envelope: SignedEnvelope,
+    },
+    /// The confirm is no longer waiting on its host.
+    ConfirmDismissed {
+        confirm_id: String,
+    },
 }
 
 /// Every type the Worker needs, for the TS export.
@@ -932,7 +1211,9 @@ pub fn types() -> specta::Types {
         .register::<ReplyBody>()
         .register::<Delegation>()
         .register::<RemoteAsk>()
-        .register::<StartedSpace>();
+        .register::<RemoteConfirm>()
+        .register::<StartedSpace>()
+        .register::<MirroredSubSpace>();
     // JS numbers: seqs, generations and unix-ms timestamps stay far below
     // 2^53 (same call as the contract crate).
     use specta::datatype::Primitive as P;

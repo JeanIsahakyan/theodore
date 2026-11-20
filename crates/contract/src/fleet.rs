@@ -5,9 +5,11 @@
 //!
 //! Commands: `fleet_status`, `fleet_set_settings`, `fleet_trust_device`,
 //! `fleet_remove_device`, `fleet_delegate`, `fleet_start_space`, `fleet_send`, `fleet_stop`, `fleet_answer`,
-//! `fleet_spaces`, `fleet_space_lines`, `fleet_presence`.
+//! `fleet_spaces`, `fleet_space_lines`, `fleet_presence`, `fleet_confirms`,
+//! `fleet_confirm`, `fleet_set_auto`.
 //! Ephemerals: `fleet_status`, `fleet_space`, `fleet_space_line`,
-//! `fleet_ask`, `fleet_ask_dismissed`, `fleet_trust_needed`.
+//! `fleet_ask`, `fleet_ask_dismissed`, `fleet_trust_needed`,
+//! `fleet_confirm`, `fleet_confirm_done`.
 
 use serde::{Deserialize, Serialize};
 use specta::Type;
@@ -39,7 +41,9 @@ pub struct FleetDevice {
     pub name: String,
     pub os: FleetOs,
     /// `desktop` or `daemon` (computers: they run spaces), `mobile` or `web`
-    /// (the phone and web app: clients only, never a space's target).
+    /// (the phone and web app: clients only, never a space's target), `mcp`
+    /// (Claude via the cloud: a client whose key the cloud holds; an Edit or
+    /// Run from it waits for a person here).
     pub kind: String,
     pub online: bool,
     /// Unix ms; 0 if never.
@@ -69,6 +73,70 @@ pub struct FleetDevice {
     /// picked and its own defaults run.
     #[serde(default)]
     pub agents: Vec<FleetAgent>,
+    /// `mcp` devices pinned here: this computer's auto mode for it
+    /// (docs/fleet.md "Auto mode"); `off` for every other device, and when
+    /// `auto_until_ms` has passed.
+    #[serde(default)]
+    pub auto: FleetAuto,
+    /// Unix ms the auto mode ends; `None`: until turned off (or off).
+    #[serde(default)]
+    pub auto_until_ms: Option<u64>,
+    /// Another computer: its auto mode for each Claude via cloud device it
+    /// pins, as it lists it (empty for others, and for older computers).
+    /// Changed with `fleet_set_auto { host_device }`.
+    #[serde(default)]
+    pub mcp_auto: Vec<FleetMcpAuto>,
+}
+
+/// Whether this computer lets Claude via cloud (an `mcp` device) edit or
+/// run without your yes. It never lifts `max_mode`; it only skips the
+/// prompt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum FleetAuto {
+    /// Every Edit or Run waits for your yes.
+    #[default]
+    Off,
+    /// Edit (a plan's approval into Edit too) goes through; Run waits.
+    Edit,
+    /// Edit and Run go through, plan approvals too.
+    Full,
+}
+
+/// A computer's auto mode for one Claude via cloud device, as it lists it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+pub struct FleetMcpAuto {
+    /// The `mcp` device.
+    pub device_id: String,
+    /// Its name as the cloud lists it ("Claude (MCP)"), or its id.
+    pub name: String,
+    pub auto: FleetAuto,
+    pub until_ms: Option<u64>,
+}
+
+/// An auto mode on now on this computer: the notice that stays while it
+/// lasts.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+pub struct FleetAutoOn {
+    pub device_id: String,
+    /// The name pinned here.
+    pub device_name: String,
+    pub auto: FleetAuto,
+    pub until_ms: Option<u64>,
+}
+
+/// `fleet_set_auto`: the auto mode for `mcp` device `device_id`, on this
+/// computer (`host_device` none) or on another one you trust (sent there as
+/// a signed request; it applies it if it trusts this device).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+pub struct FleetAutoRequest {
+    pub device_id: String,
+    pub auto: FleetAuto,
+    /// Unix ms it ends; `None`: until turned off. Ignored for `off`.
+    #[serde(default)]
+    pub until_ms: Option<u64>,
+    #[serde(default)]
+    pub host_device: Option<String>,
 }
 
 /// An agent another device runs, with its models (`description` none,
@@ -104,6 +172,9 @@ pub struct FleetStatus {
     pub devices: Vec<FleetDevice>,
     /// Why it isn't connected, when enabled and not connected.
     pub error: Option<String>,
+    /// Auto modes on now on this computer (docs/fleet.md "Auto mode").
+    #[serde(default)]
+    pub autos: Vec<FleetAutoOn>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
@@ -242,6 +313,8 @@ pub enum FleetLineKind {
     Ended,
     Question,
     Gap,
+    /// A sub-space the space started on its host: `<id> · <title> · <status>`.
+    SubSpace,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
@@ -258,4 +331,60 @@ pub struct FleetTrustNeeded {
     pub device_name: String,
     pub fingerprint: String,
     pub public_key: String,
+    /// `FleetDevice::kind` as the cloud lists it; empty when it doesn't
+    /// list the device.
+    #[serde(default)]
+    pub kind: String,
+}
+
+/// What a request waiting for a person here would do.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum FleetConfirmAction {
+    /// Start a space in `project_name`.
+    Start,
+    /// Send a message to `space_name`, as its next turn.
+    Send,
+    /// Approve the plan in `space_name` (its next turn edits).
+    ApprovePlan,
+    /// Merge a sub-space (`text`: its title) into `space_name`.
+    Merge,
+}
+
+/// A request from a device whose key the cloud holds (kind `mcp`: Claude
+/// via the cloud) that would edit or run here: it waits for a person on
+/// this device (docs/fleet.md "Trust"). Allow runs it; Deny, or no answer
+/// by `expires_at_ms`, refuses it with `fleet.denied`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+pub struct FleetConfirm {
+    /// The request's id: what `fleet_confirm` answers.
+    pub id: String,
+    pub device_id: String,
+    /// The name pinned here for the device.
+    pub device_name: String,
+    pub action: FleetConfirmAction,
+    pub mode: SpaceMode,
+    /// `start`: the project it starts in.
+    pub project_name: Option<String>,
+    /// `send` / `approve_plan`: the space, as people know it here.
+    pub space_name: Option<String>,
+    /// `send` / `approve_plan`: its local id, to open it.
+    pub local_space: Option<String>,
+    /// The goal or the message, cut to 500 characters.
+    pub text: String,
+    /// Unix ms: refused unless answered before.
+    pub expires_at_ms: u64,
+    /// Waiting on another computer, which sends its approvals here
+    /// (`None`: on this one). Allow or Deny goes there as a signed request.
+    #[serde(default)]
+    pub host_device: Option<String>,
+    /// That computer's name as pinned here.
+    #[serde(default)]
+    pub host_name: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+pub struct FleetConfirmAnswer {
+    pub id: String,
+    pub allow: bool,
 }

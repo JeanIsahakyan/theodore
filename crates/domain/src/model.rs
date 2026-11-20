@@ -450,6 +450,63 @@ impl AgentId {
     }
 }
 
+/// How close an agent account is to its usage limit (docs/plan.md "Agent
+/// accounts and limits").
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
+#[serde(rename_all = "lowercase")]
+pub enum LimitStatus {
+    Ok,
+    /// Past a warning threshold: still runs.
+    Warning,
+    /// Refused until `resets_at`.
+    Limited,
+}
+
+/// What a CLI said about its account's usage limit: Claude Code's
+/// `rate_limit_event`, Codex's rate-limit snapshot, or a usage-limit error
+/// text read back into this shape.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
+pub struct AgentLimit {
+    pub status: LimitStatus,
+    /// When the limit resets (unix ms), when the CLI says.
+    #[serde(default)]
+    pub resets_at: Option<Millis>,
+    /// The window it is about, as the CLI names it (`five_hour`,
+    /// `seven_day`, `primary`…).
+    #[serde(default)]
+    pub window: Option<String>,
+    /// How much of the window is used, 0–100 (may pass 100).
+    #[serde(default)]
+    pub used_pct: Option<f64>,
+}
+
+impl AgentLimit {
+    pub fn limited(resets_at: Option<Millis>) -> Self {
+        Self {
+            status: LimitStatus::Limited,
+            resets_at,
+            window: None,
+            used_pct: None,
+        }
+    }
+
+    /// Still refusing runs at `now` (unix ms): limited, and its reset (when
+    /// known) not passed yet. A limit with no reset time stands for
+    /// `UNKNOWN_RESET_MS` after `seen_at`.
+    pub fn blocks_at(&self, seen_at: Millis, now: Millis) -> bool {
+        self.status == LimitStatus::Limited
+            && match self.resets_at {
+                Some(at) => at > now,
+                None => now < seen_at + UNKNOWN_RESET_MS,
+            }
+    }
+}
+
+/// How long a limit without a reset time is assumed to stand.
+pub const UNKNOWN_RESET_MS: Millis = 60 * 60 * 1000;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "specta", derive(specta::Type))]
 #[serde(tag = "kind", content = "agent", rename_all = "lowercase")]

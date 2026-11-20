@@ -35,6 +35,7 @@ fn info(name: &str) -> DeviceInfo {
         accepts_remote: true,
         max_mode: FleetMode::Edit,
         agents: vec![],
+        mcp_auto: vec![],
     }
 }
 

@@ -138,6 +138,11 @@ pub(crate) struct Inner {
     pub report_drafts: crate::usecases::report::ReportDrafts,
     /// The fleet: link, devices, hosted and remote spaces (`usecases::fleet`).
     pub fleet: crate::usecases::fleet::FleetState,
+    /// Sub-spaces: the running turns' text so far, the start lock
+    /// (`usecases::space_children`).
+    pub sub_spaces: crate::usecases::space_children::SubSpaceState,
+    /// Each agent account's latest usage limit (`usecases::agent_accounts`).
+    pub agent_limits: crate::usecases::agent_accounts::LimitBook,
 }
 
 /// Inbound streams the shell (Tauri or the CLI) forwards to the UI.
@@ -197,6 +202,8 @@ impl Core {
             reports: std::sync::Mutex::new(None),
             report_drafts: Default::default(),
             fleet: Default::default(),
+            sub_spaces: Default::default(),
+            agent_limits: Default::default(),
         });
 
         let core = Core(inner.clone());
@@ -206,6 +213,27 @@ impl Core {
                 core.fail_interrupted_runs().await;
                 core.fail_interrupted_spaces().await;
                 core.pause_resumed_mirrors().await;
+            });
+        }
+        {
+            let core = core.clone();
+            tokio::spawn(async move {
+                core.continue_due_pauses().await;
+                core.run_pause_loop().await;
+            });
+        }
+        // Limits of runs whose account the agent layer picked (chat,
+        // skills, fixes, grouping): kept like a space turn's.
+        if let Some(mut seen) = core.0.deps.agents.limits_seen() {
+            let core = core.clone();
+            tokio::spawn(async move {
+                loop {
+                    match seen.recv().await {
+                        Ok(s) => core.note_agent_limit(s.agent, &s.account, s.limit).await,
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                        Err(_) => return,
+                    }
+                }
             });
         }
         // Host traffic waits for the account gate (`account_hold`): the

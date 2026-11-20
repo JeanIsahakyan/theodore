@@ -150,6 +150,8 @@ impl Core {
             attachments: vec![],
             resume: None,
             stream_text: false,
+            fork_session: false,
+            account: None,
         };
         let run = async {
             let mut run = self.0.deps.agents.run(req).await.ok()?;

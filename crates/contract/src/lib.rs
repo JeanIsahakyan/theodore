@@ -51,6 +51,8 @@ mod telemetry;
 pub use telemetry::*;
 mod terminal;
 pub use terminal::*;
+mod agent_accounts;
+pub use agent_accounts::*;
 
 /// Model names used in transactions and sync frames.
 pub mod models {
@@ -76,6 +78,9 @@ pub mod models {
     /// "My reports": an issue "Report a problem" opened, keyed
     /// `owner/name#number` (`TrackedReport`).
     pub const REPORT: &str = "report";
+    /// The latest usage limit of each agent account, keyed
+    /// `<agent>:<account>` (`AgentLimitRow`).
+    pub const AGENT_LIMIT: &str = "agent_limit";
     pub const ALL: &[&str] = &[
         PR,
         PR_DETAIL,
@@ -94,6 +99,7 @@ pub mod models {
         PROJECT,
         SPACE,
         REPORT,
+        AGENT_LIMIT,
     ];
 }
 
@@ -662,6 +668,14 @@ pub enum Ephemeral {
     FleetTrustNeeded {
         request: FleetTrustNeeded,
     },
+    /// A request that waits for a person here (Allow / Deny).
+    FleetConfirm {
+        request: FleetConfirm,
+    },
+    /// Answered, or out of time: drop the prompt.
+    FleetConfirmDone {
+        id: String,
+    },
     /// One line of a space command's output (docs/config.md); the last
     /// lines are kept per space and returned by `space_logs`.
     SpaceLog {
@@ -1025,6 +1039,23 @@ pub struct ChatMessage {
     /// The mode of the space turn that wrote this reply.
     #[serde(default)]
     pub mode: Option<SpaceMode>,
+    /// A space message another space's agent sent (`space_send`,
+    /// docs/spaces.md "Sub-spaces"), not you: which space. `author` stays
+    /// `Me` (it is a turn's ask, like yours).
+    #[serde(default)]
+    pub from_space: Option<FromSpace>,
+    /// A small system row, not a message (an account switch on a usage
+    /// limit): `text` says it in words; never part of a prompt.
+    #[serde(default)]
+    pub notice: Option<ChatNotice>,
+}
+
+/// The space whose agent sent a message, as it was named then.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct FromSpace {
+    /// `Space::id`, local.
+    pub space: String,
+    pub title: String,
 }
 
 /// A thumbs up or down on an agent's reply.
@@ -1078,6 +1109,7 @@ pub fn types() -> specta::Types {
         .register::<CheckTick>()
         .register::<SkillRun>()
         .register::<ChatMessage>()
+        .register::<FromSpace>()
         .register::<MessageVote>()
         .register::<SetMessageVoteRequest>()
         .register::<TurnStep>()
@@ -1187,6 +1219,14 @@ pub fn types() -> specta::Types {
         .register::<SpaceRevertFrom>()
         .register::<RevertSpaceFileRequest>()
         .register::<AgentSession>()
+        .register::<AgentAccount>()
+        .register::<AgentLimitRow>()
+        .register::<AgentAccountStatus>()
+        .register::<AddAgentAccountRequest>()
+        .register::<AgentAccountRequest>()
+        .register::<ChatNotice>()
+        .register::<SpacePause>()
+        .register::<SpacePauseRequest>()
         .register::<SpaceFeedback>()
         .register::<SpaceFeedbackRequest>()
         .register::<QueuedSend>()
@@ -1252,6 +1292,10 @@ pub fn types() -> specta::Types {
         .register::<FleetSpaceLine>()
         .register::<FleetQuestion>()
         .register::<FleetTrustNeeded>()
+        .register::<FleetConfirm>()
+        .register::<FleetConfirmAnswer>()
+        .register::<FleetAutoRequest>()
+        .register::<FleetAutoOn>()
         .register::<ClientLog>()
         .register::<ClientLogLevel>()
         .register::<UiEvent>()

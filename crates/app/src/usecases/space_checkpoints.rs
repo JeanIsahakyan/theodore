@@ -224,6 +224,8 @@ impl Core {
             vote: None,
             effort: None,
             mode: None,
+            from_space: None,
+            notice: None,
         };
         let mut log = space.turn_log.clone();
         log.push(SpaceTurn {
@@ -358,6 +360,10 @@ pub(crate) fn rewindable(space: &Space, from: Option<usize>) -> Result<usize, St
                 }
                 ShipKind::Branch => {
                     "this turn is already written as a branch; ask the agent to revert it instead"
+                }
+                ShipKind::MergedIntoParent => {
+                    "this turn is already merged into the parent space; ask the agent to revert \
+                     it instead"
                 }
             }
             .into());

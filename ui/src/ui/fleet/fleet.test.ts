@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { device, thisDevice } from '../../test/fleet';
+import { confirmRequest, device, thisDevice } from '../../test/fleet';
 import {
+  autoOn,
+  autoUntil,
+  autoWarning,
+  canFollow,
   capMode,
+  confirmAction,
   isAnswered,
   isClient,
   kindLabel,
@@ -11,6 +16,7 @@ import {
   startableDevices,
   toWireAnswers,
   typeOther,
+  untilLabel,
 } from './fleet';
 
 describe('modes', () => {
@@ -59,6 +65,18 @@ describe('kinds', () => {
     expect(isClient(device({ kind: 'web' }))).toBe(true);
     expect(isClient(device({ kind: 'desktop' }))).toBe(false);
     expect(isClient(device({ kind: 'daemon' }))).toBe(false);
+  });
+
+  it('Claude via the cloud is a client that follows nothing', () => {
+    expect(isClient(device({ kind: 'mcp' }))).toBe(true);
+    expect(kindLabel(device({ kind: 'mcp' }))).toBe('Claude via cloud (MCP)');
+    expect(canFollow(device({ kind: 'mcp' }))).toBe(false);
+    expect(canFollow(device({ kind: 'mobile' }))).toBe(true);
+    expect(canFollow(device({ kind: 'desktop' }))).toBe(true);
+    expect(canFollow(device({ kind: 'daemon' }))).toBe(false);
+    expect(startableDevices([device({ kind: 'mcp', trusted: true })])).toEqual(
+      [],
+    );
   });
 
   it('reads as Phone, Web app, or the OS', () => {
@@ -129,5 +147,61 @@ describe('answers', () => {
         { selected: ['a'], other: 'and more' },
       ]),
     ).toEqual([['a', 'b'], ['my own'], ['a', 'and more']]);
+  });
+});
+
+describe('confirmAction', () => {
+  it('says what Claude via the cloud would do', () => {
+    expect(confirmAction(confirmRequest())).toBe('start an Edit space in app');
+    expect(confirmAction(confirmRequest({ mode: 'run' }))).toBe(
+      'start a Run space in app',
+    );
+    expect(
+      confirmAction(
+        confirmRequest({ action: 'send', space_name: 'Fix login' }),
+      ),
+    ).toBe('send to Fix login in Edit');
+    expect(
+      confirmAction(
+        confirmRequest({
+          action: 'approve_plan',
+          space_name: 'Fix login',
+          mode: 'run',
+        }),
+      ),
+    ).toBe('approve the plan in Fix login (Run)');
+  });
+});
+
+describe('auto mode', () => {
+  const noon = new Date(2026, 10, 19, 12, 0, 0).getTime();
+
+  it('lasts an hour, to the end of today, or until turned off', () => {
+    expect(autoUntil('hour', noon)).toBe(noon + 3_600_000);
+    expect(autoUntil('day', noon)).toBe(
+      new Date(2026, 10, 19, 23, 59, 59, 999).getTime(),
+    );
+    expect(autoUntil('off', noon)).toBeNull();
+  });
+
+  it('reads its end today, another day, or none', () => {
+    expect(untilLabel(null, noon)).toBe('until turned off');
+    expect(untilLabel(noon + 3_600_000, noon)).toMatch(/^until \d/);
+    expect(untilLabel(noon + 2 * 86_400_000, noon)).toMatch(/^until \D+.*, /);
+  });
+
+  it('is on until its end passes', () => {
+    expect(autoOn('edit', null, noon)).toBe(true);
+    expect(autoOn('full', noon + 1, noon)).toBe(true);
+    expect(autoOn('full', noon, noon)).toBe(false);
+    expect(autoOn('off', null, noon)).toBe(false);
+    expect(autoOn(undefined, null, noon)).toBe(false);
+  });
+
+  it('warns about running commands only for full auto', () => {
+    expect(autoWarning('edit')).toBe(
+      'Its key is held by the Theodore cloud: with auto on, the cloud could make this computer edit without you.',
+    );
+    expect(autoWarning('full')).toContain('edit and run commands without you');
   });
 });

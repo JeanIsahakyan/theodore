@@ -49,7 +49,7 @@ pub(crate) struct RemotePick {
 }
 
 /// History kept per remote space in memory.
-const LINES_KEPT: usize = 500;
+pub(crate) const LINES_KEPT: usize = 500;
 /// Most characters of a space name or branch taken from a signed reply.
 const NAME_MAX: usize = 200;
 
@@ -251,7 +251,7 @@ impl Core {
     /// Only to a target pinned here: the request names the pinned key
     /// (`target_key`), and only a reply signed by it counts. Never to a
     /// phone or the web app: they run no spaces.
-    async fn fleet_request(
+    pub(crate) async fn fleet_request(
         &self,
         target: &str,
         op: RemoteOp,

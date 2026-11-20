@@ -15,6 +15,7 @@ pub mod backend;
 pub mod bridge;
 pub mod code_server;
 pub mod fleet;
+pub mod local_spaces;
 pub mod server;
 pub mod space_agent;
 pub mod tools;
@@ -23,10 +24,11 @@ pub use backend::{
     AppStatus, BackendError, BaseChange, CODE_EDIT_TOOL_NAMES, CODE_TOOL_NAMES, CheckOutcome,
     CodeEditOutcome, CodeTools, CodeToolsBackend, FLEET_STEER_TOOL_NAMES, FLEET_TOOL_NAMES,
     FileSummary, FleetTools, GroupSummary, GroupWithHunks, HOSTED_EDIT_TOOL_NAMES,
-    HOSTED_RUN_TOOL_NAMES, LogTail, NewFinding, NewPatch, NewReviewComment, NoCodeTools,
-    NoReviewTools, NoSpaceTools, PrContext, ProgressStep, ProgressStepState, REPORT_TOOL,
-    REVIEW_SPACE_TOOL_NAMES, REVIEW_TOOL_NAMES, ReportRequest, ReportScope, ReviewItem,
-    ReviewToolsBackend, RunContext, SPACE_TOOL_NAMES, ShipOutcome, ShipToolAction,
+    HOSTED_RUN_TOOL_NAMES, LOCAL_SPACE_READ_TOOL_NAMES, LogTail, NewFinding, NewPatch,
+    NewReviewComment, NoCodeTools, NoReviewTools, NoSpaceTools, PrContext, ProgressStep,
+    ProgressStepState, REPORT_TOOL, REVIEW_SPACE_TOOL_NAMES, REVIEW_TOOL_NAMES, ReportRequest,
+    ReportScope, ReviewItem, ReviewToolsBackend, RunContext, SPACE_TOOL_NAMES,
+    SUB_SPACE_STEER_TOOL_NAMES, SUB_SPACE_TOOL_NAMES, ShipOutcome, ShipToolAction,
     SpaceCommandName, SpaceDiff, SpaceInfo, SpaceToolError, SpaceToolsBackend, TerminalTail,
     ToolSet, TurnMode,
 };

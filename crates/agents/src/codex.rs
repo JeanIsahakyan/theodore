@@ -26,7 +26,7 @@
 //! (`item/agentMessage/delta`) — a different runner, not a flag.
 
 use serde_json::Value;
-use theodore_domain::Usage;
+use theodore_domain::{AgentId, Usage};
 use theodore_ports::agent::{AgentEvent, AgentMode, AgentRequest, ToolResultDetail};
 
 use crate::config::AgentBinaryConfig;
@@ -38,6 +38,9 @@ use crate::process::LineParser;
 /// thread with them there; `resume`'s own `-i` takes one value).
 pub fn build_args(req: &AgentRequest, cfg: &AgentBinaryConfig) -> Vec<String> {
     let mut args = vec!["exec".to_string(), "--json".to_string()];
+    // Codex can't fork a thread: a fork asked for starts a new one, never
+    // a turn in the original.
+    let resume = req.resume.as_ref().filter(|_| !req.fork_session);
     // Images go to the model with the prompt; other attachments are only
     // listed in it (the sandbox reads outside the workspace). Before `-C`:
     // `-i` takes several values, so a flag must follow it, never the prompt.
@@ -49,7 +52,7 @@ pub fn build_args(req: &AgentRequest, cfg: &AgentBinaryConfig) -> Vec<String> {
         .filter(|(a, path)| a.mime.starts_with("image/") && !path.contains(','))
         .map(|(_, path)| path)
         .collect();
-    if req.resume.is_none() {
+    if resume.is_none() {
         for path in &images {
             args.push("-i".to_string());
             args.push(path.clone());
@@ -105,7 +108,7 @@ pub fn build_args(req: &AgentRequest, cfg: &AgentBinaryConfig) -> Vec<String> {
         None => {}
     }
     args.extend(cfg.extra_args.iter().cloned());
-    if let Some(thread) = &req.resume {
+    if let Some(thread) = resume {
         // The thread already opens with the system prompt (folded into its
         // first turn, below): only the new turn goes in. Except in Plan mode:
         // a thread opened in another one never heard the Plan rules.
@@ -165,6 +168,30 @@ pub fn parse_line(line: &str, last_agent_message: &mut String) -> Vec<AgentEvent
     let Ok(v) = serde_json::from_str::<Value>(line) else {
         return vec![];
     };
+    let events = line_events(&v, last_agent_message);
+    match rate_limits(&v) {
+        Some(limit) => std::iter::once(limit).chain(events).collect(),
+        None => events,
+    }
+}
+
+/// Codex's rate-limit snapshot, where a line carries one (its internal
+/// `token_count` event has it as `msg.rate_limits`). `codex exec --json`
+/// isn't known to send it: read defensively, wherever it sits.
+fn rate_limits(v: &Value) -> Option<AgentEvent> {
+    [
+        "/rate_limits",
+        "/msg/rate_limits",
+        "/info/rate_limits",
+        "/msg/info/rate_limits",
+    ]
+    .iter()
+    .find_map(|at| v.pointer(at).filter(|r| r.is_object()))
+    .and_then(crate::limits::codex_rate_limits)
+    .map(|limit| AgentEvent::Limit { limit })
+}
+
+fn line_events(v: &Value, last_agent_message: &mut String) -> Vec<AgentEvent> {
     match v.get("type").and_then(Value::as_str) {
         Some("item.started") => item_started(v.get("item")),
         Some("item.completed") => item_completed(v.get("item"), last_agent_message),
@@ -180,10 +207,20 @@ pub fn parse_line(line: &str, last_agent_message: &mut String) -> Vec<AgentEvent
                 .and_then(Value::as_str)
                 .unwrap_or("codex turn failed")
                 .to_string();
-            vec![AgentEvent::Error {
-                message,
-                stderr_tail: String::new(),
-            }]
+            // The usage limit, from the message or a code next to it
+            // (`usage_limit_reached`), before the error it ends the run with.
+            let said = ["/error/code", "/error/type"]
+                .iter()
+                .filter_map(|at| v.pointer(at).and_then(Value::as_str))
+                .fold(message.clone(), |all, code| format!("{all}\n{code}"));
+            crate::limits::limit_in_error(AgentId::Codex, &said, chrono::Local::now())
+                .map(|limit| AgentEvent::Limit { limit })
+                .into_iter()
+                .chain(std::iter::once(AgentEvent::Error {
+                    message,
+                    stderr_tail: String::new(),
+                }))
+                .collect()
         }
         // A new thread or a resumed one: its id is what `exec resume` takes.
         Some("thread.started") => v
@@ -515,6 +552,8 @@ mod run_mode_tests {
             attachments: vec![],
             resume: None,
             stream_text: false,
+            fork_session: false,
+            account: None,
         };
         let args = build_args(&req, &Default::default());
         assert!(args.windows(2).any(|w| w == ["-s", "workspace-write"]));
@@ -545,6 +584,8 @@ mod model_tests {
             attachments: vec![],
             resume: None,
             stream_text: false,
+            fork_session: false,
+            account: None,
         }
     }
 
@@ -611,6 +652,20 @@ mod model_tests {
                 "{bad}: {args:?}"
             );
         }
+    }
+
+    /// A fork asked of Codex starts a new thread: never a turn in the one
+    /// it names.
+    #[test]
+    fn a_fork_never_resumes_the_thread() {
+        let mut r = req(None, None);
+        r.resume = Some("thread-1".into());
+        r.fork_session = true;
+        let args = build_args(&r, &Default::default());
+        assert!(
+            !args.iter().any(|a| a == "resume" || a == "thread-1"),
+            "{args:?}"
+        );
     }
 
     /// `exec resume <thread> <prompt>` after `exec`'s own flags; images on

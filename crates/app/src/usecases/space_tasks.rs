@@ -58,6 +58,8 @@ const NOTE_CUT: &str = "Cut off after running for hours with no one watching";
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct CliKey {
     pub agent: AgentId,
+    /// The agent account it runs on (`AgentAccount::id`).
+    pub account: String,
     pub model: Option<String>,
     pub effort: Option<String>,
     pub mode: SpaceMode,

@@ -7,7 +7,8 @@
 //!    ├─ silent `stall_after_ms` ─▶ Stalled (keeps running)
 //!    │     └─ last word was "can't connect" ─▶ stop ─▶ Error agent.offline
 //!    └─ exit ≠ 0 ─▶ Error with stderr tail
-//!          └─ connection failure in message/stderr ─▶ Error agent.offline
+//!          ├─ connection failure in message/stderr ─▶ Error agent.offline
+//!          └─ usage limit in message/stderr ─▶ Limit, then Error agent.limited
 //! ```
 //!
 //! With an [`Input`] (`spawn_with_input`) stdin stays open: the first
@@ -35,6 +36,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
+use theodore_domain::{AgentId, AgentLimit, LimitStatus};
 use theodore_ports::agent::{
     AGENT_OFFLINE_CODE, AGENT_SIGNED_OUT_CODE, AgentError, AgentEvent, AgentRun, ControlRequest,
     SteerMessage, is_auth_failure, is_connection_failure, offline_message, signed_out_message,
@@ -452,6 +454,8 @@ async fn run_loop(
     // Set while the parser waits for a written message to be taken.
     let mut input_deadline: Option<tokio::time::Instant> = None;
     let mut terminal_sent = false;
+    // A `Limit` with status limited went out: an error needn't send another.
+    let mut limited_sent = false;
     // Every task is gone and nothing else will start: stdin closes.
     let mut drained = false;
     let mut stalled_notified = false;
@@ -571,6 +575,12 @@ async fn run_loop(
                                 continue;
                             }
                             terminal_sent |= terminal && !keep;
+                            let limit = limit_before(&ev, &log.agent, "", &mut limited_sent);
+                            if let Some(limit) = limit
+                                && tx.send(limit).await.is_err()
+                            {
+                                return;
+                            }
                             let (ev, failure) = classify_failure(ev, &log.agent, "");
                             log_terminal(&log, &ev, None, failure);
                             if tx.send(ev).await.is_err() {
@@ -688,6 +698,9 @@ async fn run_loop(
         let (ev, failure) = if cancelled {
             (ev, Failure::Crash)
         } else {
+            if let Some(limit) = limit_before(&ev, &log.agent, &tail_str, &mut limited_sent) {
+                let _ = tx.send(limit).await;
+            }
             classify_failure(ev, &log.agent, &tail_str)
         };
         if !cancelled {
@@ -712,14 +725,77 @@ enum Failure {
     SignedOut,
     /// The CLI's answer to an interrupt: the user pressed Stop.
     Interrupted,
+    /// The account hit its usage limit (the user's plan, not a crash).
+    Limited,
 }
 
-/// An `Error` whose message or stderr says the CLI couldn't reach its
-/// servers becomes the plain offline message, and one that says it isn't
-/// signed in becomes a sentence with the command to fix it (`codex
-/// login`). The raw text moves to `stderr_tail`, which is only logged.
+/// The `error.code` of a run that ended because the agent's account hit its
+/// usage limit.
+pub const AGENT_LIMITED_CODE: &str = "agent.limited";
+
+/// The agent a run's log names (`claude`, `codex`, `gemini`).
+fn agent_id(name: &str) -> Option<AgentId> {
+    AgentId::ALL.into_iter().find(|a| a.as_str() == name)
+}
+
+/// The usage limit an `Error`'s message, its stderr tail or the run's
+/// `stderr` says the account hit (`limits::limit_in_error`), preferring the
+/// one that tells when it resets. Never read from the agent's own text.
+fn limit_in(ev: &AgentEvent, agent: &str, stderr: &str) -> Option<AgentLimit> {
+    let AgentEvent::Error {
+        message,
+        stderr_tail,
+    } = ev
+    else {
+        return None;
+    };
+    if message.starts_with(INTERRUPT_DIAGNOSTIC) {
+        return None;
+    }
+    let agent = agent_id(agent)?;
+    let now = chrono::Local::now();
+    let found: Vec<AgentLimit> = [message.as_str(), stderr_tail, stderr]
+        .into_iter()
+        .filter(|t| !t.is_empty())
+        .filter_map(|t| crate::limits::limit_in_error(agent, t, now))
+        .collect();
+    found
+        .iter()
+        .find(|l| l.resets_at.is_some())
+        .or(found.first())
+        .cloned()
+}
+
+/// The `Limit` to send right before `ev`: an `Error` that says the account
+/// hit its usage limit, unless the run already sent a limited one (the
+/// parser's own, from the CLI's structured events, says more).
+fn limit_before(
+    ev: &AgentEvent,
+    agent: &str,
+    stderr: &str,
+    limited_sent: &mut bool,
+) -> Option<AgentEvent> {
+    if let AgentEvent::Limit { limit } = ev {
+        *limited_sent |= limit.status == LimitStatus::Limited;
+        return None;
+    }
+    if *limited_sent {
+        return None;
+    }
+    let limit = limit_in(ev, agent, stderr)?;
+    *limited_sent = true;
+    Some(AgentEvent::Limit { limit })
+}
+
+/// An `Error` whose message or stderr says the account hit its usage limit
+/// stays as the CLI wrote it (`Failure::Limited`). One that says the CLI
+/// couldn't reach its servers becomes the plain offline message, and one
+/// that says it isn't signed in becomes a sentence with the command to fix
+/// it (`codex login`). The raw text moves to `stderr_tail`, which is only
+/// logged.
 /// Anything else passes through.
 fn classify_failure(ev: AgentEvent, agent: &str, stderr: &str) -> (AgentEvent, Failure) {
+    let limited = limit_in(&ev, agent, stderr).is_some();
     let AgentEvent::Error {
         message,
         stderr_tail,
@@ -733,6 +809,14 @@ fn classify_failure(ev: AgentEvent, agent: &str, stderr: &str) -> (AgentEvent, F
             stderr_tail,
         };
         return (ev, Failure::Interrupted);
+    }
+    if limited {
+        // The CLI's own words: they say when it resets, and what to do.
+        let ev = AgentEvent::Error {
+            message,
+            stderr_tail,
+        };
+        return (ev, Failure::Limited);
     }
     let said = |f: fn(&str) -> bool| f(&message) || f(&stderr_tail) || f(stderr);
     if said(is_connection_failure) {
@@ -765,7 +849,8 @@ fn classify_failure(ev: AgentEvent, agent: &str, stderr: &str) -> (AgentEvent, F
 
 /// Logs how a run ended: `info` when done, `agent.crashed` with the exit
 /// code and the end of stderr when it failed, `agent.offline` (info: the
-/// network, not the agent) when it couldn't reach its servers, and
+/// network, not the agent) when it couldn't reach its servers,
+/// `agent.limited` (info: the account's plan) when it hit its usage limit, and
 /// `agent.signed_out` (info: the user's to fix) when it has no credentials.
 fn log_terminal(
     log: &RunLog,
@@ -803,6 +888,18 @@ fn log_terminal(
                     exit_code = code,
                     stderr_tail = tail,
                     "agent couldn't reach its servers"
+                );
+                return;
+            }
+            if failure == Failure::Limited {
+                tracing::info!(
+                    error.code = AGENT_LIMITED_CODE,
+                    agent = %log.agent,
+                    agent_version = %log.version,
+                    duration_ms = log.ms(),
+                    exit_code = code,
+                    error = %message,
+                    "agent account hit its usage limit"
                 );
                 return;
             }
@@ -1058,5 +1155,130 @@ mod tests {
             classify_failure(done.clone(), "codex", "401 Unauthorized"),
             (done, Failure::Crash)
         );
+    }
+
+    /// What `run_loop` sends for a parser's events: a `Limit` before an
+    /// error that says the account hit its limit, then the classified event.
+    fn sent(
+        parser: &mut dyn LineParser,
+        agent: &str,
+        lines: &[&str],
+    ) -> Vec<(AgentEvent, Failure)> {
+        let mut limited_sent = false;
+        let mut out = Vec::new();
+        for line in lines {
+            for ev in parser.on_line(line) {
+                if let Some(limit) = limit_before(&ev, agent, "", &mut limited_sent) {
+                    out.push((limit, Failure::Crash));
+                }
+                out.push(classify_failure(ev, agent, ""));
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn a_claude_usage_limit_result_sends_a_limit_then_its_own_error() {
+        let text = "You've hit your session limit \u{b7} resets 6pm";
+        let line = format!(r#"{{"type":"result","is_error":true,"result":"{text}"}}"#);
+        let out = sent(&mut crate::claude::ClaudeParser::new(), "claude", &[&line]);
+        let [(AgentEvent::Limit { limit }, _), (error, failure)] = &out[..] else {
+            panic!("{out:?}");
+        };
+        assert_eq!(limit.status, LimitStatus::Limited);
+        assert!(limit.resets_at.is_some(), "{limit:?}");
+        assert_eq!(*failure, Failure::Limited);
+        assert_eq!(*error, self::error(text, ""));
+    }
+
+    #[test]
+    fn a_limit_the_cli_already_sent_isnt_sent_again() {
+        let lines: Vec<&str> = include_str!("../tests/fixtures/claude_rate_limited.jsonl")
+            .lines()
+            .collect();
+        let out = sent(&mut crate::claude::ClaudeParser::new(), "claude", &lines);
+        let limits: Vec<&AgentLimit> = out
+            .iter()
+            .filter_map(|(e, _)| match e {
+                AgentEvent::Limit { limit } => Some(limit),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(limits.len(), 2, "{out:?}");
+        assert_eq!(limits[0].status, LimitStatus::Warning);
+        assert_eq!(limits[1].status, LimitStatus::Limited);
+        assert_eq!(limits[1].resets_at, Some(1_795_003_600_000));
+        let (last, failure) = out.last().unwrap();
+        assert!(matches!(last, AgentEvent::Error { .. }));
+        assert_eq!(*failure, Failure::Limited);
+    }
+
+    #[test]
+    fn a_warning_doesnt_stand_for_the_limit() {
+        let mut limited_sent = false;
+        let warning = AgentEvent::Limit {
+            limit: AgentLimit {
+                status: LimitStatus::Warning,
+                resets_at: None,
+                window: None,
+                used_pct: Some(95.0),
+            },
+        };
+        assert_eq!(limit_before(&warning, "codex", "", &mut limited_sent), None);
+        assert!(!limited_sent);
+        let ev = error("You\u{2019}ve hit your usage limit.", "");
+        assert!(matches!(
+            limit_before(&ev, "codex", "", &mut limited_sent),
+            Some(AgentEvent::Limit { .. })
+        ));
+        assert!(limited_sent);
+        assert_eq!(limit_before(&ev, "codex", "", &mut limited_sent), None);
+    }
+
+    #[test]
+    fn a_usage_limit_in_stderr_ends_the_run_limited() {
+        let tail = "Error: You\u{2019}ve hit your usage limit. Try again in 3h 5m.";
+        let ev = error("codex exited with a non-zero status", tail);
+        let mut limited_sent = false;
+        let Some(AgentEvent::Limit { limit }) = limit_before(&ev, "codex", tail, &mut limited_sent)
+        else {
+            panic!("no limit");
+        };
+        assert!(limit.resets_at.is_some());
+        let (ev, failure) = classify_failure(ev, "codex", tail);
+        assert_eq!(failure, Failure::Limited);
+        assert_eq!(ev, error("codex exited with a non-zero status", tail));
+    }
+
+    #[test]
+    fn a_gemini_quota_error_ends_the_run_limited() {
+        let (_, failure) =
+            classify_failure(error("exit 1", ""), "gemini", "429 RESOURCE_EXHAUSTED");
+        assert_eq!(failure, Failure::Limited);
+    }
+
+    #[test]
+    fn no_limit_for_an_unknown_agent_an_interrupt_or_a_claude_api_429() {
+        let mut limited_sent = false;
+        let text = "You've hit your session limit";
+        assert_eq!(
+            limit_before(&error(text, ""), "fake", "", &mut limited_sent),
+            None
+        );
+        let interrupt = format!("{INTERRUPT_DIAGNOSTIC} result_type=user {text}");
+        assert_eq!(
+            limit_before(&error(&interrupt, ""), "claude", "", &mut limited_sent),
+            None
+        );
+        let api = r#"API Error: 429 {"type":"error","error":{"type":"rate_limit_error"}}"#;
+        assert_eq!(
+            limit_before(&error(api, ""), "claude", "", &mut limited_sent),
+            None
+        );
+        assert_eq!(
+            classify_failure(error(api, ""), "claude", "").1,
+            Failure::Crash
+        );
+        assert!(!limited_sent);
     }
 }

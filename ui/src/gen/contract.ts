@@ -95,6 +95,11 @@ export type AccountUser = {
 	avatar_url: string | null,
 };
 
+export type AddAgentAccountRequest = {
+	agent: AgentId,
+	label: string,
+};
+
 export type AddProjectRequest = {
 	/**  A host repo (from `list_host_repos`), or … */
 	repo: RepoRef | null,
@@ -102,7 +107,78 @@ export type AddProjectRequest = {
 	path: string | null,
 };
 
+/**
+ *  One account of an agent CLI. Each agent has its default account (the
+ *  CLI's own config); extra ones live in Theodore's data dir.
+ */
+export type AgentAccount = {
+	/**  `default`, or the extra account's own id. */
+	id: string,
+	agent: AgentId,
+	label: string,
+	/**
+	 *  Its config directory (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`, a Gemini key
+	 *  file's folder); the CLI's default one for the default account.
+	 */
+	config_dir: string,
+	/**  The CLI's own config: nothing is overridden for its runs. */
+	default: boolean,
+};
+
+export type AgentAccountRequest = {
+	/**  `AgentAccount::id`; with `agent` for a default account. */
+	id: string,
+	agent: AgentId,
+	/**  Check its sign-in again rather than read the cache. */
+	recheck?: boolean,
+};
+
+/**  One account as Settings → Agents shows it. */
+export type AgentAccountStatus = {
+	account: AgentAccount,
+	/**
+	 *  `null`: unknown (not checked yet, the CLI isn't installed, or the
+	 *  check couldn't tell).
+	 */
+	signed_in: boolean | null,
+	/**  The terminal command that signs it in (extra accounts). */
+	sign_in_command: string | null,
+	limit: AgentLimitRow | null,
+	/**  Runs of this agent start on it while it isn't limited. */
+	preferred: boolean,
+};
+
 export type AgentId = "claude" | "codex" | "gemini";
+
+/**
+ *  What a CLI said about its account's usage limit: Claude Code's
+ *  `rate_limit_event`, Codex's rate-limit snapshot, or a usage-limit error
+ *  text read back into this shape.
+ */
+export type AgentLimit = {
+	status: LimitStatus,
+	/**  When the limit resets (unix ms), when the CLI says. */
+	resets_at?: number | null,
+	/**
+	 *  The window it is about, as the CLI names it (`five_hour`,
+	 *  `seven_day`, `primary`…).
+	 */
+	window?: string | null,
+	/**  How much of the window is used, 0–100 (may pass 100). */
+	used_pct?: number | null,
+};
+
+/**
+ *  The latest usage limit an account reported (`agent_limit` rows, keyed
+ *  `<agent>:<account>`).
+ */
+export type AgentLimitRow = {
+	agent: AgentId,
+	account: string,
+	limit: AgentLimit,
+	/**  When it was reported. */
+	at: number,
+};
 
 /**
  *  One model an agent CLI can run, for the model picker (`agent_models`).
@@ -132,6 +208,11 @@ export type AgentSession = {
 	 *  one from another path can't be resumed.
 	 */
 	cwd: string,
+	/**
+	 *  The agent account it ran on (`AgentAccount::id`); `None`: the
+	 *  default one. A session lives in its account's config dir.
+	 */
+	account?: string | null,
 };
 
 export type AgentStatus = {
@@ -352,7 +433,29 @@ export type ChatMessage = {
 	effort_resolved?: boolean,
 	/**  The mode of the space turn that wrote this reply. */
 	mode?: SpaceMode | null,
+	/**
+	 *  A space message another space's agent sent (`space_send`,
+	 *  docs/spaces.md "Sub-spaces"), not you: which space. `author` stays
+	 *  `Me` (it is a turn's ask, like yours).
+	 */
+	from_space?: FromSpace | null,
+	/**
+	 *  A small system row, not a message (an account switch on a usage
+	 *  limit): `text` says it in words; never part of a prompt.
+	 */
+	notice?: ChatNotice | null,
 };
+
+/**  A small system row in a space's chat (docs/spaces.md "Usage limits"). */
+export type ChatNotice =
+/**
+ *  `from` hit its limit; the conversation goes on with `to`
+ *  ("Claude · personal hit its limit (resets 18:00): continuing on
+ *  Claude · work"). `continued`: an automatic message continued it.
+ */
+{ kind: "account_switch"; from: string; to: string; resets_at: number | null; continued: boolean } |
+/**  `account` hit its limit and nothing else could take over. */
+{ kind: "limit_hit"; account: string; resets_at: number | null };
 
 export type Check = {
 	id: string,
@@ -856,6 +959,10 @@ server_trouble?: boolean } |
 { type: "fleet_ask_dismissed"; ask_id: string } |
 /**  A device that isn't trusted here asked for something. */
 { type: "fleet_trust_needed"; request: FleetTrustNeeded } |
+/**  A request that waits for a person here (Allow / Deny). */
+{ type: "fleet_confirm"; request: FleetConfirm } |
+/**  Answered, or out of time: drop the prompt. */
+{ type: "fleet_confirm_done"; id: string } |
 /**
  *  One line of a space command's output (docs/config.md); the last
  *  lines are kept per space and returned by `space_logs`.
@@ -1053,13 +1160,102 @@ export type FleetAnswerRequest = {
 	answers: string[][],
 };
 
+/**
+ *  Whether this computer lets Claude via cloud (an `mcp` device) edit or
+ *  run without your yes. It never lifts `max_mode`; it only skips the
+ *  prompt.
+ */
+export type FleetAuto =
+/**  Every Edit or Run waits for your yes. */
+"off" |
+/**  Edit (a plan's approval into Edit too) goes through; Run waits. */
+"edit" |
+/**  Edit and Run go through, plan approvals too. */
+"full";
+
+/**
+ *  An auto mode on now on this computer: the notice that stays while it
+ *  lasts.
+ */
+export type FleetAutoOn = {
+	device_id: string,
+	/**  The name pinned here. */
+	device_name: string,
+	auto: FleetAuto,
+	until_ms: number | null,
+};
+
+/**
+ *  `fleet_set_auto`: the auto mode for `mcp` device `device_id`, on this
+ *  computer (`host_device` none) or on another one you trust (sent there as
+ *  a signed request; it applies it if it trusts this device).
+ */
+export type FleetAutoRequest = {
+	device_id: string,
+	auto: FleetAuto,
+	/**  Unix ms it ends; `None`: until turned off. Ignored for `off`. */
+	until_ms?: number | null,
+	host_device?: string | null,
+};
+
+/**
+ *  A request from a device whose key the cloud holds (kind `mcp`: Claude
+ *  via the cloud) that would edit or run here: it waits for a person on
+ *  this device (docs/fleet.md "Trust"). Allow runs it; Deny, or no answer
+ *  by `expires_at_ms`, refuses it with `fleet.denied`.
+ */
+export type FleetConfirm = {
+	/**  The request's id: what `fleet_confirm` answers. */
+	id: string,
+	device_id: string,
+	/**  The name pinned here for the device. */
+	device_name: string,
+	action: FleetConfirmAction,
+	mode: SpaceMode,
+	/**  `start`: the project it starts in. */
+	project_name: string | null,
+	/**  `send` / `approve_plan`: the space, as people know it here. */
+	space_name: string | null,
+	/**  `send` / `approve_plan`: its local id, to open it. */
+	local_space: string | null,
+	/**  The goal or the message, cut to 500 characters. */
+	text: string,
+	/**  Unix ms: refused unless answered before. */
+	expires_at_ms: number,
+	/**
+	 *  Waiting on another computer, which sends its approvals here
+	 *  (`None`: on this one). Allow or Deny goes there as a signed request.
+	 */
+	host_device?: string | null,
+	/**  That computer's name as pinned here. */
+	host_name?: string | null,
+};
+
+/**  What a request waiting for a person here would do. */
+export type FleetConfirmAction =
+/**  Start a space in `project_name`. */
+"start" |
+/**  Send a message to `space_name`, as its next turn. */
+"send" |
+/**  Approve the plan in `space_name` (its next turn edits). */
+"approve_plan" |
+/**  Merge a sub-space (`text`: its title) into `space_name`. */
+"merge";
+
+export type FleetConfirmAnswer = {
+	id: string,
+	allow: boolean,
+};
+
 export type FleetDevice = {
 	device_id: string,
 	name: string,
 	os: FleetOs,
 	/**
 	 *  `desktop` or `daemon` (computers: they run spaces), `mobile` or `web`
-	 *  (the phone and web app: clients only, never a space's target).
+	 *  (the phone and web app: clients only, never a space's target), `mcp`
+	 *  (Claude via the cloud: a client whose key the cloud holds; an Edit or
+	 *  Run from it waits for a person here).
 	 */
 	kind: string,
 	online: boolean,
@@ -1099,9 +1295,35 @@ export type FleetDevice = {
 	 *  picked and its own defaults run.
 	 */
 	agents?: FleetAgent[],
+	/**
+	 *  `mcp` devices pinned here: this computer's auto mode for it
+	 *  (docs/fleet.md "Auto mode"); `off` for every other device, and when
+	 *  `auto_until_ms` has passed.
+	 */
+	auto?: FleetAuto,
+	/**  Unix ms the auto mode ends; `None`: until turned off (or off). */
+	auto_until_ms?: number | null,
+	/**
+	 *  Another computer: its auto mode for each Claude via cloud device it
+	 *  pins, as it lists it (empty for others, and for older computers).
+	 *  Changed with `fleet_set_auto { host_device }`.
+	 */
+	mcp_auto?: FleetMcpAuto[],
 };
 
-export type FleetLineKind = "started" | "status" | "turn" | "tool" | "reply" | "ended" | "question" | "gap";
+export type FleetLineKind = "started" | "status" | "turn" | "tool" | "reply" | "ended" | "question" | "gap" |
+/**  A sub-space the space started on its host: `<id> · <title> · <status>`. */
+"sub_space";
+
+/**  A computer's auto mode for one Claude via cloud device, as it lists it. */
+export type FleetMcpAuto = {
+	/**  The `mcp` device. */
+	device_id: string,
+	/**  Its name as the cloud lists it ("Claude (MCP)"), or its id. */
+	name: string,
+	auto: FleetAuto,
+	until_ms: number | null,
+};
 
 export type FleetOs = "macos" | "linux" | "windows" | "ios" | "android" | "other";
 
@@ -1216,6 +1438,8 @@ export type FleetStatus = {
 	devices: FleetDevice[],
 	/**  Why it isn't connected, when enabled and not connected. */
 	error: string | null,
+	/**  Auto modes on now on this computer (docs/fleet.md "Auto mode"). */
+	autos?: FleetAutoOn[],
 };
 
 /**  A request from `device_id` was refused because it isn't trusted here. */
@@ -1224,6 +1448,11 @@ export type FleetTrustNeeded = {
 	device_name: string,
 	fingerprint: string,
 	public_key: string,
+	/**
+	 *  `FleetDevice::kind` as the cloud lists it; empty when it doesn't
+	 *  list the device.
+	 */
+	kind?: string,
 };
 
 /**
@@ -1239,6 +1468,13 @@ export type FleetTrustRequest = {
 	 *  another key for the device.
 	 */
 	public_key?: string | null,
+};
+
+/**  The space whose agent sent a message, as it was named then. */
+export type FromSpace = {
+	/**  `Space::id`, local. */
+	space: string,
+	title: string,
 };
 
 export type GetBlobRequest = {
@@ -1437,6 +1673,16 @@ export type IssueTarget = {
 	 */
 	retry?: boolean,
 };
+
+/**
+ *  How close an agent account is to its usage limit (docs/plan.md "Agent
+ *  accounts and limits").
+ */
+export type LimitStatus = "ok" |
+/**  Past a warning threshold: still runs. */
+"warning" |
+/**  Refused until `resets_at`. */
+"limited";
 
 export type LineKind = "ctx" | "add" | "del";
 
@@ -2172,7 +2418,14 @@ export type ShipKind =
 /**  Merged into a local folder's checked-out branch. */
 "merged_locally" |
 /**  Written as a branch in a local folder. */
-"branch";
+"branch" |
+/**
+ *  A sub-space's change brought into its parent's worktree by the
+ *  parent's agent (`space_merge`, docs/spaces.md "Sub-spaces"): the
+ *  parent is `Space::parent`, `branch` its branch, and `sha` = `head`
+ *  the checkpoint merged, so a later merge brings only the turns since.
+ */
+"merged_into_parent";
 
 export type ShipSpaceRequest = {
 	space: string,
@@ -2304,6 +2557,11 @@ export type Space = {
 	 *  fleet; local-only parts (worktree, diff, terminal) are the host's.
 	 */
 	remote?: SpaceRemote | null,
+	/**
+	 *  Set when another space's agent started this one on this device
+	 *  (docs/spaces.md "Sub-spaces"): shown under that space.
+	 */
+	parent?: SpaceParent | null,
 	created_at: number,
 	updated_at: number,
 	/**
@@ -2397,6 +2655,11 @@ export type Space = {
 	 *  words in it ends this: it becomes the goal and names the space.
 	 */
 	blank?: boolean,
+	/**
+	 *  Waiting for usage limits to reset (docs/spaces.md "Usage limits"):
+	 *  continues on its own at `until`, unless cancelled.
+	 */
+	paused?: SpacePause | null,
 };
 
 export type SpaceAnswerItem = {
@@ -2536,6 +2799,35 @@ export type SpaceMode =
  */
 "plan";
 
+/**  The space whose agent started this one. */
+export type SpaceParent = {
+	/**  `Space::id` of the parent (local). */
+	space: string,
+	/**
+	 *  1 for a child of a top-level space, 2 for its child; at most
+	 *  `spaces.max_depth`.
+	 */
+	depth: number,
+};
+
+/**
+ *  A space waiting for usage limits to reset (docs/spaces.md "Usage
+ *  limits"): it continues on its own at `until`, unless cancelled.
+ */
+export type SpacePause = {
+	/**
+	 *  The earliest reset of the accounts that could continue; `null` when
+	 *  none said: only "Continue now" continues it.
+	 */
+	until: number | null,
+	agent: AgentId,
+	since: number,
+};
+
+export type SpacePauseRequest = {
+	space: string,
+};
+
 /**  The space's long-running `run` command. */
 export type SpaceProcess = {
 	status: ProcessStatus,
@@ -2596,11 +2888,7 @@ export type SpaceQueuedRequest = {
 	action: QueuedAction,
 };
 
-/**
- *  One agent turn of a space: the messages it answered and the checkpoint
- *  it moved the space from and to.
- *  Where a mirrored space runs.
- */
+/**  Where a mirrored space runs. */
 export type SpaceRemote = {
 	/**  The fleet id (`rs_…`). */
 	space: string,
@@ -2767,6 +3055,10 @@ export type SpaceTrustRequest = {
 	hash: string,
 };
 
+/**
+ *  One agent turn of a space: the messages it answered and the checkpoint
+ *  it moved the space from and to.
+ */
 export type SpaceTurn = {
 	/**
 	 *  The `chat_message` id of your message that started it; the reply's
