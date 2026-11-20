@@ -165,6 +165,7 @@ mod tests {
             // calls, not one-shot utility ones) sees it.
             stream_text: true,
             fork_session: false,
+            account: None,
         }
     }
 

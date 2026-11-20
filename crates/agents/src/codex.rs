@@ -519,6 +519,7 @@ mod run_mode_tests {
             resume: None,
             stream_text: false,
             fork_session: false,
+            account: None,
         };
         let args = build_args(&req, &Default::default());
         assert!(args.windows(2).any(|w| w == ["-s", "workspace-write"]));
@@ -550,6 +551,7 @@ mod model_tests {
             resume: None,
             stream_text: false,
             fork_session: false,
+            account: None,
         }
     }
 

@@ -481,6 +481,7 @@ async fn drive_skill_run(
             resume: None,
             stream_text: true,
             fork_session: false,
+            account: None,
         };
         let _guard = ToolsGuard { core, mcp };
         let mut live = LiveRun::new(run_id.as_str(), agent).with_thinking();
@@ -878,6 +879,7 @@ async fn drive_ask(
         resume: None,
         stream_text: true,
         fork_session: false,
+        account: None,
     };
     let _guard = ToolsGuard { core, mcp };
     let mut live = LiveRun::new(run_id.as_str(), agent);

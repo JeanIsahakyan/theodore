@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use theodore_domain::{AgentId, Usage};
+use theodore_domain::{AgentId, AgentLimit, Usage};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
@@ -117,6 +117,39 @@ pub struct AgentRequest {
     /// fixes) and for grouping runs that stream groups.
     #[serde(default)]
     pub stream_text: bool,
+    /// Which of the agent's accounts runs it (docs/plan.md "Agent accounts
+    /// and limits"). `None`: not picked by the caller — the app's account
+    /// layer picks one, and a runner treats it as the CLI's default.
+    #[serde(default)]
+    pub account: Option<AgentAccountRef>,
+}
+
+/// One account of an agent CLI, as a run needs it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentAccountRef {
+    /// `default`, or the account's own id.
+    pub id: String,
+    /// Its config directory (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`, a Gemini
+    /// key file's directory). `None`: the CLI's default account, run with
+    /// no override at all (setting `CLAUDE_CONFIG_DIR` to `~/.claude` would
+    /// change where Claude Code keeps its credentials).
+    pub dir: Option<PathBuf>,
+}
+
+/// The id of each agent's own account: the CLI's default config.
+pub const DEFAULT_ACCOUNT: &str = "default";
+
+impl AgentAccountRef {
+    pub fn default_account() -> Self {
+        Self {
+            id: DEFAULT_ACCOUNT.to_string(),
+            dir: None,
+        }
+    }
+
+    pub fn is_default(&self) -> bool {
+        self.dir.is_none()
+    }
 }
 
 /// One file the agent should read, outside `cwd`.
@@ -293,6 +326,12 @@ pub enum AgentEvent {
     /// it. May come more than once; the last one counts.
     Session {
         id: String,
+    },
+    /// What the CLI said about its account's usage limit: may come any
+    /// time, more than once; the last one counts. A run that ends because
+    /// of the limit sends one with `status: limited` before its `Error`.
+    Limit {
+        limit: AgentLimit,
     },
     Done {
         final_text: String,
@@ -584,6 +623,33 @@ pub trait AgentPort: Send + Sync {
     /// `None`: unknown.
     fn known_sign_in(&self, _agent: AgentId) -> Option<bool> {
         None
+    }
+    /// Whether `account` of `agent` is signed in, checked with that
+    /// account's env (cached like `detect`'s; `recheck` asks again).
+    /// `None`: unknown.
+    async fn account_sign_in(
+        &self,
+        agent: AgentId,
+        account: &AgentAccountRef,
+        _recheck: bool,
+    ) -> Option<bool> {
+        if account.is_default() {
+            return self.known_sign_in(agent);
+        }
+        None
+    }
+    /// What's known of `account`'s sign-in without checking.
+    fn known_account_sign_in(&self, agent: AgentId, account: &AgentAccountRef) -> Option<bool> {
+        if account.is_default() {
+            return self.known_sign_in(agent);
+        }
+        None
+    }
+    /// [`models`](Self::models) as `account` sees them (Claude Code's
+    /// catalog lives in its config dir, Codex lists with its `CODEX_HOME`).
+    async fn models_in(&self, agent: AgentId, account: Option<&AgentAccountRef>) -> Vec<ModelInfo> {
+        let _ = account;
+        self.models(agent).await
     }
 }
 

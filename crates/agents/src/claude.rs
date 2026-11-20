@@ -1300,6 +1300,7 @@ mod read_only_tests {
             resume: None,
             stream_text: false,
             fork_session: false,
+            account: None,
         };
         let args = build_args(&req, &Default::default(), None);
         let i = args
@@ -1336,6 +1337,7 @@ mod mcp_config_tests {
             resume: None,
             stream_text: false,
             fork_session: false,
+            account: None,
         }
     }
 
@@ -1527,6 +1529,7 @@ mod run_mode_tests {
             resume: None,
             stream_text: false,
             fork_session: false,
+            account: None,
         };
         let args = build_args(&req, &Default::default(), None);
         assert!(
@@ -1555,6 +1558,7 @@ mod run_mode_tests {
             resume: None,
             stream_text: false,
             fork_session: false,
+            account: None,
         };
         let args = build_args(&req, &Default::default(), None);
         assert!(!args.iter().any(|a| a == "--strict-mcp-config"));
@@ -1590,6 +1594,7 @@ mod run_mode_tests {
             resume: None,
             stream_text: false,
             fork_session: false,
+            account: None,
         };
         let exe = Path::new("/Applications/Theodore.app/Contents/MacOS/theodore");
 
@@ -1671,6 +1676,7 @@ mod model_and_effort_tests {
             resume: None,
             stream_text: false,
             fork_session: false,
+            account: None,
         }
     }
 

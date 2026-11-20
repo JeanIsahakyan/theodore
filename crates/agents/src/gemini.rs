@@ -513,6 +513,7 @@ mod tests {
             resume: None,
             stream_text: false,
             fork_session: false,
+            account: None,
         }
     }
 }
@@ -539,6 +540,7 @@ mod run_mode_tests {
             resume: None,
             stream_text: false,
             fork_session: false,
+            account: None,
         };
         let args = build_args(&req, &Default::default());
         assert!(args.windows(2).any(|w| w == ["--approval-mode", "yolo"]));
@@ -568,6 +570,7 @@ mod model_tests {
             resume: None,
             stream_text: false,
             fork_session: false,
+            account: None,
         };
         let args = build_args(&req, &Default::default());
         assert!(

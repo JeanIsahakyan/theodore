@@ -646,6 +646,7 @@ impl Core {
             attachments: Vec::new(),
             resume: None,
             fork_session: false,
+            account: None,
             // Off the UI: nothing shows in either space while it runs.
             stream_text: false,
         };
@@ -673,6 +674,7 @@ impl Core {
                 model: model.clone(),
                 resume: Some(session.id.clone()),
                 fork_session: true,
+                account: None,
                 ..base.clone()
             };
             match tokio::time::timeout_at(

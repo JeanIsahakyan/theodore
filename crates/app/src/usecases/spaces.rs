@@ -1464,6 +1464,7 @@ async fn stream_run(
                     | AgentEvent::ToolResult { .. }
                     | AgentEvent::ToolDetail { .. }
                     | AgentEvent::Stalled
+                    | AgentEvent::Limit { .. }
                     | AgentEvent::Usage { .. } => {}
                     // Handled above.
                     AgentEvent::BackgroundTasks { .. }
@@ -1680,6 +1681,7 @@ async fn drive_turn(core: &Core, turn: Turn) {
         resume,
         stream_text: true,
         fork_session: false,
+        account: None,
     };
     let started = std::time::Instant::now();
     tracing::info!(

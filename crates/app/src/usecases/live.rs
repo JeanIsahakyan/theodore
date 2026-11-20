@@ -124,6 +124,7 @@ impl LiveRun {
             | AgentEvent::Lingering
             | AgentEvent::FollowUp
             | AgentEvent::TasksCapped
+            | AgentEvent::Limit { .. }
             | AgentEvent::ControlResponse { .. }
             | AgentEvent::Done { .. }
             | AgentEvent::Error { .. } => vec![],

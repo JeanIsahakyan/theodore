@@ -22,6 +22,7 @@ pub mod edit_guard;
 pub mod env;
 pub mod exit_output;
 pub mod gemini;
+pub mod limits;
 pub mod models;
 pub mod process;
 pub mod pty;
