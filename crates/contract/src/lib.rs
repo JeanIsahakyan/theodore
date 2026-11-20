@@ -51,6 +51,8 @@ mod telemetry;
 pub use telemetry::*;
 mod terminal;
 pub use terminal::*;
+mod agent_accounts;
+pub use agent_accounts::*;
 
 /// Model names used in transactions and sync frames.
 pub mod models {
@@ -76,6 +78,9 @@ pub mod models {
     /// "My reports": an issue "Report a problem" opened, keyed
     /// `owner/name#number` (`TrackedReport`).
     pub const REPORT: &str = "report";
+    /// The latest usage limit of each agent account, keyed
+    /// `<agent>:<account>` (`AgentLimitRow`).
+    pub const AGENT_LIMIT: &str = "agent_limit";
     pub const ALL: &[&str] = &[
         PR,
         PR_DETAIL,
@@ -94,6 +99,7 @@ pub mod models {
         PROJECT,
         SPACE,
         REPORT,
+        AGENT_LIMIT,
     ];
 }
 
@@ -1038,6 +1044,10 @@ pub struct ChatMessage {
     /// `Me` (it is a turn's ask, like yours).
     #[serde(default)]
     pub from_space: Option<FromSpace>,
+    /// A small system row, not a message (an account switch on a usage
+    /// limit): `text` says it in words; never part of a prompt.
+    #[serde(default)]
+    pub notice: Option<ChatNotice>,
 }
 
 /// The space whose agent sent a message, as it was named then.
@@ -1209,6 +1219,14 @@ pub fn types() -> specta::Types {
         .register::<SpaceRevertFrom>()
         .register::<RevertSpaceFileRequest>()
         .register::<AgentSession>()
+        .register::<AgentAccount>()
+        .register::<AgentLimitRow>()
+        .register::<AgentAccountStatus>()
+        .register::<AddAgentAccountRequest>()
+        .register::<AgentAccountRequest>()
+        .register::<ChatNotice>()
+        .register::<SpacePause>()
+        .register::<SpacePauseRequest>()
         .register::<SpaceFeedback>()
         .register::<SpaceFeedbackRequest>()
         .register::<QueuedSend>()

@@ -1017,7 +1017,7 @@ spawn (cwd = worktree) ─▶ stream ─▶ Done
    └─ exit ≠ 0 ─▶ failed with stderr tail
 ```
 
-- Credentials: each CLI uses its own login. Core does not read or copy them.
+- Credentials: each CLI uses its own login. Core does not read or copy them, except an extra Gemini account's API key file, which it passes to that account's runs (§8.6).
 - Reading code: agents use their own read/grep tools in the worktree; MCP adds
   only what the worktree cannot give (PR context, groups, base files, findings).
 - Env: Theodore's own secrets are removed from the child env; the agent's own
@@ -1091,6 +1091,10 @@ Which agent does what is a setting, layered user → repo:
 | `agents.fix` | `claude` | one agent; edits only in the PR worktree |
 | `agents.<id>.enabled`, `.path`, `.model`, `.effort` | detected on onboarding; model and effort unset = the CLI's own | CLI path, model and effort override. Effort: Claude `--effort`, Codex `-c model_reasoning_effort="…"`, Gemini none. The picker shows no "default": an agent without a model or effort set gets, and keeps, the one shown. Its models (`agent_models`): Claude Code's catalog cache (else its aliases), Codex's from `codex debug models` (listed ones, by priority; read once per run of the app), none for Gemini |
 | `agents.user_mcp` | `true` | user scope only: Claude runs may use the user's own MCP servers (§8.2) |
+| `agents.accounts` | `[]` | user scope, written by the core: the extra agent accounts (§8.6) |
+| `agents.<id>.account` | `default` | user scope: the account runs of that agent start on (§8.6) |
+| `agents.fallback_agents` | `[]` | user scope: other agents a space continues on, in order, when every account of its agent is limited (§8.6) |
+| `agents.auto_continue` | `true` | user scope: a turn cut off by a usage limit goes on by itself, on another account or after the reset (§8.6) |
 | `spaces.sub_spaces` | `true` | user scope: a space's agent may start, steer and wait for sub-spaces, and message or answer any other space here (docs/spaces.md "Sub-spaces"); listing, reading and asking other spaces stay on |
 | `spaces.ask_timeout_secs` | `180` | user scope: how long a `space_ask` waits for the other space's answer |
 | `spaces.max_depth` | `2` | user scope: how deep sub-spaces nest (a top-level space is 0) |
@@ -1098,6 +1102,79 @@ Which agent does what is a setting, layered user → repo:
 
 `theodore group --agent <id>` overrides the setting for evals. M1 ships the
 Claude runner; the others follow in M4 behind the same runner trait.
+
+### 8.6 Agent accounts and limits
+
+Each agent CLI can have several accounts: its **default** account (the CLI's
+own config, nothing overridden) and any number of extra ones, each its own
+config directory under `<data>/agent-accounts/<id>`.
+
+| Agent | An extra account is | Sign it in (the Settings row shows the command) | Verified |
+| --- | --- | --- | --- |
+| Claude Code | `CLAUDE_CONFIG_DIR=<dir>`: credentials, settings, sessions under `<dir>`; its keychain item is `Claude Code-credentials-<sha256(dir)[..8]>` | `CLAUDE_CONFIG_DIR=<dir> claude auth login` | 2.1.329 binary (`claude auth --help`, the config-dir and keychain code) |
+| Codex | `CODEX_HOME=<dir>` | `CODEX_HOME=<dir> codex login` | 0.169.0 `codex exec --help` (`$CODEX_HOME/<name>.config.toml`) |
+| Gemini CLI | an API key in `<dir>/.env` (`GEMINI_API_KEY=…`), read by Theodore and passed as `GEMINI_API_KEY` | `echo 'GEMINI_API_KEY=<key>' > <dir>/.env` | not installed here: no config-dir switch is known, so only API-key accounts |
+
+- The default account sets no variable: `CLAUDE_CONFIG_DIR=~/.claude` would
+  move Claude Code's keychain item and sign it out. An extra account's run
+  also drops the parent env's auth variables (`ANTHROPIC_API_KEY`,
+  `CLAUDE_CODE_OAUTH_TOKEN`, `OPENAI_API_KEY`, `GEMINI_API_KEY`…,
+  `CLAUDE_SECURESTORAGE_CONFIG_DIR`), which the CLI would prefer over the
+  account's own sign-in. The account's variable goes last, over a space's
+  `env`.
+- Sign-in (§8.1) and the model list are per account: `claude auth status`
+  and `codex login status` run with the account's env; Claude's catalog is
+  read from `<dir>/cache/model-catalog`; `codex debug models` runs with its
+  `CODEX_HOME`. The pickers list the preferred account's models.
+- An agent counts as signed in (pickers, the fleet) when any of its accounts
+  is. The fleet doesn't list accounts.
+
+**Limits.** Every CLI's limit signal becomes one `AgentLimit {status: ok |
+warning | limited, resets_at?, window?, used_pct?}`:
+
+```
+Claude Code  rate_limit_event.rate_limit_info ─┐  status allowed │ allowed_warning │ rejected,
+             {status, resetsAt, rateLimitType, │  resetsAt (unix s), utilization (0–1),
+              utilization, unifiedWindows…}    │  unifiedWindows.{five_hour,seven_day…}
+Codex        rate_limits {primary, secondary}  ├─▶ AgentLimit ─▶ agent_limit row <agent>:<account>
+             (if an event carries one)         │                 + in memory (LimitBook)
+any CLI      an error that says the account    │
+             ran out ("You've hit your session ┘
+             limit · resets 6pm", "You've hit your usage limit… Try again at
+             Nov 20, 2026 6:05 PM.", RESOURCE_EXHAUSTED / 429, "Claude AI
+             usage limit reached|<unix s>") ─▶ limited, the reset parsed when given
+```
+
+- An error read as a limit sends a `Limit` before its `Error`, logs
+  `agent.limited` (info), and keeps the CLI's own message.
+- A limited account stands until `resets_at`; one without a reset time for an
+  hour after it was seen.
+- Settings → Agents lists each account: its sign-in, its limit ("ok", "near
+  limit", "limited until 18:00"), which one is preferred, and for extra
+  accounts the sign-in command with "Check again" and Remove. Commands:
+  `agent_accounts`, `add_agent_account` (makes the dir, 0700),
+  `check_agent_account` (`recheck`: asks again), `remove_agent_account`
+  (forgets it; its dir and the sign-in in it stay).
+
+**Which account a run takes.**
+
+```
+space turn   preferred (agents.<id>.account) ─▶ the space's own (its session's)
+             ─▶ the other accounts as listed; skip signed out, skip limited
+             none left ─▶ the preferred one all the same
+other runs   the same order, read off the store (AgentDefaults); their Limit
+             events are recorded too (AgentPort::limits_seen)
+```
+
+A space whose session ran on another account than the one picked moves the
+session over: Claude Code's `<from>/projects/<encoded cwd>/<session>.jsonl`
+(and its `<session>/` folder) is copied into the new config dir, then
+`--resume`d; the encoded cwd is the path with every non-alphanumeric
+character as `-` (2.1.329's code), and the file is also found by scanning
+`projects/*/`. Codex keeps a thread index beside its rollouts, so a Codex
+session isn't copied: it replays the transcript, as does any copy that
+fails. What a turn cut off by a limit does next is docs/spaces.md "Usage
+limits".
 
 ---
 

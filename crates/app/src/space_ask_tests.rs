@@ -617,6 +617,7 @@ fn a_replayed_transcript_names_the_sending_space() {
         effort_resolved: false,
         mode: None,
         from_space: from,
+        notice: None,
     };
     let from = FromSpace {
         space: "a1".into(),

@@ -62,7 +62,10 @@ export const SpaceLog = observer(function SpaceLog({
   // Replies are named only when more than one agent wrote them, the live
   // one included.
   const tagged = mixedAgents([
-    ...sent.map((m) => (m.author.kind === 'agent' ? m.author.agent : null)),
+    // A notice row is the app's, not a reply.
+    ...sent.map((m) =>
+      m.author.kind === 'agent' && !m.notice ? m.author.agent : null,
+    ),
     live
       ? run
         ? space.agent

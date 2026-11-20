@@ -327,6 +327,7 @@ async fn drive_fix_run(
         resume: None,
         stream_text: true,
         fork_session: false,
+        account: None,
     };
     let _guard = ToolsGuard { core, mcp };
 

@@ -1584,6 +1584,7 @@ fn a_space_from_before_these_fields_still_loads() {
     let mut row = serde_json::to_value(Space {
         effort: Some("high".into()),
         blank: true,
+        paused: None,
         ..sample_space()
     })
     .unwrap();

@@ -1003,6 +1003,7 @@ gone?  ─▶ "No conversation found" / "no rollout found"
 | --- | --- |
 | same agent, same worktree | yes; the model and mode may change (flags are per run) |
 | another agent | no: new session from the replayed transcript (last 12 messages) |
+| same agent, another account | Claude: yes, its session file is copied to that account first; Codex, or a copy that fails: no, replayed ("Usage limits") |
 | Gemini | never: it has no resume, every turn replays the transcript |
 | after Undo or Back to here | no: the session holds the undone turns; the replay leaves them out |
 | after unarchive | yes (the worktree path is the same); no if the checkpoints were gone |
@@ -1033,6 +1034,51 @@ history > 12 messages, can't resume
 ```
 
 A short space (≤ 12 messages total) never asks for one.
+
+### Usage limits
+
+A turn runs on one of its agent's accounts (docs/plan.md §8.6): the
+preferred one, else the space's own, else the next one signed in and not
+limited. The session records its account (`agent_session.account`). A turn
+on another account than the session's moves the session first (Claude Code:
+its file is copied, then `--resume`d), else replays the transcript.
+
+When a turn hits its account's usage limit (a `Limit` with status
+`limited`, from the CLI's own event or its error text), the account is marked
+limited until its reset and the space goes on:
+
+```
+turn on Claude · personal ─▶ Limit{limited, resets 18:00} + Error
+  │   reply kept, "failed: You've hit your session limit · resets 6pm"
+  │
+  ├─ another Claude account free? ──yes──▶ row "Claude · personal hit its limit
+  │                                         (resets 18:00): continuing on Claude · work"
+  │                                         └▶ "Continue from where you stopped (the
+  │                                             previous account hit its usage limit)."
+  │                                             on work, same session (copied) or replay
+  ├─ agents.fallback_agents, in order: an agent with a free account?
+  │                                  ──yes──▶ same row and message, on that agent (replay)
+  └─ none ──▶ row "Claude · personal hit its limit (resets 18:00)"
+              Space::paused {until: earliest reset of those accounts}
+                ├─ until passes ──▶ the continue message, on whichever account is free
+                ├─ Continue now ──▶ the same, at once (on the preferred one if none is free)
+                ├─ Cancel ────────▶ paused cleared; queued messages held for you
+                └─ you send ──────▶ pause cleared; that turn picks its account as usual
+```
+
+| Row | Where | Says |
+| --- | --- | --- |
+| switch | chat, a small system row (`ChatMessage::notice`, never in a prompt) | "Claude · personal hit its limit (resets 18:00): continuing on Claude · work"; with `agents.auto_continue` off: "…: the next turn runs on Claude · work" |
+| limit hit | chat, same kind of row | "Claude · work hit its limit (resets 18:00)" |
+| paused | above the composer, while `Space::paused` is set | "Paused: limits reset at 18:00 · continues automatically" · Continue now / Cancel; no reset known: "Paused: usage limits reached" |
+
+- `agents.auto_continue` (default on): off, nothing is sent by itself: the
+  row says which account the next turn takes, and queued messages are held.
+- The pause is stored on the space; a 30-second tick (and one at start) by
+  the core's clock continues the ones whose time came, so a pause survives a
+  restart.
+- While the switch or pause is decided, queued messages stay queued; they
+  go after the continued turn.
 
 ### Background tasks
 
@@ -1789,6 +1835,8 @@ downloaded to this Mac yet".
 | `space_send_now` | into the running Claude turn when it can take it (§8 "Send now"), else as `space_send` |
 | `space_queued` | `send` · `cancel` · `edit` one queued message |
 | `space_stop` | cancels the running turn; the queue is held |
+| `space_pause_continue` | "Continue now" on a space paused for usage limits: the pause ends, the continue message goes out ("Usage limits") |
+| `space_pause_cancel` | "Cancel" on that pause: nothing continues by itself; the queue is held |
 | `save_attachment` | stores a file (≤ 25 MB) for a message; `attachment_data` reads it back as a `data:` URL |
 | `space_skills` | skills `/<id>` can run: `~/.claude/skills` plus the worktree's `.claude/skills`, no built-ins |
 | `space_review` | opens (or refreshes) the space's branch review; `group: true` also groups it |

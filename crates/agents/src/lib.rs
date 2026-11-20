@@ -14,6 +14,7 @@
 //! native HTTP (`httpUrl`), not stdio. If a future CLI only speaks stdio MCP,
 //! the bridge becomes necessary and is a separate slice.
 
+pub mod accounts;
 pub mod claude;
 pub mod codex;
 pub mod config;
@@ -22,6 +23,7 @@ pub mod edit_guard;
 pub mod env;
 pub mod exit_output;
 pub mod gemini;
+pub mod limits;
 pub mod models;
 pub mod process;
 pub mod pty;
@@ -32,7 +34,7 @@ pub mod signals;
 use async_trait::async_trait;
 use theodore_domain::AgentId;
 use theodore_ports::agent::{
-    AgentError, AgentInfo, AgentPort, AgentRequest, AgentRun, ModelInfo, Steer,
+    AgentAccountRef, AgentError, AgentInfo, AgentPort, AgentRequest, AgentRun, ModelInfo, Steer,
 };
 
 pub use config::{AgentBinaryConfig, AgentCliConfig};
@@ -62,7 +64,9 @@ pub struct AgentCli {
     versions: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<AgentId, String>>>,
     /// `codex debug models`: a success for the process, a failure (not
     /// installed, or the listing broke) for `CODEX_RETRY_AFTER`.
-    codex_models: std::sync::Arc<tokio::sync::Mutex<CodexModels>>,
+    /// Per account: the default one and each extra `CODEX_HOME`.
+    codex_models:
+        std::sync::Arc<tokio::sync::Mutex<std::collections::HashMap<String, CodexModels>>>,
     /// Each CLI's sign-in, as last checked or as a run found it.
     sign_in: std::sync::Arc<std::sync::Mutex<SignInCache>>,
 }
@@ -74,14 +78,33 @@ const SIGN_IN_TTL: std::time::Duration = std::time::Duration::from_secs(10 * 60)
 /// How long "couldn't tell" stands before asking again.
 const SIGN_IN_UNKNOWN_TTL: std::time::Duration = std::time::Duration::from_secs(60);
 
-/// Each agent's sign-in and when it was learned.
+/// One account of one agent: the default one, or an extra account's id.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct SignInKey(AgentId, String);
+
+impl From<AgentId> for SignInKey {
+    fn from(id: AgentId) -> Self {
+        SignInKey(id, theodore_ports::DEFAULT_ACCOUNT.to_string())
+    }
+}
+
+impl SignInKey {
+    fn of(id: AgentId, account: Option<&AgentAccountRef>) -> Self {
+        match account {
+            Some(a) if !a.is_default() => SignInKey(id, a.id.clone()),
+            _ => id.into(),
+        }
+    }
+}
+
+/// Each account's sign-in and when it was learned.
 #[derive(Debug, Default)]
-struct SignInCache(std::collections::HashMap<AgentId, (std::time::Instant, Option<bool>)>);
+struct SignInCache(std::collections::HashMap<SignInKey, (std::time::Instant, Option<bool>)>);
 
 impl SignInCache {
     /// The known answer for `id` if it still stands at `now`.
-    fn fresh(&self, id: AgentId, now: std::time::Instant) -> Option<Option<bool>> {
-        let (at, known) = self.0.get(&id)?;
+    fn fresh(&self, id: impl Into<SignInKey>, now: std::time::Instant) -> Option<Option<bool>> {
+        let (at, known) = self.0.get(&id.into())?;
         let ttl = if known.is_some() {
             SIGN_IN_TTL
         } else {
@@ -90,12 +113,16 @@ impl SignInCache {
         (now.duration_since(*at) < ttl).then_some(*known)
     }
 
-    fn known(&self, id: AgentId) -> Option<bool> {
-        self.0.get(&id).and_then(|(_, k)| *k)
+    fn known(&self, id: impl Into<SignInKey>) -> Option<bool> {
+        self.0.get(&id.into()).and_then(|(_, k)| *k)
     }
 
-    fn set(&mut self, id: AgentId, now: std::time::Instant, known: Option<bool>) {
-        self.0.insert(id, (now, known));
+    fn set(&mut self, id: impl Into<SignInKey>, now: std::time::Instant, known: Option<bool>) {
+        self.0.insert(id.into(), (now, known));
+    }
+
+    fn forget(&mut self, id: impl Into<SignInKey>) {
+        self.0.remove(&id.into());
     }
 }
 
@@ -229,35 +256,59 @@ impl AgentCli {
     /// `id`'s sign-in: the cached answer while it stands, else checked now
     /// (`sign_in::check`, with a run's env).
     async fn signed_in(&self, id: AgentId, program: &std::path::Path) -> Option<bool> {
+        self.account_signed_in(id, None, program).await
+    }
+
+    /// `signed_in` for one account: checked with the env its runs get.
+    /// Gemini's extra accounts are a key file, so that file says.
+    async fn account_signed_in(
+        &self,
+        id: AgentId,
+        account: Option<&AgentAccountRef>,
+        program: &std::path::Path,
+    ) -> Option<bool> {
+        let key = SignInKey::of(id, account);
         let now = std::time::Instant::now();
         if let Some(known) = self
             .sign_in
             .lock()
             .unwrap_or_else(|p| p.into_inner())
-            .fresh(id, now)
+            .fresh(key.clone(), now)
         {
             return known;
         }
-        let home = dirs::home_dir();
-        let known = sign_in::check(id, program, &env::filtered_env(), home.as_deref()).await;
+        let known = match accounts::extra_dir(account) {
+            Some(dir) if id == AgentId::Gemini => Some(!accounts::gemini_keys(dir).is_empty()),
+            _ => {
+                let mut run_env = env::filtered_env();
+                accounts::apply_env(id, account, &mut run_env);
+                let home = dirs::home_dir();
+                sign_in::check(id, program, &run_env, home.as_deref()).await
+            }
+        };
         if known == Some(false) {
-            tracing::info!(agent = id.as_str(), "agent isn't signed in");
+            tracing::info!(agent = id.as_str(), account = %key.1, "agent isn't signed in");
         }
         self.sign_in.lock().unwrap_or_else(|p| p.into_inner()).set(
-            id,
+            key,
             std::time::Instant::now(),
             known,
         );
         known
     }
 
-    /// What a run that fails signed out calls: `id` is known signed out
-    /// until it's checked again.
-    fn signed_out_hook(&self, id: AgentId) -> process::SignedOutHook {
+    /// What a run that fails signed out calls: its account is known signed
+    /// out until it's checked again.
+    fn signed_out_hook(
+        &self,
+        id: AgentId,
+        account: Option<&AgentAccountRef>,
+    ) -> process::SignedOutHook {
         let cache = self.sign_in.clone();
+        let key = SignInKey::of(id, account);
         std::sync::Arc::new(move || {
             cache.lock().unwrap_or_else(|p| p.into_inner()).set(
-                id,
+                key.clone(),
                 std::time::Instant::now(),
                 Some(false),
             );
@@ -278,6 +329,8 @@ impl AgentCli {
             detect::locate_binary(req.agent, &cfg).ok_or(AgentError::NotInstalled(req.agent))?;
         let mut child_env = env::filtered_env();
         child_env.extend(req.env.iter().cloned());
+        // Last: the account decides, whatever the space's env says.
+        accounts::apply_env(req.agent, req.account.as_ref(), &mut child_env);
         let mut guards: Vec<Box<dyn std::any::Any + Send>> = Vec::new();
 
         let args = match req.agent {
@@ -347,7 +400,7 @@ impl AgentCli {
                 .unwrap_or_else(|p| p.into_inner())
                 .get(&req.agent)
                 .cloned(),
-            on_signed_out: Some(self.signed_out_hook(req.agent)),
+            on_signed_out: Some(self.signed_out_hook(req.agent, req.account.as_ref())),
         };
         if !steerable {
             return process::spawn_and_stream(spec, parser).map(|run| (run, None));
@@ -418,18 +471,29 @@ impl AgentPort for AgentCli {
     }
 
     async fn models(&self, agent: AgentId) -> Vec<ModelInfo> {
+        self.models_in(agent, None).await
+    }
+
+    async fn models_in(&self, agent: AgentId, account: Option<&AgentAccountRef>) -> Vec<ModelInfo> {
         match agent {
-            AgentId::Claude => models::claude_models(),
+            AgentId::Claude => match accounts::extra_dir(account) {
+                Some(dir) => models::claude_models_in(dir),
+                None => models::claude_models(),
+            },
             AgentId::Codex => {
-                let mut cache = self.codex_models.lock().await;
+                let key = SignInKey::of(agent, account).1;
+                let mut caches = self.codex_models.lock().await;
+                let cache = caches.entry(key).or_default();
                 let now = std::time::Instant::now();
                 if let Some(list) = cache.cached(now) {
                     return list;
                 }
                 let cfg = self.configs.get(AgentId::Codex);
+                let mut run_env = env::filtered_env();
+                accounts::apply_env(agent, account, &mut run_env);
                 let outcome = match detect::locate_binary(AgentId::Codex, &cfg) {
                     None => Err(CodexListError::NotInstalled),
-                    Some(program) => models::codex_models(&program)
+                    Some(program) => models::codex_models(&program, &run_env)
                         .await
                         .map_err(CodexListError::Failed),
                 };
@@ -445,6 +509,66 @@ impl AgentPort for AgentCli {
                 list
             }
             AgentId::Gemini => Vec::new(),
+        }
+    }
+
+    async fn account_sign_in(
+        &self,
+        agent: AgentId,
+        account: &AgentAccountRef,
+        recheck: bool,
+    ) -> Option<bool> {
+        if recheck {
+            self.sign_in
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .forget(SignInKey::of(agent, Some(account)));
+        }
+        let cfg = self.configs.get(agent);
+        let program = detect::locate_binary(agent, &cfg)?;
+        self.account_signed_in(agent, Some(account), &program).await
+    }
+
+    fn known_account_sign_in(&self, agent: AgentId, account: &AgentAccountRef) -> Option<bool> {
+        self.sign_in
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .known(SignInKey::of(agent, Some(account)))
+    }
+
+    /// Claude Code only: its session file moves between the two config dirs
+    /// (`accounts::copy_claude_session`). Codex keeps a thread index next to
+    /// its rollouts, so a copied rollout isn't known to be resumable: it
+    /// replays instead.
+    async fn carry_session(
+        &self,
+        agent: AgentId,
+        session: &str,
+        cwd: &std::path::Path,
+        from: &AgentAccountRef,
+        to: &AgentAccountRef,
+    ) -> bool {
+        if agent != AgentId::Claude || from == to {
+            return from == to;
+        }
+        let (Some(src), Some(dest)) = (
+            accounts::dir_of(agent, Some(from)),
+            accounts::dir_of(agent, Some(to)),
+        ) else {
+            return false;
+        };
+        let (cwd, session) = (cwd.to_path_buf(), session.to_string());
+        let copied = tokio::task::spawn_blocking(move || {
+            accounts::copy_claude_session(&src, &dest, &cwd, &session)
+        })
+        .await;
+        match copied {
+            Ok(Ok(copied)) => copied,
+            Ok(Err(e)) => {
+                tracing::warn!(error = %e, "couldn't copy the claude session to the other account");
+                false
+            }
+            Err(_) => false,
         }
     }
 }
@@ -555,7 +679,7 @@ mod tests {
         assert_eq!(by_id(cli.detect().await, AgentId::Codex).signed_in, None);
 
         // A run found it signed out: known without checking, until asked.
-        (cli.signed_out_hook(AgentId::Claude))();
+        (cli.signed_out_hook(AgentId::Claude, None))();
         assert_eq!(cli.known_sign_in(AgentId::Claude), Some(false));
         assert_eq!(
             by_id(cli.detect().await, AgentId::Claude).signed_in,
@@ -565,6 +689,68 @@ mod tests {
         assert_eq!(cli.known_sign_in(AgentId::Claude), None);
         let again = by_id(cli.detect().await, AgentId::Claude);
         assert_ne!(again.signed_in, Some(false), "checked again");
+    }
+
+    #[tokio::test]
+    async fn a_run_on_an_extra_account_gets_its_config_dir_and_no_key() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("claude");
+        std::fs::write(
+            &path,
+            "#!/bin/sh\nprintf '{\"type\":\"result\",\"is_error\":false,\"result\":\"%s|%s\"}\\n' \"$CLAUDE_CONFIG_DIR\" \"$ANTHROPIC_API_KEY\"\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let cli = AgentCli::new().with_config(
+            AgentId::Claude,
+            AgentBinaryConfig {
+                path: Some(path),
+                ..Default::default()
+            },
+        );
+        let run_on = |account: Option<AgentAccountRef>| {
+            let cli = cli.clone();
+            let cwd = dir.path().to_path_buf();
+            async move {
+                let req = AgentRequest {
+                    agent: AgentId::Claude,
+                    prompt: "p".into(),
+                    system: None,
+                    cwd,
+                    mode: theodore_ports::AgentMode::ReadOnly,
+                    mcp: None,
+                    model: None,
+                    effort: None,
+                    stall_after_ms: 30_000,
+                    env: vec![("ANTHROPIC_API_KEY".into(), "space-key".into())],
+                    user_mcp: false,
+                    attachments: vec![],
+                    resume: None,
+                    fork_session: false,
+                    stream_text: false,
+                    account,
+                };
+                let mut run = cli.run(req).await.unwrap();
+                let mut last = None;
+                while let Some(e) = run.events.recv().await {
+                    last = Some(e);
+                }
+                match last {
+                    Some(theodore_ports::AgentEvent::Done { final_text, .. }) => final_text,
+                    other => panic!("{other:?}"),
+                }
+            }
+        };
+        let work = AgentAccountRef {
+            id: "work".into(),
+            dir: Some("/accounts/work".into()),
+        };
+        assert_eq!(run_on(Some(work)).await, "/accounts/work|");
+        // The default account overrides nothing.
+        let own = run_on(None).await;
+        assert!(own.ends_with("|space-key"), "{own}");
+        assert!(!own.starts_with("/accounts/"), "{own}");
     }
 
     #[tokio::test]
@@ -589,7 +775,8 @@ mod tests {
         .unwrap();
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
         assert!(cli.models(AgentId::Codex).await.is_empty());
-        let cache = cli.codex_models.lock().await;
+        let caches = cli.codex_models.lock().await;
+        let cache = &caches[theodore_ports::DEFAULT_ACCOUNT];
         assert!(matches!(
             cache.failed,
             Some((_, CodexListError::NotInstalled))

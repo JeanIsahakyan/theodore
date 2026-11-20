@@ -53,6 +53,7 @@ pub(crate) async fn run(
         resume: None,
         stream_text: false,
         fork_session: false,
+        account: None,
     };
     run_to_text(core, req).await.ok()
 }

@@ -669,12 +669,26 @@ pub fn parse_line(line: &str) -> Vec<AgentEvent> {
             _ => vec![],
         },
         Some("control_response") => control_response(&v).into_iter().collect(),
-        _ => vec![], // rate_limit_event/etc: not user-visible stream content
+        // `rate_limit_event`: only its `rate_limit_info`, read below.
+        _ => vec![],
     };
-    match v.get("parent_tool_use_id").and_then(Value::as_str) {
+    let events = match v.get("parent_tool_use_id").and_then(Value::as_str) {
         Some(parent) if !parent.is_empty() => nested(parent, events),
         _ => events,
+    };
+    // The account's usage limit, on a `rate_limit_event` or any line that
+    // carries one: about the account, never nested under a subagent's call.
+    match rate_limit(&v) {
+        Some(limit) => std::iter::once(limit).chain(events).collect(),
+        None => events,
     }
+}
+
+/// `rate_limit_info` (`{"type":"rate_limit_event","rate_limit_info":{…}}`,
+/// recorded in `tests/fixtures/claude_result.jsonl`) as a `Limit`.
+fn rate_limit(v: &Value) -> Option<AgentEvent> {
+    let info = v.get("rate_limit_info").filter(|i| !i.is_null())?;
+    crate::limits::claude_rate_limit(info).map(|limit| AgentEvent::Limit { limit })
 }
 
 /// A subagent's line (recorded from 2.1.319, `tests/fixtures/
@@ -1264,6 +1278,84 @@ mod tests {
         assert_eq!(parse_line(""), vec![]);
     }
 
+    fn limit_of(line: &str) -> Vec<AgentEvent> {
+        parse_line(line)
+            .into_iter()
+            .filter(|e| matches!(e, AgentEvent::Limit { .. }))
+            .collect()
+    }
+
+    #[test]
+    fn a_rate_limit_event_becomes_a_limit() {
+        let line = r#"{"type":"rate_limit_event","rate_limit_info":{"status":"allowed"},"session_id":"s1"}"#;
+        assert_eq!(
+            parse_line(line),
+            vec![AgentEvent::Limit {
+                limit: theodore_domain::AgentLimit {
+                    status: theodore_domain::LimitStatus::Ok,
+                    resets_at: None,
+                    window: None,
+                    used_pct: None,
+                }
+            }]
+        );
+        let line = r#"{"type":"rate_limit_event","rate_limit_info":{"status":"allowed_warning","utilization":0.8,"resetsAt":1795000000,"rateLimitType":"seven_day"}}"#;
+        let [AgentEvent::Limit { limit }] = &limit_of(line)[..] else {
+            panic!("{:?}", parse_line(line));
+        };
+        assert_eq!(limit.status, theodore_domain::LimitStatus::Warning);
+        assert_eq!(limit.resets_at, Some(1_795_000_000_000));
+        assert_eq!(limit.window.as_deref(), Some("seven_day"));
+        assert!((limit.used_pct.unwrap() - 80.0).abs() < 1e-9);
+        let line = r#"{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","resetsAt":1795003600}}"#;
+        assert_eq!(
+            limit_of(line),
+            vec![AgentEvent::Limit {
+                limit: theodore_domain::AgentLimit {
+                    status: theodore_domain::LimitStatus::Limited,
+                    resets_at: Some(1_795_003_600_000),
+                    window: None,
+                    used_pct: None,
+                }
+            }]
+        );
+    }
+
+    #[test]
+    fn an_unknown_rate_limit_status_says_nothing() {
+        let line = r#"{"type":"rate_limit_event","rate_limit_info":{"status":"throttled"}}"#;
+        assert_eq!(parse_line(line), vec![]);
+        let line = r#"{"type":"rate_limit_event","rate_limit_info":"rejected"}"#;
+        assert_eq!(parse_line(line), vec![]);
+        assert_eq!(parse_line(r#"{"type":"rate_limit_event"}"#), vec![]);
+    }
+
+    #[test]
+    fn rate_limit_info_on_another_line_still_counts_and_is_never_nested() {
+        let line = r#"{"type":"system","subtype":"status","parent_tool_use_id":"call_1","rate_limit_info":{"status":"rejected"}}"#;
+        assert_eq!(
+            parse_line(line),
+            vec![AgentEvent::Limit {
+                limit: theodore_domain::AgentLimit::limited(None)
+            }]
+        );
+    }
+
+    #[test]
+    fn a_limit_after_the_turn_doesnt_open_another() {
+        let mut parser = ClaudeParser::with_stdin_input();
+        let done = parser.on_line(r#"{"type":"result","is_error":false,"result":"ok"}"#);
+        assert!(matches!(done.last(), Some(AgentEvent::Done { .. })));
+        let events = parser.on_line(
+            r#"{"type":"rate_limit_event","rate_limit_info":{"status":"allowed_warning"}}"#,
+        );
+        assert!(
+            matches!(&events[..], [AgentEvent::Limit { .. }]),
+            "{events:?}"
+        );
+        assert_eq!(parser.session(), Session::Drained);
+    }
+
     #[test]
     fn exit_without_result_is_the_one_terminal_event() {
         let mut parser = ClaudeParser::new();
@@ -1300,6 +1392,7 @@ mod read_only_tests {
             resume: None,
             stream_text: false,
             fork_session: false,
+            account: None,
         };
         let args = build_args(&req, &Default::default(), None);
         let i = args
@@ -1336,6 +1429,7 @@ mod mcp_config_tests {
             resume: None,
             stream_text: false,
             fork_session: false,
+            account: None,
         }
     }
 
@@ -1527,6 +1621,7 @@ mod run_mode_tests {
             resume: None,
             stream_text: false,
             fork_session: false,
+            account: None,
         };
         let args = build_args(&req, &Default::default(), None);
         assert!(
@@ -1555,6 +1650,7 @@ mod run_mode_tests {
             resume: None,
             stream_text: false,
             fork_session: false,
+            account: None,
         };
         let args = build_args(&req, &Default::default(), None);
         assert!(!args.iter().any(|a| a == "--strict-mcp-config"));
@@ -1590,6 +1686,7 @@ mod run_mode_tests {
             resume: None,
             stream_text: false,
             fork_session: false,
+            account: None,
         };
         let exe = Path::new("/Applications/Theodore.app/Contents/MacOS/theodore");
 
@@ -1671,6 +1768,7 @@ mod model_and_effort_tests {
             resume: None,
             stream_text: false,
             fork_session: false,
+            account: None,
         }
     }
 

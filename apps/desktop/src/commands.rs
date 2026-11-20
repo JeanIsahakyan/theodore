@@ -961,6 +961,70 @@ pub async fn set_space_pinned(
 
 #[tauri::command]
 #[specta::specta]
+pub async fn agent_accounts(
+    op: crate::op::Op,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<Vec<theodore_contract::AgentAccountStatus>, CommandError> {
+    op.run(async move { core.agent_accounts().await }).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn add_agent_account(
+    op: crate::op::Op,
+    req: theodore_contract::AddAgentAccountRequest,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<theodore_contract::AgentAccountStatus, CommandError> {
+    op.run(async move { core.add_agent_account(req).await })
+        .await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn remove_agent_account(
+    op: crate::op::Op,
+    req: theodore_contract::AgentAccountRequest,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<(), CommandError> {
+    op.run(async move { core.remove_agent_account(req).await })
+        .await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn check_agent_account(
+    op: crate::op::Op,
+    req: theodore_contract::AgentAccountRequest,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<theodore_contract::AgentAccountStatus, CommandError> {
+    op.run(async move { core.check_agent_account(req).await })
+        .await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn space_pause_continue(
+    op: crate::op::Op,
+    req: theodore_contract::SpacePauseRequest,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<(), CommandError> {
+    op.run(async move { core.space_pause_continue(req).await })
+        .await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn space_pause_cancel(
+    op: crate::op::Op,
+    req: theodore_contract::SpacePauseRequest,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<(), CommandError> {
+    op.run(async move { core.space_pause_cancel(req).await })
+        .await
+}
+
+#[tauri::command]
+#[specta::specta]
 pub async fn mirror_space(
     op: crate::op::Op,
     space: String,

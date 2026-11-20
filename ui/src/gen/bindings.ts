@@ -136,6 +136,12 @@ export const commands = {
 	revertSpaceFile: (req: RevertSpaceFileRequest) => typedError<Space, CommandError>(__TAURI_INVOKE("revert_space_file", { req })),
 	unarchiveSpace: (space: string) => typedError<Space, CommandError>(__TAURI_INVOKE("unarchive_space", { space })),
 	setSpacePinned: (req: SetSpacePinnedRequest) => typedError<Space, CommandError>(__TAURI_INVOKE("set_space_pinned", { req })),
+	agentAccounts: () => typedError<AgentAccountStatus[], CommandError>(__TAURI_INVOKE("agent_accounts")),
+	addAgentAccount: (req: AddAgentAccountRequest) => typedError<AgentAccountStatus, CommandError>(__TAURI_INVOKE("add_agent_account", { req })),
+	removeAgentAccount: (req: AgentAccountRequest) => typedError<null, CommandError>(__TAURI_INVOKE("remove_agent_account", { req })),
+	checkAgentAccount: (req: AgentAccountRequest) => typedError<AgentAccountStatus, CommandError>(__TAURI_INVOKE("check_agent_account", { req })),
+	spacePauseContinue: (req: SpacePauseRequest) => typedError<null, CommandError>(__TAURI_INVOKE("space_pause_continue", { req })),
+	spacePauseCancel: (req: SpacePauseRequest) => typedError<null, CommandError>(__TAURI_INVOKE("space_pause_cancel", { req })),
 	setSpaceSettings: (req: SetSpaceSettingsRequest) => typedError<Space, CommandError>(__TAURI_INVOKE("set_space_settings", { req })),
 	projectSkills: (project: string) => typedError<SkillInfo[], CommandError>(__TAURI_INVOKE("project_skills", { project })),
 	spaceSendFeedback: (req: SpaceFeedbackRequest) => typedError<string, CommandError>(__TAURI_INVOKE("space_send_feedback", { req })),
@@ -425,6 +431,11 @@ export type AccountUser = {
 	avatar_url: string | null,
 };
 
+export type AddAgentAccountRequest = {
+	agent: AgentId,
+	label: string,
+};
+
 export type AddProjectRequest = {
 	/**  A host repo (from `list_host_repos`), or … */
 	repo: RepoRef | null,
@@ -432,7 +443,78 @@ export type AddProjectRequest = {
 	path: string | null,
 };
 
+/**
+ *  One account of an agent CLI. Each agent has its default account (the
+ *  CLI's own config); extra ones live in Theodore's data dir.
+ */
+export type AgentAccount = {
+	/**  `default`, or the extra account's own id. */
+	id: string,
+	agent: AgentId,
+	label: string,
+	/**
+	 *  Its config directory (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`, a Gemini key
+	 *  file's folder); the CLI's default one for the default account.
+	 */
+	config_dir: string,
+	/**  The CLI's own config: nothing is overridden for its runs. */
+	default: boolean,
+};
+
+export type AgentAccountRequest = {
+	/**  `AgentAccount::id`; with `agent` for a default account. */
+	id: string,
+	agent: AgentId,
+	/**  Check its sign-in again rather than read the cache. */
+	recheck?: boolean,
+};
+
+/**  One account as Settings → Agents shows it. */
+export type AgentAccountStatus = {
+	account: AgentAccount,
+	/**
+	 *  `null`: unknown (not checked yet, the CLI isn't installed, or the
+	 *  check couldn't tell).
+	 */
+	signed_in: boolean | null,
+	/**  The terminal command that signs it in (extra accounts). */
+	sign_in_command: string | null,
+	limit: AgentLimitRow | null,
+	/**  Runs of this agent start on it while it isn't limited. */
+	preferred: boolean,
+};
+
 export type AgentId = "claude" | "codex" | "gemini";
+
+/**
+ *  What a CLI said about its account's usage limit: Claude Code's
+ *  `rate_limit_event`, Codex's rate-limit snapshot, or a usage-limit error
+ *  text read back into this shape.
+ */
+export type AgentLimit = {
+	status: LimitStatus,
+	/**  When the limit resets (unix ms), when the CLI says. */
+	resets_at?: number | null,
+	/**
+	 *  The window it is about, as the CLI names it (`five_hour`,
+	 *  `seven_day`, `primary`…).
+	 */
+	window?: string | null,
+	/**  How much of the window is used, 0–100 (may pass 100). */
+	used_pct?: number | null,
+};
+
+/**
+ *  The latest usage limit an account reported (`agent_limit` rows, keyed
+ *  `<agent>:<account>`).
+ */
+export type AgentLimitRow = {
+	agent: AgentId,
+	account: string,
+	limit: AgentLimit,
+	/**  When it was reported. */
+	at: number,
+};
 
 /**
  *  One model an agent CLI can run, for the model picker (`agent_models`).
@@ -462,6 +544,11 @@ export type AgentSession = {
 	 *  one from another path can't be resumed.
 	 */
 	cwd: string,
+	/**
+	 *  The agent account it ran on (`AgentAccount::id`); `None`: the
+	 *  default one. A session lives in its account's config dir.
+	 */
+	account?: string | null,
 };
 
 export type AgentStatus = {
@@ -1662,6 +1749,16 @@ export type IssueTarget = {
 	retry?: boolean,
 };
 
+/**
+ *  How close an agent account is to its usage limit (docs/plan.md "Agent
+ *  accounts and limits").
+ */
+export type LimitStatus = "ok" |
+/**  Past a warning threshold: still runs. */
+"warning" |
+/**  Refused until `resets_at`. */
+"limited";
+
 export type LineKind = "ctx" | "add" | "del";
 
 /**
@@ -2468,6 +2565,11 @@ export type Space = {
 	 *  words in it ends this: it becomes the goal and names the space.
 	 */
 	blank?: boolean,
+	/**
+	 *  Waiting for usage limits to reset (docs/spaces.md "Usage limits"):
+	 *  continues on its own at `until`, unless cancelled.
+	 */
+	paused?: SpacePause | null,
 };
 
 export type SpaceAnswerItem = {
@@ -2616,6 +2718,24 @@ export type SpaceParent = {
 	 *  `spaces.max_depth`.
 	 */
 	depth: number,
+};
+
+/**
+ *  A space waiting for usage limits to reset (docs/spaces.md "Usage
+ *  limits"): it continues on its own at `until`, unless cancelled.
+ */
+export type SpacePause = {
+	/**
+	 *  The earliest reset of the accounts that could continue; `null` when
+	 *  none said: only "Continue now" continues it.
+	 */
+	until: number | null,
+	agent: AgentId,
+	since: number,
+};
+
+export type SpacePauseRequest = {
+	space: string,
 };
 
 /**  The space's long-running `run` command. */

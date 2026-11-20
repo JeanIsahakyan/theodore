@@ -42,6 +42,8 @@ mod fleet_tests;
 mod git_integration_tests;
 
 #[cfg(test)]
+mod agent_accounts_tests;
+#[cfg(test)]
 mod config_editor_tests;
 #[cfg(test)]
 mod diff_media_integration_tests;

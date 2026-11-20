@@ -279,6 +279,10 @@ pub struct Space {
     /// words in it ends this: it becomes the goal and names the space.
     #[serde(default)]
     pub blank: bool,
+    /// Waiting for usage limits to reset (docs/spaces.md "Usage limits"):
+    /// continues on its own at `until`, unless cancelled.
+    #[serde(default)]
+    pub paused: Option<crate::SpacePause>,
 }
 
 /// A merge of the base into the space, left in progress on conflicts
@@ -367,6 +371,10 @@ pub struct AgentSession {
     /// The worktree it ran in. Claude Code keeps sessions per directory, so
     /// one from another path can't be resumed.
     pub cwd: String,
+    /// The agent account it ran on (`AgentAccount::id`); `None`: the
+    /// default one. A session lives in its account's config dir.
+    #[serde(default)]
+    pub account: Option<String>,
 }
 
 /// The space whose agent started this one.

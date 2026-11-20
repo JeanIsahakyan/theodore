@@ -1092,6 +1092,7 @@ mod tests {
             resume: None,
             stream_text: false,
             fork_session: false,
+            account: None,
         }
     }
 

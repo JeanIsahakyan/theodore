@@ -127,6 +127,7 @@ mod tests {
             effort: None,
             mode: None,
             from_space: None,
+            notice: None,
         }
     }
 

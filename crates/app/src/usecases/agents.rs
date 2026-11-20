@@ -138,6 +138,7 @@ impl Core {
             effort: None,
             mode: None,
             from_space: None,
+            notice: None,
         };
         let data = serde_json::to_value(&question).map_err(|e| AppError::Invalid(e.to_string()))?;
         self.apply(vec![NewAction {
@@ -481,6 +482,7 @@ async fn drive_skill_run(
             resume: None,
             stream_text: true,
             fork_session: false,
+            account: None,
         };
         let _guard = ToolsGuard { core, mcp };
         let mut live = LiveRun::new(run_id.as_str(), agent).with_thinking();
@@ -654,6 +656,7 @@ async fn persist_failed_run(
         effort_resolved: resolved,
         mode: None,
         from_space: None,
+        notice: None,
     };
     if let Ok(data) = serde_json::to_value(&message) {
         let _ = core
@@ -878,6 +881,7 @@ async fn drive_ask(
         resume: None,
         stream_text: true,
         fork_session: false,
+        account: None,
     };
     let _guard = ToolsGuard { core, mcp };
     let mut live = LiveRun::new(run_id.as_str(), agent);
@@ -1004,6 +1008,7 @@ async fn drive_ask(
         effort_resolved: true,
         mode: None,
         from_space: None,
+        notice: None,
     };
     if let Ok(data) = serde_json::to_value(&reply) {
         let _ = core

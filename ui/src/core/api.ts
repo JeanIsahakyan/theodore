@@ -7,7 +7,10 @@ import type {
   AccountSignInStart,
   AccountSignInState,
   AccountStatus,
+  AddAgentAccountRequest,
   AddProjectRequest,
+  AgentAccountRequest,
+  AgentAccountStatus,
   AgentId,
   AgentModel,
   AgentStatus,
@@ -121,6 +124,7 @@ import type {
   SetTokenRequest,
   SkillBody,
   SkillInfo,
+  SpacePauseRequest,
   SubmitReviewRequest,
   SymbolHit,
   SyncFrame,
@@ -255,6 +259,16 @@ export const api = {
     call<AgentStatus[]>('detect_agents', { recheck }),
   agentModels: (agent: AgentId) =>
     call<AgentModel[]>('agent_models', { agent }),
+  /** Every account of every agent, with its sign-in and last limit. */
+  agentAccounts: () => call<AgentAccountStatus[]>('agent_accounts'),
+  /** A new account in its own config dir; sign it in with its command. */
+  addAgentAccount: (req: AddAgentAccountRequest) =>
+    call<AgentAccountStatus>('add_agent_account', { req }),
+  removeAgentAccount: (req: AgentAccountRequest) =>
+    call<null>('remove_agent_account', { req }),
+  /** `recheck`: its sign-in asked again, not read from the cache. */
+  checkAgentAccount: (req: AgentAccountRequest) =>
+    call<AgentAccountStatus>('check_agent_account', { req }),
   appInfo: () => call<AppInfo>('app_info'),
   /** `quiet`: the caller says what failed itself (the update toast). */
   checkUpdate: (quiet = false) =>
@@ -360,6 +374,12 @@ export const api = {
   spaceStopTask: (space: string, task: string) =>
     call<null>('space_stop_task', { space, task }),
   spaceStop: (space: string) => call<null>('space_stop', { space }),
+  /** A space paused on usage limits: continue it now. */
+  spacePauseContinue: (req: SpacePauseRequest) =>
+    call<null>('space_pause_continue', { req }),
+  /** A space paused on usage limits: stop waiting; its queue stays held. */
+  spacePauseCancel: (req: SpacePauseRequest) =>
+    call<null>('space_pause_cancel', { req }),
   spaceSkills: (space: string) => call<SkillInfo[]>('space_skills', { space }),
   projectSkills: (project: string) =>
     call<SkillInfo[]>('project_skills', { project }),
