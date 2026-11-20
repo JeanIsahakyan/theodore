@@ -93,6 +93,11 @@ pub enum ShipKind {
     MergedLocally,
     /// Written as a branch in a local folder.
     Branch,
+    /// A sub-space's change brought into its parent's worktree by the
+    /// parent's agent (`space_merge`, docs/spaces.md "Sub-spaces"): the
+    /// parent is `Space::parent`, `branch` its branch, and `sha` = `head`
+    /// the checkpoint merged, so a later merge brings only the turns since.
+    MergedIntoParent,
 }
 
 /// The space's last ship: the squashed commit and where it went.

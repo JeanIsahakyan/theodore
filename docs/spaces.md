@@ -1164,7 +1164,7 @@ configured commands, never a shell of the agent's choosing.
 | `fleet_devices`, `fleet_wait`, `fleet_read` | spaces on your other devices trusted here: list the devices, wait for and read the spaces this space started. Only while the fleet is on and connected (docs/fleet.md "Agents use it too") |
 | `fleet_start_space`, `fleet_send`, `fleet_stop` | start one (this space is its parent, mode at most the turn's), message it (at most the turn's mode), stop it — only spaces this space started. Only in an Edit or Run turn, and never in a space hosted here for another device |
 | `spaces_list`, `space_read` | the other spaces on this computer, read only (below, "Sub-spaces"). Never in a space hosted here for another device |
-| `space_start`, `space_send`, `space_wait`, `space_stop`, `space_answer` | sub-spaces of this one: start, message, wait for, stop, answer (below). While `spaces.sub_spaces` is on |
+| `space_start`, `space_send`, `space_wait`, `space_stop`, `space_answer`, `space_merge` | sub-spaces of this one: start, message, wait for, stop, answer, bring their work back (below). While `spaces.sub_spaces` is on |
 
 ```
 turn ─▶ token for this space ─▶ agent ─▶ run_check ─▶ check ─▶ result ─▶ agent fixes ─▶ …
@@ -1213,10 +1213,34 @@ parent turn (Edit/Run) ─▶ space_start {goal} ─▶ create_space (the usual 
                                                  └─▶ child's turn 1 (its goal)
                        ─▶ space_wait [children] ─▶ one settles: turn ended,
                                                    failed, or a question waits
-                       ─▶ space_read child ─▶ messages, diff stat ─▶ integrate
+                       ─▶ space_read child ─▶ messages, diff stat
+                       ─▶ space_merge child ─▶ its change, in this worktree
+                       ─▶ resolve conflicts, run_check ─▶ turn ends ─▶ checkpoint
 child asks ─▶ question card for you, as any space ─┬─ you answer
                                                    └─ or space_answer (parent)
 ```
+
+A child forks from the base, not from the parent, and its work stays on its
+own branch until the parent's agent merges it:
+
+```
+space_merge {child}   (own child · settled · same project · not shipped on its own)
+  from = child.shipped.head  (last merge)   or  child.base_sha  (first merge)
+  to   = child.head_sha      (its last checkpoint)
+  parent worktree now ─(temp index)─▶ ours, a commit no ref names
+  git merge-tree --merge-base <from> <ours> <to> ─▶ merged tree
+  diff ours..merged ─▶ written into the parent worktree (temp index)
+       HEAD, index, refs untouched ─▶ part of this turn's checkpoint
+  both sides changed a file ─▶ <<<<<<< this space / >>>>>>> sub-space <name>
+                               file listed in `conflicts`, the agent resolves it
+  child.shipped = {merged_into_parent, branch: parent's, head: <to>}, done_at = now
+```
+
+| Merge | Brings |
+| --- | --- |
+| first | `base_sha..head_sha`: all of the child's work |
+| after more turns of the child | `<last merged head>..head_sha`: only the turns since |
+| nothing new | refused, `sub_spaces.nothing_new` |
 
 | Tool | Does | Who gets it |
 | --- | --- | --- |
@@ -1226,22 +1250,37 @@ child asks ─▶ question card for you, as any space ─┬─ you answer
 | `space_send {space, message, mode?}` | a message to a child, queued like yours while it runs | same |
 | `space_wait {spaces, timeout_ms?}` | until one of the children settles, ≤ 10 min | every turn, `spaces.sub_spaces` on |
 | `space_stop {space}` / `space_answer {space, ask, answer}` | stop a child's turn / answer its waiting question | an Edit or Run turn, `spaces.sub_spaces` on |
+| `space_merge {space}` | a child's change into this worktree as uncommitted edits, three-way: `from`, `to`, files changed (+/−), `conflicts`, a `note`; the child is then merged into this space | same |
 
 | Rule | Refused with |
 | --- | --- |
-| start, send, stop, answer only from an Edit or Run turn | `sub_spaces.mode` |
+| start, send, stop, answer, merge only from an Edit or Run turn | `sub_spaces.mode` |
 | a child's mode ≤ the turn's; a send's ≤ the turn's and ≤ the child's | `sub_spaces.mode` |
 | never from a space hosted here for another device (no tool at all) | `sub_spaces.hosted` |
 | depth ≤ `spaces.max_depth` (default 2; a top-level space is 0) | `sub_spaces.depth` |
-| live (not archived) children per space < `spaces.max_children` (default 5), counted under one lock | `sub_spaces.children` |
-| send, wait, stop, answer: own children only, not grandchildren | `sub_spaces.not_child` |
-| `spaces.sub_spaces` off (default on): the five tools unlisted | `sub_spaces.off` |
+| live (not archived, not done) children per space < `spaces.max_children` (default 5), counted under one lock | `sub_spaces.children` |
+| send, wait, stop, answer, merge: own children only, not grandchildren | `sub_spaces.not_child` |
+| merge: not while the child's turn or setup runs | `sub_spaces.running` |
+| merge: not mid update from base in the child, nor with a rebase, merge or unmerged files in this worktree | `sub_spaces.busy` |
+| merge: the child works on this space's project, here (not a mirror) | `sub_spaces.project` |
+| merge: the child wasn't shipped on its own (a PR, Merge locally, Keep as branch) | `sub_spaces.shipped` |
+| merge: the child has changes, or new turns since the last merge | `sub_spaces.nothing_new` |
+| `spaces.sub_spaces` off (default on): the six tools unlisted | `sub_spaces.off` |
 
 - Another space's words are data: `spaces_list` and `space_read` say so in
   their `note`, and the system prompt does too.
 - The system prompt names the tools for a space of this device's own, and
   says to split only clearly independent work (each part's goal says all
-  it needs), then wait, read and integrate; not small tasks.
+  it needs), then wait and read, `space_merge` each child worth keeping,
+  resolve the conflicts it lists and check the result; not small tasks.
+- A merge never loses a side: the parent's uncommitted edits are "ours" in
+  the three-way merge; a file the parent removed but the child changed
+  comes back (listed as a conflict); a binary both changed keeps the
+  parent's (listed). The child's own worktree and branch stay as they were.
+- Merges run one at a time per Theodore (two of the same child would both
+  apply it). The merged child is done: out of `spaces_list` unless
+  `include_done`, `spaces.auto_archive_days` counts from then, and its
+  header reads "Merged into <parent>". Its Undo stops at the merged turn.
 - The running turn's text is kept in memory per space while it streams,
   and dropped when the turn ends.
 - Settings are `user` scope (Settings → Spaces).
@@ -1270,6 +1309,8 @@ Push      ─▶ commit-tree <checkpoint tree> -p <last shipped> [-p <base tip m
 Merge     ─▶ (local folder) fetch <cache> <shipped ref> ─▶ git merge into its checked-out branch
 Keep      ─▶ (local folder) fetch <cache> <shipped ref>:refs/heads/space/<slug>
 Keep      ─▶ (local folder) git -C <folder> fetch <cache> <ref>:refs/heads/<branch>
+space_merge ─▶ merge-tree --merge-base <child from> <parent worktree snapshot> <child head>
+          ─▶ what differs written into the parent's worktree (temp index), nothing committed
 Continue  ─▶ ls-remote + fetch <base> ─▶ tip ─▶ (turns not pushed) commit-tree 3-way onto tip
           ─▶ as Undo: HEAD = tip (mixed reset), files = that commit (only what differs),
              the unpushed turns uncommitted on it; update-ref refs/theodore/spaces/<id>
@@ -1531,8 +1572,8 @@ New synced model `space` (core-owned, written only by commands):
 | `pr` | the host PR, once opened — the link from drafting to review |
 | `usage`, `turns`, `error`, `created_at`, `updated_at` | |
 | `attention_at` | when something last asked for you: a turn ended or failed, or a question came. Drives the ● and the dock badge. Written with `updated_at`, the value the page's seen mark stores, so looking at the page always covers it; empty on spaces with no such event yet (they fall back to `updated_at`) |
-| `shipped` | the last ship: `how` (`pr · merged_locally · branch`), `branch`, `sha` (the squashed commit), `head` (the checkpoint it came from — later turns are "not pushed"), `pushes`, `at` |
-| `done_at` | set when the PR merges (seen by the poller's spaces sweep) or on Merge locally / Keep as branch; cleared by Continue |
+| `shipped` | the last ship: `how` (`pr · merged_locally · branch · merged_into_parent`), `branch`, `sha` (the squashed commit; for `merged_into_parent` the checkpoint merged, as `head`), `head` (the checkpoint it came from — later turns are "not pushed"), `pushes`, `at` |
+| `done_at` | set when the PR merges (seen by the poller's spaces sweep) or on Merge locally / Keep as branch, or when the parent space's agent merges it (`space_merge`, "Sub-spaces"); cleared by Continue |
 | `turn_log` | per turn: your message and the reply (`chat_message` ids), messages steered into it (`steered`), checkpoint `before` / `after` and the worktree's `HEAD` under each (`before_head` / `after_head`, none on old entries), `undone`; `base_before` when the turn completed an Update from base (Undo puts that base back); a Revert is an entry too, with `reverted` paths and its own message as `reply` |
 | `worktree_head` | the worktree's `HEAD` under `head_sha` (none: `head_sha` is `HEAD`) |
 | `title` | the chat agent's proposed title (§3 "New space"); `None` until it lands |

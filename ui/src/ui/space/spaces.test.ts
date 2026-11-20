@@ -17,6 +17,7 @@ import {
   sentTurnDone,
   sentTurnOf,
   spaceStage,
+  stageLabel,
   unshipped,
   diffStat,
   isSpaceReview,
@@ -290,7 +291,10 @@ describe('spaces', () => {
 });
 
 describe('shipping', () => {
-  const shipped = (how: 'pr' | 'merged_locally' | 'branch', head = 'h') => ({
+  const shipped = (
+    how: 'pr' | 'merged_locally' | 'branch' | 'merged_into_parent',
+    head = 'h',
+  ) => ({
     how,
     branch: 'me/x',
     sha: 's1',
@@ -317,6 +321,18 @@ describe('shipping', () => {
     expect(spaceStage(space({ id: 'a', shipped: shipped('branch') }))).toBe(
       'branch',
     );
+  });
+
+  it('names the parent a sub-space was merged into', () => {
+    const stage = spaceStage(
+      space({ id: 'a', shipped: shipped('merged_into_parent') }),
+    );
+    expect(stage).toBe('merged_into_parent');
+    expect(stageLabel(stage, 'Fix the login')).toBe(
+      'Merged into Fix the login',
+    );
+    expect(stageLabel(stage, null)).toBe('Merged into its parent');
+    expect(stageLabel('in_review', 'Fix the login')).toBe('In review');
   });
 
   it('knows when there are turns to push', () => {

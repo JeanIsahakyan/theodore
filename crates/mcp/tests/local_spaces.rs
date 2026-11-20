@@ -23,8 +23,8 @@ use theodore_mcp::{
     SpaceToolsBackend, TerminalTail, ToolSet, TurnMode,
 };
 use theodore_ports::{
-    LocalAnswer, LocalSpaceItem, LocalSpaceList, LocalSpaceRead, LocalSpaceStart, LocalSpaceWait,
-    OTHER_SPACE_NOTE,
+    LocalAnswer, LocalMergedFile, LocalSpaceItem, LocalSpaceList, LocalSpaceMerge, LocalSpaceRead,
+    LocalSpaceStart, LocalSpaceWait, OTHER_SPACE_NOTE,
 };
 
 struct EmptyReview;
@@ -215,6 +215,36 @@ impl SpaceToolsBackend for FakeLocal {
         ));
         Ok(item(target, "running"))
     }
+    async fn local_merge(
+        &self,
+        space: &str,
+        turn: TurnMode,
+        target: &str,
+    ) -> Result<LocalSpaceMerge, SpaceToolError> {
+        self.log(format!("merge {space} {turn:?} {target}"));
+        if target == "busy" {
+            return Err(SpaceToolError::Unavailable(
+                "sub_spaces.running: busy is still running; space_wait for it, then merge".into(),
+            ));
+        }
+        Ok(LocalSpaceMerge {
+            space: LocalSpaceItem {
+                done: true,
+                ..item(target, "idle")
+            },
+            from: "base1".into(),
+            to: "head1".into(),
+            files: vec![LocalMergedFile {
+                path: "src/a.rs".into(),
+                additions: 3,
+                deletions: 1,
+            }],
+            additions: 3,
+            deletions: 1,
+            conflicts: vec!["src/a.rs".into()],
+            note: "resolve them".into(),
+        })
+    }
 }
 
 fn turn(tools: ToolSet, mode: TurnMode, fleet: FleetTools) -> RunContext {
@@ -334,6 +364,28 @@ async fn local_space_tools_follow_the_turn_the_setting_and_the_host() {
     )
     .await;
     call(&client, "space_stop", json!({"space": "s3"})).await;
+    let merged = call(&client, "space_merge", json!({"space": "s3"})).await;
+    assert_eq!(merged["space"]["done"], json!(true));
+    assert_eq!(
+        merged["files"],
+        json!([{"path": "src/a.rs", "additions": 3, "deletions": 1}])
+    );
+    assert_eq!(merged["conflicts"], json!(["src/a.rs"]));
+    assert_eq!(
+        (&merged["from"], &merged["to"]),
+        (&json!("base1"), &json!("head1"))
+    );
+    // A refusal comes back as the tool's error, its code first.
+    let refused = client
+        .call_tool(
+            CallToolRequestParams::new("space_merge")
+                .with_arguments(json!({"space": "busy"}).as_object().unwrap().clone()),
+        )
+        .await
+        .expect("call");
+    assert_eq!(refused.is_error, Some(true));
+    let text = &refused.content[0].as_text().expect("text").text;
+    assert!(text.starts_with("sub_spaces.running: "), "{text}");
     assert_eq!(
         *local.calls.lock().unwrap(),
         [
@@ -345,6 +397,8 @@ async fn local_space_tools_follow_the_turn_the_setting_and_the_host() {
             "wait s1 s3 600000",
             "answer s1 Edit s3 q1 [\"SQLite\"]",
             "stop s1 Edit s3",
+            "merge s1 Edit s3",
+            "merge s1 Edit busy",
         ]
     );
     drop(client);

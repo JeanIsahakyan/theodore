@@ -2174,7 +2174,14 @@ export type ShipKind =
 /**  Merged into a local folder's checked-out branch. */
 "merged_locally" |
 /**  Written as a branch in a local folder. */
-"branch";
+"branch" |
+/**
+ *  A sub-space's change brought into its parent's worktree by the
+ *  parent's agent (`space_merge`, docs/spaces.md "Sub-spaces"): the
+ *  parent is `Space::parent`, `branch` its branch, and `sha` = `head`
+ *  the checkpoint merged, so a later merge brings only the turns since.
+ */
+"merged_into_parent";
 
 export type ShipSpaceRequest = {
 	space: string,

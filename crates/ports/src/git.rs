@@ -612,6 +612,27 @@ pub trait GitPort: Send + Sync {
         Err(GitError::Unsupported("space_merge_finish"))
     }
 
+    /// Brings the change `from..to` (commits in the same cache: another
+    /// space's fork point and checkpoint) into a space's worktree as
+    /// uncommitted edits, three-way against the worktree as it is now
+    /// (its own uncommitted edits included): `HEAD`, the index and every
+    /// ref stay. A file both sides changed gets standard conflict markers,
+    /// `ours` and `theirs` naming the sides, and is listed in
+    /// `SpaceApply::conflicts`; neither side is dropped (a modify/delete
+    /// keeps the modified file, a binary one the worktree's). `Busy` while
+    /// an operation is unfinished there; the caller checkpoints.
+    async fn space_apply(
+        &self,
+        worktree: &Path,
+        from: &Sha,
+        to: &Sha,
+        ours: &str,
+        theirs: &str,
+    ) -> GitResult<SpaceApply> {
+        let _ = (worktree, from, to, ours, theirs);
+        Err(GitError::Unsupported("space_apply"))
+    }
+
     /// Abandons an update from base: `merge --abort`, then the worktree
     /// and `refs/theodore/spaces/<space>` back at checkpoint `to`.
     async fn space_merge_abort(&self, worktree: &Path, space: &str, to: &Sha) -> GitResult<()> {
@@ -829,6 +850,16 @@ pub enum SpaceMerge {
     /// No merge in progress any more, and the base isn't in `HEAD`: it
     /// was aborted in the worktree.
     NotMerging,
+}
+
+/// What `GitPort::space_apply` changed in a space's worktree.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SpaceApply {
+    /// Per file, between the worktree before and after.
+    pub files: Vec<FileStat>,
+    /// Files both sides changed: left with conflict markers (or, binary,
+    /// as the worktree had them).
+    pub conflicts: Vec<String>,
 }
 
 /// Where a space's last shipped (squashed) commit is kept in the cache.

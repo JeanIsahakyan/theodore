@@ -484,6 +484,17 @@ impl SpaceToolsBackend for CoreTools {
             .sub_space_answer(space, space_mode(turn), target, ask, answers)
             .await
     }
+
+    async fn local_merge(
+        &self,
+        space: &str,
+        turn: TurnMode,
+        target: &str,
+    ) -> Result<theodore_ports::LocalSpaceMerge, SpaceToolError> {
+        self.space_core()?
+            .sub_space_merge(space, space_mode(turn), target)
+            .await
+    }
 }
 
 /// The worktree a run's code tools work on: its space's on a space turn,
