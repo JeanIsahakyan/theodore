@@ -1307,7 +1307,9 @@ export class McpFleet {
   }
 
   /**
-   * Whether the last start or send the host took hasn't begun its turn yet
+   * Whether the last start or send the host took (or hasn't answered yet:
+   * it answers a start once the worktree is made, which can outlast the
+   * reply wait) hasn't begun its turn yet
    * (nothing of a turn since: no turn, tool, reply, question or end line),
    * for up to `TURN_START_MS`: a turn starts within
    * seconds, and a missed event must not keep a space running for good.
@@ -1316,7 +1318,7 @@ export class McpFleet {
     const req = this.store.one<RequestRow>(
       `SELECT * FROM mcp_requests
        WHERE user_id = ? AND space = ? AND op IN ('start_space', 'send')
-         AND json_extract(outcome, '$.kind') = 'ok'
+         AND (outcome IS NULL OR json_extract(outcome, '$.kind') = 'ok')
        ORDER BY created_ms DESC LIMIT 1`,
       user,
       space,
