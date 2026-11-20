@@ -35,7 +35,7 @@ The cloud never makes a device run anything on its own word.
 | Only trusted devices are targets: the start dialog, `fleet_devices` and `fleet_start_space` list and reach only devices pinned here, and no request (start, send, stop, answer) is signed for a device that isn't pinned | origin core | yes |
 | Phones, the web app and Claude via the cloud (`kind` `mobile` / `web` / `mcp`) are never targets: the start dialog, `fleet_devices` and `fleet_start_space` skip them whatever they list, and no request is signed for one | origin core + UI | yes |
 | Claude via the cloud (`kind` `mcp`) holds no key of its own: the cloud does. It is trusted like a phone (fingerprint compared, pinned here with its kind), and a request from it that edits or runs (a start or send in Edit or Run, so a plan's approval too; a `send_to` to a space in Edit or Run; a `merge_child`; a sub-space tool of a space hosted for it, in Edit or Run) runs only after a person says Allow, on this device or on a device it delegates to; Deny, or no answer before `issued_at` + 5 min ─▶ `fleet.denied`; a daemon (nobody there) refuses it outright. Ask, Plan, answers and stop need no yes | target core + UI | yes: the cloud can sign as that device, never say yes for you |
-| Auto mode (opt-in, per `mcp` pin, on this device only): `edit` lets its Edit through without the yes, `full` Edit and Run; with an end (`auto_until_ms`) or until turned off. It skips only the yes: `accept_remote`, `max_mode`, the pin and freshness still hold, and it's read again right before the request runs. Set here (`fleet_set_auto`) or by a signed `set_mcp_auto` from a trusted device that isn't `mcp` | target core + UI | no, while on: the cloud can make this device edit (and with `full` run) without you; the Devices row and a notice that stays say so |
+| Auto mode (opt-in, per `mcp` pin, on this device only): `edit` lets its Edit through without the yes, `full` Edit and Run; with an end (`auto_until_ms`) or until turned off. It skips only the yes: `accept_remote`, `max_mode`, the pin and freshness still hold, and it's read again right before the request runs. Set here (`fleet_set_auto`) or by a signed `set_mcp_auto` from a trusted device that isn't `mcp` | target core + UI | no, while on: the cloud can make this device edit (and with `full` run) without you; the Devices row and a chip in the tab bar that stays say so |
 | A yes from elsewhere is a signed `confirm{confirm_id, allow}` request: taken only from a device pinned here, delegated to (`fleet.delegates`), not `mcp`, while that prompt waits; the first answer wins. The prompt it answers went out signed by this device (`Domain::Confirm`) | target core | yes |
 | The `mcp` cap follows the pin's kind or the cloud's listing, whichever is `mcp`: a listing can add the cap, never lift it | target core | yes |
 | A delegation (this device's spaces' questions also go to a phone) is signed by this device (`Domain::Delegate`), only for a phone or web app pinned here; one the cloud lists counts only if it verifies (this device's own against its key, another's against that origin's pin) | origin core | yes |
@@ -319,7 +319,7 @@ rows: only `fleet_set_settings`, `fleet_trust_device`,
 trusted device's `set_mcp_auto`) change them, never a UI transaction.
 
 ```
-Devices page / "Trust <device>?" notice ─▶ Trust ─▶ confirm: the full
+Devices page / "<device> wants to run spaces here" dialog ─▶ Trust ─▶ confirm: the full
   fingerprint, "make sure <device> shows the same fingerprint" ─▶ Trust
   ─▶ fleet_trust_device{device_id, trusted, public_key: the key shown}
   ─▶ refused unless the cloud still lists exactly that key ─▶ pinned
@@ -412,7 +412,7 @@ gate passes, origin pinned (or listed) as mcp
 | | |
 | --- | --- |
 | Prompt | "Claude via cloud wants to start an Edit space in app" / "send to Fix login in Run" / "approve the plan in Fix login (Edit)" / "merge a sub-space into Fix login", the goal, message or sub-space title as plain text (≤ 500 characters), the pinned name, Allow / Deny |
-| UI | `fleet_confirm` / `fleet_confirm_done` ephemerals, `fleet_confirms` (what waits, after a reload), `fleet_confirm{id, allow}`; a system notification while the window is in the background |
+| UI | `fleet_confirm` / `fleet_confirm_done` ephemerals, `fleet_confirms` (what waits, after a reload), `fleet_confirm{id, allow}`; a centered dialog ("Decision prompts" below); a system notification while the window is in the background |
 | Memory | pending prompts live in memory only and hold up nothing else; a restart forgets them (their requests are out of time by then) |
 | Hosted | a space started this way is hosted like any other (no user MCP servers, no `approve_tool`, `run_check` only in Run) |
 | Devices | listed as "Claude via cloud (MCP)" with a cloud icon and the warning that its key is held by the cloud; never a target, never a delegate; trusted, its row has the auto mode control |
@@ -481,7 +481,7 @@ another computer's row ─▶ its Claude via cloud ─▶ fleet_set_auto{…, ho
 
 | | |
 | --- | --- |
-| Notice | while any auto is on: "Claude via cloud: full auto until 18:00 · Turn off" in the fleet notices; Turn off is one click |
+| Chip | while any auto is on, here or on another computer this one knows of: a cloud chip in the tab bar, by the "+", "Full auto · 18:00" (the strongest mode, its end; "+1" for more); its popover lists each computer with it on, until when, Turn off per entry (another computer's: trusted and online only), and Settings → Devices. Never over the page (`ui/src/ui/fleet/FleetChrome.tsx`) |
 | Warning | on the control: "Its key is held by the Theodore cloud: with auto on, the cloud could make this computer edit [and run commands] without you." |
 | Log | an auto-allowed request is logged like an allowed one, info line `auto` (`req_id`, origin, auto and mode); every change, `fleet auto mode changed` with who asked |
 | Contract | `fleet_set_auto(FleetAutoRequest{device_id, auto, until_ms, host_device})` ─▶ `FleetStatus`; refused unless `device_id` is an `mcp` pin (here), or for an end in the past; `FleetDevice.auto`, `auto_until_ms` (this computer's, on the `mcp` row), `FleetDevice.mcp_auto` (another computer's, as it lists it), `FleetStatus.autos` |
@@ -497,6 +497,32 @@ host: pinned, not mcp, in fleet.delegates, still waiting ─▶ the person's
   answer, logged with the delegate's id; else fleet.invalid
 answered anywhere / timed out ─▶ confirm_resolved ─▶ confirm_dismissed there
 ```
+
+##### Decision prompts
+
+Everything waiting on a person's decision — a request from Claude via
+cloud (here, or on a computer that delegates its prompts here) and a
+"<device> wants to run spaces here" — is a centered dialog, one at a time
+(`ui/src/ui/fleet/FleetPrompts.tsx`). Routed agent questions stay
+non-blocking cards.
+
+```
+prompt comes ─▶ dialog: who (cloud icon, key-held-by-cloud warning), what
+  ("start an Edit space in app" / "send to Fix login in Run" / "merge…"),
+  goal or message (plain text, scrolls), "Waiting on <host>" if not here,
+  "Refused automatically in 4:32"  ─▶  [1 of 3 ‹ ›]   Deny   Allow ⌘⏎
+Deny / Allow ─▶ fleet_confirm{id, allow} ─▶ the next one, or closed
+Esc / click outside / ✕ ─▶ put away unanswered ─▶ "2 waiting" chip in the
+  tab bar ─▶ click ─▶ the dialog again
+a new prompt while put away ─▶ the dialog again, at the new one
+answered elsewhere (fleet_confirm_done) / out of time ─▶ gone from the queue
+```
+
+| | |
+| --- | --- |
+| Keys | focus starts on no button: a bare Enter answers nothing; Allow is a click or ⌘⏎ (Ctrl+Enter); Esc puts away |
+| Trust | Dismiss / Trust…; Trust opens the fingerprint check, and only its button pins the key |
+| Background | a system notification per request while the window isn't focused |
 
 A desktop computer may be a delegate too (`fleet_delegate`, not a daemon
 or an `mcp` device): it gets this device's prompts and its spaces'
