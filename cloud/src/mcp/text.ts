@@ -89,6 +89,24 @@ export function remoteStatus(s: unknown): string | null {
   return (STATUSES as readonly unknown[]).includes(s) ? (s as string) : null;
 }
 
+/**
+ * A send's ok value `{queued: true, position}`: the place it took in the
+ * queue of a space still working (docs/fleet.md "Sends queue"); `null`
+ * when it runs now, or from a host that never queues (it says busy).
+ */
+export function queuedPosition(value: unknown): number | null {
+  if (!value || typeof value !== 'object') return null;
+  const v = value as Record<string, unknown>;
+  const p = v.position;
+  return v.queued === true &&
+    typeof p === 'number' &&
+    Number.isSafeInteger(p) &&
+    p >= 1 &&
+    p <= 1000
+    ? p
+    : null;
+}
+
 /** Only desktops and daemons host spaces; phones, browsers and MCP never do. */
 export function hosts(kind: string): boolean {
   return kind === 'desktop' || kind === 'daemon';

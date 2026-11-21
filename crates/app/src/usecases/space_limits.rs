@@ -71,6 +71,9 @@ pub fn notice_text(notice: &ChatNotice, now: Millis) -> String {
         ChatNotice::LimitHit { account, resets_at } => {
             format!("{account} hit its limit{}", resets(resets_at))
         }
+        ChatNotice::RemoteDropped { from, reason } => {
+            format!("A message queued from {from} was dropped: {reason}")
+        }
     }
 }
 

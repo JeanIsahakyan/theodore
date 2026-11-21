@@ -35,6 +35,9 @@ pub(crate) struct QueueState {
     /// By run id: the turn's steer handle while its agent runs, and the
     /// messages steered into it so far.
     steers: Mutex<HashMap<String, Steered>>,
+    /// By message id: queued messages another device sent, with what they
+    /// were allowed on (`fleet_queue`).
+    pub(crate) remote: Mutex<HashMap<String, crate::usecases::fleet_queue::RemoteQueued>>,
 }
 
 #[derive(Default)]
@@ -152,6 +155,13 @@ impl Core {
 
     /// Send / Cancel / Edit on one queued message.
     pub async fn space_queued(&self, req: SpaceQueuedRequest) -> AppResult<()> {
+        // A mirrored space's queue is its host's: this copy only shows it.
+        if let Some(r) = self.space_remote_of(&req.space).await {
+            return Err(AppError::Invalid(format!(
+                "this message waits in the queue on {}: change it there",
+                r.host_name
+            )));
+        }
         let _queue = self.space_queue_lock(&req.space).await;
         let message = self
             .queued_messages(&req.space)
@@ -161,6 +171,7 @@ impl Core {
             .ok_or_else(|| AppError::NotFound(format!("queued message {}", req.message)))?;
         match req.action {
             QueuedAction::Cancel => {
+                self.fleet_queued_take(&message.id);
                 self.apply(vec![NewAction {
                     model: models::CHAT_MESSAGE.into(),
                     model_id: message.id,
@@ -196,7 +207,11 @@ impl Core {
                     }
                     SpaceStatus::Idle | SpaceStatus::Failed => {
                         self.check_setup_done(&space)?;
-                        self.start_queued(space, message).await?;
+                        // Another device's, no longer allowed: dropped,
+                        // and the chat says why.
+                        if self.fleet_queued_may_run(&space, &message).await {
+                            self.start_queued(space, message).await?;
+                        }
                     }
                 }
             }
@@ -207,6 +222,7 @@ impl Core {
     /// Starts the turn of a queued message, which stops being queued.
     /// Caller holds the space's queue lock; the space isn't running.
     async fn start_queued(&self, space: Space, message: ChatMessage) -> AppResult<String> {
+        self.fleet_queued_take(&message.id);
         let queued = message.queued.clone();
         let req = SpaceSendRequest {
             space: space.id.clone(),
@@ -296,7 +312,9 @@ impl Core {
             .and_then(|s| s.steer.clone())
     }
 
-    /// Runs the first waiting message, if the space is free for it.
+    /// Runs the first waiting message, if the space is free for it; one
+    /// from another device no longer allowed is dropped, and the next one
+    /// tried.
     async fn drain_queue(&self, space_id: &str) {
         let Ok(space) = self.space_row(space_id).await else {
             return;
@@ -304,14 +322,25 @@ impl Core {
         if !matches!(space.status, SpaceStatus::Idle | SpaceStatus::Failed) {
             return;
         }
-        let Ok(queue) = self.queued_messages(space_id).await else {
-            return;
-        };
-        let Some(next) = queue
-            .into_iter()
-            .find(|m| m.queued.as_ref().is_some_and(|q| !q.held))
-        else {
-            return;
+        let mut dropped = Vec::new();
+        let next = loop {
+            let Ok(queue) = self.queued_messages(space_id).await else {
+                return;
+            };
+            let Some(next) = queue
+                .into_iter()
+                .find(|m| m.queued.as_ref().is_some_and(|q| !q.held))
+            else {
+                return;
+            };
+            // Dropped, yet still there (the store failed): it stays put.
+            if dropped.contains(&next.id) {
+                return;
+            }
+            if self.fleet_queued_may_run(&space, &next).await {
+                break next;
+            }
+            dropped.push(next.id);
         };
         let name = space.name.clone();
         if let Err(e) = self.start_queued_boxed(space, next).await {
@@ -374,7 +403,7 @@ impl Core {
     /// mid-run and the message needs nothing the run can't change (another
     /// agent, model or mode, attachments); otherwise the usual send, so
     /// queued while a turn runs. A mirrored space's is a send to its host,
-    /// which takes it only once the turn settled.
+    /// which queues it behind a running turn (docs/fleet.md "Sends queue").
     pub async fn space_send_now(&self, req: SpaceSendRequest) -> AppResult<String> {
         if let Some(r) = self.space_remote_of(&req.space).await {
             return self.remote_space_send(&r, req).await;

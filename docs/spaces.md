@@ -1782,6 +1782,11 @@ send ─▶ running? ── no ──▶ turn now
   nothing (Send is refused); after Unarchive the held messages can be sent.
 - A per-space lock covers "send now or queue" and "turn ends → next queued
   starts", so a send never slips in between and the order holds.
+- A send from another of your devices queues here too, up to 5 at once,
+  and is checked against that device's trust again when its turn comes:
+  no longer allowed, it's dropped with a notice row (docs/fleet.md "Sends
+  queue"). A mirrored space's queue is its host's: shown here, changed
+  there.
 
 **Send now (steer).** For a Claude Code turn the composer also offers
 *Send now* (⌘⏎; ⏎ still queues): the message goes into the running turn and

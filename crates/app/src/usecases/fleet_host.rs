@@ -6,7 +6,7 @@
 //! request ─▶ peek: for this device? ─▶ accept_remote ─▶ origin pinned?
 //!   ─▶ open(pinned key) ─▶ target_key is this device's key
 //!   ─▶ fresh + not replayed (seen, kept in the store)
-//!   ─▶ op fits (mode, project, depth, space, not busy, answers; a start
+//!   ─▶ op fits (mode, project, depth, space, queue room, answers; a start
 //!      reserves its slot) ─▶ claim
 //!   ─▶ claim_result{claimed} ─▶ seen done kept (else internal, no run)
 //!      ─▶ fresh, accept_remote, same pin, max_mode again ─▶ run ─▶ reply
@@ -54,6 +54,7 @@ use crate::usecases::fleet_agents::{agent_of, check_pick};
 use crate::usecases::fleet_confirm::needs_person;
 use crate::usecases::fleet_mirror::Mirror;
 use crate::usecases::fleet_origin::{line_of, truncate};
+use crate::usecases::fleet_queue::RemoteQueued;
 use crate::usecases::spaces::space_chat_key;
 
 /// A refusal: code and words for the origin.
@@ -183,13 +184,6 @@ pub(crate) fn answer_items(
         .collect()
 }
 
-fn busy() -> Refusal {
-    refuse(
-        codes::BUSY,
-        "the space is still working: wait until it settles, then send",
-    )
-}
-
 /// A synced change to what `DeviceInfo` lists: a project, or an agent
 /// setting (`agents.<…>`: on or off, model, effort, `agents.chat`).
 fn offer_changed(a: &theodore_contract::WireAction) -> bool {
@@ -213,7 +207,7 @@ fn offer_changed(a: &theodore_contract::WireAction) -> bool {
     key.starts_with("agents.")
 }
 
-fn app_refusal(e: AppError) -> Refusal {
+pub(crate) fn app_refusal(e: AppError) -> Refusal {
     match e {
         AppError::NotFound(m) => refuse(codes::UNKNOWN_SPACE, m),
         AppError::Invalid(m) => refuse(codes::INVALID, m),
@@ -610,12 +604,9 @@ impl Core {
                     return Err(refuse(codes::INVALID, "empty message"));
                 }
                 let row = self.space_row(&local).await.map_err(app_refusal)?;
-                // Never queued behind a running turn: a queued message
-                // would run later, past any change to the trust, the key
-                // or max_mode made meanwhile.
-                if row.status == SpaceStatus::Running {
-                    return Err(busy());
-                }
+                // Queued behind a running turn, up to a few from other
+                // devices (docs/fleet.md "Sends queue").
+                self.fleet_check_queue(&row).await?;
                 // Picks apply to the space's agent unless one is named.
                 check_pick(
                     &self.fleet_offer().await,
@@ -747,14 +738,18 @@ impl Core {
             }
             // A person's yes first, when it needs one; waits in this task
             // only, never in front of other requests.
-            if c.confirm
-                && let Err(refusal) = core.fleet_confirm_or_auto(&c).await
-            {
-                core.fleet().release(c.req.op.space(), &c.req.req_id);
-                core.fleet_reply(c.req, Err(refusal)).await;
-                return;
+            let mut person = false;
+            if c.confirm {
+                match core.fleet_confirm_or_auto(&c).await {
+                    Ok(yes) => person = yes,
+                    Err(refusal) => {
+                        core.fleet().release(c.req.op.space(), &c.req.req_id);
+                        core.fleet_reply(c.req, Err(refusal)).await;
+                        return;
+                    }
+                }
             }
-            core.fleet_run(c).await;
+            core.fleet_run(c, person).await;
         });
     }
 
@@ -802,42 +797,41 @@ impl Core {
         Ok(())
     }
 
-    /// Runs a claimed request and replies.
-    async fn fleet_run(&self, c: Claimed) {
+    /// Runs a claimed request and replies. `person`: a person here said
+    /// yes to it.
+    async fn fleet_run(&self, c: Claimed, person: bool) {
         let checked = self.fleet_recheck(&c).await;
+        // What a send that ends up queued is checked against again.
+        let from = RemoteQueued {
+            space: String::new(),
+            origin: c.req.origin_device.clone(),
+            key: c.key.clone(),
+            name: self
+                .fleet_pinned(&c.req.origin_device)
+                .await
+                .map_or_else(|| c.req.origin_device.clone(), |p| p.name),
+            mode: c.mode,
+            own_mode: matches!(c.req.op, RemoteOp::SendTo { .. }),
+            person,
+        };
         let req = c.req;
         let outcome = match checked {
             Err(refusal) => Err(refusal),
-            Ok(()) => self.fleet_run_op(&req, c.mode).await,
+            Ok(()) => self.fleet_run_op(&req, c.mode, from).await,
         };
         // A start's slot goes either way: hosted now, or not at all.
         self.fleet().release(req.op.space(), &req.req_id);
         self.fleet_reply(req, outcome).await;
     }
 
-    /// A send to hosted space `local`: only while it isn't running, checked
-    /// under the space's queue lock so it can't start running in between
-    /// and the message wait in its queue (docs/fleet.md "Sends never
-    /// queue").
-    async fn fleet_host_send(&self, req: SpaceSendRequest) -> Result<serde_json::Value, Refusal> {
-        let _queue = self.space_queue_lock(&req.space).await;
-        let row = self.space_row(&req.space).await.map_err(app_refusal)?;
-        if row.status == SpaceStatus::Running {
-            return Err(busy());
-        }
-        self.space_send_as(req, None)
-            .await
-            .map(|id| serde_json::json!({ "message": id }))
-            .map_err(app_refusal)
-    }
-
     async fn fleet_run_op(
         &self,
         req: &RemoteRequest,
         mode: Option<FleetMode>,
+        from: RemoteQueued,
     ) -> Result<serde_json::Value, Refusal> {
         if req.op.on_any_space() {
-            return self.fleet_run_any_space(req, mode).await;
+            return self.fleet_run_any_space(req, mode, from).await;
         }
         match req.op.clone() {
             RemoteOp::StartSpace { .. } => self.fleet_host_start(req).await,
@@ -850,17 +844,24 @@ impl Core {
                 effort,
             } => match self.fleet_hosted_local(&space) {
                 // The picks passed the gate: as a local send's, from
-                // this turn on.
+                // this turn on; queued while the space runs.
                 Some(local) => {
-                    self.fleet_host_send(SpaceSendRequest {
-                        space: local,
-                        text,
-                        agent: agent.as_deref().and_then(agent_of),
-                        model,
-                        mode: mode.map(space_mode),
-                        attachments: None,
-                        effort,
-                    })
+                    let from = RemoteQueued {
+                        space: local.clone(),
+                        ..from
+                    };
+                    self.fleet_send_or_queue(
+                        SpaceSendRequest {
+                            space: local,
+                            text,
+                            agent: agent.as_deref().and_then(agent_of),
+                            model,
+                            mode: mode.map(space_mode),
+                            attachments: None,
+                            effort,
+                        },
+                        from,
+                    )
                     .await
                 }
                 None => Err(refuse(codes::UNKNOWN_SPACE, "no such space on this device")),
