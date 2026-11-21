@@ -81,6 +81,9 @@ pub mod models {
     /// The latest usage limit of each agent account, keyed
     /// `<agent>:<account>` (`AgentLimitRow`).
     pub const AGENT_LIMIT: &str = "agent_limit";
+    /// A followed space's sub-spaces on its host, keyed `<rs_>:<id>`
+    /// (`RemoteSubSpace`): its tree, never spaces here.
+    pub const REMOTE_SUB_SPACE: &str = "remote_sub_space";
     pub const ALL: &[&str] = &[
         PR,
         PR_DETAIL,
@@ -100,6 +103,7 @@ pub mod models {
         SPACE,
         REPORT,
         AGENT_LIMIT,
+        REMOTE_SUB_SPACE,
     ];
 }
 
@@ -1289,6 +1293,8 @@ pub fn types() -> specta::Types {
         .register::<FleetAnswerRequest>()
         .register::<FleetPresenceRequest>()
         .register::<FleetRemoteSpace>()
+        .register::<RemoteSubSpace>()
+        .register::<RemoteSubSpaceStatus>()
         .register::<FleetSpaceLine>()
         .register::<FleetQuestion>()
         .register::<FleetTrustNeeded>()

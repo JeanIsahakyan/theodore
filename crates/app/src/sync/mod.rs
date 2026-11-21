@@ -42,6 +42,7 @@ impl Core {
                     models::SPACE,
                     models::REPORT,
                     models::AGENT_LIMIT,
+                    models::REMOTE_SUB_SPACE,
                 ] {
                     out.extend(store.all(m)?);
                 }
