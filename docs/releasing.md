@@ -142,28 +142,47 @@ it out and send data to the account: it can only ingest, never read. Rotate
 it in New Relic if it is abused. A local nightly bakes them in only when
 they are exported in the shell that runs `scripts/nightly-build.sh`.
 
-## Optional: Developer ID signing + notarization
+## Developer ID signing + notarization
 
-Without this, every release is **ad-hoc signed** (`tauri.conf.json`'s
-`bundle.macOS.signingIdentity: "-"`, equivalent to `codesign --force --deep -s -`).
-That's enough to run on Apple Silicon, but Gatekeeper still blocks the first
-launch (see below) and updates install into an unnotarized app.
+Releases are signed with **Developer ID Application: Zhan Isaakian
+(J33CB2C73P)** and notarized whenever `APPLE_CERTIFICATE` is set (it is).
+Without it, `build.yml` falls back to an **ad-hoc** signature
+(`tauri.conf.json`'s `bundle.macOS.signingIdentity: "-"`): enough to run on
+Apple Silicon, but Gatekeeper blocks the first launch (see below).
 
-To turn on real signing, add these secrets — `build.yml` picks them up
-automatically (`tauri-bundler` reads them directly) and the ad-hoc path is
-skipped:
+`tauri-bundler` reads these secrets itself; the DMG and the grammar dylibs
+are signed with the same certificate in a throwaway keychain:
 
 | Secret | What |
 | --- | --- |
-| `APPLE_CERTIFICATE` | Developer ID Application cert, exported as `.p12`, base64-encoded (`base64 -i cert.p12`) |
-| `APPLE_CERTIFICATE_PASSWORD` | password used when exporting the `.p12` |
-| `APPLE_SIGNING_IDENTITY` | e.g. `Developer ID Application: Your Name (TEAMID)` |
-| `APPLE_ID` | Apple ID used for `notarytool` |
-| `APPLE_PASSWORD` | an [app-specific password](https://support.apple.com/en-us/102654) for that Apple ID (not the account password) |
-| `APPLE_TEAM_ID` | your Apple Developer team id |
+| `APPLE_CERTIFICATE` | Developer ID Application cert + key + the Developer ID G2 intermediate, `.p12`, base64-encoded |
+| `APPLE_CERTIFICATE_PASSWORD` | the `.p12` password |
+| `APPLE_SIGNING_IDENTITY` | `Developer ID Application: Zhan Isaakian (J33CB2C73P)` |
+| `APPLE_TEAM_ID` | `J33CB2C73P` |
+| `APPLE_API_KEY` | notarization: App Store Connect API key id (Team Keys) |
+| `APPLE_API_ISSUER` | notarization: that key's issuer id |
+| `APPLE_API_KEY_P8` | notarization: the `AuthKey_<id>.p8` contents |
+| `APPLE_ID`, `APPLE_PASSWORD` | notarization fallback when no API key is set: Apple ID + app-specific password |
 
-No other change: the workflow and `tauri.conf.json` are unchanged whether or
-not these are set.
+Renewing the certificate (it expires 2027-12-21): only the Account Holder can
+create a Developer ID certificate, in the portal, not through the API.
+
+```sh
+openssl req -new -newkey rsa:2048 -nodes -keyout devid.key -out devid.csr \
+  -subj "/CN=Theodore Developer ID/C=US"
+# developer.apple.com → Certificates → + → Developer ID Application (G2),
+# upload devid.csr, download developerID_application.cer
+openssl x509 -inform DER -in developerID_application.cer -out devid.pem
+curl -so g2.cer https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer
+openssl x509 -inform DER -in g2.cer -out g2.pem
+openssl pkcs12 -export -legacy -inkey devid.key -in devid.pem -certfile g2.pem \
+  -out devid.p12 -passout pass:"$PASS"
+base64 -i devid.p12 | gh secret set APPLE_CERTIFICATE
+printf '%s' "$PASS" | gh secret set APPLE_CERTIFICATE_PASSWORD
+```
+
+`-legacy` matters: `security import` on macOS rejects OpenSSL 3's default
+`.p12` encryption.
 
 ## Cutting a production release
 
