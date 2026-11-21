@@ -20,8 +20,8 @@ use theodore_mcp::space_agent::MAX_DIFF_CHARS;
 use theodore_mcp::{
     AppStatus, BackendError, BaseChange, CheckOutcome, GroupWithHunks, LogTail, McpServer,
     NewFinding, NewPatch, NewReviewComment, PrContext, ProgressStep, ReviewItem,
-    ReviewToolsBackend, RunContext, ShipOutcome, ShipToolAction, SpaceCommandName, SpaceDiff,
-    SpaceInfo, SpaceToolError, SpaceToolsBackend, TerminalTail, ToolSet,
+    ReviewToolsBackend, RunContext, ShipMerge, ShipOutcome, ShipToolAction, SpaceCommandName,
+    SpaceDiff, SpaceInfo, SpaceToolError, SpaceToolsBackend, TerminalTail, ToolSet,
 };
 
 struct EmptyReview;
@@ -113,12 +113,18 @@ impl SpaceToolsBackend for FakeChange {
                 "open a PR before pushing".into(),
             ));
         }
+        let merge = (action == ShipToolAction::Merge).then(|| ShipMerge {
+            method: "squash".into(),
+            auto: true,
+            queue: false,
+        });
         Ok(ShipOutcome {
             action,
             branch: "ada/fix-login".into(),
             sha: "squash1".into(),
             pr_number: Some(12),
             pr_url: Some("https://github.com/acme/widget/pull/12".into()),
+            merge,
             summary: "Opened PR #12 from ada/fix-login".into(),
         })
     }
@@ -276,6 +282,17 @@ async fn the_change_tools_reach_the_backend_with_the_tokens_space() {
     );
     assert_eq!(shipped["pr_number"], json!(12));
     assert_eq!(shipped["action"], json!("open_draft_pr"));
+    assert_eq!(
+        shipped.get("merge"),
+        None,
+        "only a merge says how it merged"
+    );
+    let merged = json_of(&call(&client, "ship", json!({ "action": "merge" })).await);
+    assert_eq!(merged["action"], json!("merge"));
+    assert_eq!(
+        merged["merge"],
+        json!({ "method": "squash", "auto": true, "queue": false })
+    );
     let refused = call(&client, "ship", json!({ "action": "push" })).await;
     assert_eq!(refused.is_error, Some(true));
     assert_eq!(
@@ -335,6 +352,7 @@ async fn the_change_tools_reach_the_backend_with_the_tokens_space() {
         spaces.calls(),
         [
             "ship s1 space:s1:m1 OpenDraftPr Some(\"Fix login\")",
+            "ship s1 space:s1:m1 Merge None",
             "ship s1 space:s1:m1 Push None",
             "space_diff s1 Some(\"src/a.rs\")",
             "space_diff s1 None",

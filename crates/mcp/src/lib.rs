@@ -28,7 +28,7 @@ pub use backend::{
     NewReviewComment, NoCodeTools, NoReviewTools, NoSpaceTools, PrContext, ProgressStep,
     ProgressStepState, REPORT_TOOL, REVIEW_SPACE_TOOL_NAMES, REVIEW_TOOL_NAMES, ReportRequest,
     ReportScope, ReviewItem, ReviewToolsBackend, RunContext, SPACE_TOOL_NAMES,
-    SUB_SPACE_STEER_TOOL_NAMES, SUB_SPACE_TOOL_NAMES, ShipOutcome, ShipToolAction,
+    SUB_SPACE_STEER_TOOL_NAMES, SUB_SPACE_TOOL_NAMES, ShipMerge, ShipOutcome, ShipToolAction,
     SpaceCommandName, SpaceDiff, SpaceInfo, SpaceToolError, SpaceToolsBackend, TerminalTail,
     ToolSet, TurnMode,
 };

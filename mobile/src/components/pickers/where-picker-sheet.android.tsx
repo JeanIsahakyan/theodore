@@ -1,6 +1,7 @@
 /**
  * Android: Home's computer and project sheets in Compose (inside a
- * `ModalBottomSheet`); the same rows as `where-picker-list.tsx`.
+ * `ModalBottomSheet`); the same rows and steps as `where-picker-list.tsx`
+ * (the computer sheet's Mode step included).
  */
 import {
   Column,
@@ -15,18 +16,56 @@ import {
   verticalScroll,
 } from '@expo/ui/jetpack-compose/modifiers';
 import { useState } from 'react';
-import { applyDevice, applyWhere } from '../../state/compose';
+import { applyDevice, applyWhere, setHomeMode } from '../../state/compose';
 import { PROJECT_SEARCH_MIN } from '../../ui/homeDraft';
+import { MODE_LABEL, modeRows, modesUpTo } from '../../ui/logic';
 import { usePalette } from '../../ui/theme';
 import { tick } from './haptics';
-import { SheetHeading, SheetRow, SheetTitle } from './sheet-parts.android';
+import {
+  SheetBack,
+  SheetDivider,
+  SheetHeading,
+  SheetRow,
+  SheetTitle,
+} from './sheet-parts.android';
 import { useDeviceRows, useHome, useProjectGroups } from './use-picker';
 
 const COLUMN = [fillMaxWidth(), verticalScroll(), padding(0, 0, 0, 24)];
 
+type ComputerStep = 'main' | 'mode';
+
 export function ComputerPickerSheet({ onClose }: { onClose: () => void }) {
   const rows = useDeviceRows();
-  const shown = useHome();
+  const { device, mode } = useHome();
+  const [step, setStep] = useState<ComputerStep>('main');
+
+  if (step === 'mode' && device) {
+    return (
+      <Column modifiers={COLUMN}>
+        <SheetTitle
+          leading={
+            <SheetBack label="Computer" onPress={() => setStep('main')} />
+          }
+        >
+          Mode
+        </SheetTitle>
+        {modeRows(modesUpTo(device.maxMode), mode).map((r) => (
+          <SheetRow
+            key={r.mode}
+            label={r.label}
+            selected={r.selected}
+            accessibilityLabel={`Mode: ${r.label}`}
+            onPress={() => {
+              setHomeMode(r.mode);
+              tick();
+              setStep('main');
+            }}
+          />
+        ))}
+      </Column>
+    );
+  }
+
   return (
     <Column modifiers={COLUMN}>
       <SheetTitle>Computer</SheetTitle>
@@ -39,7 +78,7 @@ export function ComputerPickerSheet({ onClose }: { onClose: () => void }) {
             detail={r.detail}
             dot={d.online ? 'on' : 'off'}
             disabled={!r.enabled}
-            selected={shown.device?.deviceId === d.deviceId}
+            selected={device?.deviceId === d.deviceId}
             accessibilityLabel={`${d.name}, ${d.online ? 'online' : 'offline'}, ${r.detail}`}
             onPress={() => {
               applyDevice(d.deviceId);
@@ -49,6 +88,18 @@ export function ComputerPickerSheet({ onClose }: { onClose: () => void }) {
           />
         );
       })}
+      {device ? (
+        <>
+          <SheetDivider />
+          <SheetRow
+            label="Mode"
+            value={MODE_LABEL[mode]}
+            chevron
+            accessibilityLabel={`Mode, ${MODE_LABEL[mode]}`}
+            onPress={() => setStep('mode')}
+          />
+        </>
+      ) : null}
     </Column>
   );
 }

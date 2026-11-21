@@ -8,7 +8,9 @@ import {
   emptyDraft,
   isAnswered,
   mergeLines,
+  modeRows,
   modesUpTo,
+  offeredMode,
   pickOption,
   plainExcerpt,
   questionFor,
@@ -117,6 +119,30 @@ describe('modes', () => {
     expect(capMode('run', 'edit')).toBe('edit');
     expect(capMode('ask', 'edit')).toBe('ask');
     expect(capMode('edit', 'edit')).toBe('edit');
+  });
+});
+
+describe("a sheet's Mode step", () => {
+  it('offers every mode up to the cap, ✓ on the current', () => {
+    expect(modeRows(modesUpTo('edit'), 'plan')).toEqual([
+      { mode: 'ask', label: 'Ask', selected: false },
+      { mode: 'plan', label: 'Plan', selected: true },
+      { mode: 'edit', label: 'Edit', selected: false },
+    ]);
+    expect(modeRows(modesUpTo('run'), 'run').map((r) => r.label)).toEqual([
+      'Ask',
+      'Plan',
+      'Edit',
+      'Run',
+    ]);
+  });
+
+  it('a current mode above the cap: ✓ on the highest offered', () => {
+    const rows = modeRows(modesUpTo('plan'), 'run');
+    expect(rows.filter((r) => r.selected).map((r) => r.mode)).toEqual(['plan']);
+    expect(offeredMode(['ask', 'plan'], 'run')).toBe('plan');
+    expect(offeredMode(['ask', 'plan'], 'ask')).toBe('ask');
+    expect(offeredMode([], 'edit')).toBe('ask');
   });
 });
 

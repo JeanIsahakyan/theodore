@@ -11,7 +11,8 @@ use theodore_contract::{
 };
 use theodore_domain::{PrRef, PrState, RepoRef, Sha, Usage};
 use theodore_ports::{
-    AgentEvent, MergeMethod, MergeState, MergeStatus, NewAction, SpaceMerge, Store, SyncActionCode,
+    AgentEvent, MergeMethod, MergeState, MergeStatus, NewAction, ShipMerge, ShipToolAction,
+    SpaceMerge, Store, SyncActionCode,
 };
 
 use crate::testkit::{Fixtures, fixtures, sample_pr_detail};
@@ -462,6 +463,149 @@ async fn merge_is_refused_with_turns_not_pushed_or_without_a_pr() {
         .unwrap_err();
     assert!(err.to_string().contains("aren't pushed"), "{err}");
     assert!(f.host.merge_calls().is_empty());
+}
+
+// ── Merge from the agent's turn (`ship` with `merge`) ─────────────────────
+
+/// The space as if turn `run` were in flight.
+fn running(f: &Fixtures, id: &str, run: &str) {
+    f.store
+        .apply(vec![NewAction {
+            model: models::SPACE.into(),
+            model_id: id.to_string(),
+            action: SyncActionCode::C,
+            data: Some(json!({ "status": "running", "run": run })),
+        }])
+        .unwrap();
+}
+
+#[tokio::test]
+async fn the_agents_merge_merges_the_pr_from_its_own_turn() {
+    let f = fixtures();
+    let (core, _recv, project) = host_project(&f).await;
+    let s = in_review(&f, &core, &project, "Retry on 429").await;
+    running(&f, &s.id, "space:t:1");
+    f.host
+        .push_merge_status(Ok(status(MergeState::Clean, Some(true))));
+
+    // Another turn's call waits for the one that holds the space.
+    let err = core
+        .space_tool_ship(&s.id, "space:t:other", ShipToolAction::Merge, None)
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("still working"), "{err}");
+    assert!(f.host.merge_calls().is_empty());
+
+    let out = core
+        .space_tool_ship(&s.id, "space:t:1", ShipToolAction::Merge, None)
+        .await
+        .unwrap();
+    assert_eq!(out.action, ShipToolAction::Merge);
+    assert_eq!(out.pr_number, Some(100));
+    assert_eq!(out.branch, s.branch);
+    assert_eq!(out.sha, "squash1", "the pushed squash the PR has");
+    assert_eq!(
+        out.merge,
+        Some(ShipMerge {
+            method: "squash".into(),
+            auto: false,
+            queue: false,
+        })
+    );
+    assert_eq!(
+        out.summary,
+        "Merging PR #100 (squash) now; the space is done once the host confirms"
+    );
+    wait_until(|| !f.host.merge_calls().is_empty()).await;
+    assert_eq!(f.host.merge_calls()[0].0, MergeMethod::Squash);
+}
+
+#[tokio::test]
+async fn the_agents_merge_reports_auto_merge_and_the_queue() {
+    let f = fixtures();
+    let (core, _recv, project) = host_project(&f).await;
+    let s = in_review(&f, &core, &project, "Retry on 429").await;
+    running(&f, &s.id, "space:t:1");
+    let mut blocked = status(MergeState::Blocked, Some(true));
+    blocked.auto_merge_allowed = true;
+    f.host.push_merge_status(Ok(blocked));
+    let out = core
+        .space_tool_ship(&s.id, "space:t:1", ShipToolAction::Merge, None)
+        .await
+        .unwrap();
+    assert!(out.merge.as_ref().is_some_and(|m| m.auto && !m.queue));
+    assert!(
+        out.summary.starts_with("Enabled auto-merge on PR #100"),
+        "{}",
+        out.summary
+    );
+
+    let mut queued = status(MergeState::Clean, Some(true));
+    queued.merge_queue = true;
+    f.host.push_merge_status(Ok(queued));
+    let out = core
+        .space_tool_ship(&s.id, "space:t:1", ShipToolAction::Merge, None)
+        .await
+        .unwrap();
+    assert!(out.merge.as_ref().is_some_and(|m| m.queue && !m.auto));
+    assert!(
+        out.summary.starts_with("Added PR #100 to the merge queue"),
+        "{}",
+        out.summary
+    );
+
+    // Blocked on a repo without auto-merge: refused, nothing queued.
+    f.host
+        .push_merge_status(Ok(status(MergeState::Blocked, Some(true))));
+    let err = core
+        .space_tool_ship(&s.id, "space:t:1", ShipToolAction::Merge, None)
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("auto-merge"), "{err}");
+}
+
+#[tokio::test]
+async fn the_agents_merge_is_refused_without_a_pr_or_with_edits_not_pushed() {
+    let f = fixtures();
+    let spaces = tempfile::tempdir().unwrap();
+    f.git.set_space_root(spaces.path());
+    let (core, _recv, project) = host_project(&f).await;
+    let s = one_turn(&f, &core, &project, "Retry on 429").await;
+    running(&f, &s.id, "space:t:1");
+    let err = core
+        .space_tool_ship(&s.id, "space:t:1", ShipToolAction::Merge, None)
+        .await
+        .unwrap_err();
+    assert_eq!(err.to_string(), "this space has no PR to merge");
+
+    f.host.push_get_pr(Ok(theodore_ports::Fetched::Modified {
+        etag: None,
+        value: sample_pr_detail(&pr_ref(100), &Sha::new("base000"), &Sha::new("squash1")),
+    }));
+    core.space_tool_ship(&s.id, "space:t:1", ShipToolAction::OpenPr, None)
+        .await
+        .unwrap();
+    wait_until(|| space(&f, &s.id).pr.is_some()).await;
+    // The turn edited files since the push: the merge would leave them out.
+    f.git.ship.lock().unwrap().snapshot = Some(Sha::new("live1"));
+    f.host
+        .push_merge_status(Ok(status(MergeState::Clean, Some(true))));
+    let err = core
+        .space_tool_ship(&s.id, "space:t:1", ShipToolAction::Merge, None)
+        .await
+        .unwrap_err();
+    assert!(
+        err.to_string().contains("this turn's edits aren't pushed"),
+        "{err}"
+    );
+    assert!(f.host.merge_calls().is_empty());
+
+    // Pushed (the snapshot is the checkpoint again): it merges.
+    f.git.ship.lock().unwrap().snapshot = None;
+    core.space_tool_ship(&s.id, "space:t:1", ShipToolAction::Merge, None)
+        .await
+        .unwrap();
+    wait_until(|| !f.host.merge_calls().is_empty()).await;
 }
 
 #[tokio::test]

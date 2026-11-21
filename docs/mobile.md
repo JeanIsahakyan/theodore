@@ -23,10 +23,10 @@ iPhone / Android / browser                     Theodore cloud            your co
 | --- | --- |
 | Sign in | AuthKit hosted page (PKCE, no secret), org picker when you're in several (through the cloud, like the desktop) |
 | Drawer | Fleet spaces you started from here or follow, newest activity first by day (Today, Yesterday, Previous 7 days, Older), a status dot, search; Devices, Settings, the account and organization |
-| Home (new space) | The goal in the composer; on its card the computer and the project (a sheet each), chips for the model (top 4, All models, Effort) and the mode up to its cap; last picks remembered (below, "New space") |
+| Home (new space) | The goal in the composer; under the hint a project chip and a computer chip ("theodore on mac-A", a sheet each; the computer's sheet holds the mode up to its cap), in the composer the model chip (top 4, All models, Effort); last picks remembered (below, "New space") |
 | Devices | This device's fingerprint (large, copy) to show on the computer; a card per device, computers first (kind, online, OS · mode cap · agents, fingerprint), trust / untrust with the fingerprint confirm; on a computer, its auto mode per Claude via cloud device (Off / Auto Edit / Full auto, for 1 hour, until end of day or until turned off) |
 | Settings | Account card; Organization (switch), Devices, This device (fingerprint, copy), Appearance (Light / Dark / System), Notifications, About (version, server); sign out |
-| Space | Its chat (or history lines), send a message any time: while a turn runs the host queues it (a queued bubble, or "Queued: runs after the current turn"), Stop beside Send; the running turn's steps, or the newest log line with "Working · 12s" on a host that doesn't mirror; Approve / Revise a plan, answer its question |
+| Space | Its chat (or history lines), send a message any time: while a turn runs the host queues it (a queued bubble, or "Queued: runs after the current turn"), Stop beside Send; the composer's one chip is the model's, its sheet also holds the next message's mode (shown in the header: "on mac-A · Running · Edit"); the running turn's steps, or the newest log line with "Working · 12s" on a host that doesn't mirror; Approve / Revise a plan, answer its question |
 
 Questions and "space finished" arrive as push notifications; a question's
 options are notification buttons (one tap answers it, signed on the phone,
@@ -222,7 +222,7 @@ import { Button, Form, Row, Section, Switch, confirm } from '../../src/ui/native
 | `Form` › `Section` (`title`, `footer`, `plain`) › `Row` (`label`, `value`, `detail`, `icon`, `chevron`, `selected`, `destructive`, `loading`, `onPress`) | `Form` (inset grouped, scrolls) › `Section` › row `Button` | scrolling `Column` › titled `Card` › `ListItem` (no chevron) | `ScrollView` › card › rows |
 | `icon` on `Row`, `Switch`, `Select` (`src/ui/native/icons.ts`) | SF Symbol in a `Label` (accent) | Material Symbol, the `ListItem`'s leading content (`assets/icons/*.xml`) | Lucide |
 | `FormSlot` (any RN view inside a `Form`) | `RNHostView` | `RNHostView` | `View` |
-| `Menu` (`label`, `groups` of choices with a check on the current one; the composer's Mode) | `Menu` with a `Picker` submenu per group, a lone group inline (glass button on iOS 26) | `AssistChip` + `DropdownMenu`, a heading per group | pill + sheet |
+| `Menu` (`label`, `groups` of choices with a check on the current one) | `Menu` with a `Picker` submenu per group, a lone group inline (glass button on iOS 26) | `AssistChip` + `DropdownMenu`, a heading per group | pill + sheet |
 | `confirm()` / `notify()` (promise) | `UIAlertController` (RN `Alert`) | `AlertDialog` (RN `Alert`) | `window.confirm` / `alert` |
 
 ```
@@ -247,12 +247,11 @@ Android: isDynamicColorAvailable (Android 12+)
 | --- | --- | --- | --- |
 | Home's header | native glass bar, ☰ / 🔔 / ✎ bar items | opaque native header, same items | Material 3 top app bar (menu, badged bell, edit) |
 | Pushed screens' header | native glass bar, "‹" back (minimal) | `TopBar` ("‹ Back") | `TopBar`: Material 3 top app bar |
-| Space's header (name, "on host · status") | Home's header (☰ / 🔔 / ✎), two-line title view | same, opaque native header | Home's top app bar, title + subtitle |
+| Space's header (name, "on host · status · mode") | Home's header (☰ / 🔔 / ✎), two-line title view | same, opaque native header | Home's top app bar, title + subtitle |
 | Drawer | behind the content, which slides off it (rounded corners) | same | Material 3 modal navigation drawer over a scrim, pill items |
 | Composer | Liquid Glass, interactive | system chrome blur | `surfaceContainerHigh`, 28 dp corners, filled send |
-| Composer: Mode | SwiftUI `Menu`, choices inline | same | assist chip ─▶ `DropdownMenu` |
-| Composer: model | small bordered capsule (effort secondary) ─▶ formSheet route, glass sheet, grabber | same, no glass | assist chip (`labelMedium`) ─▶ Compose `ModalBottomSheet` |
-| Composer card: computer, project | RN rows ─▶ formSheet route | same | RN rows ─▶ Compose `ModalBottomSheet` |
+| Composer: model (a space: its Mode step too) | small bordered capsule (effort secondary) ─▶ formSheet route, glass sheet, grabber | same, no glass | assist chip (`labelMedium`) ─▶ Compose `ModalBottomSheet` |
+| Home: project and computer chips (the computer's sheet holds Mode) | small bordered capsules with an SF Symbol ─▶ formSheet route | same | assist chips with a Material Symbol ─▶ Compose `ModalBottomSheet` |
 | Space composer | `PromptInput` floating over the chat, notes on a `Glass` panel above it | same, chrome blur, notes on a card | same, `surfaceContainerHigh`, notes on a card |
 | Scroll to the newest message | glass circle | blur circle | raised `card` circle, ripple |
 | Plan's Approve / Revise, Send answer | capsule `.borderedProminent` / `.bordered` (kit `Button` `pill`) | same | `Button` / `FilledTonalButton` |
@@ -350,7 +349,7 @@ new space (✎)      ─▶ dismissTo Home         bell ─▶ the first waiting
 | Markdown: mdast (micromark, GFM tables and strikethrough) ─▶ React Native views; code blocks highlighted (highlight.js, a fixed set of languages, never guessed) | `src/components/markdown/` |
 | A space's header (name, "on host · status") | `src/components/space-header.tsx` (the main header with a subtitle), `space-title.tsx` |
 | A space's steps: compact grey rows that open in place (folding: `src/ui/turnRows.ts`) | `src/ui/Timeline.tsx`, `src/ui/SpaceChat.tsx` |
-| Composer chips, where card and picker sheets (Mode, computer, project, agent · model · effort) | `src/components/pickers/` (`sheet-host.*` opens a sheet per platform), routes `app/(app)/model-picker.tsx`, `computer-picker.tsx`, `project-picker.tsx`; logic `src/ui/modelPicker.ts`, `src/ui/homeDraft.ts`; picks `src/state/compose.ts` |
+| Composer chip, Home's where chips and picker sheets (computer + Mode, project, agent · model · effort + a space's Mode) | `src/components/pickers/` (`sheet-chip.*` a chip per platform, `sheet-host.*` opens a sheet per platform, `where-chips.tsx`), routes `app/(app)/model-picker.tsx`, `computer-picker.tsx`, `project-picker.tsx`; logic `src/ui/modelPicker.ts`, `src/ui/homeDraft.ts`, `modeRows` in `src/ui/logic.ts`; picks `src/state/compose.ts` |
 | Icons: SF Symbols (iOS), Material Symbols (Android), Lucide (web) | `src/components/symbol-image.tsx` |
 | Settings and Devices: rows, sections, account / fingerprint / device cards | `src/components/settings/` (below) |
 
@@ -397,35 +396,41 @@ Space screen, top of the chat           Drawer row
 - A child isn't followed here: a tap opens nothing, a long press copies its
   id. Logic: `src/ui/subSpaceTree.ts`; view: `src/ui/SubSpaces.tsx`.
 
-### New space: where card, chips and sheets
+### New space: where chips, the model chip and the sheets
 
 ```text
-Home composer   ╭ 🖥  mac-A ●              up to Edit ⌄ ╮   computer sheet
-                │ 📁  theodore                         ⌄ │   project sheet (this computer's)
-                ├──────────────────────────────────────── ┤
-                │ What should the agent work on?          │
-                ╰ (Opus 4.1 High ⌄) (Edit ⌄)          (↑) ╯   small chips, effort muted
-space composer  (Edit ⌄) (Opus 4.1 High ⌄)                   the space's pick, kept per space
-
-chip / row ─▶ iOS      router.push(/model-picker[?space=id] | /computer-picker | /project-picker)
-                       formSheet, detents 0.5 / 1, grabber; iOS 26+: no background, the glass sheet
-              Android  Compose ModalBottomSheet in place (drag handle, scrim, Back), Compose rows
-              web      a modal card over the window
-one computer can take spaces / its only project ─▶ that row has no ⌄, opens nothing
+Home            It runs on your computer; follow it from here.
+                   ( 📁 theodore ⌄ )  on  ( 🖥 mac-A ⌄ )    project sheet · computer sheet (+ Mode)
+                ╭──────────────────────────────────────────╮  centered; wraps as two lines,
+                │ What should the agent work on?           │  "on" with the computer chip
+                ╰ (Opus 4.1 High ⌄)                    (↑) ╯  the model chip, effort muted
+space composer  (Opus 4.1 High ⌄)                             the space's pick, kept per space;
+                                                              its sheet holds the next message's Mode
+chip ─▶ iOS      router.push(/model-picker[?space=id] | /computer-picker | /project-picker)
+                 formSheet, detents 0.5 / 1, grabber; iOS 26+: no background, the glass sheet
+        Android  Compose ModalBottomSheet in place (drag handle, scrim, Back), Compose rows
+        web      a modal card over the window
+the computer's only project ─▶ the project chip has no ⌄, opens nothing
+the computer chip always opens: its sheet holds the mode
 ```
 
 | Sheet | Content | A tap |
 | --- | --- | --- |
-| Model | top 4: each agent's default model (the host's order), then their next ones round-robin, the agent named when 2+; a picked one outside them 5th with ✓; "All models  12 ›" when more are listed; "Effort  Default (High) ›" when the model takes one | a model: applied (haptic), the sheet closes only when it takes no effort |
+| Model | top 4: each agent's default model (the host's order), then their next ones round-robin, the agent named when 2+; a picked one outside them 5th with ✓; "All models  12 ›" when more are listed; "Effort  Default (High) ›" when the model takes one; in a space "Mode  Edit ›" | a model: applied (haptic), the sheet closes only when it takes no effort |
 | Model ─▶ All models | a heading per agent (2+), "Default" on its default, ✓ on what runs; search from 9 models; Reset to defaults | a model: as above, back to the top |
 | Model ─▶ Effort | "Default (High)", then the model's levels in full (Low … Ultracode) | applied, back to the top |
-| Computer | computers you trust, online dot, those that can take a space first ("2 projects · up to Edit", else "Offline" / "Doesn't take spaces…" / "No projects", dimmed) | picked, closed; its project: the last started in there, else its first; another computer drops the agent pick and caps the mode |
+| Model ─▶ Mode (a space) | Ask / Plan / Edit / Run up to the host's cap (all when it lists none), ✓ on the next message's | `setSpaceMode`, back to the top; the header shows it ("on mac-A · Idle · Plan"), Run warns above the composer when the space isn't in Run |
+| Computer | computers you trust, online dot, those that can take a space first ("2 projects · up to Edit", else "Offline" / "Doesn't take spaces…" / "No projects", dimmed); under a rule "Mode  Edit ›" | picked, closed; its project: the last started in there, else its first; another computer drops the agent pick and caps the mode |
+| Computer ─▶ Mode | Ask / Plan / Edit / Run up to the computer's cap, ✓ on Home's | `setHomeMode`, back to the computers (the sheet stays) |
 | Project | "Project · mac-A": Recent (started in here, newest first), All (the rest); search from 7 projects | picked, closed |
 
 ```text
 picks (src/state/compose.ts, zustand: the iOS sheets are routes)
   home        {deviceId, projectId, mode, pick}  only what was picked
   spacePicks  {space id: pick}
+  spaceModes  {space id: {mode, of}}  the next message's mode, picked while the
+              space's own was `of`: sticky per space, a turn in another mode
+              resets it; Revise sets Plan; not kept across restarts
   recent      projects spaces were started in (≤ 5): the project sheet's Recent,
               a computer's project when it is picked
 
@@ -440,7 +445,10 @@ sent:  only what was picked (startPicks / sendPicks), the host's defaults otherw
 - "New space" (✎, the drawer): Home's goal cleared, the field focused. Not
   at a cold start: the keyboard would cover Home at launch; web focuses it
   on load.
-- Run in the mode menu: the warning shows above the composer.
+- Run picked (the computer sheet's Mode, a space's Mode step): the warning
+  shows above the composer.
+- A host too old to list agents: a space's chip shows the mode instead
+  ("Edit ⌄"), so its Mode step stays reachable.
 - Start ─▶ the space opens with a fade, not a slide: it is a top-level
   screen like Home, its header the main one (☰ / 🔔 / ✎, no Back, no iOS
   edge swipe back); Android Back goes to Home. Devices and Settings stay

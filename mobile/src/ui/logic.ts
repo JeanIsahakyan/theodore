@@ -42,6 +42,36 @@ export function capMode(mode: FleetMode, max: FleetMode): FleetMode {
   return modesUpTo(max).includes(mode) ? mode : max;
 }
 
+/** `mode` when `modes` offers it, else the highest offered. */
+export function offeredMode(
+  modes: readonly FleetMode[],
+  mode: FleetMode,
+): FleetMode {
+  return modes.includes(mode) ? mode : (modes.at(-1) ?? 'ask');
+}
+
+/** A row of a sheet's Mode step. */
+export interface ModeRow {
+  mode: FleetMode;
+  label: string;
+  /** ✓: the mode in use now. */
+  selected: boolean;
+}
+
+/** The Mode step: every mode offered, ✓ on `current` (brought under the
+ *  cap when it is above it). */
+export function modeRows(
+  modes: readonly FleetMode[],
+  current: FleetMode,
+): ModeRow[] {
+  const now = offeredMode(modes, current);
+  return modes.map((mode) => ({
+    mode,
+    label: MODE_LABEL[mode],
+    selected: mode === now,
+  }));
+}
+
 /** Devices a space can start on from here: not this one, a computer
  *  (desktop / daemon) you trust, online, taking remote spaces, with a
  *  project to offer. */

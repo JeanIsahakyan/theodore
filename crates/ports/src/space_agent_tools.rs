@@ -6,6 +6,7 @@
 //!
 //! ```text
 //! agent ─▶ ship ──────────────▶ ship_space (Open PR · Push · Merge locally · Keep)
+//!                             ▶ merge_space (Merge: the PR, as the space page's button)
 //!       ─▶ get_space_diff ────▶ base...worktree (uncommitted edits included)
 //!       ─▶ get_review_comments ▶ drafts · findings · threads (review + PR)
 //!       ─▶ add_review_comment ─▶ a finding on the space's review
@@ -23,8 +24,22 @@ pub enum ShipToolAction {
     OpenPr,
     OpenDraftPr,
     Push,
+    /// Host project, the space has a PR: merge it as the space page's
+    /// Merge does (now, auto-merge or the merge queue).
+    Merge,
     MergeLocally,
     KeepBranch,
+}
+
+/// `ship` with `merge`: what the host was asked for.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ShipMerge {
+    /// `merge` · `squash` · `rebase`: the repo's default when it allows it.
+    pub method: String,
+    /// Auto-merge: the PR merges itself once its checks and reviews pass.
+    pub auto: bool,
+    /// Added to the base branch's merge queue instead.
+    pub queue: bool,
 }
 
 /// `ship`: what happened.
@@ -32,13 +47,16 @@ pub enum ShipToolAction {
 pub struct ShipOutcome {
     pub action: ShipToolAction,
     /// The branch pushed or written; a folder's checked-out branch for a
-    /// local merge.
+    /// local merge; the PR's branch for a merge.
     pub branch: String,
     /// The squashed commit.
     pub sha: String,
     /// The host PR, once the host answered.
     pub pr_number: Option<u64>,
     pub pr_url: Option<String>,
+    /// `merge` only: now, auto-merge or the queue, and the method.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub merge: Option<ShipMerge>,
     /// One line to tell the user.
     pub summary: String,
 }

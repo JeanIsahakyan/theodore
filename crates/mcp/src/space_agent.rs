@@ -34,6 +34,12 @@ pub enum ShipActionParam {
     OpenDraftPr,
     /// The space has a PR: push the turns since as one more commit.
     Push,
+    /// The space has a PR: merge it, as the space page's Merge does. The
+    /// repo's default method; merged now when it can be, else auto-merge
+    /// (it merges once checks and reviews pass) or the base's merge queue.
+    /// Refused with turns or edits not pushed yet, conflicts, a draft, or
+    /// checks not passed on a repo without auto-merge.
+    Merge,
     /// Local folder: merge into its checked-out branch.
     MergeLocally,
     /// Local folder: write the space's branch only.
@@ -46,6 +52,7 @@ impl From<ShipActionParam> for ShipToolAction {
             ShipActionParam::OpenPr => Self::OpenPr,
             ShipActionParam::OpenDraftPr => Self::OpenDraftPr,
             ShipActionParam::Push => Self::Push,
+            ShipActionParam::Merge => Self::Merge,
             ShipActionParam::MergeLocally => Self::MergeLocally,
             ShipActionParam::KeepBranch => Self::KeepBranch,
         }
@@ -56,7 +63,7 @@ impl From<ShipActionParam> for ShipToolAction {
 pub struct ShipParams {
     pub action: ShipActionParam,
     /// Commit message / PR title. Defaults to the goal's first line (Push:
-    /// the user's latest message).
+    /// the user's latest message). Ignored by merge.
     pub title: Option<String>,
 }
 
@@ -228,7 +235,7 @@ pub struct UpdateProgressResult {
 #[tool_router(router = space_agent_router, vis = "pub(crate)")]
 impl ReviewToolsServer {
     #[tool(
-        description = "Ship the space the way its Ship menu does: open_pr / open_draft_pr / push (a host project) or merge_locally / keep_branch (a local folder). Theodore squashes the turns into one commit authored by the user and never force-pushes. Call it only when the user asks to push, open a PR or merge; never run git push, gh pr create or switch branches yourself. Returns the branch, the commit, the PR number and URL; a refusal says why."
+        description = "Ship the space the way its Ship menu does: open_pr / open_draft_pr / push / merge (a host project; merge merges the space's open PR as the page's Merge button does) or merge_locally / keep_branch (a local folder). Theodore squashes the turns into one commit authored by the user and never force-pushes. Call it only when the user asks to push, open a PR or merge; never run git push, gh pr create, gh pr merge or switch branches yourself. Returns the branch, the commit, the PR number and URL, and for merge what happened (merged now, auto-merge enabled, or added to the merge queue, with the method); a refusal says why."
     )]
     async fn ship(
         &self,
