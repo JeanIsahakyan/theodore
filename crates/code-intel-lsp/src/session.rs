@@ -352,16 +352,29 @@ impl LspSession {
             .argv
             .split_first()
             .ok_or_else(|| err("empty argv".into()))?;
-        let mut child = Command::new(program)
-            .args(args)
+        let mut cmd = Command::new(program);
+        cmd.args(args)
             .envs(config.env.iter().cloned())
             .current_dir(&root)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .kill_on_drop(true)
-            .spawn()
-            .map_err(|e| err(format!("spawn {program}: {e}")))?;
+            .kill_on_drop(true);
+        // A server just unpacked can still be open for writing in a child
+        // another thread forked meanwhile: Linux refuses that exec with
+        // ETXTBSY for a moment (as `code-intel-toolchain`'s probe). Retry
+        // briefly; this runs once per server start.
+        let mut tries = 0u64;
+        let mut child = loop {
+            match cmd.spawn() {
+                Ok(child) => break child,
+                Err(e) if e.kind() == std::io::ErrorKind::ExecutableFileBusy && tries < 9 => {
+                    tries += 1;
+                    std::thread::sleep(std::time::Duration::from_millis(5 * tries));
+                }
+                Err(e) => return Err(err(format!("spawn {program}: {e}"))),
+            }
+        };
         let stdin = child.stdin.take().expect("piped stdin");
         let stdout = child.stdout.take().expect("piped stdout");
         if let Some(stderr) = child.stderr.take() {
