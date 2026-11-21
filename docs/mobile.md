@@ -712,7 +712,7 @@ Store Connect API; re-encode them into the secrets.
 | 1 | Expo account, EAS project | `npx eas-cli@latest login`, then `eas init` in `mobile/`: creates the project and writes `extra.eas.projectId` into `app.json`; commit it |
 | 2 | EAS env for production | the two `eas env:create` calls above |
 | 3 | Apple Developer Program, App Store Connect app | done (2026-11-20): team J33CB2C73P, app 6837583003; cert and profile made through the API, in the secrets above |
-| 4 | iOS push key | `eas credentials` → iOS → Push Notifications: set up a new key (an APNs `.p8`); EAS hands it to Expo's push service. Never commit it |
+| 4 | iOS push key | done (2026-11-20): APNs key TG8NSFRC8T (Sandbox & Production) on EAS for `app.theodore.mobile`; Expo's push service uses it. Replace with `eas credentials` → iOS → Push Notifications. Never commit it |
 | 5 | Google Play Console | pay, create the app `app.theodore.mobile`; make a service account key for `eas submit` (`eas credentials` → Android) |
 | 6 | FCM for Android push | create a Firebase project, add the Android app, download `google-services.json`, point `expo.android.googleServicesFile` at it (upload it as an EAS file env var, not in git), then `eas credentials` → Android → FCM V1 service account key |
 | 7 | WorkOS redirects | add `theodore-mobile://callback` and `https://theodore-web-staging.prd-instance.workers.dev/callback` to the staging environment, `theodore-mobile://callback` and `https://theodore-web.prd-instance.workers.dev/callback` to production (docs/releasing.md "WorkOS redirects to register") |
