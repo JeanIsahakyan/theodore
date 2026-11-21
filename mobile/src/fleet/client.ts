@@ -100,6 +100,7 @@ import {
   truncate,
   uiAgents,
   uiMcpAuto,
+  sendResult,
   uiQuestions,
   validDeviceId,
 } from './rules';
@@ -1290,11 +1291,13 @@ export function createFleetClient(
   };
 
   /** A send, stop or answer: the host's verified ok within the wait, or throws. */
-  const steer = async (space: string, op: RemoteOp) => {
+  /** The host's `ok` value. */
+  const steer = async (space: string, op: RemoteOp): Promise<unknown> => {
     const { answer } = await request(hostOf(space), op, false);
     const a = await within(answer, t.replyWaitMs);
     const err = answerError(a);
     if (err) throw err;
+    return a.kind === 'ok' ? a.value : null;
   };
 
   /**
@@ -1464,7 +1467,7 @@ export function createFleetClient(
         publishSpaces();
       }
       try {
-        await steer(space, {
+        const value = await steer(space, {
           op: 'send',
           space,
           text,
@@ -1474,6 +1477,7 @@ export function createFleetClient(
           model: picks.model ?? null,
           effort: picks.effort ?? null,
         });
+        return sendResult(value);
       } catch (e) {
         if (x && before && x.view.status === 'running') {
           x.view.status = before;

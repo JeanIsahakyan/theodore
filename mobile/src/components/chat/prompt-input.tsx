@@ -82,16 +82,25 @@ function SubmitButton({
   enabled,
   label,
   onPress,
+  quiet,
 }: {
   mode: 'send' | 'stop' | 'busy';
   enabled: boolean;
   label: string;
   onPress: () => void;
+  /** Stop beside Send: a secondary circle, the glyph in the text color. */
+  quiet?: boolean;
 }) {
   const p = usePalette();
   // Android: Material 3 filled icon button (40 dp, primary / onPrimary).
-  const on = android ? 'bg-primary' : 'bg-foreground';
-  const ink = enabled ? (android ? p.onAccent : p.background) : p.muted;
+  const on = quiet ? 'bg-secondary' : android ? 'bg-primary' : 'bg-foreground';
+  const ink = quiet
+    ? p.text
+    : enabled
+      ? android
+        ? p.onAccent
+        : p.background
+      : p.muted;
   const size = android ? 40 : 34;
   return (
     <Pressable
@@ -109,7 +118,7 @@ function SubmitButton({
         <Animated.View>
           <ActivityIndicator
             size="small"
-            color={android ? p.onAccent : p.background}
+            color={quiet ? p.text : android ? p.onAccent : p.background}
           />
         </Animated.View>
       ) : (
@@ -135,6 +144,7 @@ export function PromptInput({
   running,
   onStop,
   stopping,
+  queue,
   canSubmit,
   header,
   leading,
@@ -149,8 +159,14 @@ export function PromptInput({
   const p = usePalette();
   const sendable = (canSubmit ?? value.trim() !== '') && !disabled && !sending;
   const stopMode = !!running && !!onStop;
+  // Queueing: Stop on its own button, Send stays.
+  const both = stopMode && !!queue;
   const mode =
-    sending || (stopMode && stopping) ? 'busy' : stopMode ? 'stop' : 'send';
+    sending || (stopMode && !both && stopping)
+      ? 'busy'
+      : stopMode && !both
+        ? 'stop'
+        : 'send';
   const enabled = mode === 'stop' ? !disabled : mode === 'send' && sendable;
 
   const press = () => {
@@ -158,6 +174,11 @@ export function PromptInput({
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     if (mode === 'stop') onStop?.();
     else onSubmit();
+  };
+  const pressStop = () => {
+    if (stopping) return;
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    onStop?.();
   };
 
   return (
@@ -196,6 +217,15 @@ export function PromptInput({
             {leading}
           </ScrollView>
           {trailing}
+          {both ? (
+            <SubmitButton
+              mode={stopping ? 'busy' : 'stop'}
+              enabled={!disabled && !stopping}
+              label="Stop"
+              onPress={pressStop}
+              quiet
+            />
+          ) : null}
           <SubmitButton
             mode={mode}
             enabled={enabled}

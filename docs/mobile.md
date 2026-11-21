@@ -24,10 +24,9 @@ iPhone / Android / browser                     Theodore cloud            your co
 | Sign in | AuthKit hosted page (PKCE, no secret), org picker when you're in several (through the cloud, like the desktop) |
 | Drawer | Fleet spaces you started from here or follow, newest activity first by day (Today, Yesterday, Previous 7 days, Older), a status dot, search; Devices, Settings, the account and organization |
 | Home (new space) | The goal in the composer; on its card the computer and the project (a sheet each), chips for the model (top 4, All models, Effort) and the mode up to its cap; last picks remembered (below, "New space") |
-| Space | Its history (lines), send a message when it's idle or waiting, Stop while it runs, answer its question |
 | Devices | This device's fingerprint (large, copy) to show on the computer; a card per device, computers first (kind, online, OS · mode cap · agents, fingerprint), trust / untrust with the fingerprint confirm; on a computer, its auto mode per Claude via cloud device (Off / Auto Edit / Full auto, for 1 hour, until end of day or until turned off) |
 | Settings | Account card; Organization (switch), Devices, This device (fingerprint, copy), Appearance (Light / Dark / System), Notifications, About (version, server); sign out |
-| Space | Its chat (or history lines), send a message when it's idle or waiting, Stop while it runs, Approve / Revise a plan, answer its question |
+| Space | Its chat (or history lines), send a message any time: while a turn runs the host queues it (a queued bubble, or "Queued: runs after the current turn"), Stop beside Send; the running turn's steps, or the newest log line with "Working · 12s" on a host that doesn't mirror; Approve / Revise a plan, answer its question |
 
 Questions and "space finished" arrive as push notifications; a question's
 options are notification buttons (one tap answers it, signed on the phone,

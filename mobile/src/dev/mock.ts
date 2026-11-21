@@ -517,6 +517,8 @@ export function createMock(options: MockOptions = {}): Mock {
     useFleetState.setState((s) => ({
       spaces: s.spaces.map((x) => (x.space === id ? { ...x, ...patch } : x)),
     }));
+  /** Messages queued per running space (the mock never drains them). */
+  const queuedHere: Record<string, number> = {};
   const appendLine = (id: string, kind: SpaceLine['kind'], text: string) =>
     useFleetState.setState((s) => {
       const lines = s.lines[id] ?? [];
@@ -558,8 +560,16 @@ export function createMock(options: MockOptions = {}): Mock {
     },
     async send(space, text, mode = null, picks) {
       await call('send', space, text, mode, ...(picks ? [picks] : []));
+      const running = useFleetState
+        .getState()
+        .spaces.some((s) => s.space === space && s.status === 'running');
+      if (running) {
+        queuedHere[space] = (queuedHere[space] ?? 0) + 1;
+        return { queued: true, position: queuedHere[space] };
+      }
       appendLine(space, 'turn', text);
       patchSpace(space, { status: 'running' });
+      return { queued: false, position: null };
     },
     async stopSpace(space) {
       await call('stopSpace', space);

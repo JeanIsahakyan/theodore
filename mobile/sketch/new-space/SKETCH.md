@@ -129,3 +129,19 @@ after    Home ──Start──▶ /space/id, no slide   [☰] … [🔔][✎]
 - The space header is the main header's: menu, questions, new space.
 - No iOS edge swipe back from a space; Android Back goes to Home.
 - Devices and Settings stay pushed with Back.
+
+## Queue while it runs (added before 0.1.27)
+
+```
+ ⟳ Edit src/app.ts                        newest step / log line
+   Working · 42s
+              ╭ and fix the tests ╮ Queued   queued bubble (mirrored host)
+  Queued: runs after the current turn        note (host without mirror)
+╭──────────────────────────────────────────────╮
+│ Add to the queue…                            │  field always open
+│ (Edit ⌄)(Opus 4.1 High ⌄)          (■) (↑)   │  Stop beside Send
+╰──────────────────────────────────────────────╯
+```
+
+The host queues up to 5 messages from other devices (docs/fleet.md "Sends
+queue"); past that, or an older computer: `fleet.busy`.

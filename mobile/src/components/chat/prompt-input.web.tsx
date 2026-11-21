@@ -28,6 +28,7 @@ export function PromptInput({
   running,
   onStop,
   stopping,
+  queue,
   canSubmit,
   header,
   leading,
@@ -41,7 +42,10 @@ export function PromptInput({
 }: PromptInputProps) {
   const p = usePalette();
   const sendable = (canSubmit ?? value.trim() !== '') && !disabled && !sending;
-  const stopMode = !!running && !!onStop;
+  const turnRuns = !!running && !!onStop;
+  // Queueing: Stop on its own button, Send stays.
+  const both = turnRuns && !!queue;
+  const stopMode = turnRuns && !both;
   const busy = !!sending || (stopMode && !!stopping);
   const enabled = busy ? false : stopMode ? !disabled : sendable;
 
@@ -109,6 +113,24 @@ export function PromptInput({
             {leading}
           </ScrollView>
           {trailing}
+          {both ? (
+            <Pressable
+              onPress={() => {
+                if (!stopping) onStop?.();
+              }}
+              disabled={!!disabled || !!stopping}
+              accessibilityRole="button"
+              accessibilityLabel="Stop"
+              accessibilityState={{ disabled: !!disabled, busy: !!stopping }}
+              className="h-8 w-8 items-center justify-center rounded-xl bg-muted hover:opacity-85"
+            >
+              {stopping ? (
+                <ActivityIndicator size="small" color={p.text} />
+              ) : (
+                <SymbolImage name="stop" size={12} color={p.text} />
+              )}
+            </Pressable>
+          ) : null}
           <Pressable
             onPress={press}
             disabled={!enabled}
