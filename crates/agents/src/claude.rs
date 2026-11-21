@@ -305,6 +305,11 @@ const EDIT_TOOLS: &str = "Edit|Write|MultiEdit|NotebookEdit";
 /// them as the only places edits are allowed; both modes get the
 /// `edit_guard` hook, which also holds under `bypassPermissions`. Shell
 /// commands are not limited.
+///
+/// One exception outside the worktree: Claude Code's own memory for this
+/// project (`<config>/projects/<key>/memory/*.md`, the account's config
+/// dir), so an agent can save what it learned. The guard takes the dirs as
+/// `--memory=<dir>`; Edit also allows them, else `acceptEdits` would ask.
 fn edit_settings(req: &AgentRequest, guard: Option<&Path>) -> Option<String> {
     if req.mode == AgentMode::ReadOnly {
         return None;
@@ -319,19 +324,33 @@ fn edit_settings(req: &AgentRequest, guard: Option<&Path>) -> Option<String> {
             .map(|d| vec![d.join("plans")])
             .unwrap_or_default();
     }
+    // Edit and Run only: Plan writes its plan file and nothing else.
+    let memory = if req.mode == AgentMode::Plan {
+        Vec::new()
+    } else {
+        crate::accounts::dir_of(theodore_domain::AgentId::Claude, req.account.as_ref())
+            .map(|config| crate::accounts::claude_memory_dirs(&config, &req.cwd))
+            .unwrap_or_default()
+    };
     let mut settings = serde_json::json!({});
     if req.mode == AgentMode::Edit {
         let mut allow: Vec<String> = Vec::new();
+        let mut add = |rule: String| {
+            if !allow.contains(&rule) {
+                allow.push(rule);
+            }
+        };
         for root in &roots {
             // As given and with symlinks resolved (`/tmp` → `/private/tmp`).
             let real = std::fs::canonicalize(root).unwrap_or_else(|_| root.clone());
             for form in [root, &real] {
                 // `//` = an absolute path in Claude Code's rule syntax.
-                let rule = format!("Edit(/{}/**)", form.display());
-                if !allow.contains(&rule) {
-                    allow.push(rule);
-                }
+                add(format!("Edit(/{}/**)", form.display()));
             }
+        }
+        for dir in &memory {
+            // `*` stays in one directory (gitignore syntax): no subdirectory.
+            add(format!("Edit(/{}/*.md)", dir.display()));
         }
         settings["permissions"] = serde_json::json!({ "allow": allow });
     }
@@ -341,7 +360,7 @@ fn edit_settings(req: &AgentRequest, guard: Option<&Path>) -> Option<String> {
                 "matcher": EDIT_TOOLS,
                 "hooks": [{
                     "type": "command",
-                    "command": crate::edit_guard::hook_command(exe, &roots),
+                    "command": crate::edit_guard::hook_command(exe, &roots, &memory),
                 }],
             }],
         });
@@ -1686,9 +1705,16 @@ mod run_mode_tests {
             resume: None,
             stream_text: false,
             fork_session: false,
-            account: None,
+            // An extra account: its config dir holds the memory, and the
+            // test doesn't depend on `$HOME`.
+            account: Some(theodore_ports::agent::AgentAccountRef {
+                id: "work".into(),
+                dir: Some("/data/accounts/work".into()),
+            }),
         };
         let exe = Path::new("/Applications/Theodore.app/Contents/MacOS/theodore");
+        // The cwd key only: `/data/spaces/a1` is no worktree on this host.
+        let memory = "/data/accounts/work/projects/-data-spaces-a1/memory";
 
         let args = build_args_guarded(&req, &Default::default(), None, Some(exe));
         let i = args.iter().position(|a| a == "--allowedTools").unwrap();
@@ -1700,17 +1726,24 @@ mod run_mode_tests {
         let s = settings_of(&args).expect("settings");
         assert_eq!(
             s["permissions"]["allow"],
-            serde_json::json!(["Edit(//data/spaces/a1/**)", "Edit(//data/attachments/x/**)"])
+            serde_json::json!([
+                "Edit(//data/spaces/a1/**)",
+                "Edit(//data/attachments/x/**)",
+                format!("Edit(/{memory}/*.md)"),
+            ])
         );
         let hook = &s["hooks"]["PreToolUse"][0];
         assert_eq!(hook["matcher"], "Edit|Write|MultiEdit|NotebookEdit");
         assert_eq!(
             hook["hooks"][0]["command"],
-            "'/Applications/Theodore.app/Contents/MacOS/theodore' --theodore-edit-guard \
-             '/data/spaces/a1' '/data/attachments/x'"
+            format!(
+                "'/Applications/Theodore.app/Contents/MacOS/theodore' --theodore-edit-guard \
+                 '/data/spaces/a1' '/data/attachments/x' '--memory={memory}'"
+            )
         );
 
-        // Run: no allow rules (everything is allowed), the hook still holds.
+        // Run: no allow rules (everything is allowed), the hook still holds,
+        // memory included.
         req.mode = AgentMode::Run;
         let s = settings_of(&build_args_guarded(
             &req,
@@ -1720,7 +1753,28 @@ mod run_mode_tests {
         ))
         .expect("settings");
         assert!(s.get("permissions").is_none());
-        assert!(s["hooks"]["PreToolUse"][0]["hooks"][0]["command"].is_string());
+        let cmd = s["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
+            .as_str()
+            .unwrap();
+        assert!(cmd.ends_with(&format!("'--memory={memory}'")), "{cmd}");
+
+        // The default account: the memory is under its own config dir.
+        req.account = None;
+        let s = settings_of(&build_args_guarded(
+            &req,
+            &Default::default(),
+            None,
+            Some(exe),
+        ))
+        .expect("settings");
+        let cmd = s["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
+            .as_str()
+            .unwrap();
+        assert!(
+            cmd.contains("--memory=") && cmd.contains("/projects/-data-spaces-a1/memory'"),
+            "{cmd}"
+        );
+        assert!(!cmd.contains("/data/accounts/work"), "{cmd}");
         // A binary that never installed the guard offers no hook.
         assert!(settings_of(&build_args_guarded(&req, &Default::default(), None, None)).is_none());
 
