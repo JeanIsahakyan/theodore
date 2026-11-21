@@ -9,6 +9,7 @@
  * ```
  */
 import type { ReactNode } from 'react';
+import type { SymbolName } from '../symbol-image';
 
 export type SheetKind = 'model' | 'computer' | 'project';
 
@@ -24,12 +25,16 @@ export interface SheetChipProps {
   sheet: SheetKind;
   /** The model sheet's target: a space's id; none: Home's draft. */
   space?: string | null;
+  /** Before the label (Home's project / computer chips). */
+  icon?: SymbolName;
   /** Short, what the chip shows ("Opus 4.1"). */
   label: string;
   /** After the label, muted ("High"). */
   detail?: string | null;
   /** What it is read as ("Agent: Claude, Opus 4.1, High"). */
   accessibilityLabel: string;
+  /** Nothing else to choose: no ⌄, opens nothing, read as text. */
+  fixed?: boolean;
   disabled?: boolean;
   testID?: string;
 }

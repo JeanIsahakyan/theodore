@@ -4,29 +4,68 @@
  * (`where-picker-sheet.android.tsx`).
  *
  * ```text
- * Computer                                 Project · mac-A
- * ● mac-A     3 projects · up to Edit ✓    [Search projects]   (7+)
- * ● build-box 1 project · up to Run        RECENT
- * ○ Work Mac  Offline              (dim)     theodore        ✓
- *                                          ALL
- *                                            cloud
+ * Computer                      ‹ Mode            Project · mac-A
+ * ● mac-A     3 projects · up to Edit ✓   Ask      [Search projects]   (7+)
+ * ● build-box 1 project · up to Run       Plan     RECENT
+ * ○ Work Mac  Offline              (dim)  Edit ✓     theodore        ✓
+ * ───                                              ALL
+ * Mode                          Edit ›               cloud
  *
  * a computer ─▶ applyDevice(): its last project, else its first; closed
+ * a mode     ─▶ setHomeMode(), back to the computers (the sheet stays)
  * a project  ─▶ applyWhere(): picked, closed
  * ```
  */
 import { useState } from 'react';
 import { Text, TextInput, View } from 'react-native';
-import { applyDevice, applyWhere } from '../../state/compose';
+import { applyDevice, applyWhere, setHomeMode } from '../../state/compose';
 import { PROJECT_SEARCH_MIN } from '../../ui/homeDraft';
+import { MODE_LABEL, modeRows, modesUpTo } from '../../ui/logic';
 import { usePalette } from '../../ui/theme';
 import { tick } from './haptics';
-import { SheetHeading, SheetRow, SheetTitle } from './sheet-rows';
+import {
+  SheetBack,
+  SheetDivider,
+  SheetHeading,
+  SheetRow,
+  SheetTitle,
+} from './sheet-rows';
 import { useDeviceRows, useHome, useProjectGroups } from './use-picker';
+
+type ComputerStep = 'main' | 'mode';
 
 export function ComputerPickerList({ onClose }: { onClose: () => void }) {
   const rows = useDeviceRows();
-  const shown = useHome();
+  const { device, mode } = useHome();
+  const [step, setStep] = useState<ComputerStep>('main');
+
+  if (step === 'mode' && device) {
+    return (
+      <View className="pb-6" testID="computer-picker-mode">
+        <SheetTitle
+          leading={
+            <SheetBack label="Computer" onPress={() => setStep('main')} />
+          }
+        >
+          Mode
+        </SheetTitle>
+        {modeRows(modesUpTo(device.maxMode), mode).map((r) => (
+          <SheetRow
+            key={r.mode}
+            label={r.label}
+            selected={r.selected}
+            accessibilityLabel={`Mode: ${r.label}`}
+            onPress={() => {
+              setHomeMode(r.mode);
+              tick();
+              setStep('main');
+            }}
+          />
+        ))}
+      </View>
+    );
+  }
+
   return (
     <View className="pb-6" testID="computer-picker">
       <SheetTitle>Computer</SheetTitle>
@@ -39,7 +78,7 @@ export function ComputerPickerList({ onClose }: { onClose: () => void }) {
             detail={r.detail}
             dot={d.online ? 'on' : 'off'}
             disabled={!r.enabled}
-            selected={shown.device?.deviceId === d.deviceId}
+            selected={device?.deviceId === d.deviceId}
             accessibilityLabel={`${d.name}, ${d.online ? 'online' : 'offline'}, ${r.detail}`}
             onPress={() => {
               applyDevice(d.deviceId);
@@ -49,6 +88,19 @@ export function ComputerPickerList({ onClose }: { onClose: () => void }) {
           />
         );
       })}
+      {device ? (
+        <>
+          <SheetDivider />
+          <SheetRow
+            label="Mode"
+            value={MODE_LABEL[mode]}
+            chevron
+            accessibilityLabel={`Mode, ${MODE_LABEL[mode]}`}
+            onPress={() => setStep('mode')}
+            testID="computer-picker-mode-row"
+          />
+        </>
+      ) : null}
     </View>
   );
 }

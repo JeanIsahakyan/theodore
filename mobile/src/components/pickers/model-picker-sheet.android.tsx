@@ -1,7 +1,7 @@
 /**
  * Android: the model sheet's content in Compose (inside the chip's
  * `ModalBottomSheet`); the same steps as `model-picker-list.tsx`: the top
- * models, All models (search from 9), Effort as a list.
+ * models, All models (search from 9), Effort as a list, a space's Mode.
  */
 import {
   Column,
@@ -16,7 +16,13 @@ import {
   verticalScroll,
 } from '@expo/ui/jetpack-compose/modifiers';
 import { Fragment, useState } from 'react';
-import { applyEffort, applyModel, resetPick } from '../../state/compose';
+import {
+  applyEffort,
+  applyModel,
+  resetPick,
+  setSpaceMode,
+} from '../../state/compose';
+import { MODE_LABEL, modeRows } from '../../ui/logic';
 import {
   SEARCH_MIN_MODELS,
   filterSections,
@@ -31,9 +37,9 @@ import {
   SheetRow,
   SheetTitle,
 } from './sheet-parts.android';
-import { useModelSheet } from './use-picker';
+import { useModelSheet, useSpaceMode } from './use-picker';
 
-type Step = 'main' | 'all' | 'effort';
+type Step = 'main' | 'all' | 'effort' | 'mode';
 
 function Search({ onChange }: { onChange: (q: string) => void }) {
   const text = useNativeState('');
@@ -70,6 +76,8 @@ export function ModelPickerSheet({
   const p = usePalette();
   const { agents, top, sections, effort, canReset, empty } =
     useModelSheet(space);
+  // A space's next message's mode; Home's is in the computer sheet.
+  const spaceMode = useSpaceMode(space);
   const [step, setStep] = useState<Step>('main');
   const [query, setQuery] = useState('');
 
@@ -156,6 +164,29 @@ export function ModelPickerSheet({
     );
   }
 
+  if (step === 'mode' && space && spaceMode) {
+    return (
+      <Column modifiers={mods}>
+        <SheetTitle leading={back}>Mode</SheetTitle>
+        {modeRows(spaceMode.modes, spaceMode.picked).map((r) => (
+          <SheetRow
+            key={r.mode}
+            label={r.label}
+            selected={r.selected}
+            accessibilityLabel={`Mode: ${r.label}`}
+            onPress={() => {
+              setSpaceMode(space, r.mode);
+              tick();
+              setStep('main');
+            }}
+          />
+        ))}
+      </Column>
+    );
+  }
+
+  const modeLabel = space && spaceMode ? MODE_LABEL[spaceMode.picked] : null;
+
   return (
     <Column modifiers={mods}>
       <SheetTitle>Model</SheetTitle>
@@ -174,7 +205,9 @@ export function ModelPickerSheet({
           onPress={() => pickModel(r)}
         />
       ))}
-      {top.more || effort.choices.length > 0 ? <SheetDivider /> : null}
+      {top.more || effort.choices.length > 0 || modeLabel ? (
+        <SheetDivider />
+      ) : null}
       {top.more ? (
         <SheetRow
           label="All models"
@@ -194,6 +227,15 @@ export function ModelPickerSheet({
           chevron
           accessibilityLabel={`Effort, ${effort.summary}`}
           onPress={() => setStep('effort')}
+        />
+      ) : null}
+      {modeLabel ? (
+        <SheetRow
+          label="Mode"
+          value={modeLabel}
+          chevron
+          accessibilityLabel={`Mode, ${modeLabel}`}
+          onPress={() => setStep('mode')}
         />
       ) : null}
       {!top.more && !empty ? (

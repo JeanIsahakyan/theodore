@@ -1,7 +1,8 @@
 /**
  * Home: start a new space, in the chat template's empty-chat style. The
- * goal is the first message; where it runs and how are the composer's
- * chips (docs/mobile.md "New space").
+ * goal is the first message; where it runs is two chips under the hint,
+ * the model a chip in the composer, the mode in the computer's sheet
+ * (docs/mobile.md "New space").
  *
  * ```text
  * [☰]            New space           [🔔][✎]
@@ -10,14 +11,12 @@
  *                  ⌘  New space
  *       It runs on your computer; follow it from here.
  *
+ *        ( 📁 theodore ⌄ )  on  ( 🖥 mac-A ⌄ )    WhereChips: project sheet,
+ *                                                  computer sheet (+ Mode)
  *  ╭ Run lets the agent run any command… ╮          only in Run
  * ╭──────────────────────────────────────────────╮
- * │ 🖥  mac-A ●                   up to Edit  ⌄ │  WhereCard: computer sheet
- * │ ──────────────────────────────────────────── │
- * │ 📁  theodore                              ⌄ │  project sheet
- * ├──────────────────────────────────────────────┤
  * │ What should the agent work on?               │
- * │ (Opus 4.1 High ⌄)(Edit ⌄)                (↑) │  small chips
+ * │ (Opus 4.1 High ⌄)                        (↑) │  the model chip
  * ╰──────────────────────────────────────────────╯
  *
  * picks: src/state/compose.ts (shared with the sheets, remembered per
@@ -42,12 +41,9 @@ import {
 } from 'react-native';
 import { ComposerDock, PromptInput } from '../../src/components/chat';
 import { MainHeader } from '../../src/components/main-header';
-import {
-  ModeMenu,
-  ModelChip,
-} from '../../src/components/pickers/composer-chips';
-import { WhereCard } from '../../src/components/pickers/where-card';
+import { ModelChip } from '../../src/components/pickers/composer-chips';
 import { useHome } from '../../src/components/pickers/use-picker';
+import { WhereChips } from '../../src/components/pickers/where-chips';
 import { SymbolImage } from '../../src/components/symbol-image';
 import { useServices } from '../../src/services';
 import { useGlassHeaderInset } from '../../src/shell/glassHeader';
@@ -55,12 +51,11 @@ import { spaceHref } from '../../src/shell/navigate';
 import {
   noteStarted,
   requestNewSpace,
-  setHomeMode,
   useCompose,
 } from '../../src/state/compose';
 import { startPicks } from '../../src/ui/agents';
 import { ConnectionBanner } from '../../src/ui/ConnectionBanner';
-import { RUN_WARNING, errorText, modesUpTo } from '../../src/ui/logic';
+import { RUN_WARNING, errorText } from '../../src/ui/logic';
 import { Button, Glass } from '../../src/ui/native';
 import { QuestionsBanner } from '../../src/ui/QuestionsBanner';
 import { usePalette } from '../../src/ui/theme';
@@ -121,19 +116,7 @@ export default function NewSpaceScreen() {
       .finally(() => setBusy(false));
   };
 
-  const chips =
-    device && project ? (
-      <>
-        <ModelChip disabled={busy} />
-        <ModeMenu
-          modes={modesUpTo(device.maxMode)}
-          value={mode}
-          onChange={setHomeMode}
-          disabled={busy}
-          testID="start-mode"
-        />
-      </>
-    ) : null;
+  const chips = device && project ? <ModelChip disabled={busy} /> : null;
 
   return (
     <View className="flex-1 bg-background" style={{ paddingTop: top }}>
@@ -158,6 +141,9 @@ export default function NewSpaceScreen() {
             <Text className="max-w-xs text-center text-sm text-muted-foreground">
               {HINT}
             </Text>
+            <View className="mt-3 w-full">
+              <WhereChips disabled={busy} />
+            </View>
           </>
         ) : (
           <>
@@ -197,7 +183,6 @@ export default function NewSpaceScreen() {
           disabled={!device || !project}
           sending={busy}
           canSubmit={ready}
-          header={device && project ? <WhereCard disabled={busy} /> : null}
           leading={chips}
           error={error}
           autoFocus={web}
