@@ -335,8 +335,13 @@ The look follows Evan Bacon's chat template (MIT,
 
 ```text
 iOS / Android  DrawerLayout (src/components/drawer-layout.tsx) ── Stack
-                 pan from the left edge opens it on Home only (elsewhere the
-                 edge is the system's back swipe); Android Back closes it
+                 a rightward swipe anywhere on the content opens it on Home
+                 and a space (src/ui/drawer.ts swipeOpensOn); not on pushed
+                 screens, whose left edge is the system's back swipe. A
+                 vertical or leftward move is the content's, and a horizontal
+                 scroll view under the finger (chips, code block, table) wins:
+                 it starts at its touch slop, under the swipe's 12 pt.
+                 Open: a pan or a tap on the content closes it; Android Back too
 web            sidebar beside the stack (md+), over it with a scrim (narrow)
 
 drawer pick on Home ─▶ push [Home, pick]     elsewhere ─▶ replace [Home, pick]

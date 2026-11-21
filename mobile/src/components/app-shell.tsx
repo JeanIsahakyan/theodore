@@ -3,12 +3,14 @@
  * The signed-in shell on iOS and Android: the drawer (spaces, Devices,
  * Settings, account) around the stack. Web: `app-shell.web.tsx` (sidebar).
  *
- * The drawer opens from the menu button, or by a pan from the left edge
- * on Home only: on a pushed screen that edge is the system's back swipe.
+ * The drawer opens from the menu button, or by a rightward swipe anywhere
+ * on the content of a top-level screen, Home or a space (`swipeOpensOn`).
+ * Not on a pushed screen: its left edge is the system's back swipe.
  */
 import { usePathname, type Href } from 'expo-router';
 import type { ReactNode } from 'react';
 import { goNewSpace, openFromDrawer } from '../shell/navigate';
+import { swipeOpensOn } from '../ui/drawer';
 import { useDrawer } from './drawer-context';
 import { DrawerContent } from './drawer-content';
 import { DrawerLayout } from './drawer-layout';
@@ -21,7 +23,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       open={isOpen}
       onOpen={openDrawer}
       onClose={closeDrawer}
-      swipeEnabled={path === '/'}
+      swipeEnabled={swipeOpensOn(path)}
       drawerContent={
         <DrawerContent
           onNavigate={(href: Href) => {

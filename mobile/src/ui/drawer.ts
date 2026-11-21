@@ -10,7 +10,18 @@
  * ```
  */
 import type { SpaceView } from '../fleet/types';
+import { spaceIdFromPath } from '../shell/paths';
 import { spaceTitle } from './logic';
+
+/**
+ * Whether a swipe on the content at `path` opens the drawer: on the
+ * top-level screens, Home and a space (the header has ☰, no Back, no system
+ * back swipe). Pushed screens (Devices, Settings and its pages, a sub-space)
+ * keep their left edge for the system's back swipe.
+ */
+export function swipeOpensOn(path: string): boolean {
+  return path === '/' || spaceIdFromPath(path) !== null;
+}
 
 export type DayGroup = 'Today' | 'Yesterday' | 'Previous 7 days' | 'Older';
 
