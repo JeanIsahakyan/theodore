@@ -19,7 +19,9 @@
  * │  Working · 12s                                live turn, shimmer │
  * │  ╭ question card ╮                            footer             │
  * │                                        ( ⌄ )  scroll to the end  │
- * │ ╭ notes (progress, run warning) ╮             Glass / card       │
+ * │ ╭ ⟳ 2 of 5 · Edit auth · 1 queued   1m 12s ╮  ActivityStrip on   │
+ * │ │ ◌ 2 agents · 2 sub-spaces (1 waiting) ⌃  │  the notes panel    │
+ * │ ╰ run warning, chat error ─────────────────╯  (Glass / card)     │
  * │ ╭ Ask the agent to change something…      ╮   PromptInput in a   │
  * │ │ (Opus 4.1 · High ⌄)                 (↑) │   floating dock      │
  * └─╰───────────────────────────────────────╯───────────────────────┘
@@ -29,10 +31,14 @@
  * the next message's mode ─▶ the model sheet's Mode step (compose store,
  *     spaceModes: sticky per space, the next turn starts in the space's last mode)
  * (↑) Send ─▶ fleet.send(mode only when not the space's own, picks)
- *     while it runs ─▶ the host queues it: a queued bubble (mirrored) or
- *     "Queued: runs after the current turn" over the composer
+ *     while it runs ─▶ the host queues it: a queued bubble (mirrored), and
+ *     "· 1 queued" on the strip's first line
  * (■) Stop while running, beside Send ─▶ confirm() ─▶ fleet.stopSpace
- * running, not mirrored ─▶ WorkingLine: the newest log line, Working · 12s
+ * running ─▶ the strip's first line: the plan's active step, else the newest
+ *     live step, else (not mirrored) the newest log line, and a timer;
+ *     waiting on a question ─▶ "Waiting for your answer ↓" scrolls to the card
+ * subagents / sub-spaces ─▶ the strip's second line ─▶ the activity sheet
+ *     (src/ui/ActivitySheet) ─▶ a sub-space row ─▶ /sub-space/[space]/[child]
  * Revise ─▶ mode Plan, the field focused; Approve ─▶ send APPROVED_TEXT in the build mode
  * ```
  *
@@ -56,7 +62,7 @@ import { ModelChip } from '../../../src/components/pickers/composer-chips';
 import { useSpaceMode } from '../../../src/components/pickers/use-picker';
 import { MainHeader } from '../../../src/components/main-header';
 import { SpaceHeader } from '../../../src/components/space-header';
-import type { ChatMessage } from '../../../src/fleet/contract';
+import type { ChatMessage, TurnStep } from '../../../src/fleet/contract';
 import { mirrored } from '../../../src/fleet/mirror';
 import type { SpaceLine, SpaceView } from '../../../src/fleet/types';
 import type { MirroredSubSpace } from '../../../src/gen/fleet';
@@ -84,20 +90,20 @@ import {
   questionFor,
   spaceTitle,
 } from '../../../src/ui/logic';
+import { ActivityStrip, useActivityStrip } from '../../../src/ui/ActivityStrip';
 import { Glass, confirm } from '../../../src/ui/native';
 import { QuestionCard } from '../../../src/ui/QuestionCard';
 import { SubSpaces } from '../../../src/ui/SubSpaces';
 import {
   LiveReply,
   MessageRow,
-  ProgressCard,
   QueuedRow,
-  WorkingLine,
   type PlanProps,
 } from '../../../src/ui/SpaceChat';
 import { mono, usePalette } from '../../../src/ui/theme';
 
 const EMPTY_LINES: SpaceLine[] = [];
+const EMPTY_STEPS: TurnStep[] = [];
 /** Until the dock reports its height. */
 const DOCK_GUESS = 112;
 
@@ -297,6 +303,18 @@ export default function SpaceScreen() {
   // Revising lasts while there is a plan to revise.
   const revising = reviseAsked && chat?.planHere != null;
   const toEnd = useCallback(() => list.current?.scrollToEnd(), []);
+  const routedHere = routed.some((q) => q.space === id);
+  // The strip above the composer: what the space is doing (src/ui/activity.ts).
+  const stripProps = {
+    space: id,
+    status: space?.status ?? ('idle' as const),
+    question: !!(chat?.question ?? space?.question) || routedHere,
+    progress: chat?.progress ?? null,
+    liveSteps: chat?.live?.steps ?? EMPTY_STEPS,
+    lastLog: chat ? null : (lines.at(-1)?.text ?? null),
+    queued: chat ? chat.queued.length : queuedAt !== null ? 1 : 0,
+  };
+  const activity = useActivityStrip(stripProps);
 
   if (!space) {
     return (
@@ -388,9 +406,6 @@ export default function SpaceScreen() {
   const footer = (
     <View style={styles.tail}>
       {chat?.live ? <LiveReply live={chat.live} waiting={!!question} /> : null}
-      {!chat && running && !question ? (
-        <WorkingLine last={lines.at(-1)?.text ?? null} />
-      ) : null}
       {chat?.queued.map((m) => (
         <QueuedRow key={m.id} m={m} />
       ))}
@@ -409,6 +424,14 @@ export default function SpaceScreen() {
     );
 
   const notes = [
+    activity.shown ? (
+      <ActivityStrip
+        key="activity"
+        {...stripProps}
+        since={chat?.live?.since ?? null}
+        onWaiting={toEnd}
+      />
+    ) : null,
     chat?.error ? (
       <Text
         key="chat-error"
@@ -418,16 +441,6 @@ export default function SpaceScreen() {
       >
         {chat.error}
       </Text>
-    ) : null,
-    queuedAt !== null ? (
-      <Text key="queued" style={[styles.small, { color: p.muted }]}>
-        {queuedAt === 1
-          ? 'Queued: runs after the current turn'
-          : `Queued: ${queuedAt - 1} ahead of it`}
-      </Text>
-    ) : null,
-    chat?.progress ? (
-      <ProgressCard key="progress" progress={chat.progress} />
     ) : null,
     picked === 'run' && space.mode !== 'run' ? (
       <Text key="run" style={[styles.small, { color: p.warning }]}>

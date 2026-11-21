@@ -11,6 +11,7 @@ const PATHS: Record<SheetKind, string> = {
   model: '/model-picker',
   computer: '/computer-picker',
   project: '/project-picker',
+  activity: '/activity-sheet',
 };
 
 export function sheetHref(kind: SheetKind, space?: string | null): Href {
