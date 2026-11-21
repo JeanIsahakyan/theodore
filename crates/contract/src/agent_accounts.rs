@@ -79,6 +79,10 @@ pub enum ChatNotice {
         account: String,
         resets_at: Option<Millis>,
     },
+    /// A message another device queued here was dropped before it ran:
+    /// that device's trust, or the mode it may use, changed meanwhile
+    /// (docs/fleet.md "Sends queue"). `from`: the device's name as pinned.
+    RemoteDropped { from: String, reason: String },
 }
 
 /// A space waiting for usage limits to reset (docs/spaces.md "Usage

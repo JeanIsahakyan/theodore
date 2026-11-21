@@ -6,7 +6,7 @@
 //! prompt.
 
 use theodore_contract::{
-    ChatMessage, FromSpace, Space, SpaceMode, SpaceRemote, SpaceStatus, models,
+    AskedBy, ChatMessage, FromSpace, Space, SpaceMode, SpaceNote, SpaceRemote, SpaceStatus, models,
 };
 use theodore_domain::{AgentId, Author, Usage};
 use theodore_ports::{
@@ -16,6 +16,7 @@ use theodore_ports::{
 
 use crate::space_children_tests::{code, parent, put_setting, send};
 use crate::space_commands_tests::{Env, done, start_env, wait_until};
+use crate::usecases::spaces::space_chat_key;
 
 /// A `space_ask` run (never a turn, a name or a summary).
 fn is_ask(r: &AgentRequest) -> bool {
@@ -285,8 +286,90 @@ async fn an_ask_without_an_answer_in_time_times_out() {
     e.f.agents.hang_matching(is_ask);
     let r = e.core.sub_space_ask(&a.id, &b.id, "Slow?").await;
     assert_eq!(code(r), "sub_spaces.timeout");
+    // B's owner still sees it was asked, and that no answer came.
+    let n = notes(&e, &b.id);
+    assert_eq!(n.len(), 1);
+    assert_eq!(n[0].ask.question, "Slow?");
+    assert_eq!(n[0].ask.answer, None);
+    let failed = n[0].ask.failed.as_deref().unwrap();
+    assert!(failed.contains("no answer within 1 s"), "{failed}");
+    assert!(!failed.contains("sub_spaces."), "{failed}");
+    assert_eq!(n[0].ask.how.as_deref(), Some("fresh"));
     // Its slot is back.
     e.core.sub_space_ask(&a.id, &b.id, "Now?").await.unwrap();
+    assert_eq!(notes(&e, &b.id).len(), 2);
+}
+
+/// `space_note` rows of `space`, by time.
+pub(crate) fn notes(e: &Env, space: &str) -> Vec<SpaceNote> {
+    let mut n: Vec<SpaceNote> =
+        e.f.store
+            .query(models::SPACE_NOTE, "pr", &space_chat_key(space).0)
+            .unwrap()
+            .into_iter()
+            .map(|r| serde_json::from_value(r.data).unwrap())
+            .collect();
+    n.sort_by_key(|n| n.at);
+    n
+}
+
+#[tokio::test]
+async fn an_ask_leaves_one_note_in_the_space_its_agent_never_sees() {
+    let e = start_env(true).await;
+    let a = parent(&e).await;
+    let b = other(&e, "Pick a store", None).await;
+    e.f.agents.push_tagged(is_ask, done("ANSWER-7731: SQLite."));
+    e.core
+        .sub_space_ask(&a.id, &b.id, "QUESTION-7731: which store?")
+        .await
+        .unwrap();
+
+    // Exactly one note, in B only: who asked, what, the answer, by whom.
+    let n = notes(&e, &b.id);
+    assert_eq!(n.len(), 1);
+    assert!(notes(&e, &a.id).is_empty());
+    let ask = &n[0].ask;
+    assert_eq!(
+        ask.from,
+        AskedBy::Space {
+            space: a.id.clone(),
+            title: crate::usecases::space_children::title_of(&e.space(&a.id)),
+        }
+    );
+    assert_eq!(ask.question, "QUESTION-7731: which store?");
+    assert_eq!(ask.answer.as_deref(), Some("ANSWER-7731: SQLite."));
+    assert_eq!(ask.failed, None);
+    assert_eq!(ask.agent, Some(AgentId::Claude));
+    assert_eq!(ask.how.as_deref(), Some("fresh"));
+    // Loaded with B's chat, for its timeline.
+    let boot = e
+        .core
+        .bootstrap(theodore_contract::BootstrapScope::Pr(space_chat_key(&b.id)))
+        .await
+        .unwrap();
+    let noted = boot.rows.iter().filter(|r| r.model == models::SPACE_NOTE);
+    assert_eq!(noted.count(), 1);
+
+    // Not in B's transcript, nor what another space reads of it.
+    let leaked = |s: &str| s.contains("7731");
+    assert!(!history(&e, &b.id).await.iter().any(|m| leaked(&m.text)));
+    let read = e.core.sub_space_read(&a.id, &b.id, 50).await.unwrap();
+    assert!(!read.messages.iter().any(|m| leaked(&m.text)));
+    assert!(
+        !leaked(&serde_json::to_string(&read).unwrap()),
+        "space_read lists no note"
+    );
+
+    // B's next turn replays its history (no session to resume): no note.
+    e.f.agents.push_script(done("ok"));
+    e.core.space_send(send(&b.id, "Go on")).await.unwrap();
+    e.until(&b.id, |s| s.turns == 2 && s.run.is_none()).await;
+    let next = e.f.agents.last_request().unwrap();
+    assert!(next.resume.is_none());
+    assert!(next.prompt.contains("Go on"), "{}", next.prompt);
+    assert!(next.prompt.contains("Built it on SQLite."), "replayed");
+    assert!(!leaked(&next.prompt), "{}", next.prompt);
+    assert_eq!(e.space(&b.id).turns, 2, "the ask was never a turn");
 }
 
 #[tokio::test]
@@ -618,6 +701,7 @@ fn a_replayed_transcript_names_the_sending_space() {
         mode: None,
         from_space: from,
         notice: None,
+        mentions: vec![],
     };
     let from = FromSpace {
         space: "a1".into(),

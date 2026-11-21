@@ -125,6 +125,7 @@ fn send(id: &str, agent: Option<AgentId>, model: Option<&str>) -> SpaceSendReque
         mode: None,
         attachments: None,
         effort: None,
+        mentions: None,
     }
 }
 
@@ -318,6 +319,7 @@ async fn a_slash_skill_runs_as_the_turns_instructions_and_is_stored_as_typed() {
         mode: None,
         attachments: None,
         effort: None,
+        mentions: None,
     };
     f.agents.push_script(done("Polished.", 0.0));
     core.space_send(send("/polish the export  ")).await.unwrap();
@@ -412,6 +414,7 @@ async fn later_turns_replay_the_transcript_and_can_switch_agent() {
         mode: None,
         attachments: None,
         effort: None,
+        mentions: None,
     })
     .await
     .unwrap();
@@ -455,6 +458,7 @@ async fn attachments_ride_on_the_message_and_reach_the_agent() {
             mode: None,
             attachments: Some(vec![att.id.clone()]),
             effort: None,
+            mentions: None,
         })
         .await
         .unwrap();
@@ -494,6 +498,7 @@ async fn attachments_ride_on_the_message_and_reach_the_agent() {
         mode: None,
         attachments: None,
         effort: None,
+        mentions: None,
     })
     .await
     .unwrap();
@@ -528,6 +533,7 @@ async fn an_unknown_attachment_fails_the_send_before_anything_is_stored() {
             mode: None,
             attachments: Some(vec!["0b6e8a52-3c1f-4d7e-9a1b-2f3c4d5e6f70".into()]),
             effort: None,
+            mentions: None,
         })
         .await
         .unwrap_err();
@@ -557,6 +563,7 @@ async fn a_running_space_queues_a_second_message_and_stops_cleanly() {
             mode: None,
             attachments: None,
             effort: None,
+            mentions: None,
         })
         .await
         .unwrap();
@@ -701,6 +708,7 @@ async fn a_failed_turn_marks_the_space_failed_and_can_be_retried() {
         mode: None,
         attachments: None,
         effort: None,
+        mentions: None,
     })
     .await
     .unwrap();
@@ -768,6 +776,7 @@ async fn a_leftover_space_budget_no_longer_stops_turns() {
         mode: None,
         attachments: None,
         effort: None,
+        mentions: None,
     })
     .await
     .expect("over an old budget, the turn still starts");
@@ -850,6 +859,7 @@ async fn a_file_new_since_the_grouping_is_in_a_catch_all_group() {
         mode: None,
         attachments: None,
         effort: None,
+        mentions: None,
     })
     .await
     .unwrap();
@@ -914,6 +924,7 @@ async fn archive_removes_the_worktree_and_review_but_keeps_the_transcript() {
             mode: None,
             attachments: None,
             effort: None,
+            mentions: None,
         })
         .await
         .is_err()
@@ -1162,6 +1173,7 @@ async fn say(core: &Core, f: &Fixtures, id: &str, text: &str) -> Space {
         mode: None,
         attachments: None,
         effort: None,
+        mentions: None,
     })
     .await
     .unwrap();
@@ -1283,6 +1295,7 @@ async fn files_alone_start_a_blank_space_but_the_first_words_name_it() {
         mode: None,
         attachments: Some(vec![file.id]),
         effort: None,
+        mentions: None,
     })
     .await
     .unwrap();
@@ -1798,6 +1811,7 @@ mod real_git {
             mode: None,
             attachments: None,
             effort: None,
+            mentions: None,
         })
         .await
         .unwrap();

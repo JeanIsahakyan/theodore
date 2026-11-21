@@ -118,6 +118,7 @@ async fn two_turns(f: &Fixtures) -> (Core, Receivers, Space) {
         mode: None,
         attachments: None,
         effort: None,
+        mentions: None,
     })
     .await
     .unwrap();

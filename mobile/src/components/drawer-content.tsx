@@ -9,6 +9,7 @@
  * ✎ New space
  * Today
  *   Fix the login redirect   ●      ● running (accent) / waiting (warning) / failed (red)
+ *   3 sub-spaces, 1 running          its sub-spaces, when it has any
  * Yesterday · Previous 7 days · Older
  * ──────────────────────────────
  * ▢ Devices
@@ -35,6 +36,7 @@ import { spaceHref } from '../shell/navigate';
 import { useFleetState } from '../state/fleet';
 import { initials, spaceDot, spaceSections, type SpaceDot } from '../ui/drawer';
 import { spaceTitle } from '../ui/logic';
+import { subSpaceSummary } from '../ui/subSpaceTree';
 import { usePalette } from '../ui/theme';
 import { SymbolImage, type SymbolName } from './symbol-image';
 import { SafeAreaView } from './tw';
@@ -137,27 +139,39 @@ function SpaceItem({
   onPress: () => void;
 }) {
   const p = usePalette();
+  const subs = useFleetState((s) => s.mirrors[space.space]?.subSpaces);
+  const summary = useMemo(() => subSpaceSummary(subs), [subs]);
   const dot = spaceDot(space);
   const title = spaceTitle(space) || 'Untitled space';
+  const label = [title, dot ? DOT_LABEL[dot] : null, summary]
+    .filter(Boolean)
+    .join(', ');
   return (
     <Pressable
       onPress={onPress}
       accessibilityRole="button"
-      accessibilityLabel={dot ? `${title}, ${DOT_LABEL[dot]}` : title}
+      accessibilityLabel={label}
       accessibilityState={{ selected: active }}
       android_ripple={{ color: p.border }}
       className={
         android
-          ? `mx-3 h-12 flex-row items-center gap-2 overflow-hidden rounded-full px-4 ${active ? 'bg-primary/15' : ''}`
+          ? `mx-3 ${summary ? 'h-14' : 'h-12'} flex-row items-center gap-2 overflow-hidden rounded-full px-4 ${active ? 'bg-primary/15' : ''}`
           : `mx-2 flex-row items-center gap-2 rounded-[10px] px-4 py-2.5 active:bg-accent ${active ? 'bg-muted' : ''}`
       }
     >
-      <Text
-        numberOfLines={1}
-        className={`flex-1 text-[15px] ${active ? 'text-foreground' : android ? 'text-foreground' : 'text-muted-foreground'}`}
-      >
-        {title}
-      </Text>
+      <View className="flex-1">
+        <Text
+          numberOfLines={1}
+          className={`text-[15px] ${active ? 'text-foreground' : android ? 'text-foreground' : 'text-muted-foreground'}`}
+        >
+          {title}
+        </Text>
+        {summary ? (
+          <Text numberOfLines={1} className="text-xs text-muted-foreground">
+            {summary}
+          </Text>
+        ) : null}
+      </View>
       {dot ? (
         <View className={`h-2 w-2 rounded-full ${DOT_CLASS[dot]}`} />
       ) : null}

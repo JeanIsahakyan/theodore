@@ -71,6 +71,9 @@ pub fn notice_text(notice: &ChatNotice, now: Millis) -> String {
         ChatNotice::LimitHit { account, resets_at } => {
             format!("{account} hit its limit{}", resets(resets_at))
         }
+        ChatNotice::RemoteDropped { from, reason } => {
+            format!("A message queued from {from} was dropped: {reason}")
+        }
     }
 }
 
@@ -199,6 +202,7 @@ impl Core {
             mode: None,
             from_space: None,
             notice: Some(notice),
+            mentions: vec![],
         };
         let Ok(data) = serde_json::to_value(&msg) else {
             return;
@@ -225,6 +229,7 @@ impl Core {
                 mode: None,
                 attachments: None,
                 effort: None,
+                mentions: None,
             },
             None,
         )

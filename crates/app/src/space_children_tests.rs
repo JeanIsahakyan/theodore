@@ -237,6 +237,7 @@ pub(crate) fn send(space: &str, text: &str) -> SpaceSendRequest {
         mode: None,
         attachments: None,
         effort: None,
+        mentions: None,
     }
 }
 

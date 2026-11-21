@@ -53,6 +53,8 @@ mod terminal;
 pub use terminal::*;
 mod agent_accounts;
 pub use agent_accounts::*;
+mod space_notes;
+pub use space_notes::*;
 
 /// Model names used in transactions and sync frames.
 pub mod models {
@@ -81,6 +83,12 @@ pub mod models {
     /// The latest usage limit of each agent account, keyed
     /// `<agent>:<account>` (`AgentLimitRow`).
     pub const AGENT_LIMIT: &str = "agent_limit";
+    /// A space's timeline notes that aren't its conversation (`SpaceNote`),
+    /// keyed by id, `pr = "space:<id>"`; never read where chat rows are.
+    pub const SPACE_NOTE: &str = "space_note";
+    /// A followed space's sub-spaces on its host, keyed `<rs_>:<id>`
+    /// (`RemoteSubSpace`): its tree, never spaces here.
+    pub const REMOTE_SUB_SPACE: &str = "remote_sub_space";
     pub const ALL: &[&str] = &[
         PR,
         PR_DETAIL,
@@ -100,6 +108,8 @@ pub mod models {
         SPACE,
         REPORT,
         AGENT_LIMIT,
+        SPACE_NOTE,
+        REMOTE_SUB_SPACE,
     ];
 }
 
@@ -1048,6 +1058,21 @@ pub struct ChatMessage {
     /// limit): `text` says it in words; never part of a prompt.
     #[serde(default)]
     pub notice: Option<ChatNotice>,
+    /// Other spaces you mentioned with `@` (docs/spaces.md "Mentions"), as
+    /// they were named then; the turn's prompt carries their context.
+    #[serde(default)]
+    pub mentions: Vec<SpaceMention>,
+}
+
+/// A space mentioned in a message.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct SpaceMention {
+    /// `Space::id` here (a mirror's own id for a remote one).
+    pub space: String,
+    pub title: String,
+    /// The device it runs on, for a mirrored one.
+    #[serde(default)]
+    pub host: Option<String>,
 }
 
 /// The space whose agent sent a message, as it was named then.
@@ -1225,6 +1250,9 @@ pub fn types() -> specta::Types {
         .register::<AddAgentAccountRequest>()
         .register::<AgentAccountRequest>()
         .register::<ChatNotice>()
+        .register::<SpaceNote>()
+        .register::<SpaceAskNote>()
+        .register::<AskedBy>()
         .register::<SpacePause>()
         .register::<SpacePauseRequest>()
         .register::<SpaceFeedback>()
@@ -1289,6 +1317,8 @@ pub fn types() -> specta::Types {
         .register::<FleetAnswerRequest>()
         .register::<FleetPresenceRequest>()
         .register::<FleetRemoteSpace>()
+        .register::<RemoteSubSpace>()
+        .register::<RemoteSubSpaceStatus>()
         .register::<FleetSpaceLine>()
         .register::<FleetQuestion>()
         .register::<FleetTrustNeeded>()

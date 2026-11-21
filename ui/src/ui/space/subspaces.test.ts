@@ -4,11 +4,18 @@ import {
   childStage,
   fromLabel,
   mergedIntoParent,
+  nestRemoteSubs,
   nestSpaces,
+  remoteRoot,
+  remoteStage,
+  remoteSubRows,
+  remoteSubtreeStats,
   spaceRows,
   subSpacesOf,
   subtreeLabel,
   subtreeStats,
+  type RemoteSub,
+  type RemoteSubRow,
 } from './subspaces';
 
 const space = (id: string, over: Partial<Space> = {}): Space =>
@@ -163,5 +170,94 @@ describe("a sub-space's stage", () => {
     expect(childStage(s({ shipped: merged, status: 'running' }))).toBe(
       'running',
     );
+  });
+});
+
+describe("a mirrored space's sub-spaces on its host", () => {
+  const sub = (
+    id: string,
+    parent: string,
+    over: Partial<RemoteSub> = {},
+  ): RemoteSub => ({
+    id: `rs_1:${id}`,
+    root: 'rs_1',
+    space: id,
+    parent,
+    title: id,
+    status: 'idle',
+    mode: 'edit',
+    done: false,
+    seq: 1,
+    ...over,
+  });
+  const names = (rows: RemoteSubRow[]) =>
+    rows.map((r) => `${'  '.repeat(r.depth)}${r.sub.space}`);
+
+  it('nests under the root and their parents; a lost parent or a loop sits under the root', () => {
+    const all = [
+      sub('c1', 'rs_1', { seq: 2 }),
+      sub('c2', 'c1'),
+      sub('c3', 'gone', { seq: 3 }),
+      sub('x', 'y'),
+      sub('y', 'x'),
+      sub('old', 'rs_1', { status: 'archived', seq: 9 }),
+      sub('other', 'rs_1', { root: 'rs_2', id: 'rs_2:other' }),
+    ];
+    const tree = nestRemoteSubs('rs_1', all);
+    expect(names(remoteSubRows(tree, new Set(), 1, 'Port it'))).toEqual([
+      '  c3',
+      '  c1',
+      '    c2',
+      '  x',
+      '  y',
+    ]);
+    expect(remoteSubtreeStats(tree).total).toBe(5);
+  });
+
+  it('puts merged ones last and folds a collapsed parent', () => {
+    const tree = nestRemoteSubs('rs_1', [
+      sub('m', 'rs_1', { done: true, seq: 9 }),
+      sub('live', 'rs_1', { status: 'running', seq: 1 }),
+      sub('kid', 'live', { status: 'question' }),
+    ]);
+    const rows = remoteSubRows(tree, new Set(['rs_1:live']), 1, 'Port it');
+    expect(names(rows)).toEqual(['  live', '  m']);
+    expect(rows[0]!.stats).toEqual({ total: 1, running: 1, asking: 1 });
+    expect(remoteSubtreeStats(tree)).toEqual({
+      total: 3,
+      running: 2,
+      asking: 1,
+    });
+    const open = remoteSubRows(tree, new Set(), 1, 'Port it');
+    expect(open.map((r) => r.parentTitle)).toEqual([
+      'Port it',
+      'live',
+      'Port it',
+    ]);
+  });
+
+  it('words its stage as a local one', () => {
+    const stage = (over: Partial<RemoteSub>) =>
+      remoteStage(sub('c', 'rs_1', over));
+    expect(stage({ status: 'running' })).toBe('running');
+    expect(stage({ status: 'question' })).toBe('asking');
+    expect(stage({ status: 'setting_up' })).toBe('starting');
+    expect(stage({ status: 'failed', done: true })).toBe('failed');
+    expect(stage({ done: true })).toBe('merged');
+    expect(stage({})).toBe('done');
+    expect(stage({ status: 'archived' })).toBe('archived');
+  });
+
+  it('nests only under the mirrored space at the top of its tree', () => {
+    const remote = {
+      space: 'rs_1',
+      host_device: 'd',
+      host_name: 'mac',
+      project_name: 'app',
+      started_here: true,
+    };
+    expect(remoteRoot({ id: 'rs_1', remote })).toBe(true);
+    expect(remoteRoot({ id: 'x', remote })).toBe(false);
+    expect(remoteRoot({ id: 'rs_1', remote: null })).toBe(false);
   });
 });

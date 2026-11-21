@@ -52,6 +52,7 @@ impl Core {
                 mode: None,
                 attachments: None,
                 effort: None,
+                mentions: None,
             })
             .await?;
         let mut sent = space.sent_feedback.clone();

@@ -103,6 +103,7 @@ fn send(id: &str, text: &str) -> SpaceSendRequest {
         mode: None,
         attachments: None,
         effort: None,
+        mentions: None,
     }
 }
 

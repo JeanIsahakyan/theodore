@@ -445,7 +445,8 @@ pub enum RemoteOp {
         question: String,
     },
     /// A message as the space's next turn, in the space's own mode (never
-    /// changed); refused while it runs (`fleet.busy`).
+    /// changed); queued while it runs, `fleet.busy` once 5 from other
+    /// devices wait (docs/fleet.md "Sends queue").
     SendTo {
         space: String,
         message: String,

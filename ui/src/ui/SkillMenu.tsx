@@ -19,13 +19,14 @@ export function matchSkills(
 }
 
 /** The box's keys while the list is open: ↑ ↓ move, Tab / ⏎ pick, Esc
- *  closes. `true` when the key was the list's. */
-export function skillMenuKey(
+ *  closes. `true` when the key was the list's. Any list over the box (the
+ *  `@` mentions too). */
+export function skillMenuKey<T = SkillInfo>(
   e: KeyboardEvent,
-  matches: SkillInfo[] | null,
+  matches: T[] | null,
   hi: number,
   setHi: (f: (n: number) => number) => void,
-  pick: (s: SkillInfo) => void,
+  pick: (s: T) => void,
   close: () => void,
 ): boolean {
   if (!matches) return false;

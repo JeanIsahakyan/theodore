@@ -79,6 +79,7 @@ async fn one_turn(f: &Fixtures, core: &Core, project: &Project) -> (Space, Strin
         mode: None,
         attachments: None,
         effort: None,
+        mentions: None,
     })
     .await
     .unwrap();

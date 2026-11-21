@@ -70,6 +70,7 @@ import {
   lineOf,
   pinName,
   projectName,
+  queuedPosition,
   remoteStatus,
   safeCode,
   truncate,
@@ -1298,7 +1299,7 @@ export class McpFleet {
     // A host reports `idle` right after making a space, before the goal's
     // turn starts (and between a send's ok and its turn): while a turn it
     // took hasn't ended, the space is still running.
-    const owed = sp.status === 'idle' && this.turnsOwed(user, sp.space);
+    const owed = sp.status === 'idle' && this.turnsOwed(user, sp);
     return viewOf(
       owed ? { ...sp, status: 'running' } : sp,
       this.waitingFor(user, sp.space),
@@ -1315,7 +1316,8 @@ export class McpFleet {
    * `TURN_START_MS`, so a missed event can't keep a space running; a
    * longer turn says `running` itself by then.
    */
-  private turnsOwed(user: string, space: string): boolean {
+  private turnsOwed(user: string, sp: McpSpaceRow): boolean {
+    const space = sp.space;
     const req = this.store.one<RequestRow>(
       `SELECT * FROM mcp_requests
        WHERE user_id = ? AND space = ? AND op IN ('start_space', 'send')
@@ -1324,7 +1326,10 @@ export class McpFleet {
       user,
       space,
     );
-    if (!req || this.env.now() - req.created_ms > TURN_START_MS) return false;
+    if (!req) return false;
+    const position = queuedAt(req);
+    if (position !== null) return this.queuedOwed(sp, req, position);
+    if (this.env.now() - req.created_ms > TURN_START_MS) return false;
     const began = this.store.one<{ n: number }>(
       `SELECT COUNT(*) AS n FROM mcp_lines
        WHERE space = ? AND kind IN ('reply', 'question', 'ended')
@@ -1333,6 +1338,30 @@ export class McpFleet {
       req.seq_at,
     );
     return (began?.n ?? 0) === 0;
+  }
+
+  /**
+   * A send the host queued behind its running turn (`{queued, position}`):
+   * owed until that many turns more than the running one ended. Not when
+   * one was stopped or failed (the host holds its queue then), nor once
+   * the space was quiet for `TURN_START_MS` (the next queued turn starts
+   * right after one ends, so it isn't coming: dropped or cancelled there).
+   */
+  private queuedOwed(
+    sp: McpSpaceRow,
+    req: RequestRow,
+    position: number,
+  ): boolean {
+    if (this.env.now() - sp.updated_ms > TURN_START_MS) return false;
+    const ends = this.store.rows<{ text: string }>(
+      `SELECT text FROM mcp_lines WHERE space = ? AND kind = 'ended' AND seq > ?`,
+      sp.space,
+      req.seq_at,
+    );
+    if (ends.some((e) => /^Turn \d+ (stopped|failed)/.test(e.text))) {
+      return false;
+    }
+    return ends.length < position + 1;
   }
 
   /**
@@ -1400,6 +1429,17 @@ function peekField(envelope: SignedEnvelope, k: string): unknown {
     return v && typeof v === 'object' ? v[k] : undefined;
   } catch {
     return undefined;
+  }
+}
+
+/** A send's place in the host's queue, from its stored ok outcome. */
+function queuedAt(req: RequestRow): number | null {
+  if (req.op !== 'send' || !req.outcome) return null;
+  try {
+    const o = JSON.parse(req.outcome) as Outcome;
+    return o.kind === 'ok' ? queuedPosition(o.value) : null;
+  } catch {
+    return null;
   }
 }
 

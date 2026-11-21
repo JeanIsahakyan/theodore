@@ -342,6 +342,7 @@ async fn copied_env_files_stay_out_of_checkpoints_and_commits() {
             mode: None,
             attachments: None,
             effort: None,
+            mentions: None,
         })
         .await
         .unwrap();
@@ -399,6 +400,7 @@ async fn the_diff_tool_only_calls_new_edits_uncommitted() {
             mode: None,
             attachments: None,
             effort: None,
+            mentions: None,
         })
         .await
         .unwrap();
@@ -454,6 +456,7 @@ async fn a_stopped_turn_checkpoints_what_the_agent_wrote_while_dying() {
             mode: None,
             attachments: None,
             effort: None,
+            mentions: None,
         })
         .await
         .unwrap();
@@ -539,6 +542,7 @@ async fn open_pr_finds_its_own_push_after_a_quit_before_the_row() {
         mode: None,
         attachments: None,
         effort: None,
+        mentions: None,
     })
     .await
     .unwrap();

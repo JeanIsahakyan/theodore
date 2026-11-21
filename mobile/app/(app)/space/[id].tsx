@@ -11,6 +11,7 @@
  *            on mac-A · Running                  name, host · status
  * ┌ Conversation (Legend List, keyboard-aware) ─────────────────────┐
  * │  theodore · fix-login · Edit                  details, error     │
+ * │  ╭ Sub-spaces: title (status) mode, nested ╮  its children        │
  * │                           ╭ your message ╮                       │
  * │  › 3 tool calls  ▤ ▸_                         grey rows, fold    │
  * │  The agent's reply, markdown                                     │
@@ -54,7 +55,7 @@ import { SpaceHeader } from '../../../src/components/space-header';
 import type { ChatMessage } from '../../../src/fleet/contract';
 import { mirrored } from '../../../src/fleet/mirror';
 import type { SpaceLine, SpaceView } from '../../../src/fleet/types';
-import type { FleetMode } from '../../../src/gen/fleet';
+import type { FleetMode, MirroredSubSpace } from '../../../src/gen/fleet';
 import { useServices } from '../../../src/services';
 import { useGlassHeaderInset } from '../../../src/shell/glassHeader';
 import { useFleetState } from '../../../src/state/fleet';
@@ -82,6 +83,7 @@ import {
 } from '../../../src/ui/logic';
 import { Glass, confirm } from '../../../src/ui/native';
 import { QuestionCard } from '../../../src/ui/QuestionCard';
+import { SubSpaces } from '../../../src/ui/SubSpaces';
 import {
   LiveReply,
   MessageRow,
@@ -155,8 +157,15 @@ function Line({ line }: { line: SpaceLine }) {
   }
 }
 
-/** Where it runs and how, at the top of the chat; the space's error. */
-function Details({ space }: { space: SpaceView }) {
+/** Where it runs and how, at the top of the chat; the space's error, its
+ *  sub-spaces. */
+function Details({
+  space,
+  subs,
+}: {
+  space: SpaceView;
+  subs: Readonly<Record<string, MirroredSubSpace>> | undefined;
+}) {
   const p = usePalette();
   const where = [
     space.projectName,
@@ -172,6 +181,7 @@ function Details({ space }: { space: SpaceView }) {
         {where.join(' · ')}
       </Text>
       {space.error ? <Notice tone="danger">{space.error}</Notice> : null}
+      {subs ? <SubSpaces root={space.space} subs={subs} /> : null}
     </View>
   );
 }
@@ -413,6 +423,8 @@ export default function SpaceScreen() {
     ) : null,
   ].filter((n) => n !== null);
 
+  const details = <Details space={space} subs={mirror?.subSpaces} />;
+
   const chips = (
     <>
       <ModeMenu
@@ -444,7 +456,7 @@ export default function SpaceScreen() {
               plan={chat.planHere === item.id ? plan : null}
             />
           )}
-          header={<Details space={space} />}
+          header={details}
           footer={footer}
           empty={empty}
           composerHeight={dock}
@@ -462,7 +474,7 @@ export default function SpaceScreen() {
               <Line line={item} />
             </View>
           )}
-          header={<Details space={space} />}
+          header={details}
           footer={footer}
           empty={empty}
           composerHeight={dock}

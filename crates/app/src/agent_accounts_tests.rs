@@ -142,6 +142,7 @@ fn send_req(id: &str, text: &str) -> SpaceSendRequest {
         mode: None,
         attachments: None,
         effort: None,
+        mentions: None,
     }
 }
 

@@ -24,6 +24,7 @@ import type {
   SandboxInfo,
   Side,
   SpaceLogLine,
+  SpaceMention,
   ToastLevel,
   TurnStep,
   UpdateInfo,
@@ -152,6 +153,8 @@ export interface SpaceSend {
   key: string;
   text: string;
   attachments: Attachment[];
+  /** Spaces it mentions (`@`), as chips. */
+  mentions?: SpaceMention[];
   agent: AgentId;
   at: number;
   /** Shows in the queue: a turn runs or is about to. */

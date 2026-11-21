@@ -1436,7 +1436,7 @@ describe('kept across restarts', () => {
     expect(state().lines[space]!.map((l) => l.seq)).toEqual([1, 2, 5, 6]);
   });
 
-  it('keeps the mirrored space row and chat', async () => {
+  it('keeps the mirrored space row, chat and sub-spaces', async () => {
     const t = await runningSpace();
     const { sock, space } = t;
     const mirror = (seq: number, model: string, id: string, data: object) =>
@@ -1467,7 +1467,24 @@ describe('kept across restarts', () => {
         at: 2,
       }),
     });
+    const child = {
+      space: 'a1b2c3d4e5f6',
+      parent: space,
+      title: 'Split the crate',
+      status: 'running',
+      mode: 'edit',
+      done: false,
+    };
+    sock.deliver({
+      type: 'space_event',
+      envelope: await mirror(5, 'sub_space', child.space, child),
+    });
     await waitFor(() => state().spaces[0]?.lastReply === 'The plan', 'mirror');
+    // Live: in the store as it arrives.
+    await waitFor(
+      () => !!state().mirrors[space]?.subSpaces[child.space],
+      'sub-space',
+    );
     t.hub.setActive(false);
     await until(
       async () =>
@@ -1487,9 +1504,10 @@ describe('kept across restarts', () => {
     const m = state().mirrors[space]!;
     expect(m.space).toMatchObject({ id: space, title: 'Login fix' });
     expect(Object.values(m.messages).map((x) => x.text)).toEqual(['The plan']);
+    expect(m.subSpaces).toEqual({ [child.space]: child });
     const again = await handshake(r.hub, [device(HOST, hostKey)]);
     await waitFor(() => again.of('subscribe').length === 1, 'resubscribe');
-    expect(again.of('subscribe')[0]!.since).toBe(4);
+    expect(again.of('subscribe')[0]!.since).toBe(5);
   });
 
   it('brings a followed space back only while its origin still delegates here', async () => {

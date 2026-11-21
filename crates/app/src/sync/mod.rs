@@ -42,6 +42,7 @@ impl Core {
                     models::SPACE,
                     models::REPORT,
                     models::AGENT_LIMIT,
+                    models::REMOTE_SUB_SPACE,
                 ] {
                     out.extend(store.all(m)?);
                 }
@@ -50,12 +51,17 @@ impl Core {
             .await
             .map_err(AppError::join)??,
             // A space's transcript (docs/spaces.md §7): chat rows only, and
-            // nothing to open — the space is not a PR.
+            // nothing to open — the space is not a PR. Its notes (who
+            // asked it what) show in the same timeline.
             BootstrapScope::Pr(pr) if pr.0.starts_with("space:") => {
                 let key = pr.0.clone();
-                tokio::task::spawn_blocking(move || store.query(models::CHAT_MESSAGE, "pr", &key))
-                    .await
-                    .map_err(AppError::join)??
+                tokio::task::spawn_blocking(move || {
+                    let mut out = store.query(models::CHAT_MESSAGE, "pr", &key)?;
+                    out.extend(store.query(models::SPACE_NOTE, "pr", &key)?);
+                    Ok::<_, StoreError>(out)
+                })
+                .await
+                .map_err(AppError::join)??
             }
             BootstrapScope::Pr(pr) => {
                 if !self.0.current_head.read().await.contains_key(&pr) {
