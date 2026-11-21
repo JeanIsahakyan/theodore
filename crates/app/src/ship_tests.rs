@@ -289,6 +289,40 @@ async fn open_as_draft_and_an_edited_title() {
     );
 }
 
+/// The first PR is described by the chat agent from the change, in
+/// English, never with the goal as typed (it may be in any language).
+#[tokio::test]
+async fn the_first_pr_says_what_changed_in_english_not_the_goal() {
+    let f = fixtures();
+    let (core, _recv, project) = host_project(&f).await;
+    let goal = "Добавь экспорт в CSV\nИ экранируй запятые.";
+    let s = one_turn(&f, &core, &project, goal).await;
+    let is_ship_title = |r: &theodore_ports::AgentRequest| {
+        r.system.as_deref() == Some(crate::usecases::ship_title::SHIP_TITLE_SYSTEM)
+    };
+    f.agents.push_tagged(
+        is_ship_title,
+        done(
+            "TITLE: Export orders as CSV\nSUMMARY:\n- Quote commas in exported fields.",
+            0.0,
+        ),
+    );
+    core.ship_space(ship(&s, ShipAction::OpenPr)).await.unwrap();
+    with_pr(&f, &s.id).await;
+    let calls = f.host.create_pr_calls.lock().unwrap().clone();
+    assert_eq!(calls[0].1.title, "Export orders as CSV");
+    let body = &calls[0].1.body;
+    assert!(
+        body.starts_with("- Quote commas in exported fields.\n\n<!-- theodore-space:"),
+        "{body}"
+    );
+    assert!(!body.contains("экспорт"), "{body}");
+    assert!(
+        crate::usecases::ship_title::SHIP_TITLE_SYSTEM.contains("in English"),
+        "the proposal is asked for in English"
+    );
+}
+
 #[tokio::test]
 async fn a_create_that_timed_out_after_landing_is_not_opened_twice() {
     let f = fixtures();
@@ -532,7 +566,8 @@ async fn a_push_commit_says_what_changed_not_what_was_said() {
         .agents
         .utility_requests()
         .into_iter()
-        .find(|r| is_ship_title(r))
+        // The last one: Open PR asked for the first PR's description.
+        .rfind(|r| is_ship_title(r))
         .expect("asked for a title");
     assert!(
         ask.prompt.contains("Your pet has passed on"),

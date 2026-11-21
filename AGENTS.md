@@ -108,6 +108,10 @@ Every commit header is `<type>(<scope>)?!?: <subject>`. The `commit-msg` hook
 - Subject: imperative ("add", not "added"), no trailing period, header ≤ 72 chars.
 - Body (optional) explains why, not what. PR titles follow the same format —
   a squash merge uses it as the commit header.
+- **English, always**: branch names, commit messages, PR titles and PR
+  descriptions are in English and written in full, even when the chat is in
+  another language. A PR description is never the raw first message of the
+  chat.
 
 Hooks live in `lefthook.yml`; run `lefthook install` once per clone. Never bypass
 them with `--no-verify` — fix what they report.
