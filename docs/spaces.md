@@ -710,6 +710,12 @@ The method is the host's default (GitHub `viewerDefaultMergeMethod`: your
 last one, else the repo's) when the repo allows it, else the first allowed
 one; ▾ picks another allowed method or opens the full merge dialog.
 
+Asking the agent ("merge it") is the same merge: its `ship` tool's `merge`
+action ("Tools the agent gets") runs `merge_space` from the turn, with the
+host's default method, and tells you what happened — merged now, auto-merge
+on, or in the queue — or why it was refused. Edits of that turn not pushed
+yet refuse it too (push first), the same as turns not pushed.
+
 **Continue** — once the PR merged, a banner offers it instead of only
 waiting for auto-archive (§7):
 
@@ -962,8 +968,8 @@ remaining prompts and limits.
     you ask: a click, or asking the agent, which calls the `ship` tool
     (below). Either way it is the same ship, with the same guarantees.
   - The prompt tells the agent to stay in its directory, to ship only
-    through `ship`, and never to run `git push`, `gh pr create` or switch
-    branches itself. After each turn Theodore points the space ref at a
+    through `ship` (merging its PR included), and never to run `git push`,
+    `gh pr create`, `gh pr merge` or switch branches itself. After each turn Theodore points the space ref at a
     snapshot on whatever `HEAD` is; the agent's own commits stay as it
     made them.
   - Theodore's secrets are stripped from the agent env (existing).
@@ -1249,7 +1255,7 @@ configured commands, never a shell of the agent's choosing.
 | `read_logs` | the tail of `setup`, `run`, `check` or `archive` output (bounded) |
 | `read_terminal` | one of the space's open terminals — id, title, running?, last lines (ANSI stripped); defaults to the most recently active one; a note, not an error, when none is open |
 | `space_info` | name, branch, base, worktree, ports, env variable names (not values), which commands are set |
-| `ship` | Open PR / Open as draft / Push / Merge locally / Keep as branch, as the Ship menu does (§6): PR number and URL, or why it was refused |
+| `ship` | Open PR / Open as draft / Push / Merge (the PR, as the page's Merge does: now, auto-merge or the queue, §3) / Merge locally / Keep as branch, as the Ship menu does (§6): PR number and URL, for `merge` what happened and the method, or why it was refused |
 | `get_space_diff` | the change vs the merge-base with the base, uncommitted edits included; one `file`, or `stat` for +/− per file |
 | `get_review_comments` | drafts, findings and threads on the space's review and its PR: `path:line`, who (you, an agent, a reviewer), state |
 | `add_review_comment` | a finding on a line of the space's review: shows in Review, "Send to agent" sends it back |
@@ -1266,15 +1272,21 @@ configured commands, never a shell of the agent's choosing.
 ```
 turn ─▶ token for this space ─▶ agent ─▶ run_check ─▶ check ─▶ result ─▶ agent fixes ─▶ …
   │                                  ├─▶ start_app ─▶ run   ─▶ URLs   ─▶ agent tries it
-  │                                  └─▶ ship ─▶ ship_space (as the turn) ─▶ PR #n ─▶ agent tells you
+  │                                  ├─▶ ship ─▶ ship_space (as the turn) ─▶ PR #n ─▶ agent tells you
+  │                                  └─▶ ship merge ─▶ merge_space (as the turn) ─▶ merged · auto · queue
   └─ agent exits ─▶ token revoked, progress cleared
 ```
 
 - The system prompt names them: use `run_check` after changes, `start_app`
-  to try the app, `ship` only when you ask to push, open a PR or merge.
+  to try the app, `ship` only when you ask to push, open a PR or merge
+  (never `gh pr merge` itself).
 - `ship` from the turn runs while that turn holds the space; any other
   caller still waits for the turn. It checkpoints the edits so far first,
   so they ship too; the turn's own checkpoint follows when it ends.
+- `ship` `merge` never pushes on its own: edits of the turn since the last
+  push refuse it ("push first"), like turns not pushed (§3 "Merge"). A
+  space without a PR, conflicts, a draft, or checks not passed on a repo
+  without auto-merge come back as the same refusals the Merge button shows.
 - `get_space_diff` snapshots the worktree through a temporary index: no
   ref moves, the worktree's own index stays as it was.
 - `set_base` keeps the worktree and the turns; a PR that is already open

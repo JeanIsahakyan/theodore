@@ -5,7 +5,8 @@
 //! one line the agent can tell the user.
 //!
 //! ```text
-//! ship ─────────────▶ ship_space (as the running turn) ─▶ PR · branch · merge
+//! ship ─────────────▶ ship_space (as the running turn) ─▶ PR · branch · local merge
+//!                   ▶ merge_space (merge: the PR, as the space page's Merge)
 //! get_space_diff ───▶ snapshot(worktree) ─▶ diff base_sha...snapshot
 //! get_review_comments ▶ drafts · findings · threads of review_pr and pr
 //! add_review_comment ─▶ add_finding on review_pr (Review, "Send to agent")
@@ -17,8 +18,8 @@ use std::path::Path;
 use std::time::Duration;
 
 use theodore_contract::{
-    ShipAction, ShipKind, ShipSpaceRequest, Space, SpaceProgress, SpaceProgressState,
-    SpaceProgressStep, SpaceReviewRequest, SpaceStatus, models,
+    MergeSpaceRequest, ShipAction, ShipKind, ShipSpaceRequest, Space, SpaceProgress,
+    SpaceProgressState, SpaceProgressStep, SpaceReviewRequest, SpaceStatus, models,
 };
 use theodore_domain::{
     Anchor, Author, Draft, Finding, FindingId, FindingState, PrDetail, PrId, PrSummary, Side,
@@ -26,8 +27,8 @@ use theodore_domain::{
 };
 use theodore_ports::{
     BaseChange, NewAction, NewReviewComment, ProgressStep, ProgressStepState, ReviewItem,
-    ReviewItemComment, ReviewItemKind, ReviewItemState, ReviewSource, ShipOutcome, ShipToolAction,
-    SpaceDiff, SpaceToolError, SyncActionCode,
+    ReviewItemComment, ReviewItemKind, ReviewItemState, ReviewSource, ShipMerge, ShipOutcome,
+    ShipToolAction, SpaceDiff, SpaceToolError, SyncActionCode,
 };
 
 use crate::core::Core;
@@ -79,6 +80,7 @@ impl Core {
             ShipToolAction::OpenPr => ShipAction::OpenPr,
             ShipToolAction::OpenDraftPr => ShipAction::OpenDraftPr,
             ShipToolAction::Push => ShipAction::Push,
+            ShipToolAction::Merge => return self.space_tool_merge(space, run).await,
             ShipToolAction::MergeLocally => ShipAction::MergeLocally,
             ShipToolAction::KeepBranch => ShipAction::KeepBranch,
         };
@@ -143,6 +145,72 @@ impl Core {
             sha: shipped.sha.0,
             pr_number,
             pr_url,
+            merge: None,
+            summary,
+        })
+    }
+
+    /// `ship` with `merge`: the space's PR, as the space page's Merge does
+    /// (`merge_space`, docs/spaces.md §3): the repo's default method; now
+    /// when it can, else auto-merge or the merge queue. The host merges it
+    /// through the outbox: the summary says what was asked for.
+    async fn space_tool_merge(
+        &self,
+        space: &str,
+        run: &str,
+    ) -> Result<ShipOutcome, SpaceToolError> {
+        let merged = self
+            .merge_space_as(
+                MergeSpaceRequest {
+                    space: space.to_string(),
+                    method: None,
+                },
+                Some(run),
+            )
+            .await
+            .map_err(refusal)?;
+        let row = self.space_row(space).await.map_err(refusal)?;
+        let pr = row
+            .pr
+            .clone()
+            .ok_or_else(|| unavailable("this space has no PR to merge"))?;
+        let summary_row = self.pr_summary(&pr).await;
+        let pr_number = summary_row
+            .as_ref()
+            .map(|s| s.pr.number)
+            .or_else(|| pr_number_of(&pr));
+        let pr_url = summary_row.map(|s| s.url).filter(|u| !u.is_empty());
+        let method = crate::usecases::telemetry::wire_str(&merged.method);
+        let number = pr_number.map(|n| format!(" #{n}")).unwrap_or_default();
+        let summary = if merged.queue {
+            format!("Added PR{number} to the merge queue ({method}); it merges when its turn comes")
+        } else if merged.auto {
+            format!(
+                "Enabled auto-merge on PR{number} ({method}): it merges once its checks and \
+                 reviews pass"
+            )
+        } else {
+            format!("Merging PR{number} ({method}) now; the space is done once the host confirms")
+        };
+        // The pushed squash the PR has; an adopted PR's tip before any push.
+        let sha = row
+            .shipped
+            .as_ref()
+            .filter(|s| s.how == ShipKind::Pr)
+            .map(|s| s.sha.clone())
+            .or(row.fork_sha.clone())
+            .unwrap_or_else(|| row.head_sha.clone());
+        Ok(ShipOutcome {
+            action: ShipToolAction::Merge,
+            branch: row.branch,
+            sha: sha.0,
+            pr_number,
+            pr_url,
+            merge: Some(ShipMerge {
+                method,
+                auto: merged.auto,
+                queue: merged.queue,
+            }),
             summary,
         })
     }

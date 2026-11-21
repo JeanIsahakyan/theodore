@@ -10,8 +10,8 @@ pub use theodore_ports::{
     FleetToolDevice, FleetToolRead, FleetToolSpace, FleetToolWait, LanguageStatus, LocalAnswer,
     LocalSpaceAsk, LocalSpaceItem, LocalSpaceList, LocalSpaceMerge, LocalSpaceRead,
     LocalSpaceStart, LocalSpaceWait, LogTail, NewReviewComment, Position, ProgressStep,
-    ProgressStepState, ReviewItem, ShipOutcome, ShipToolAction, SpaceCommandName, SpaceDiff,
-    SpaceInfo, SpaceToolError, TerminalTail, UserAnswer, UserQuestion,
+    ProgressStepState, ReviewItem, ShipMerge, ShipOutcome, ShipToolAction, SpaceCommandName,
+    SpaceDiff, SpaceInfo, SpaceToolError, TerminalTail, UserAnswer, UserQuestion,
 };
 
 /// Which server a run talks to, and so which tools it sees.

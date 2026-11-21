@@ -2638,6 +2638,7 @@ async fn a_hosted_space_runs_checks_only_in_run_and_ships_only_in_edit_or_run() 
     for action in [
         theodore_ports::ShipToolAction::OpenPr,
         theodore_ports::ShipToolAction::Push,
+        theodore_ports::ShipToolAction::Merge,
         theodore_ports::ShipToolAction::KeepBranch,
     ] {
         not_allowed(

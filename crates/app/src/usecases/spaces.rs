@@ -2332,8 +2332,11 @@ pub(crate) const SPACE_TOOLS_PROMPT: &str = "Theodore's space-tools MCP server r
      whether it still runs, its last lines) — leave `terminal` out for the most \
      recently active one; a note, not an error, says so when none is open. It also \
      acts on the change: when the user asks you to push, open a PR \
-     (or a draft), merge or keep it as a branch, call ship and tell them what it returns \
-     (the PR link, or why it was refused). get_space_diff shows your change against the \
+     (or a draft), merge the PR, or merge or keep it as a branch in a local folder, call \
+     ship (open_pr, open_draft_pr, push, merge; merge_locally, keep_branch) and tell them \
+     what it returns (the PR link; for merge whether it merged now, auto-merge is on or \
+     it joined the merge queue; or why it was refused). Never run gh pr merge yourself: \
+     when the user asks to merge the PR, call ship with merge. get_space_diff shows your change against the \
      base, uncommitted edits included; get_review_comments reads the review's comments \
      and add_review_comment leaves one on a line; set_base changes the base branch when \
      the user asks; update_progress shows your plan above the user's message box, for \
@@ -2415,7 +2418,7 @@ fn base_system_prompt(space: &Space, hosted_on: Option<&str>) -> String {
          Goal: {goal}\n\
          Base branch: {base}. The change will be shipped as branch {branch}.\n\
          Rules: work only inside the current directory. Shipping goes through Theodore: \
-         never run git push, gh pr create or another PR command, and do not switch, create \
+         never run git push, gh pr create, gh pr merge or another PR command, and do not switch, create \
          or rebase branches or rewrite history yourself; without the ship tool, {ship}. \
          Theodore commits your edits after every turn, \
          so you don't need to. End each turn with a short summary of what you \
