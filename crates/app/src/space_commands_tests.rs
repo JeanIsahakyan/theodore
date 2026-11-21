@@ -326,6 +326,7 @@ async fn sending_is_refused_while_setting_up() {
             mode: None,
             attachments: None,
             effort: None,
+            mentions: None,
         })
         .await
         .unwrap_err();
@@ -520,6 +521,7 @@ async fn check_runs_after_a_turn_that_changed_files() {
             mode: None,
             attachments: None,
             effort: None,
+            mentions: None,
         })
         .await
         .unwrap();

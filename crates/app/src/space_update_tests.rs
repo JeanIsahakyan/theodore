@@ -515,6 +515,7 @@ async fn back_to_here_over_an_update_restores_the_base_and_waits_for_it() {
         mode: None,
         attachments: None,
         effort: None,
+        mentions: None,
     })
     .await
     .unwrap();
@@ -551,6 +552,7 @@ async fn next_turn(f: &Fixtures, core: &Core, s: &Space, head: &str) -> Space {
         mode: None,
         attachments: None,
         effort: None,
+        mentions: None,
     })
     .await
     .unwrap();
@@ -621,6 +623,7 @@ async fn conflicts_left_after_a_turn_hold_the_queue() {
         mode: None,
         attachments: None,
         effort: None,
+        mentions: None,
     })
     .await
     .unwrap();

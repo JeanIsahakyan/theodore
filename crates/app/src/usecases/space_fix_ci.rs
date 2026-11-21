@@ -100,6 +100,7 @@ impl Core {
             mode: None,
             attachments: Some(attachments),
             effort: None,
+            mentions: None,
         })
         .await
     }

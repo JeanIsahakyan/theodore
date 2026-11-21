@@ -188,6 +188,7 @@ impl Core {
                     mode: (space.mode == SpaceMode::Ask).then_some(SpaceMode::Edit),
                     attachments: None,
                     effort: None,
+                    mentions: None,
                 })
                 .await?;
             }

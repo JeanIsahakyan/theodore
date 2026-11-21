@@ -587,6 +587,12 @@ impl Core {
                 r.host_name
             )));
         }
+        if req.mentions.as_ref().is_some_and(|m| !m.is_empty()) {
+            return Err(AppError::Invalid(format!(
+                "other spaces can't be mentioned to a space on {}: send the message without them",
+                r.host_name
+            )));
+        }
         self.fleet_load_followed().await;
         self.fleet_send(FleetSendRequest {
             space: r.space.clone(),
@@ -660,6 +666,7 @@ impl Core {
                 mode: Some(build_mode(row.build_mode)),
                 attachments: None,
                 effort: None,
+                mentions: None,
             },
         )
         .await

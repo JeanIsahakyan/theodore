@@ -49,6 +49,7 @@ pub(crate) mod space_handoff;
 pub mod space_hooks;
 pub mod space_limits;
 pub(crate) mod space_live_diff;
+pub(crate) mod space_mentions;
 pub(crate) mod space_naming;
 pub mod space_plan;
 pub mod space_pr;

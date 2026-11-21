@@ -860,6 +860,7 @@ impl Core {
                         mode: mode.map(space_mode),
                         attachments: None,
                         effort,
+                        mentions: None,
                     })
                     .await
                 }

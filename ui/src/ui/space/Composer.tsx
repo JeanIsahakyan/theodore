@@ -5,7 +5,14 @@
  * continues it (in the space's chat) and asks about a PR (the review's AI
  * panel), so every chat with an agent reads the same.
  */
-import { useEffect, useRef, useState, type ReactNode, type Ref } from 'react';
+import {
+  useEffect,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type ReactNode,
+  type Ref,
+} from 'react';
 import {
   ArrowRightToLine,
   ArrowUp,
@@ -67,6 +74,7 @@ export function Composer({
   onEmptyBackspace,
   quiet,
   canSubmitEmpty,
+  menu,
 }: {
   value: string;
   onChange: (v: string) => void;
@@ -117,6 +125,9 @@ export function Composer({
    *  other than the text already makes this submittable, so the usual
    *  "empty box" check is skipped in favor of this. */
   canSubmitEmpty?: boolean;
+  /** Another list over the box (a space's `@` mentions): shown above it,
+   *  offered each key first (`true`: it took the key). */
+  menu?: { node: ReactNode; onKey: (e: KeyboardEvent) => boolean };
 }) {
   const empty =
     !canSubmitEmpty &&
@@ -148,6 +159,7 @@ export function Composer({
       onDragOver={files?.onDragOver}
       onDrop={files?.onDrop}
     >
+      {menu?.node}
       {matches && matches.length > 0 && (
         <SkillMenu
           matches={matches}
@@ -187,6 +199,7 @@ export function Composer({
             className={`w-full resize-none px-4 py-0 ${quiet ? 'text-[15px] leading-relaxed' : 'text-sm'}`}
             placeholder={placeholder}
             onKeyDown={(e) => {
+              if (menu?.onKey(e)) return;
               if (
                 skillMenuKey(e, matches, hi, setHi, pick, () => onChange(''))
               ) {

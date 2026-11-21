@@ -529,6 +529,9 @@ pub struct SpaceSendRequest {
     /// From this turn on; `None` keeps the space's.
     #[serde(default)]
     pub effort: Option<String>,
+    /// Other spaces mentioned (`@`, docs/spaces.md "Mentions"): their ids.
+    #[serde(default)]
+    pub mentions: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]

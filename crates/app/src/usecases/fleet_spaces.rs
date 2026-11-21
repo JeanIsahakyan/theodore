@@ -307,6 +307,7 @@ impl Core {
                     mode: None,
                     attachments: None,
                     effort: None,
+                    mentions: None,
                 })
                 .await?
             }

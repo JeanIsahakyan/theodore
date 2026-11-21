@@ -80,6 +80,7 @@ impl Core {
         req: &SpaceSendRequest,
         text: String,
         attachments: Vec<theodore_contract::Attachment>,
+        mentions: Vec<theodore_contract::SpaceMention>,
         from: Option<theodore_contract::FromSpace>,
     ) -> AppResult<String> {
         let queue = self.queued_messages(&space.id).await?;
@@ -122,6 +123,7 @@ impl Core {
             mode: None,
             from_space: from,
             notice: None,
+            mentions,
         };
         self.apply(vec![NewAction {
             model: models::CHAT_MESSAGE.into(),
@@ -216,6 +218,7 @@ impl Core {
             mode: queued.as_ref().and_then(|q| q.mode),
             attachments: None,
             effort: queued.as_ref().and_then(|q| q.effort.clone()),
+            mentions: None,
         };
         let message = ChatMessage {
             // Sent now: it sorts after the turn it waited for.
@@ -383,6 +386,7 @@ impl Core {
         let space = self.space_row(&req.space).await?;
         let text = req.text.trim().to_string();
         let plain = req.attachments.as_ref().is_none_or(|a| a.is_empty())
+            && req.mentions.as_ref().is_none_or(|m| m.is_empty())
             && req.agent.is_none_or(|a| a == space.agent)
             && req
                 .model
@@ -457,6 +461,7 @@ impl Core {
             mode: None,
             from_space: None,
             notice: None,
+            mentions: vec![],
         };
         self.apply(vec![NewAction {
             model: models::CHAT_MESSAGE.into(),

@@ -2753,6 +2753,7 @@ async fn a_send_to_a_running_hosted_space_is_refused_as_busy() {
         mode: None,
         attachments: None,
         effort: None,
+        mentions: None,
     })
     .await
     .unwrap();
