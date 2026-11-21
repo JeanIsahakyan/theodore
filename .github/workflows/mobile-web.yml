@@ -9,8 +9,8 @@ name: Mobile web
 #
 # A push that touches nothing under mobile/ deploys nothing. The web app is
 # not part of the desktop build: no version bump, no tag, no release. The
-# iOS/Android builds are not here either: they are EAS builds the owner
-# starts by hand (docs/mobile.md).
+# iOS build ships with a desktop release (release.yml `ios`); Android is
+# an EAS build the owner starts by hand (docs/mobile.md).
 #
 # Secrets: CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID, the same as
 # cloud.yml (Workers Scripts: Edit). Variables, baked

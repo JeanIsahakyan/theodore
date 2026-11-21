@@ -11,6 +11,7 @@
  * | GET  /v1/orgs | the caller's organizations (switcher), personal first |
  * | POST /v1/orgs/personal | the caller's personal organization, created once (src/orgs.ts) |
  * | POST /v1/auth/select-organization | finishes a sign-in that needs an org picked (needs the secret) |
+ * | DELETE /v1/account | deletes the caller's account and its data, 204 (src/account.ts) |
  * | GET  /v1/fleet/ws | WebSocket to the org's fleet hub (src/fleet/, docs/fleet.md) |
  * | POST /v1/fleet/request | a one-shot signed fleet request, no socket (a push action) |
  * | POST /mcp, /oauth/*, /.well-known/oauth-* | MCP for Claude, with OAuth (src/mcp/oauth.ts) |
@@ -21,7 +22,8 @@
  *
  * CORS: only for the web app's origins (`WEB_ORIGINS`), only on the routes
  * it calls (`/v1/orgs*`, `/v1/auth/select-organization`,
- * `/v1/fleet/request`); no credentials, `Authorization` and `Content-Type`.
+ * `/v1/fleet/request`, `/v1/account`); no credentials, `Authorization` and
+ * `Content-Type`.
  *
  * ```text
  * app sign-in ─▶ 403 organization_selection_required {pending_authentication_token, organizations}
@@ -30,6 +32,7 @@
  *      (the app validates the access token itself, as after a code exchange)
  * ```
  */
+import { deleteAccount } from './account';
 import { bearer, verifierFor, type Caller } from './auth';
 import { field, readJson } from './body';
 import { CloudError, errorResponse, json } from './errors';
@@ -72,6 +75,8 @@ export interface Deps {
   limit?: (bucket: 'public' | 'user', key: string) => Promise<boolean>;
   /** Origins of the web app (set by `handle` from its argument). */
   webOrigins?: readonly string[];
+  /** The MCP OAuth store (grants revoked on account deletion); absent: none. */
+  oauthKv?: KVNamespace;
 }
 
 /** `WEB_ORIGINS` as a list: trimmed, empty entries and trailing `/` gone. */
@@ -87,7 +92,8 @@ const corsPath = (path: string) =>
   path === '/v1/orgs' ||
   path.startsWith('/v1/orgs/') ||
   path === '/v1/auth/select-organization' ||
-  path === '/v1/fleet/request';
+  path === '/v1/fleet/request' ||
+  path === '/v1/account';
 
 /** CORS headers for an allowed origin; none for any other. */
 function corsHeaders(
@@ -103,7 +109,7 @@ function corsHeaders(
 }
 
 const PREFLIGHT = {
-  'access-control-allow-methods': 'GET, POST, OPTIONS',
+  'access-control-allow-methods': 'GET, POST, DELETE, OPTIONS',
   'access-control-allow-headers': 'Authorization, Content-Type',
   'access-control-max-age': '600',
 };
@@ -137,6 +143,7 @@ export function depsFor(env: Env): Deps {
     apiBase,
     verify: verifierFor(apiBase, env.WORKOS_CLIENT_ID),
     hub: ns ? (orgId) => ns.get(ns.idFromName(orgId)) : undefined,
+    oauthKv: env.OAUTH_KV,
     limit: async (bucket, key) => {
       const rl = bucket === 'public' ? env.RL_PUBLIC : env.RL_USER;
       if (!rl) return true;
@@ -163,6 +170,17 @@ const routes: Record<string, Partial<Record<string, Route>>> = {
       const caller = await deps.verify(bearer(request));
       await within(deps, 'user', caller.userId);
       return json(await ensurePersonalOrganization(caller.userId, deps.workos));
+    },
+  },
+  '/v1/account': {
+    DELETE: async (request, deps) => {
+      const caller = await deps.verify(bearer(request));
+      await within(deps, 'user', caller.userId);
+      await deleteAccount(caller.userId, deps, new URL(request.url).origin);
+      return new Response(null, {
+        status: 204,
+        headers: { 'cache-control': 'no-store' },
+      });
     },
   },
   '/v1/fleet/ws': {

@@ -58,6 +58,7 @@ import {
   closeCodeFor,
   codes,
   ESCALATE_MS,
+  GONE_USER_MS,
   GRACE_MS,
   HELLO_TIMEOUT_MS,
   HOST_OFFLINE_PRUNE_MS,
@@ -92,6 +93,7 @@ import {
   type PushSender,
 } from './push';
 import {
+  DATA_TABLES,
   Store,
   type AskRow,
   type ConfirmRow,
@@ -247,6 +249,17 @@ export class Hub {
     return this.run(() => {
       // One challenge per connection: a device signs one nonce per socket.
       if (stateOf(conn)) return;
+      if (this.isGone(caller.userId)) {
+        conn.save({
+          id: crypto.randomUUID(),
+          user: caller.userId,
+          org: caller.orgId,
+          expMs: caller.expMs,
+          phase: 'challenged',
+          ...(internal ? { internal: true } : {}),
+        });
+        return this.fail(conn, codes.UNAUTHORIZED, 'the account was deleted');
+      }
       const others = this.env
         .conns(caller.userId)
         .filter((c) => c !== conn && c.open && stateOf(c)?.phase !== 'closed');
@@ -390,6 +403,103 @@ export class Hub {
     });
   }
 
+  /** Whether `user`'s account was deleted (recently: GONE_USER_MS). */
+  isGone(user: string): boolean {
+    return (
+      this.store.one(
+        'SELECT 1 AS x FROM gone_users WHERE user_id = ? AND until_ms > ?',
+        user,
+        this.env.now(),
+      ) !== undefined
+    );
+  }
+
+  /**
+   * The account `user` is deleted (DELETE /v1/account): its connections
+   * closed for good (4001), every row of it gone, and the user refused for
+   * GONE_USER_MS. Nobody else's rows are touched: every row here belongs to
+   * one user, and spaces, requests, questions and delegations never cross
+   * users. Idempotent. Throws (unlike a message) if a statement fails.
+   */
+  purgeUser(user: string): Promise<void> {
+    return this.runOrThrow(() => {
+      this.markGone(user);
+      this.closeAll(user);
+      const devices = this.store
+        .rows<{
+          device_id: string;
+        }>('SELECT device_id FROM devices WHERE user_id = ?', user)
+        .map((d) => d.device_id);
+      this.store.dropSpaces(
+        this.store
+          .rows<{
+            space: string;
+          }>('SELECT space FROM spaces WHERE user_id = ?', user)
+          .map((x) => x.space),
+      );
+      for (const t of ['asks', 'confirms', 'pending', 'push_tokens']) {
+        this.store.run(`DELETE FROM ${t} WHERE user_id = ?`, user);
+      }
+      for (const d of devices) {
+        this.store.run('DELETE FROM replies WHERE origin_device = ?', d);
+        this.store.run('DELETE FROM subs WHERE device_id = ?', d);
+        this.store.run('DELETE FROM push_tokens WHERE device_id = ?', d);
+        this.store.run(
+          `DELETE FROM delegations
+           WHERE origin_device = ? OR delegate_device = ?`,
+          d,
+          d,
+        );
+      }
+      this.store.run('DELETE FROM delegations WHERE user_id = ?', user);
+      this.store.run('DELETE FROM conns WHERE user_id = ?', user);
+      this.store.run('DELETE FROM devices WHERE user_id = ?', user);
+    });
+  }
+
+  /**
+   * The whole org's fleet state dropped (a deleted personal org): every
+   * connection closed for good, every table emptied; `user` refused as by
+   * `purgeUser`.
+   */
+  purgeAll(user: string): Promise<void> {
+    return this.runOrThrow(() => {
+      this.markGone(user);
+      this.closeAll();
+      for (const t of DATA_TABLES) this.store.run(`DELETE FROM ${t}`);
+    });
+  }
+
+  private markGone(user: string) {
+    this.store.run(
+      `INSERT INTO gone_users (user_id, until_ms) VALUES (?, ?)
+       ON CONFLICT (user_id) DO UPDATE SET until_ms = excluded.until_ms`,
+      user,
+      this.env.now() + GONE_USER_MS,
+    );
+  }
+
+  /** Closes connections (one user's, or all) for good: 4001, no redial. */
+  private closeAll(user?: string) {
+    for (const conn of this.env.conns(user)) {
+      if (!conn.open) continue;
+      const s = stateOf(conn);
+      if (s) {
+        this.buckets.delete(s.id);
+        this.store.run('DELETE FROM conns WHERE conn_id = ?', s.id);
+        // `closed`: its close handler then cleans nothing up (no `gone`).
+        s.phase = 'closed';
+        conn.save(s);
+      }
+      this.error(conn, codes.UNAUTHORIZED, 'the account was deleted');
+      try {
+        conn.close(closeCodeFor(codes.UNAUTHORIZED), codes.UNAUTHORIZED);
+      } catch {
+        // already closing
+      }
+    }
+  }
+
   /** `user`'s devices as `devices` lists them (every kind, protocol 5). */
   listDevices(user: string): DeviceSummary[] {
     const online = new Set(this.ready(user).map((c) => c.state.device));
@@ -485,6 +595,7 @@ export class Hub {
       }
       this.pruneStale(now);
       this.pruneDelegations(now);
+      this.store.run('DELETE FROM gone_users WHERE until_ms <= ?', now);
     });
   }
 
@@ -2156,6 +2267,20 @@ export class Hub {
     return next;
   }
 
+  /** `run`, but a failure reaches the caller (after it is logged). */
+  private async runOrThrow(fn: () => void): Promise<void> {
+    let failed: { e: unknown } | undefined;
+    await this.run(() => {
+      try {
+        fn();
+      } catch (e) {
+        failed = { e };
+        throw e;
+      }
+    });
+    if (failed) throw failed.e;
+  }
+
   private async reschedule() {
     const s = this.store;
     const due = [
@@ -2169,8 +2294,9 @@ export class Hub {
          WHERE revoked = 0 AND expires_at_ms > 0`,
       ),
       s.num('SELECT MIN(expires_at_ms) FROM confirms'),
+      s.num('SELECT MIN(until_ms) FROM gone_users'),
     ];
-    const ttl = [0, 0, 0, PENDING_TTL_MS, ESCALATE_MS, 0, 0];
+    const ttl = [0, 0, 0, PENDING_TTL_MS, ESCALATE_MS, 0, 0, 0];
     const at = due
       .map((v, i) => (v === null ? null : v + ttl[i]!))
       .filter((v): v is number => v !== null);

@@ -28,12 +28,14 @@
 import {
   AuthorizationError,
   authorizationErrorRedirect,
+  getOAuthApi,
   GrantType,
   insufficientScope,
   OAuthError,
   OAuthProvider,
   type AuthRequest,
   type OAuthHelpers,
+  type OAuthProviderOptions,
   type OAuthResourceAuth,
 } from '@cloudflare/workers-oauth-provider';
 import type { Caller } from '../auth';
@@ -99,11 +101,9 @@ export function isMcpPath(path: string): boolean {
 
 const providers = new Map<string, OAuthProvider<ProviderEnv>>();
 
-/** One provider per origin the Worker answers on (workers.dev, a domain). */
-function providerFor(origin: string): OAuthProvider<ProviderEnv> {
-  let p = providers.get(origin);
-  if (p) return p;
-  p = new OAuthProvider<ProviderEnv>({
+/** The provider's options for one origin the Worker answers on. */
+function providerOptions(origin: string): OAuthProviderOptions<ProviderEnv> {
+  return {
     apiRoute: MCP_PATH,
     apiHandler: { fetch: (req, env, ctx) => api(req, env, ctx) },
     defaultHandler: { fetch: (req, env) => pages(req, env as ProviderEnv) },
@@ -120,9 +120,46 @@ function providerFor(origin: string): OAuthProvider<ProviderEnv> {
       resource_name: 'Theodore',
     },
     tokenExchangeCallback: refreshUpstream,
-  });
+  };
+}
+
+/** One provider per origin the Worker answers on (workers.dev, a domain). */
+function providerFor(origin: string): OAuthProvider<ProviderEnv> {
+  let p = providers.get(origin);
+  if (p) return p;
+  p = new OAuthProvider<ProviderEnv>(providerOptions(origin));
   providers.set(origin, p);
   return p;
+}
+
+/**
+ * Every MCP grant of `userId` revoked, with its access and refresh tokens
+ * (a deleted account). The library keys grants `grant:<user>:<id>` and
+ * tokens `token:<user>:<grant>:<id>`, `user` as `finish` stored it. All
+ * pages are listed first, then revoked: KV lists lag behind deletes.
+ * Idempotent; returns how many grants it revoked.
+ */
+export async function revokeUserGrants(
+  kv: KVNamespace,
+  origin: string,
+  userId: string,
+  deps: Deps,
+): Promise<number> {
+  const oauth = getOAuthApi(providerOptions(origin), {
+    OAUTH_KV: kv,
+    MCP_DEPS: deps,
+    MCP_ORIGINS: [],
+  });
+  const user = encodeURIComponent(userId);
+  const ids: string[] = [];
+  let cursor: string | undefined;
+  do {
+    const page = await oauth.listUserGrants(user, { limit: 1000, cursor });
+    ids.push(...page.items.map((g) => g.id));
+    cursor = page.cursor;
+  } while (cursor);
+  for (const id of ids) await oauth.revokeGrant(id, user);
+  return ids.length;
 }
 
 /** Everything MCP and OAuth, if configured; `null`: not an MCP path. */

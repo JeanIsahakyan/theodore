@@ -19,7 +19,9 @@ name: Build
 # Secrets (callers pass `secrets: inherit`):
 #   TAURI_SIGNING_PRIVATE_KEY, TAURI_SIGNING_PRIVATE_KEY_PASSWORD  (required)
 #   APPLE_CERTIFICATE, APPLE_CERTIFICATE_PASSWORD,
-#   APPLE_SIGNING_IDENTITY, APPLE_ID, APPLE_PASSWORD, APPLE_TEAM_ID  (optional)
+#   APPLE_SIGNING_IDENTITY, APPLE_TEAM_ID, and for notarization either
+#   APPLE_API_KEY, APPLE_API_ISSUER, APPLE_API_KEY_P8 (App Store Connect
+#   API key) or APPLE_ID, APPLE_PASSWORD  (all optional)
 # Variables:
 #   THEODORE_OTLP_ENDPOINT, THEODORE_POSTHOG_HOST, THEODORE_POSTHOG_KEY
 #                              remote telemetry sinks (optional, docs/telemetry.md)
@@ -141,15 +143,31 @@ jobs:
       # make tauri-bundler try, and fail, to import an empty certificate).
       - name: load Developer ID secrets
         if: env.HAS_APPLE_CERT == 'true'
+        env:
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
         run: |
           {
             echo "APPLE_CERTIFICATE=${{ secrets.APPLE_CERTIFICATE }}"
             echo "APPLE_CERTIFICATE_PASSWORD=${{ secrets.APPLE_CERTIFICATE_PASSWORD }}"
             echo "APPLE_SIGNING_IDENTITY=${{ secrets.APPLE_SIGNING_IDENTITY }}"
-            echo "APPLE_ID=${{ secrets.APPLE_ID }}"
-            echo "APPLE_PASSWORD=${{ secrets.APPLE_PASSWORD }}"
             echo "APPLE_TEAM_ID=${{ secrets.APPLE_TEAM_ID }}"
           } >> "$GITHUB_ENV"
+          # Notarization: an App Store Connect API key when one is set,
+          # otherwise Apple ID + app-specific password.
+          if [ -n "$APPLE_API_KEY_P8" ]; then
+            key="$RUNNER_TEMP/AuthKey.p8"
+            printf '%s\n' "$APPLE_API_KEY_P8" > "$key"
+            {
+              echo "APPLE_API_ISSUER=${{ secrets.APPLE_API_ISSUER }}"
+              echo "APPLE_API_KEY=${{ secrets.APPLE_API_KEY }}"
+              echo "APPLE_API_KEY_PATH=$key"
+            } >> "$GITHUB_ENV"
+          else
+            {
+              echo "APPLE_ID=${{ secrets.APPLE_ID }}"
+              echo "APPLE_PASSWORD=${{ secrets.APPLE_PASSWORD }}"
+            } >> "$GITHUB_ENV"
+          fi
 
       # The Dock icon in this build's colours (staging: orange), generated
       # from apps/desktop/icons/src/icon.svg with the tauri-cli installed
@@ -227,8 +245,8 @@ jobs:
       # used: under CI=true it skips its Finder layout, and on macOS 26 that
       # layout loses the background anyway. Volume name = product name, as
       # the bundler had it. With a Developer ID the DMG is signed with it,
-      # as the bundler did (never notarized: the app inside is); ad-hoc
-      # builds leave it unsigned, as the bundler did.
+      # then notarized and stapled like the app inside; ad-hoc builds leave
+      # it unsigned, as the bundler did.
       - name: build dmg
         run: |
           bundle="target/aarch64-apple-darwin/release/bundle"
@@ -248,9 +266,25 @@ jobs:
               -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
             rm -f "$RUNNER_TEMP/cert.p12"
             security set-key-partition-list -S apple-tool:,apple: -s -k "$pass" "$keychain" >/dev/null
+            # codesign only treats an identity as valid (chain trusted) when its
+            # keychain is in the search list; --keychain alone finds none.
+            read -ra others <<< "$(security list-keychains -d user | tr -d '"')"
+            security list-keychains -d user -s "$keychain" "${others[@]}"
             codesign --force --timestamp --keychain "$keychain" \
               --sign "$APPLE_SIGNING_IDENTITY" "$dmg"
             codesign --verify --verbose "$dmg"
+            # Notarize the DMG too: a quarantined, unnotarized image makes
+            # Gatekeeper warn before the (notarized) app is even reached.
+            if [ -n "${APPLE_API_KEY_PATH:-}" ]; then
+              xcrun notarytool submit "$dmg" --wait \
+                --key "$APPLE_API_KEY_PATH" --key-id "$APPLE_API_KEY" \
+                --issuer "$APPLE_API_ISSUER"
+            else
+              xcrun notarytool submit "$dmg" --wait \
+                --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" \
+                --team-id "$APPLE_TEAM_ID"
+            fi
+            xcrun stapler staple "$dmg"
             security delete-keychain "$keychain"
           fi
 

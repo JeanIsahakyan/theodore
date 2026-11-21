@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Theodore — Privacy Policy</title>
+<!-- Linked from App Store Connect and the app (docs/mobile.md "Store listing").
+     Keep it true when data handling changes in cloud/, mobile/ or crates/telemetry. -->
+<style>
+  :root { color-scheme: light dark; --muted: #6b7280; }
+  body { font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+         max-width: 720px; margin: 0 auto; padding: 32px 20px 64px; }
+  h1 { font-size: 28px; margin-bottom: 4px; }
+  h2 { font-size: 20px; margin-top: 32px; }
+  .muted { color: var(--muted); }
+  table { border-collapse: collapse; width: 100%; font-size: 15px; }
+  th, td { text-align: left; vertical-align: top; padding: 6px 8px; border-bottom: 1px solid rgba(127,127,127,.3); }
+</style>
+</head>
+<body>
+<h1>Privacy Policy</h1>
+<p class="muted">Theodore and Theodore Code · Effective November 20, 2026</p>
+
+<p>Theodore is a desktop app (macOS, Linux) that runs AI coding agents on your own
+computers. Theodore Code is its companion app for iPhone, Android and the web, and
+the Theodore cloud relays between your devices. This policy covers all three. They
+are operated by Zhan Isaakian ("we"). Contact:
+<a href="mailto:jeanisahakyan@gmail.com">jeanisahakyan@gmail.com</a>.</p>
+
+<p><strong>In short:</strong> your code stays on your computers. We keep what is
+needed to sign you in and to relay your spaces between your devices. There are no
+ads and no tracking, and we don't sell data. You can delete your account in the app.</p>
+
+<h2>What we collect and why</h2>
+<table>
+<tr><th>Data</th><th>Why</th></tr>
+<tr><td><strong>Account</strong>: email, name, user id, organizations and roles</td>
+    <td>Sign-in and organizations. Provided by WorkOS, our identity provider.</td></tr>
+<tr><td><strong>Device information</strong>: device name, OS, app version, a device
+    public key, and for computers, the names of projects and agents you make available</td>
+    <td>Showing your devices to each other and checking that messages come from your devices.</td></tr>
+<tr><td><strong>Space content</strong>: the goals and messages you send, the agents'
+    replies and questions, your answers, space names and branches</td>
+    <td>Relaying spaces between your devices, for example to follow and answer a space
+    running on your Mac from your phone.</td></tr>
+<tr><td><strong>Push token</strong> and notification text</td>
+    <td>Telling you when an agent asks a question or finishes.</td></tr>
+</table>
+
+<p>The cloud checks each device's signature. Space content is <strong>not end-to-end
+encrypted</strong>: it is encrypted in transit (TLS) and stored on Cloudflare's
+infrastructure, where our service can read it. Notifications include the space name
+and the agent's question (up to 180 characters), and they pass through Expo's push
+service and Apple or Google.</p>
+
+<p>The repositories, files and diffs on your computers stay on your computers.
+Agents run there under your own accounts with their providers (for example
+Anthropic, OpenAI, Google), and those providers' policies apply to what you send them.</p>
+
+<h2>What we don't do</h2>
+<ul>
+<li>Theodore Code contains no analytics, advertising or crash-reporting SDKs, and does
+    not track you across apps or websites.</li>
+<li>We don't sell or rent personal data or use it for advertising.</li>
+</ul>
+
+<h2>Desktop diagnostics (optional)</h2>
+<p>The desktop app can send error reports (New Relic) and usage events (PostHog),
+but only after you choose to in onboarding or Settings, and each can be switched off
+at any time. Before anything leaves your computer, secrets are removed and code, paths,
+repository and branch names are dropped or hashed. Reports are tied to your user id
+if you are signed in, and to a random install id otherwise. A token from
+"Sign in with GitHub" is kept in your system keychain and is never sent to us.</p>
+
+<h2>How long we keep it</h2>
+<ul>
+<li>Space content: at most the newest 500 events per space. A space is deleted
+    30 days after its computer was last online.</li>
+<li>Pending requests and questions: minutes.</li>
+<li>Account, devices and push tokens: until you remove the device or delete your account.</li>
+<li>The phone keeps recent messages of up to 50 spaces locally. Signing out clears them.</li>
+</ul>
+
+<h2>Deleting your account</h2>
+<p>In Theodore Code, open Settings → <strong>Delete account</strong>. This permanently
+deletes your account at WorkOS and everything the Theodore cloud holds for you: devices,
+push tokens, spaces and their content, your personal organization and connected MCP
+clients. Data on your own computers is not touched. You can also email us to delete
+your account.</p>
+
+<h2>Service providers</h2>
+<table>
+<tr><th>Provider</th><th>Role</th></tr>
+<tr><td>Cloudflare</td><td>Hosting the cloud and the web app; storage</td></tr>
+<tr><td>WorkOS</td><td>Sign-in, accounts, organizations</td></tr>
+<tr><td>Expo (650 Industries), Apple, Google</td><td>Push notifications</td></tr>
+<tr><td>New Relic, PostHog</td><td>Desktop diagnostics, only if you opt in</td></tr>
+<tr><td>GitHub</td><td>App downloads and updates; GitHub sign-in on the desktop</td></tr>
+</table>
+<p>These providers may process data in the United States and other countries.</p>
+
+<h2>Your rights</h2>
+<p>You can access, correct, export or delete your data, and object to its processing,
+by emailing us. Where GDPR applies, we process data to provide the service you asked
+for (contract) and, for optional diagnostics, with your consent. You may also complain
+to your local data protection authority.</p>
+
+<h2>Children</h2>
+<p>Theodore is a developer tool and not directed at children under 13 (or 16 in the EEA).
+We don't knowingly collect their data.</p>
+
+<h2>Changes</h2>
+<p>If this policy changes, we update it here and change the effective date. For
+significant changes, we'll also tell you in the app.</p>
+</body>
+</html>

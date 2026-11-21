@@ -276,7 +276,7 @@ export function DrawerContent({
               : 'text-[28px] font-bold text-foreground'
           }
         >
-          Theodore
+          Theodore Code
         </Text>
       </View>
 

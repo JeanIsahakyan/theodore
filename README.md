@@ -26,8 +26,8 @@ what you agree with into comments. The agents help; you decide what goes out.
 1. Download the latest `.dmg` from [GitHub Releases](https://github.com/JeanIsahakyan/theodore/releases/latest)
    (macOS, Apple Silicon).
 2. Open it and drag Theodore to Applications.
-3. First launch: builds are not notarized yet, so macOS blocks it once. System Settings → Privacy &
-   Security → "Open Anyway", or `xattr -dr com.apple.quarantine /Applications/Theodore.app`.
+3. Launch it. Releases are signed with a Developer ID and notarized by Apple (from 0.1.25), so
+   macOS opens them without a warning.
 
 From then on it updates itself.
 
@@ -475,8 +475,6 @@ Git hooks (`lefthook install` once per clone):
 
 ## Not yet
 
-- Notarization and a Developer ID (the release workflow has the steps, no secrets yet); builds are
-  ad-hoc signed.
 - Windows builds — macOS (Apple Silicon) and Linux only.
 - GitLab OAuth/PKCE sign-in — personal access token only.
 - A Theodore server: the account sign-in is client-only; billing and sync need one.

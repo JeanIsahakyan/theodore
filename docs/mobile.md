@@ -546,17 +546,18 @@ Web push, hosting spaces on the phone, file transfer, tablets' layouts beyond
 
 ## Build and release
 
-The app is not part of the desktop release: no version bump, no tag. Web
-rides the branch flow like the Worker; iOS and Android are EAS builds the
-owner starts by hand.
+Web rides the branch flow like the Worker. iOS ships with the desktop
+release: a new version on `main` builds it on EAS and uploads it to
+TestFlight. Android is an EAS build the owner starts by hand.
 
 ```
 push staging, mobile/** ─▶ mobile-web.yml: checks ─▶ build:web ─▶ Pages theodore-web-staging
 push main,    mobile/** ─▶ mobile-web.yml: checks ─▶ build:web ─▶ Pages theodore-web
 every PR / push          ─▶ ci.yml `mobile`: typecheck, lint, format, test, build:web
 
-eas build --profile preview    ─▶ internal build (staging cloud) ─▶ TestFlight / Play internal
-eas build --profile production ─▶ store build (production cloud) ─▶ eas submit ─▶ review
+new version on main ─▶ release.yml `ios`: eas build --profile production ─▶ eas submit ─▶ TestFlight
+                                                               App Review: by hand in App Store Connect
+eas build --profile preview    ─▶ internal build (staging cloud) ─▶ Play internal / ad hoc
 ```
 
 ### Local development
@@ -610,19 +611,20 @@ The web origin must be in the cloud's CORS list (above).
 | --- | --- | --- | --- |
 | `development` | dev client | internal (iOS simulator build) | staging, literal |
 | `preview` | testers | internal (ad hoc iOS, APK Android) | staging, literal |
-| `production` | stores | store (AAB, App Store) | EAS environment `production` |
+| `production` | stores | store (AAB, App Store) | production, literal |
+| `apk` | installing by link, no store | internal (APK Android) | production, literal |
 
-- Production's client id and cloud URL are **not** in the repo: set them once as
-  EAS environment variables (`eas env:create --environment production
-  --name EXPO_PUBLIC_WORKOS_CLIENT_ID --visibility plaintext`, same for
-  `EXPO_PUBLIC_CLOUD_URL`). Same values as the `THEODORE_*` repo variables.
-  Check a production build's values with `eas env:list --environment production`.
+- The EAS project is `@jean_i/theodore` (id in `app.json`). Production's
+  client id and cloud URL are literal in `eas.json`: both are public (the
+  client id is in every sign-in link). Same values as the `THEODORE_*` repo
+  variables.
 - Versioning: `appVersionSource: remote`. The user-visible version is
   `expo.version` in `app.json`; the build number (iOS) and version code
   (Android) are counted by EAS and bumped by `autoIncrement` on `production`.
   Remote, because nothing in git then has to be bumped and merged per upload
   (Apple rejects a repeated build number, and a failed upload still burns
-  one). Bump `expo.version` by hand for a store release.
+  one). `expo.version` is the desktop's version: `scripts/bump-version.sh` sets it
+  with the rest.
 - `runtimeVersion` policy `appVersion`: a build's runtime is its
   `expo.version`. Inert until `expo-updates` is added; then an OTA update only
   reaches builds with the same version, so JS that needs a new native module
@@ -640,8 +642,9 @@ production  ─▶ eas submit --platform ios     ─▶ App Store Connect ─▶
             ─▶ eas submit --platform android ─▶ Play Console, internal track ─▶ promote
 ```
 
-- TestFlight: `eas build --profile production --platform ios --auto-submit`
-  uploads to App Store Connect; add internal testers there. No device
+- TestFlight: every release does it (`release.yml` job `ios`, below); by
+  hand, `eas build --profile production --platform ios` then
+  `eas submit -p ios --id <build>`. Add internal testers in App Store Connect. No device
   registration. Prefer this to ad hoc for anyone beyond the owner's own devices.
 - Play internal testing: first upload of an app must be manual in the Play
   Console (Google rejects the API for a never-uploaded app); after that
@@ -652,14 +655,64 @@ production  ─▶ eas submit --platform ios     ─▶ App Store Connect ─▶
   must say how to sign in (a test WorkOS account) and that the app needs a
   computer running Theodore to do anything.
 
+### Demo
+
+"Try the demo" on the sign-in screen swaps both clients for the mock
+services (`src/dev/demo.ts` over `src/dev/mock.ts`) under a neutral account:
+every screen works on sample data, nothing talks to a server, no push.
+Signing out (or "Delete account") leaves it and empties the store. It is
+what App Review uses (the app shows nothing without a computer running
+Theodore) and what the store screenshots are taken from.
+
+```
+sign-in ─▶ Try the demo ─▶ AppProviders: services = createDemo() ─▶ signed in (demo)
+settings ─▶ Sign out ─▶ mock auth: null ─▶ services = real, fleet store reset
+```
+
+### Store listing
+
+- App Store Connect: "Theodore Code", Developer Tools, free, all territories,
+  iPhone only (`supportsTablet: false`). Text, keywords, age rating, review
+  contact and notes are set through the App Store Connect API.
+- Privacy policy: `mobile/public/privacy.html`, served by the web Worker at
+  `https://theodore-web.prd-instance.workers.dev/privacy`, linked in Settings →
+  About. Keep it true when data handling changes (cloud, push payloads,
+  telemetry).
+- Account deletion (App Store 5.1.1(v)): Settings → Delete account ─▶
+  `DELETE /v1/account` (docs/cloud.md "Account deletion") ─▶ signed out.
+- App Privacy answers (App Store Connect, by hand; the API has none): Contact
+  Info (name, email), User Content (other), Identifiers (user id, device id),
+  all for App Functionality, linked to the user, no tracking.
+
+### iOS release in CI
+
+`release.yml` job `ios` runs after the GitHub release is published (a new
+version only). The signing material is not stored on EAS; the job writes
+it from secrets into a gitignored `credentials.json` and points
+`credentialsSource` at it, and adds the App Store Connect API key to the
+submit profile (`eas submit --non-interactive` takes a local key only from
+there).
+
+| Secret | What |
+| --- | --- |
+| `EXPO_TOKEN` | Expo access token for `@jean_i` |
+| `IOS_DIST_P12`, `IOS_DIST_P12_PASSWORD` | Apple Distribution cert + key, `.p12` base64 (expires 2027-11-21) |
+| `IOS_APPSTORE_PROFILE` | App Store profile "Theodore App Store" for `app.theodore.mobile`, base64 (expires with the cert) |
+| `APPLE_API_KEY`, `APPLE_API_ISSUER`, `APPLE_API_KEY_P8` | App Store Connect API key, shared with macOS notarization (docs/releasing.md) |
+
+App Store Connect app: "Theodore code", Apple ID 6837583003 (`ascAppId` in
+`eas.json`), team J33CB2C73P. Renewing: the API key (Admin) can create a
+`DISTRIBUTION` certificate and an `IOS_APP_STORE` profile through the App
+Store Connect API; re-encode them into the secrets.
+
 ### One-time, by the owner
 
 | # | Step | How |
 | --- | --- | --- |
 | 1 | Expo account, EAS project | `npx eas-cli@latest login`, then `eas init` in `mobile/`: creates the project and writes `extra.eas.projectId` into `app.json`; commit it |
 | 2 | EAS env for production | the two `eas env:create` calls above |
-| 3 | Apple Developer Program, App Store Connect app | enrol; create the app with bundle id `app.theodore.mobile`; then `eas credentials` (iOS) lets EAS make the distribution cert and profile |
-| 4 | iOS push key | `eas credentials` → iOS → Push Notifications: set up a new key (an APNs `.p8`); EAS hands it to Expo's push service. Never commit it |
+| 3 | Apple Developer Program, App Store Connect app | done (2026-11-20): team J33CB2C73P, app 6837583003; cert and profile made through the API, in the secrets above |
+| 4 | iOS push key | done (2026-11-20): APNs key TG8NSFRC8T (Sandbox & Production) on EAS for `app.theodore.mobile`; Expo's push service uses it. Replace with `eas credentials` → iOS → Push Notifications. Never commit it |
 | 5 | Google Play Console | pay, create the app `app.theodore.mobile`; make a service account key for `eas submit` (`eas credentials` → Android) |
 | 6 | FCM for Android push | create a Firebase project, add the Android app, download `google-services.json`, point `expo.android.googleServicesFile` at it (upload it as an EAS file env var, not in git), then `eas credentials` → Android → FCM V1 service account key |
 | 7 | WorkOS redirects | add `theodore-mobile://callback` and `https://theodore-web-staging.prd-instance.workers.dev/callback` to the staging environment, `theodore-mobile://callback` and `https://theodore-web.prd-instance.workers.dev/callback` to production (docs/releasing.md "WorkOS redirects to register") |
