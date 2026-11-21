@@ -9,6 +9,7 @@ import {
   type ModalBottomSheetRef,
 } from '@expo/ui/jetpack-compose';
 import { useRef, useState } from 'react';
+import { ActivitySheet } from '../../ui/ActivitySheet';
 import { useHostTheme } from '../../ui/native/host.android';
 import { ModelPickerSheet } from './model-picker-sheet.android';
 import type { SheetHandle, SheetKind } from './types';
@@ -28,6 +29,8 @@ export function SheetContent({
 }) {
   if (kind === 'model')
     return <ModelPickerSheet space={space ?? null} onClose={onClose} />;
+  if (kind === 'activity')
+    return <ActivitySheet space={space ?? ''} onClose={onClose} />;
   if (kind === 'computer') return <ComputerPickerSheet onClose={onClose} />;
   return <ProjectPickerSheet onClose={onClose} />;
 }

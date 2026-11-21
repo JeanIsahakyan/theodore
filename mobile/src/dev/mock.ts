@@ -17,6 +17,7 @@ import type {
   QuestionView,
   SpaceLine,
   SpaceView,
+  SubSpaceRead,
 } from '../fleet/types';
 import type { ChatMessage } from '../fleet/contract';
 import type { SpaceMirror } from '../fleet/mirror';
@@ -441,6 +442,77 @@ export const mockMirrors: Record<string, SpaceMirror> = {
   },
 };
 
+/** What `readSpace` answers for sp-running's sub-spaces (by local id). */
+export const mockSubSpaceReads: Record<string, SubSpaceRead> = {
+  a1b2c3d4e5f6: {
+    space: 'a1b2c3d4e5f6',
+    title: 'Split the grouping crate',
+    status: 'running',
+    mode: 'edit',
+    agent: 'claude',
+    turns: 2,
+    done: false,
+    goal: 'Split the grouping crate into grouping-core and grouping-eval.',
+    branch: 'agent/split-grouping',
+    progress: [
+      { label: 'Read the crate', state: 'done' },
+      { label: 'Move the eval types', state: 'active' },
+      { label: 'Fix the imports', state: 'pending' },
+    ],
+    progressNote: null,
+    messages: [
+      {
+        from: 'space:sp-running',
+        at: T0 + 10_000,
+        text: 'Split the grouping crate into grouping-core and grouping-eval.',
+        truncated: false,
+      },
+      {
+        from: 'claude',
+        at: T0 + 40_000,
+        text: 'The eval types live in `grouping/src/eval.rs`; I am moving them into their own crate.',
+        truncated: false,
+      },
+    ],
+    live: 'Editing `crates/grouping/Cargo.toml`…',
+    question: null,
+    error: null,
+  },
+  c3d4e5f6a1b2: {
+    space: 'c3d4e5f6a1b2',
+    title: 'Cache the tree-sitter grammars',
+    status: 'question',
+    mode: 'plan',
+    agent: 'claude',
+    turns: 1,
+    done: false,
+    goal: 'Cache the compiled tree-sitter grammars between runs.',
+    branch: 'agent/cache-grammars',
+    progress: [],
+    progressNote: null,
+    messages: [
+      {
+        from: 'space:sp-running',
+        at: T0 + 12_000,
+        text: 'Cache the compiled tree-sitter grammars between runs.',
+        truncated: false,
+      },
+    ],
+    live: null,
+    question: {
+      ask: 'ask-sub-1',
+      questions: [
+        {
+          question: 'Where should the cache live?',
+          options: ['~/.cache/theodore', 'the project folder'],
+          multi: false,
+        },
+      ],
+    },
+    error: null,
+  },
+};
+
 export const mockSession: Session = {
   userId: 'user-1',
   email: 'jean@example.com',
@@ -563,13 +635,40 @@ export function createMock(options: MockOptions = {}): Mock {
       const running = useFleetState
         .getState()
         .spaces.some((s) => s.space === space && s.status === 'running');
+      counter += 1;
+      const id = `sent-${counter}`;
+      // A mirrored space gets the row the host would mirror (the optimistic
+      // bubble is replaced by it); the others a history line.
+      const mirror = useFleetState.getState().mirrors[space];
+      if (mirror) {
+        const seq = running ? (queuedHere[space] ?? 0) + 1 : 0;
+        useFleetState.setState((s) => ({
+          mirrors: {
+            ...s.mirrors,
+            [space]: {
+              ...mirror,
+              messages: {
+                ...mirror.messages,
+                [id]: msg({
+                  id,
+                  pr: `space:${space}`,
+                  author: { kind: 'me' },
+                  text,
+                  at: Date.now(),
+                  queued: running ? { seq } : null,
+                }),
+              },
+            },
+          },
+        }));
+      }
       if (running) {
         queuedHere[space] = (queuedHere[space] ?? 0) + 1;
-        return { queued: true, position: queuedHere[space] };
+        return { message: id, queued: true, position: queuedHere[space] };
       }
-      appendLine(space, 'turn', text);
+      appendLine(space, 'turn', `Turn 1: ${text}`);
       patchSpace(space, { status: 'running' });
-      return { queued: false, position: null };
+      return { message: id, queued: false, position: null };
     },
     async stopSpace(space) {
       await call('stopSpace', space);
@@ -616,6 +715,25 @@ export function createMock(options: MockOptions = {}): Mock {
     },
     async confirmOverHttp(hostDevice, confirmId, allow) {
       await call('confirmOverHttp', hostDevice, confirmId, allow);
+    },
+    async readSpace(hostDevice, space, messages) {
+      await call('readSpace', hostDevice, space, messages);
+      const read = mockSubSpaceReads[space];
+      if (!read)
+        throw new Error('the other device refused: fleet.unknown_space');
+      return read;
+    },
+    async sendTo(hostDevice, space, text) {
+      await call('sendTo', hostDevice, space, text);
+      const read = mockSubSpaceReads[space];
+      counter += 1;
+      const message = `sent-${counter}`;
+      return read?.status === 'running'
+        ? { message, queued: true, position: 1 }
+        : { message, queued: false, position: null };
+    },
+    async answerSpace(hostDevice, space, ask, answers) {
+      await call('answerSpace', hostDevice, space, ask, answers);
     },
     async setMcpAuto(hostDevice, mcpDevice, auto, untilMs) {
       await call('setMcpAuto', hostDevice, mcpDevice, auto, untilMs);

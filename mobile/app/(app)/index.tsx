@@ -25,8 +25,10 @@
  *        (not at a cold start: the keyboard would cover Home at launch)
  * no computer can take one ─▶ "No computer can take a space right now…",
  *                             Devices, the composer off
- * Send ─▶ fleet.startSpace ─▶ recent projects ─▶ /space/<id>, no slide,
- *        its header the main one (☰), not Back
+ * Send ─▶ /space/pending_<n> at once (the goal as your bubble, "Starting
+ *        on mac-A…"), no slide, its header the main one (☰), not Back
+ *        ─▶ fleet.startSpace ─▶ ok: recent projects, the route becomes the
+ *           space's; refused: back here, the goal in the field, the error
  * ```
  */
 import { router, type Href } from 'expo-router';
@@ -53,6 +55,13 @@ import {
   requestNewSpace,
   useCompose,
 } from '../../src/state/compose';
+import {
+  addStart,
+  startFailed,
+  startSettled,
+  takeHomeRestore,
+  usePending,
+} from '../../src/state/pending';
 import { startPicks } from '../../src/ui/agents';
 import { ConnectionBanner } from '../../src/ui/ConnectionBanner';
 import { RUN_WARNING, errorText } from '../../src/ui/logic';
@@ -72,9 +81,22 @@ export default function NewSpaceScreen() {
   const { device, project, mode, pick } = useHome();
   const fresh = useCompose((s) => s.fresh);
   const [goal, setGoal] = useState('');
-  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const input = useRef<TextInputInstance>(null);
+
+  // A start the host refused: its goal back in the field, with why. Home
+  // is the stack's anchor, mounted before any start: it hears every one.
+  useEffect(
+    () =>
+      usePending.subscribe((s, prev) => {
+        if (!s.homeRestore || s.homeRestore === prev.homeRestore) return;
+        const back = takeHomeRestore();
+        if (!back) return;
+        setGoal(back.goal);
+        setError(back.error);
+      }),
+    [],
+  );
 
   // "New space" (✎, the drawer): a clean field, focused. Not at a cold
   // start: only a request made after Home mounted.
@@ -89,19 +111,34 @@ export default function NewSpaceScreen() {
     return () => clearTimeout(t);
   }, [fresh]);
 
-  const ready = !!device && !!project && goal.trim() !== '' && !busy;
+  const ready = !!device && !!project && goal.trim() !== '';
 
+  // The space's screen opens at once under a pending id, the goal as your
+  // first bubble; the host's ok names the space and the route follows
+  // (src/state/pending.ts). Refused: back here, the goal in the field.
   const start = () => {
     if (!device || !project || !ready) return;
-    setBusy(true);
+    const text = goal.trim();
+    const picks = startPicks(device.agents, pick);
     setError(null);
+    setGoal('');
+    const id = addStart({
+      deviceId: device.deviceId,
+      hostName: device.name,
+      projectId: project.id,
+      projectName: project.name,
+      goal: text,
+      mode,
+      picks,
+    });
+    router.push(spaceHref(id));
     fleet
       .startSpace({
         deviceId: device.deviceId,
         projectId: project.id,
-        goal: goal.trim(),
+        goal: text,
         mode,
-        ...startPicks(device.agents, pick),
+        ...picks,
       })
       .then((space) => {
         if (!web)
@@ -109,14 +146,12 @@ export default function NewSpaceScreen() {
             Haptics.NotificationFeedbackType.Success,
           );
         noteStarted(device.deviceId, project.id);
-        setGoal('');
-        router.push(spaceHref(space.space));
+        startSettled(id, space.space);
       })
-      .catch((e: unknown) => setError(errorText(e)))
-      .finally(() => setBusy(false));
+      .catch((e: unknown) => startFailed(id, errorText(e)));
   };
 
-  const chips = device && project ? <ModelChip disabled={busy} /> : null;
+  const chips = device && project ? <ModelChip /> : null;
 
   return (
     <View className="flex-1 bg-background" style={{ paddingTop: top }}>
@@ -142,7 +177,7 @@ export default function NewSpaceScreen() {
               {HINT}
             </Text>
             <View className="mt-3 w-full">
-              <WhereChips disabled={busy} />
+              <WhereChips />
             </View>
           </>
         ) : (
@@ -181,7 +216,6 @@ export default function NewSpaceScreen() {
           placeholder={PLACEHOLDER}
           submitLabel="Start"
           disabled={!device || !project}
-          sending={busy}
           canSubmit={ready}
           leading={chips}
           error={error}

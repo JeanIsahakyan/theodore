@@ -1,4 +1,5 @@
 /** A sheet's React Native content by kind (iOS routes, the web modal). */
+import { ActivitySheet } from '../../ui/ActivitySheet';
 import { ModelPickerList } from './model-picker-list';
 import type { SheetKind } from './types';
 import { ComputerPickerList, ProjectPickerList } from './where-picker-list';
@@ -14,6 +15,8 @@ export function SheetList({
 }) {
   if (kind === 'model')
     return <ModelPickerList space={space ?? null} onClose={onClose} />;
+  if (kind === 'activity')
+    return <ActivitySheet space={space ?? ''} onClose={onClose} />;
   if (kind === 'computer') return <ComputerPickerList onClose={onClose} />;
   return <ProjectPickerList onClose={onClose} />;
 }

@@ -1,11 +1,12 @@
 /**
  * A followed space's sub-spaces, at the top of its chat: one compact row per
- * child, grandchildren one step in. The rows are `subSpaceTree.ts`'s. A child
- * isn't followed here, so a tap opens nothing; a long press copies its id.
+ * child, grandchildren one step in. The rows are `subSpaceTree.ts`'s. A tap
+ * opens the sub-space's screen (`app/(app)/sub-space/[space]/[child]`,
+ * read from its host); a long press copies its id.
  *
  * ```text
  * ╭ Sub-spaces ─────────────────────────────────────╮
- * │ Split the grouping crate        (Running)  Edit │
+ * │ Split the grouping crate        (Running)  Edit │ ─▶ its screen
  * │    Move the eval types           (Merged)  Edit │
  * │ Cache the grammars      (Waiting for you)  Plan │
  * ╰─────────────────────────────────────────────────╯
@@ -15,6 +16,7 @@ import { memo, useMemo } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { copied, copyText } from '../components/settings/feedback';
 import type { MirroredSubSpace } from '../gen/fleet';
+import { openSubSpace } from '../shell/navigate';
 import { Badge } from './kit';
 import { MODE_LABEL } from './logic';
 import {
@@ -31,15 +33,24 @@ const android = process.env.EXPO_OS === 'android';
 const INDENT = 16;
 const MAX_INDENT_DEPTH = 3;
 
-const Row = memo(function Row({ row }: { row: SubSpaceRow }) {
+const Row = memo(function Row({
+  row,
+  root,
+}: {
+  row: SubSpaceRow;
+  /** The followed space: the screen's host and parent. */
+  root: string;
+}) {
   const p = usePalette();
   const { sub, depth, state } = row;
   const title = sub.title || sub.space;
   const label = SUB_STATE_LABEL[state];
   return (
     <Pressable
+      accessibilityRole="button"
       accessibilityLabel={`${title}, ${label}, ${MODE_LABEL[sub.mode]}`}
-      accessibilityHint="Long-press to copy its id"
+      accessibilityHint="Opens the sub-space; long-press to copy its id"
+      onPress={() => openSubSpace(root, sub.space)}
       onLongPress={() => {
         void copyText(sub.space).then((ok) => ok && copied());
       }}
@@ -86,7 +97,7 @@ export function SubSpaces({
         Sub-spaces
       </Text>
       {rows.map((r) => (
-        <Row key={r.sub.space} row={r} />
+        <Row key={r.sub.space} row={r} root={root} />
       ))}
     </View>
   );
