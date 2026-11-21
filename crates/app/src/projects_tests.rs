@@ -205,7 +205,20 @@ async fn poller_skips_project_refresh_while_offline() {
             .push_changed_since(Err(HostError::Network("offline".into())));
     }
     let (core, _recv) = started_core(&f).await;
-    wait_until(|| !core.0.host_health.lock().unwrap().0).await;
+    // Startup's own reads race the first poll: an inbox refresh answering
+    // after the poll's error marks the host online again, and with the
+    // clock still nothing polls after that. Let the first poll happen,
+    // then go offline the way a failed read does.
+    wait_until(|| {
+        f.host
+            .changed_since_calls
+            .load(std::sync::atomic::Ordering::SeqCst)
+            > 0
+    })
+    .await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    core.note_host(&Err::<(), _>(HostError::Network("offline".into())));
+    assert!(!core.0.host_health.lock().unwrap().0, "offline");
     let start = f.clock.now();
     let stale = seed_host_project(&core, "stale", Some(start - TEN_MINUTES - 1)).await;
 
