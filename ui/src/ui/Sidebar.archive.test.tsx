@@ -71,7 +71,7 @@ describe('sidebar Archive button', () => {
   it('is on space rows only', () => {
     const withBtn = rows().filter((r) => archiveBtn(r));
     expect(withBtn.map((r) => r.textContent)).toEqual(['a', 'b']);
-    expect(archiveBtn(rowOf('New space'))).toBeNull();
+    expect(rowOf('New space')).toBeUndefined();
     expect(archiveBtn(rowOf('Inbox'))).toBeNull();
   });
 
