@@ -158,6 +158,10 @@ export function fakeAuth(initial: Session | null = session()) {
       current = null;
       listeners.forEach((l) => l(null));
     },
+    deleteAccount: async () => {
+      current = null;
+      listeners.forEach((l) => l(null));
+    },
     onChange(l) {
       listeners.add(l);
       return () => listeners.delete(l);

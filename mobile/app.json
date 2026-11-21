@@ -10,7 +10,7 @@
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
     "ios": {
-      "supportsTablet": true,
+      "supportsTablet": false,
       "bundleIdentifier": "app.theodore.mobile",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false

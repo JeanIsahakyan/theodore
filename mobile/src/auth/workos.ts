@@ -9,6 +9,7 @@
  *            4xx organization_selection_required ─▶ { pending token, organizations }
  * cloud    POST /v1/auth/select-organization   (pending token) ─▶ session
  *          POST /v1/orgs/personal  GET /v1/orgs (Bearer access token)
+ *          DELETE /v1/account (Bearer access token): the account and its data
  * validate GET  /sso/jwks/<client_id> ─▶ RS256, iss, exp, client_id, sub
  *            JWKS unreachable: a token straight from WorkOS keeps its claim
  *            checks; one the cloud handed over fails (`network`)
@@ -36,7 +37,7 @@ export interface HttpResponse {
 export type HttpFetch = (
   url: string,
   init: {
-    method: 'GET' | 'POST';
+    method: 'GET' | 'POST' | 'DELETE';
     headers: Record<string, string>;
     body?: string;
     redirect?: 'manual';
@@ -75,6 +76,8 @@ export interface AccountApi {
   ensurePersonalOrganization(accessToken: string): Promise<string>;
   organizations(accessToken: string): Promise<Organization[]>;
   logout(sessionId: string): Promise<void>;
+  /** Deletes the signed-in account and everything the cloud holds for it. */
+  deleteAccount(accessToken: string): Promise<void>;
 }
 
 const ORG_SELECTION_REQUIRED = 'organization_selection_required';
@@ -251,7 +254,7 @@ export class WorkosApi implements AccountApi {
   }
 
   private async cloud(
-    method: 'GET' | 'POST',
+    method: 'GET' | 'POST' | 'DELETE',
     path: string,
     bearer: string | null,
     body: unknown,
@@ -491,6 +494,10 @@ export class WorkosApi implements AccountApi {
         role: str(o.role),
         personal: o.personal === true,
       }));
+  }
+
+  async deleteAccount(accessToken: string): Promise<void> {
+    await this.cloud('DELETE', 'v1/account', accessToken, undefined);
   }
 
   async logout(sessionId: string): Promise<void> {

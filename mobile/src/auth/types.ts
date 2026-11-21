@@ -42,6 +42,11 @@ export interface AuthClient {
   /** A valid access token, refreshing first if needed; null when signed out. */
   accessToken(): Promise<string | null>;
   signOut(): Promise<void>;
+  /**
+   * Deletes the account and the cloud's data for it (App Store 5.1.1(v)),
+   * then signs out here. Data on the user's computers stays.
+   */
+  deleteAccount(): Promise<void>;
   /** Called with the new session after every sign-in, refresh, switch; null on sign-out. */
   onChange(listener: (session: Session | null) => void): () => void;
 }

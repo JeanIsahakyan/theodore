@@ -524,7 +524,16 @@ export class AuthKitClient implements AuthClient {
     return this.deps.api.organizations(token);
   }
 
-  // ── sign-out ───────────────────────────────────────────────────────────
+  // ── sign-out, account deletion ─────────────────────────────────────────
+
+  /** The cloud deletes first; only then is the local session dropped. */
+  async deleteAccount(): Promise<void> {
+    const token = await this.accessToken();
+    if (!token) throw new AuthError('config', 'Not signed in.');
+    await this.deps.api.deleteAccount(token);
+    // The user and its sessions are gone at WorkOS: no logout call.
+    await this.forget(null);
+  }
 
   async signOut(): Promise<void> {
     await this.load();

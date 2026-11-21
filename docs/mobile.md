@@ -655,6 +655,35 @@ production  ─▶ eas submit --platform ios     ─▶ App Store Connect ─▶
   must say how to sign in (a test WorkOS account) and that the app needs a
   computer running Theodore to do anything.
 
+### Demo
+
+"Try the demo" on the sign-in screen swaps both clients for the mock
+services (`src/dev/demo.ts` over `src/dev/mock.ts`) under a neutral account:
+every screen works on sample data, nothing talks to a server, no push.
+Signing out (or "Delete account") leaves it and empties the store. It is
+what App Review uses (the app shows nothing without a computer running
+Theodore) and what the store screenshots are taken from.
+
+```
+sign-in ─▶ Try the demo ─▶ AppProviders: services = createDemo() ─▶ signed in (demo)
+settings ─▶ Sign out ─▶ mock auth: null ─▶ services = real, fleet store reset
+```
+
+### Store listing
+
+- App Store Connect: "Theodore Code", Developer Tools, free, all territories,
+  iPhone only (`supportsTablet: false`). Text, keywords, age rating, review
+  contact and notes are set through the App Store Connect API.
+- Privacy policy: `mobile/public/privacy.html`, served by the web Worker at
+  `https://theodore-web.prd-instance.workers.dev/privacy`, linked in Settings →
+  About. Keep it true when data handling changes (cloud, push payloads,
+  telemetry).
+- Account deletion (App Store 5.1.1(v)): Settings → Delete account ─▶
+  `DELETE /v1/account` (docs/cloud.md "Account deletion") ─▶ signed out.
+- App Privacy answers (App Store Connect, by hand; the API has none): Contact
+  Info (name, email), User Content (other), Identifiers (user id, device id),
+  all for App Functionality, linked to the user, no tracking.
+
 ### iOS release in CI
 
 `release.yml` job `ios` runs after the GitHub release is published (a new
