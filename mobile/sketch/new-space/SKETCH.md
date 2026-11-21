@@ -145,3 +145,76 @@ after    Home ──Start──▶ /space/id, no slide   [☰] … [🔔][✎]
 
 The host queues up to 5 messages from other devices (docs/fleet.md "Sends
 queue"); past that, or an older computer: `fleet.busy`.
+
+## Where and Mode out of the composer (0.1.28)
+
+Accepted (2026-11-21). The where-card rows and the Mode chip leave the
+composer; the composer keeps one chip, the model's.
+
+```
+                  ⌘
+              New space
+   It runs on your computer; follow it from here.
+
+        ( 📁 theodore ⌄ )  on  ( 🖥 mac-A ⌄ )      centered under the hint
+            project chip   muted   computer chip
+
+╭──────────────────────────────────────────────╮
+│ What should the agent work on?               │
+│ (Opus 4.1 High ⌄)                        (↑) │  only the model chip
+╰──────────────────────────────────────────────╯
+
+long names wrap, still centered:
+        ( 📁 long-project ⌄ )
+     on ( 🖥 Jean's MacBook Pro ⌄ )
+```
+
+- The chips are the model chip's compact pill on each platform (SwiftUI
+  bordered capsule small / AssistChip / web pill) with an icon.
+- Project chip: no ⌄, not tappable when the computer has one project.
+- Computer chip: always tappable; its sheet holds Mode.
+
+### Computer sheet ─▶ Mode
+
+```
+  Computer
+    ● mac-A        3 projects · up to Edit  ✓
+    ● build-box    1 project · up to Run
+    ○ Work Mac     Offline              (dim)
+  ───
+  Mode                              Edit ›
+
+  ‹ Mode
+    Ask
+    Plan
+    Edit                                  ✓      up to the computer's cap
+    Run
+```
+
+A computer: picked, closed (as before). A mode: set, back to the
+computers; the sheet stays open.
+
+### Space: the mode in the model sheet
+
+```
+[☰]   fix the login bug…          [🔔][✎]
+      on mac-A · Running · Edit                  the header shows the mode
+
+╭──────────────────────────────────────────────╮
+│ Ask the agent to change something…           │
+│ (Opus 4.1 High ⌄)                   (■) (↑)  │  no Mode chip
+╰──────────────────────────────────────────────╯
+
+  Model                       ‹ Mode
+    Opus 4.1      Claude  ✓     Ask
+    GPT-5         Codex         Plan
+  ───                           Edit            ✓
+    All models         12 ›     Run
+    Effort   Default (High) ›
+    Mode               Edit ›   (a space only)
+```
+
+- The picked mode lives in the compose store (`spaceModes`), since the iOS
+  sheet is a route: sticky per space, reset when a turn runs in another
+  mode; Revise sets Plan; `sendMode(picked, space.mode)` on send.
+- Run picked while the space isn't in Run: the warning above the composer.

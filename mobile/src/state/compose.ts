@@ -6,6 +6,8 @@
  * Home                 home: {deviceId, projectId, mode, pick}  remembered per <user>.<org>
  *                      recent: projects spaces were started in
  * space/[id]           spacePicks[id]: agent, model, effort from its next message on
+ *                      spaceModes[id]: the mode of its next message (the model sheet's
+ *                      Mode step), sticky until a turn runs in another mode
  * sheet (target)       null ─▶ Home's draft, a space id ─▶ that space's pick
  *
  * scope (account + org) changes ─▶ cleared ─▶ the scope's last picks read back
@@ -40,8 +42,17 @@ export interface ComposeState {
   home: HomeDraft;
   recent: RecentProject[];
   spacePicks: Record<string, AgentPick>;
+  /** Per space: the mode its next message goes in (not kept across restarts). */
+  spaceModes: Record<string, SpaceModePick>;
   /** Bumped by "new space": Home clears its goal and focuses the field. */
   fresh: number;
+}
+
+/** A mode picked for a space's next message, and the space's own mode when
+ *  it was picked: it holds only while the space's own stays that. */
+export interface SpaceModePick {
+  mode: FleetMode;
+  of: FleetMode;
 }
 
 const initial: ComposeState = {
@@ -50,6 +61,7 @@ const initial: ComposeState = {
   home: NO_DRAFT,
   recent: [],
   spacePicks: {},
+  spaceModes: {},
   fresh: 0,
 };
 
@@ -175,6 +187,28 @@ export function setHomeMode(mode: FleetMode): void {
   useCompose.setState((c) => ({ home: { ...c.home, mode } }));
 }
 
+/**
+ * A space's mode for its next message: what was picked while the space's
+ * own mode is still the one it was picked under; else the space's own.
+ * Sticky per space: a turn run in another mode starts the next one there.
+ */
+export function spaceModeNow(
+  pick: SpaceModePick | undefined,
+  own: FleetMode,
+): FleetMode {
+  return pick && pick.of === own ? pick.mode : own;
+}
+
+/** The mode of `space`'s next message (the model sheet's Mode step, Revise). */
+export function setSpaceMode(space: string, mode: FleetMode): void {
+  const own =
+    useFleetState.getState().spaces.find((s) => s.space === space)?.mode ??
+    'edit';
+  useCompose.setState((c) => ({
+    spaceModes: { ...c.spaceModes, [space]: { mode, of: own } },
+  }));
+}
+
 /** A space was started there: first of the recent projects. */
 export function noteStarted(deviceId: string, projectId: string): void {
   useCompose.setState((c) => ({
@@ -211,6 +245,7 @@ export async function restorePicks(
     home: NO_DRAFT,
     recent: [],
     spacePicks: {},
+    spaceModes: {},
   });
   if (scope === null) return;
   const last = await store.load(scope);

@@ -8,7 +8,7 @@
  *
  * ```text
  * [☰]        fix the login bug…       [🔔][✎]    SpaceHeader: the main
- *            on mac-A · Running                  header, name, host · status
+ *            on mac-A · Running · Edit           header, name, host · status · mode
  * ┌ Conversation (Legend List, keyboard-aware) ─────────────────────┐
  * │  theodore · fix-login · Edit                  details, error     │
  * │  ╭ Sub-spaces: title (status) mode, nested ╮  its children        │
@@ -21,11 +21,13 @@
  * │                                        ( ⌄ )  scroll to the end  │
  * │ ╭ notes (progress, run warning) ╮             Glass / card       │
  * │ ╭ Ask the agent to change something…      ╮   PromptInput in a   │
- * │ │ (Edit ⌄) (Opus 4.1 · High ⌄)        (↑) │   floating dock      │
+ * │ │ (Opus 4.1 · High ⌄)                 (↑) │   floating dock      │
  * └─╰───────────────────────────────────────╯───────────────────────┘
  *
  * mirror for this space ─▶ chatView(mirror) ─▶ messages ─ live ─ queued ─ question
  * none                  ─▶ lines (started, turn, tool, reply, …)
+ * the next message's mode ─▶ the model sheet's Mode step (compose store,
+ *     spaceModes: sticky per space, the next turn starts in the space's last mode)
  * (↑) Send ─▶ fleet.send(mode only when not the space's own, picks)
  *     while it runs ─▶ the host queues it: a queued bubble (mirrored) or
  *     "Queued: runs after the current turn" over the composer
@@ -50,26 +52,23 @@ import {
   type ConversationHandle,
 } from '../../../src/components/chat';
 import { ChatMarkdown } from '../../../src/components/markdown';
-import {
-  ModeMenu,
-  ModelChip,
-} from '../../../src/components/pickers/composer-chips';
+import { ModelChip } from '../../../src/components/pickers/composer-chips';
+import { useSpaceMode } from '../../../src/components/pickers/use-picker';
 import { MainHeader } from '../../../src/components/main-header';
 import { SpaceHeader } from '../../../src/components/space-header';
 import type { ChatMessage } from '../../../src/fleet/contract';
 import { mirrored } from '../../../src/fleet/mirror';
 import type { SpaceLine, SpaceView } from '../../../src/fleet/types';
-import type { FleetMode, MirroredSubSpace } from '../../../src/gen/fleet';
+import type { MirroredSubSpace } from '../../../src/gen/fleet';
 import { useServices } from '../../../src/services';
 import { useGlassHeaderInset } from '../../../src/shell/glassHeader';
 import { useFleetState } from '../../../src/state/fleet';
-import { useCompose } from '../../../src/state/compose';
+import { setSpaceMode, useCompose } from '../../../src/state/compose';
 import { NO_PICK, sendPicks, spaceOwn } from '../../../src/ui/agents';
 import {
   APPROVED_TEXT,
   buildMode,
   chatView,
-  composerModes,
   sendMode,
   type ChatView,
 } from '../../../src/ui/chat';
@@ -262,9 +261,9 @@ export default function SpaceScreen() {
   // the message went, until the turn ends.
   const [queuedAt, setQueuedAt] = useState<number | null>(null);
   if (queuedAt !== null && space?.status !== 'running') setQueuedAt(null);
-  const ownMode = space?.mode ?? 'edit';
-  const [mode, setMode] = useState<FleetMode>(ownMode);
-  const [modeOf, setModeOf] = useState<FleetMode>(ownMode);
+  // The next message's mode (the model sheet's Mode step, Revise): sticky
+  // per space, the space's own once a turn ran in another one.
+  const picked = useSpaceMode(id)?.picked ?? 'edit';
   // An agent, model or effort from the host's list (the model sheet,
   // src/state/compose.ts): from the next message on, kept for this space
   // until changed; nothing picked keeps the space's own.
@@ -273,12 +272,6 @@ export default function SpaceScreen() {
   const input = useRef<TextInputInstance>(null);
   const list = useRef<ConversationHandle>(null);
   const top = useGlassHeaderInset();
-
-  // Sticky per space: the next turn starts in the space's last mode.
-  if (modeOf !== ownMode) {
-    setModeOf(ownMode);
-    setMode(ownMode);
-  }
 
   useEffect(() => {
     let live = true;
@@ -326,8 +319,6 @@ export default function SpaceScreen() {
   // "Sends queue"); Stop stays beside Send.
   const sendable =
     canSend(space.status) || running || (space.status === 'failed' && hosted);
-  const modes = composerModes(host?.maxMode ?? null);
-  const picked = modes.includes(mode) ? mode : (modes.at(-1) ?? 'ask');
   const build = mirror?.space ? buildMode(mirror.space) : 'edit';
   // None from a host too old to list them: no chip, nothing sent.
   const hostAgents = host?.agents ?? [];
@@ -381,7 +372,7 @@ export default function SpaceScreen() {
         .finally(() => setApproving(false));
     },
     onRevise: () => {
-      setMode('plan');
+      setSpaceMode(id, 'plan');
       setRevising(true);
       input.current?.focus();
     },
@@ -447,24 +438,13 @@ export default function SpaceScreen() {
 
   const details = <Details space={space} subs={mirror?.subSpaces} />;
 
-  const chips = (
-    <>
-      <ModeMenu
-        modes={modes}
-        value={picked}
-        onChange={setMode}
-        disabled={sending}
-        testID="space-mode"
-      />
-      <ModelChip space={id} disabled={sending} />
-    </>
-  );
+  const chips = <ModelChip space={id} disabled={sending} />;
 
   return (
     <View className="flex-1 bg-background">
       <SpaceHeader
         title={spaceTitle(space)}
-        subtitle={`on ${space.hostName} · ${STATUS_LABEL[space.status]}`}
+        subtitle={`on ${space.hostName} · ${STATUS_LABEL[space.status]} · ${MODE_LABEL[picked]}`}
       />
       {chat ? (
         <Conversation

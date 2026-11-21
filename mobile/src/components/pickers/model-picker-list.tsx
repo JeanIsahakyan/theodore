@@ -11,14 +11,22 @@
  * ───                                    Opus 4.1  Default ✓        Low
  *   All models               12 ›      ───                          Medium …
  *   Effort       Default (High) ›        Reset to defaults
+ *   Mode                  Edit ›      (a space only)              ‹ Mode: Ask / Plan / Edit ✓ / Run
  *
  * a model ─▶ applied (tick); closes when it takes no effort, else main
  * an effort ─▶ applied (tick), back to main
+ * a mode ─▶ setSpaceMode (tick), back to main: the space's next message
  * ```
  */
 import { useState } from 'react';
 import { Text, TextInput, View } from 'react-native';
-import { applyEffort, applyModel, resetPick } from '../../state/compose';
+import {
+  applyEffort,
+  applyModel,
+  resetPick,
+  setSpaceMode,
+} from '../../state/compose';
+import { MODE_LABEL, modeRows } from '../../ui/logic';
 import {
   SEARCH_MIN_MODELS,
   filterSections,
@@ -33,9 +41,9 @@ import {
   SheetRow,
   SheetTitle,
 } from './sheet-rows';
-import { useModelSheet } from './use-picker';
+import { useModelSheet, useSpaceMode } from './use-picker';
 
-type Step = 'main' | 'all' | 'effort';
+type Step = 'main' | 'all' | 'effort' | 'mode';
 
 export function ModelPickerList({
   space,
@@ -47,6 +55,8 @@ export function ModelPickerList({
   const p = usePalette();
   const { agents, top, sections, effort, canReset, empty } =
     useModelSheet(space);
+  // A space's next message's mode; Home's is in the computer sheet.
+  const spaceMode = useSpaceMode(space);
   const [step, setStep] = useState<Step>('main');
   const [query, setQuery] = useState('');
 
@@ -143,6 +153,29 @@ export function ModelPickerList({
     );
   }
 
+  if (step === 'mode' && space && spaceMode) {
+    return (
+      <View className="pb-6" testID="model-picker-mode">
+        <SheetTitle leading={back}>Mode</SheetTitle>
+        {modeRows(spaceMode.modes, spaceMode.picked).map((r) => (
+          <SheetRow
+            key={r.mode}
+            label={r.label}
+            selected={r.selected}
+            accessibilityLabel={`Mode: ${r.label}`}
+            onPress={() => {
+              setSpaceMode(space, r.mode);
+              tick();
+              setStep('main');
+            }}
+          />
+        ))}
+      </View>
+    );
+  }
+
+  const modeLabel = space && spaceMode ? MODE_LABEL[spaceMode.picked] : null;
+
   return (
     <View className="pb-6" testID="model-picker">
       <SheetTitle>Model</SheetTitle>
@@ -161,7 +194,9 @@ export function ModelPickerList({
           onPress={() => pickModel(r)}
         />
       ))}
-      {top.more || effort.choices.length > 0 ? <SheetDivider /> : null}
+      {top.more || effort.choices.length > 0 || modeLabel ? (
+        <SheetDivider />
+      ) : null}
       {top.more ? (
         <SheetRow
           label="All models"
@@ -183,6 +218,16 @@ export function ModelPickerList({
           accessibilityLabel={`Effort, ${effort.summary}`}
           onPress={() => setStep('effort')}
           testID="model-picker-effort-row"
+        />
+      ) : null}
+      {modeLabel ? (
+        <SheetRow
+          label="Mode"
+          value={modeLabel}
+          chevron
+          accessibilityLabel={`Mode, ${modeLabel}`}
+          onPress={() => setStep('mode')}
+          testID="model-picker-mode-row"
         />
       ) : null}
       {!top.more && !empty ? (

@@ -3,12 +3,15 @@
  * (`pickerContext`), Home's resolved draft, the sheet's view models.
  */
 import { useMemo } from 'react';
+import type { FleetMode } from '../../gen/fleet';
 import {
   pickerContext,
+  spaceModeNow,
   useCompose,
   type PickerContext,
 } from '../../state/compose';
 import { useFleetState } from '../../state/fleet';
+import { composerModes } from '../../ui/chat';
 import {
   deviceRows,
   projectGroups,
@@ -16,7 +19,7 @@ import {
   type ProjectGroups,
   type ResolvedHome,
 } from '../../ui/homeDraft';
-import { startableDevices } from '../../ui/logic';
+import { offeredMode, startableDevices } from '../../ui/logic';
 import {
   effortView,
   hasPick,
@@ -53,6 +56,32 @@ export function useModelSheet(space: string | null) {
     }),
     [agents, pick, own],
   );
+}
+
+/** A space's mode for its next message, among those its host allows. */
+export interface SpaceModeView {
+  /** Up to the host's cap; all when the host doesn't list one. */
+  modes: FleetMode[];
+  /** What the next message goes in (the model sheet's Mode step). */
+  picked: FleetMode;
+  /** The space's own: its last turn's. */
+  own: FleetMode;
+}
+
+/** The mode of `space`'s next message; `null` for Home or a space gone. */
+export function useSpaceMode(space: string | null): SpaceModeView | null {
+  const s = useFleetState((st) => st.spaces.find((x) => x.space === space));
+  const host = useFleetState((st) =>
+    st.devices.find((d) => d.deviceId === s?.hostDevice),
+  );
+  const pick = useCompose((c) => (space ? c.spaceModes[space] : undefined));
+  const own = s?.mode;
+  const max = host?.maxMode ?? null;
+  return useMemo(() => {
+    if (!own) return null;
+    const modes = composerModes(max);
+    return { modes, picked: offeredMode(modes, spaceModeNow(pick, own)), own };
+  }, [own, max, pick]);
 }
 
 /** Home's startable devices and what it shows now. */
