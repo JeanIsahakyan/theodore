@@ -31,6 +31,9 @@ export interface PromptInputProps {
   stopping?: boolean;
   /** Send allowed; default: the text isn't blank. */
   canSubmit?: boolean;
+  /** Inside the card, above the field, a hairline under it (Home: where
+   *  the space runs). */
+  header?: ReactNode;
   /** Chips on the row under the field, left (mode, agent · model · effort). */
   leading?: ReactNode;
   /** Before the send button. */

@@ -8,19 +8,20 @@ import {
   chooseWhere,
   cleanPick,
   deviceRows,
-  recentChips,
+  lastProjectOn,
+  projectGroups,
   resolveHome,
-  shorten,
-  whereLabel,
 } from '../src/ui/homeDraft';
 import { startableDevices } from '../src/ui/logic';
 import {
   chooseModel,
   closesAfter,
   effortView,
+  filterSections,
   hasPick,
   modelSections,
   offersChoice,
+  topModels,
 } from '../src/ui/modelPicker';
 
 const agents = mockAgents;
@@ -28,14 +29,14 @@ const startable = startableDevices(mockDevices);
 const mac = startable.find((d) => d.deviceId === 'dev-mac')!;
 
 describe('model sheet rows', () => {
-  it("a heading per agent when there are several, ✓ on what runs, 'Default' or the agent", () => {
+  it("a heading per agent when there are several, ✓ on what runs, 'Default'", () => {
     const s = modelSections(agents, NO_PICK);
     expect(s.map((x) => x.title)).toEqual(['Claude', 'Codex']);
     const claude = s[0]!.rows;
     expect(claude.map((r) => [r.label, r.subtitle, r.selected])).toEqual([
       ['Opus 4.1', 'Default', true],
-      ['Sonnet 4.5', 'Claude', false],
-      ['Haiku 4.5', 'Claude', false],
+      ['Sonnet 4.5', null, false],
+      ['Haiku 4.5', null, false],
     ]);
     expect(claude[0]!.accessibilityLabel).toBe('Opus 4.1, Claude, default');
     expect(s[1]!.rows[0]!.selected).toBe(false);
@@ -54,6 +55,48 @@ describe('model sheet rows', () => {
     const own = spaceOwn({ agent: 'claude', model: 'sonnet', effort: 'low' });
     const rows = modelSections(agents, NO_PICK, own)[0]!.rows;
     expect(rows.find((r) => r.selected)?.model).toBe('claude-sonnet-4-5');
+  });
+});
+
+describe('top models', () => {
+  it("each agent's default first, then round-robin, up to four, the agent named", () => {
+    const top = topModels(agents, NO_PICK);
+    const all = modelSections(agents, NO_PICK).flatMap((s) => s.rows);
+    expect(top.rows).toHaveLength(Math.min(4, all.length));
+    expect(top.rows[0]).toMatchObject({ label: 'Opus 4.1', selected: true });
+    expect(top.rows[0]!.subtitle).toBe('Claude');
+    expect(top.rows[1]!.agent).toBe('codex');
+    expect(top.rows[1]!.isDefault).toBe(true);
+    expect(top.rows[2]).toMatchObject({ label: 'Sonnet 4.5' });
+    expect(top.total).toBe(all.length);
+    expect(top.more).toBe(all.length > 4);
+  });
+
+  it('a picked model outside the top is added last with ✓', () => {
+    const top = topModels(agents, { ...NO_PICK, model: 'claude-haiku-4-5' });
+    const last = top.rows.at(-1)!;
+    expect(last).toMatchObject({ label: 'Haiku 4.5', selected: true });
+    expect(top.rows.filter((r) => r.selected)).toHaveLength(1);
+  });
+
+  it('one agent: no agent name, the default says so', () => {
+    const top = topModels([agents[0]!], NO_PICK);
+    expect(top.rows[0]!.subtitle).toBe('Default');
+    expect(top.rows[1]!.subtitle).toBeNull();
+  });
+
+  it('search keeps the matching models, or all of an agent named', () => {
+    const s = modelSections(agents, NO_PICK);
+    expect(
+      filterSections(s, agents, 'sonn').flatMap((x) =>
+        x.rows.map((r) => r.label),
+      ),
+    ).toEqual(['Sonnet 4.5']);
+    expect(filterSections(s, agents, 'codex').map((x) => x.agent)).toEqual([
+      'codex',
+    ]);
+    expect(filterSections(s, agents, '  ')).toHaveLength(s.length);
+    expect(filterSections(s, agents, 'zzz')).toEqual([]);
   });
 });
 
@@ -101,22 +144,23 @@ describe('a model tapped', () => {
 });
 
 describe('effort', () => {
-  it('the levels as short segments, read in full; Default names what runs', () => {
+  it('the levels in full as a list; Default names what runs; the row shows the pick', () => {
     const e = effortView(agents, NO_PICK);
     expect(e.value).toBeNull();
     expect(e.defaultLabel).toBe('Default (High)');
+    expect(e.summary).toBe('Default (High)');
     expect(e.choices.map((c) => c.label)).toEqual([
       'Low',
-      'Med',
+      'Medium',
       'High',
-      'XHigh',
+      'Extra high',
       'Max',
-      'Ultra',
+      'Ultracode',
     ]);
-    expect(e.choices.at(-1)!.accessibilityLabel).toBe('Ultracode');
     const picked = effortView(agents, pickEffort(NO_PICK, 'low'));
     expect(picked.value).toBe('low');
     expect(picked.defaultLabel).toBe('Default (High)');
+    expect(picked.summary).toBe('Low');
   });
 
   it("a space's own effort is its default", () => {
@@ -252,37 +296,33 @@ describe('recent projects', () => {
     expect(r).toHaveLength(5);
   });
 
-  it('chips: still startable, not the one shown, at most three', () => {
+  it('the last project started in on a computer, still on it', () => {
     const recent = [
-      { deviceId: 'dev-mac', projectId: 'p-theodore' },
-      { deviceId: 'dev-work', projectId: 'p-web' },
       { deviceId: 'dev-box', projectId: 'p-api' },
       { deviceId: 'dev-mac', projectId: 'p-gone' },
       { deviceId: 'dev-mac', projectId: 'p-tama' },
     ];
-    const chips = recentChips(recent, startable, {
-      deviceId: 'dev-mac',
-      projectId: 'p-theodore',
-    });
-    expect(chips.map((c) => c.label)).toEqual([
-      'api · build-box',
-      'tamagochi · MacBook Pro',
-    ]);
-    expect(chips[0]!.accessibilityLabel).toBe('Use api on build-box');
+    expect(lastProjectOn(recent, mac)).toBe('p-tama');
+    expect(lastProjectOn([], mac)).toBeNull();
+  });
+
+  it('project sheet: recent ones first, the rest as listed, search on both', () => {
+    const recent = [
+      { deviceId: 'dev-mac', projectId: 'p-tama' },
+      { deviceId: 'dev-box', projectId: 'p-api' },
+    ];
+    const g = projectGroups(mac, recent);
+    expect(g.recent.map((p) => p.id)).toEqual(['p-tama']);
+    expect(g.rest.map((p) => p.id)).toEqual(
+      mac.projects.filter((p) => p.id !== 'p-tama').map((p) => p.id),
+    );
+    const q = projectGroups(mac, recent, 'TAMA');
+    expect(q.recent.map((p) => p.id)).toEqual(['p-tama']);
+    expect(q.rest).toEqual([]);
   });
 });
 
 describe('where', () => {
-  it('chip text short, read in full', () => {
-    expect(shorten('abcdef', 4)).toBe('abc…');
-    expect(
-      whereLabel({ name: 'Jean’s MacBook Pro 16' }, { name: 'theodore' }),
-    ).toEqual({
-      label: 'Jean’s MacBoo… · theodore',
-      accessibilityLabel: 'Runs on Jean’s MacBook Pro 16, project theodore',
-    });
-  });
-
   it('devices you trust, those that take a space first, the others say why not', () => {
     const offline: FleetDeviceView = {
       ...mac,

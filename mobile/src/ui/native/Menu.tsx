@@ -13,6 +13,7 @@ export function Menu({
   label,
   groups,
   disabled,
+  compact,
   accessibilityLabel,
   testID,
   style,
@@ -30,6 +31,7 @@ export function Menu({
         onPress={() => setOpen(true)}
         style={({ pressed }) => [
           styles.pill,
+          compact ? styles.compact : null,
           {
             backgroundColor: p.surfaceMuted,
             opacity: disabled ? 0.45 : pressed ? 0.75 : 1,
@@ -37,10 +39,25 @@ export function Menu({
           style,
         ]}
       >
-        <Text numberOfLines={1} style={[styles.label, { color: p.text }]}>
+        <Text
+          numberOfLines={1}
+          style={[
+            styles.label,
+            compact ? styles.compactLabel : null,
+            { color: p.text },
+          ]}
+        >
           {label}
         </Text>
-        <Text style={[styles.label, { color: p.muted }]}>⌄</Text>
+        <Text
+          style={[
+            styles.label,
+            compact ? styles.compactLabel : null,
+            { color: p.muted },
+          ]}
+        >
+          ⌄
+        </Text>
       </Pressable>
       <Modal
         visible={open}
@@ -126,6 +143,8 @@ const styles = StyleSheet.create({
     maxWidth: 220,
   },
   label: { fontSize: 15, fontWeight: '500', flexShrink: 1 },
+  compact: { minHeight: 30, paddingHorizontal: 10, borderRadius: 15 },
+  compactLabel: { fontSize: 13 },
   backdrop: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.3)',

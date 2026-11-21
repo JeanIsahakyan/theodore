@@ -136,6 +136,7 @@ export function PromptInput({
   onStop,
   stopping,
   canSubmit,
+  header,
   leading,
   trailing,
   error,
@@ -163,6 +164,9 @@ export function PromptInput({
     <View testID={testID}>
       {error ? <PromptInputError message={error} /> : null}
       <Surface>
+        {header ? (
+          <View className="border-b border-border/60">{header}</View>
+        ) : null}
         <TextInput
           ref={inputRef}
           nativeID="composer"

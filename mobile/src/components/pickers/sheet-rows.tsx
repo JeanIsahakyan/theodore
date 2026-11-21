@@ -30,6 +30,33 @@ export function SheetTitle({
   );
 }
 
+/** A step's "‹" back to the sheet's previous step. */
+export function SheetBack({
+  label,
+  onPress,
+}: {
+  label: string;
+  onPress: () => void;
+}) {
+  const p = usePalette();
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      hitSlop={10}
+      className="-ml-1 h-8 w-8 items-center justify-center rounded-full active:bg-muted"
+    >
+      <SymbolImage
+        name="chevron.right"
+        size={16}
+        color={p.accent}
+        style={{ transform: [{ scaleX: -1 }] }}
+      />
+    </Pressable>
+  );
+}
+
 export function SheetHeading({ children }: { children: string }) {
   return (
     <Text
@@ -55,6 +82,7 @@ export function SheetRow({
   accent,
   dot,
   chevron,
+  value,
   accessibilityLabel,
   testID,
 }: {
@@ -70,6 +98,8 @@ export function SheetRow({
   dot?: 'on' | 'off';
   /** "›": the row opens a list. */
   chevron?: boolean;
+  /** Muted, on the trailing side ("Default (High)", "12"). */
+  value?: string | null;
   accessibilityLabel?: string;
   testID?: string;
 }) {
@@ -106,6 +136,11 @@ export function SheetRow({
           </Text>
         ) : null}
       </View>
+      {value ? (
+        <Text numberOfLines={1} className="text-[15px] text-muted-foreground">
+          {value}
+        </Text>
+      ) : null}
       {selected ? (
         <SymbolImage
           name="check"

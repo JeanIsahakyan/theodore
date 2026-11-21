@@ -7,6 +7,7 @@ import {
   Box,
   HorizontalDivider,
   Icon,
+  IconButton,
   ListItem,
   Row,
   Text,
@@ -51,6 +52,27 @@ export function SheetTitle({
   );
 }
 
+const BACK = require('../../../assets/icons/arrow_back.xml');
+
+/** A step's back arrow to the sheet's previous step. */
+export function SheetBack({
+  label,
+  onPress,
+}: {
+  label: string;
+  onPress: () => void;
+}) {
+  const p = usePalette();
+  return (
+    <IconButton
+      onClick={onPress}
+      modifiers={[semantics({ contentDescription: label })]}
+    >
+      <Icon source={BACK} size={24} tint={p.text} />
+    </IconButton>
+  );
+}
+
 export function SheetHeading({ children }: { children: string }) {
   const p = usePalette();
   return (
@@ -77,6 +99,7 @@ export function SheetRow({
   accent,
   dot,
   chevron,
+  value,
   accessibilityLabel,
   testID,
 }: {
@@ -88,6 +111,7 @@ export function SheetRow({
   accent?: boolean;
   dot?: 'on' | 'off';
   chevron?: boolean;
+  value?: string | null;
   accessibilityLabel?: string;
   testID?: string;
 }) {
@@ -130,9 +154,14 @@ export function SheetRow({
           </Text>
         </ListItem.SupportingContent>
       ) : null}
-      {selected || chevron ? (
+      {selected || chevron || value ? (
         <ListItem.TrailingContent>
           <Row verticalAlignment="center">
+            {value ? (
+              <Text color={p.muted} maxLines={1}>
+                {value}
+              </Text>
+            ) : null}
             {selected ? (
               <Icon source={CHECK} size={22} tint={p.accent} />
             ) : null}

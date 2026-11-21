@@ -133,8 +133,19 @@ export function running(
 
 /** The chip's text: "Opus 4.1 · High", the agent when no model is named. */
 export function runningLabel(r: Running): string {
-  const model = r.model?.label ?? r.modelId ?? r.agent.label;
-  return r.effort ? `${model} · ${effortLabel(r.effort)}` : model;
+  const { model, effort } = runningParts(r);
+  return effort ? `${model} · ${effort}` : model;
+}
+
+/** The chip's two parts: the model, and the effort drawn muted. */
+export function runningParts(r: Running): {
+  model: string;
+  effort: string | null;
+} {
+  return {
+    model: r.model?.label ?? r.modelId ?? r.agent.label,
+    effort: r.effort ? effortLabel(r.effort) : null,
+  };
 }
 
 /** For screen readers: "Claude, Opus 4.1, High". */

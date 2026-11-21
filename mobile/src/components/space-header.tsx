@@ -1,21 +1,11 @@
-// Adapted from EvanBacon/chat-template (MIT)
 /**
- * Web: a space's header, the JS stack's bar replaced by Back, the space's
- * name and "on <host> · <status>" under it (`space-title.tsx`).
+ * A space's header: the main header (☰, questions, new space), the
+ * space's name and "on <host> · <status>" under it. A space is a
+ * top-level screen like Home: no Back, the drawer is how you leave it.
  */
-import { Stack } from 'expo-router';
-import { goBack } from '../shell/PushedHeader';
-import { TitleBar, type SpaceHeaderProps } from './space-title';
+import type { SpaceHeaderProps } from './space-title';
+import { MainHeader } from './main-header';
 
 export function SpaceHeader({ title, subtitle }: SpaceHeaderProps) {
-  return (
-    <Stack.Screen
-      options={{
-        title,
-        header: () => (
-          <TitleBar title={title} subtitle={subtitle} onBack={goBack} />
-        ),
-      }}
-    />
-  );
+  return <MainHeader title={title} subtitle={subtitle} />;
 }

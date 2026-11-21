@@ -2,22 +2,21 @@
  * The composer's chips (docs/mobile.md "New space"):
  *
  * ```text
- * [mac-A · repo ▾]  [Sonnet 4.5 · High ▾]  [Edit ▾]
- *  WhereChip         ModelChip              ModeMenu
- *  where sheet       model sheet            quick menu (kit Menu)
+ * [Sonnet 4.5 High ▾]  [Edit ▾]       small chips (30 high, 13 pt)
+ *  ModelChip            ModeMenu         the effort muted
+ *  model sheet          quick menu (kit Menu)
  * ```
  *
- * Labels read by tests and screen readers: "Runs on mac-A, project repo",
- * "Agent: Claude, Opus 4.1, High", "Mode: Edit".
+ * Labels read by tests and screen readers: "Agent: Claude, Opus 4.1,
+ * High", "Mode: Edit". Where it runs is `where-card.tsx`.
  */
 import type { FleetMode } from '../../gen/fleet';
-import { running, runningA11y, runningLabel } from '../../ui/agents';
-import { whereLabel } from '../../ui/homeDraft';
+import { running, runningA11y, runningParts } from '../../ui/agents';
 import { MODE_LABEL } from '../../ui/logic';
 import { offersChoice } from '../../ui/modelPicker';
 import { Menu } from '../../ui/native';
 import { SheetChip } from './sheet-chip';
-import { useHome, usePickerContext } from './use-picker';
+import { usePickerContext } from './use-picker';
 
 /** Agent · model · effort of Home (`space` null) or a space; none when the
  *  host lists nothing to choose. */
@@ -31,30 +30,16 @@ export function ModelChip({
   const { agents, pick, current } = usePickerContext(space);
   const now = running(agents, pick, current);
   if (!now || !offersChoice(agents)) return null;
+  const { model, effort } = runningParts(now);
   return (
     <SheetChip
       sheet="model"
       space={space}
-      label={runningLabel(now)}
+      label={model}
+      detail={effort}
       accessibilityLabel={`Agent: ${runningA11y(now)}`}
       disabled={disabled}
       testID={space ? 'space-model' : 'start-model'}
-    />
-  );
-}
-
-/** Home: the device and project the space starts on. */
-export function WhereChip({ disabled }: { disabled?: boolean }) {
-  const { device, project } = useHome();
-  if (!device || !project) return null;
-  const { label, accessibilityLabel } = whereLabel(device, project);
-  return (
-    <SheetChip
-      sheet="where"
-      label={label}
-      accessibilityLabel={accessibilityLabel}
-      disabled={disabled}
-      testID="start-where"
     />
   );
 }
@@ -86,6 +71,7 @@ export function ModeMenu({
         },
       ]}
       disabled={disabled}
+      compact
       testID={testID}
     />
   );

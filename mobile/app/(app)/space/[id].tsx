@@ -7,8 +7,8 @@
  * untrusted: no link opens and no image loads.
  *
  * ```text
- * [‹]        fix the login bug…                  SpaceHeader: the space's
- *            on mac-A · Running                  name, host · status
+ * [☰]        fix the login bug…       [🔔][✎]    SpaceHeader: the main
+ *            on mac-A · Running                  header, name, host · status
  * ┌ Conversation (Legend List, keyboard-aware) ─────────────────────┐
  * │  theodore · fix-login · Edit                  details, error     │
  * │  ╭ Sub-spaces: title (status) mode, nested ╮  its children        │
@@ -35,7 +35,7 @@
  * Glass, iOS < 26: chrome blur, Android: Material 3 surface, web: a card);
  * the list is inset by its height and rides on the keyboard with it.
  */
-import { Stack, useLocalSearchParams } from 'expo-router';
+import { useLocalSearchParams } from 'expo-router';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { StyleSheet, Text, View, type TextInputInstance } from 'react-native';
 import {
@@ -51,6 +51,7 @@ import {
   ModeMenu,
   ModelChip,
 } from '../../../src/components/pickers/composer-chips';
+import { MainHeader } from '../../../src/components/main-header';
 import { SpaceHeader } from '../../../src/components/space-header';
 import type { ChatMessage } from '../../../src/fleet/contract';
 import { mirrored } from '../../../src/fleet/mirror';
@@ -299,7 +300,7 @@ export default function SpaceScreen() {
   if (!space) {
     return (
       <View style={{ paddingTop: top }}>
-        <Stack.Screen options={{ title: 'Space' }} />
+        <MainHeader title="Space" />
         <Empty
           title="This space isn't in your fleet any more"
           hint="It was removed, or you no longer follow it."
