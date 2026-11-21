@@ -119,6 +119,7 @@ export const confirmRequest = (
   space_name: null,
   local_space: null,
   text: 'Fix the login bug',
-  expires_at_ms: 1_700_000_300_000,
+  // Five minutes from now: a prompt out of time is not shown.
+  expires_at_ms: Date.now() + 300_000,
   ...over,
 });

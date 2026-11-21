@@ -1,6 +1,7 @@
 /** What the fleet puts in front of you wherever you are: routed questions
- *  and "wants to run spaces here" notices. */
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+ *  as cards, and the decisions waiting on you as a dialog, one at a time. */
+import { act } from 'react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { setTransport } from '../../core/transport';
 import { RootStore } from '../../stores/RootStore';
 import { RootStoreProvider } from '../../stores/context';
@@ -14,7 +15,13 @@ import {
   trustNeeded,
 } from '../../test/fleet';
 import { FakeTransport } from '../../test/fakeTransport';
+import * as native from '../../core/native';
 import { FleetNotices } from './FleetNotices';
+
+// jsdom has no CSS.escape; the modal's keyboard handling asks for it.
+globalThis.CSS ??= {
+  escape: (s: string) => s.replace(/[^\w-]/g, '\\$&'),
+} as unknown as typeof CSS;
 
 let transport: FakeTransport;
 let store: RootStore;
@@ -31,6 +38,8 @@ beforeEach(() => {
 afterEach(() => {
   m?.unmount();
   m = null;
+  document.body.innerHTML = '';
+  vi.restoreAllMocks();
 });
 
 async function render() {
@@ -42,8 +51,16 @@ async function render() {
   await settle();
 }
 
+// The dialog lives in a portal: look in the whole document.
 const q = <T extends Element = HTMLElement>(sel: string) =>
-  m!.host.querySelector<T>(sel);
+  document.querySelector<T>(sel);
+const dialog = () => q('.fleet-prompt');
+const key = (k: string, over: KeyboardEventInit = {}) =>
+  act(() => {
+    (document.activeElement ?? document.body).dispatchEvent(
+      new KeyboardEvent('keydown', { key: k, bubbles: true, ...over }),
+    );
+  });
 const calls = (cmd: string) =>
   transport.calls.filter((c) => c.cmd === cmd).map((c) => c.args);
 
@@ -116,14 +133,15 @@ describe('a routed question', () => {
 describe('a device that wants to run spaces here', () => {
   const request = trustNeeded();
 
-  it('is named, with its fingerprint', async () => {
+  it('asks in a dialog, named, with its fingerprint', async () => {
     store.fleet.handle({ type: 'fleet_trust_needed', request });
     await render();
     const text = q('.fleet-trust-needed')!.textContent!;
     expect(text).toContain('Studio Mac wants to run spaces here');
-    expect(text).toContain(
-      'fingerprint a1b2 c3d4 e5f6 0718 9abc def0 1234 5678',
+    expect(q('.fleet-trust-needed .fingerprint')!.textContent).toBe(
+      'a1b2 c3d4 e5f6 0718 9abc def0 1234 5678',
     );
+    expect(dialog()!.getAttribute('role')).toBe('alertdialog');
   });
 
   it('Trust asks to compare the fingerprint first, then pins the key it showed', async () => {
@@ -154,10 +172,10 @@ describe('a device that wants to run spaces here', () => {
         },
       },
     ]);
-    expect(q('.fleet-trust-needed')).toBeNull();
+    expect(dialog()).toBeNull();
   });
 
-  it('cancelling the check trusts nothing and keeps the notice', async () => {
+  it('cancelling the check trusts nothing and keeps the prompt', async () => {
     store.fleet.handle({ type: 'fleet_trust_needed', request });
     await render();
     await click(q('.fleet-trust-accept'));
@@ -171,7 +189,8 @@ describe('a device that wants to run spaces here', () => {
     store.fleet.handle({ type: 'fleet_trust_needed', request });
     await render();
     await click(q('.fleet-trust-dismiss'));
-    expect(q('.fleet-trust-needed')).toBeNull();
+    expect(dialog()).toBeNull();
+    expect(store.fleet.trustNeededList).toEqual([]);
     expect(calls('fleet_trust_device')).toEqual([]);
   });
 
@@ -192,13 +211,14 @@ describe('a request from Claude via the cloud', () => {
     transport.onCall('fleet_confirm', () => null);
   });
 
-  it('says what it would do, with the goal as plain text', async () => {
+  it('opens a dialog: what it would do, the goal as plain text, the warning', async () => {
     store.fleet.handle({
       type: 'fleet_confirm',
       request: confirmRequest({ text: '<b>Fix</b> the login bug' }),
     });
     await render();
     const card = q('.fleet-request-confirm')!;
+    expect(dialog()!.contains(card)).toBe(true);
     expect(card.textContent).toContain(
       'Claude via cloud wants to start an Edit space in app',
     );
@@ -207,9 +227,37 @@ describe('a request from Claude via the cloud', () => {
     );
     expect(card.querySelector('b')).toBeNull();
     expect(card.textContent).toContain('From Claude');
+    expect(q('.fleet-mcp-warning')!.textContent).toContain(
+      'held by the Theodore cloud',
+    );
+    expect(q('.fleet-request-countdown')!.textContent).toMatch(
+      /Refused automatically in [45]:\d\d/,
+    );
+    // No queue for one.
+    expect(q('.fleet-prompt-count')).toBeNull();
   });
 
-  it('Allow sends a yes and the prompt goes', async () => {
+  it('starts with focus on no button, and Enter allows nothing', async () => {
+    store.fleet.handle({ type: 'fleet_confirm', request: confirmRequest() });
+    await render();
+    expect(document.activeElement?.tagName).not.toBe('BUTTON');
+    await key('Enter');
+    await settle();
+    expect(calls('fleet_confirm')).toEqual([]);
+    expect(dialog()).not.toBeNull();
+  });
+
+  it('Cmd+Enter allows', async () => {
+    store.fleet.handle({ type: 'fleet_confirm', request: confirmRequest() });
+    await render();
+    await key('Enter', { metaKey: true });
+    await settle();
+    expect(calls('fleet_confirm')).toEqual([
+      { req: { id: 'req1', allow: true } },
+    ]);
+  });
+
+  it('Allow sends a yes and the dialog goes', async () => {
     store.fleet.handle({ type: 'fleet_confirm', request: confirmRequest() });
     await render();
     await click(q('.fleet-request-allow'));
@@ -217,7 +265,7 @@ describe('a request from Claude via the cloud', () => {
     expect(calls('fleet_confirm')).toEqual([
       { req: { id: 'req1', allow: true } },
     ]);
-    expect(q('.fleet-request-confirm')).toBeNull();
+    expect(dialog()).toBeNull();
   });
 
   it('Deny sends a no', async () => {
@@ -228,81 +276,120 @@ describe('a request from Claude via the cloud', () => {
     expect(calls('fleet_confirm')).toEqual([
       { req: { id: 'req1', allow: false } },
     ]);
-    expect(q('.fleet-request-confirm')).toBeNull();
+    expect(dialog()).toBeNull();
   });
 
-  it('goes when the core says it is answered or out of time', async () => {
+  it('closes when answered elsewhere', async () => {
     store.fleet.handle({ type: 'fleet_confirm', request: confirmRequest() });
     await render();
-    expect(q('.fleet-request-confirm')).not.toBeNull();
+    expect(dialog()).not.toBeNull();
     store.fleet.handle({ type: 'fleet_confirm_done', id: 'req1' });
     await settle();
-    expect(q('.fleet-request-confirm')).toBeNull();
+    expect(dialog()).toBeNull();
     expect(calls('fleet_confirm')).toEqual([]);
+  });
+
+  it('closes once out of time, even before the core says so', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] });
+    try {
+      store.fleet.handle({
+        type: 'fleet_confirm',
+        request: confirmRequest({ expires_at_ms: Date.now() + 2_000 }),
+      });
+      await render();
+      expect(dialog()).not.toBeNull();
+      await act(async () => {
+        vi.advanceTimersByTime(3_000);
+      });
+      expect(dialog()).toBeNull();
+      expect(calls('fleet_confirm')).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('notifies the system while the window is in the background', async () => {
+    const notify = vi.spyOn(native, 'notifySpace').mockResolvedValue(true);
+    vi.spyOn(document, 'hasFocus').mockReturnValue(false);
+    await render();
+    store.fleet.handle({
+      type: 'fleet_confirm',
+      request: confirmRequest({ local_space: 's1' }),
+    });
+    await settle();
+    expect(notify).toHaveBeenCalledWith(
+      's1',
+      'Claude via cloud wants to start an Edit space in app',
+      'Fix the login bug',
+    );
+    expect(notify).toHaveBeenCalledTimes(1);
   });
 });
 
-describe('auto mode on', () => {
+describe('several decisions', () => {
   beforeEach(() => {
-    transport.onCall('fleet_set_auto', () => status({ autos: [] }));
+    transport.onCall('fleet_confirm', () => null);
+    store.fleet.handle({
+      type: 'fleet_confirm',
+      request: confirmRequest({ id: 'a', expires_at_ms: Date.now() + 60_000 }),
+    });
+    store.fleet.handle({
+      type: 'fleet_confirm',
+      request: confirmRequest({
+        id: 'b',
+        expires_at_ms: Date.now() + 120_000,
+        action: 'send',
+        space_name: 'Fix login',
+      }),
+    });
+    store.fleet.handle({
+      type: 'fleet_trust_needed',
+      request: trustNeeded(),
+    });
   });
 
-  it('stays as a notice until turned off in one click', async () => {
-    store.fleet.setStatus(
-      status({
-        autos: [
-          {
-            device_id: 'cl',
-            device_name: 'Claude',
-            auto: 'full',
-            until_ms: Date.now() + 3_600_000,
-          },
-        ],
-      }),
-    );
+  it('queue one at a time, "1 of 3", the next after an answer', async () => {
     await render();
-    const banner = q('.fleet-auto-on')!;
-    expect(banner.textContent).toMatch(/^Claude via cloud: full auto until /);
-    await click(q('.fleet-auto-off'));
+    expect(document.querySelectorAll('.fleet-prompt')).toHaveLength(1);
+    expect(q('.fleet-prompt-count')!.textContent).toBe('1 of 3');
+    expect(q('.fleet-request-confirm')!.dataset.request).toBe('a');
+    await click(q('.fleet-request-deny'));
     await settle();
-    expect(calls('fleet_set_auto')).toEqual([
-      {
-        req: {
-          device_id: 'cl',
-          auto: 'off',
-          until_ms: null,
-          host_device: null,
-        },
-      },
-    ]);
-    expect(q('.fleet-auto-on')).toBeNull();
+    expect(q('.fleet-prompt-count')!.textContent).toBe('1 of 2');
+    expect(q('.fleet-request-confirm')!.textContent).toContain(
+      'send to Fix login in Edit',
+    );
+    await click(q('button[aria-label="Next request"]'));
+    expect(q('.fleet-trust-needed')).not.toBeNull();
+    expect(q('.fleet-prompt-count')!.textContent).toBe('2 of 2');
   });
 
-  it('says until turned off, and shows nothing once its end passed', async () => {
-    store.fleet.setStatus(
-      status({
-        autos: [
-          {
-            device_id: 'cl',
-            device_name: 'Claude',
-            auto: 'edit',
-            until_ms: null,
-          },
-          {
-            device_id: 'c2',
-            device_name: 'Claude 2',
-            auto: 'full',
-            until_ms: Date.now() - 1,
-          },
-        ],
-      }),
-    );
+  it('Esc puts them away unanswered; a new one brings the dialog back', async () => {
     await render();
-    const banners = m!.host.querySelectorAll('.fleet-auto-on');
-    expect(banners).toHaveLength(1);
-    expect(banners[0]!.textContent).toContain(
-      'Claude via cloud: auto edit until turned off',
-    );
+    await key('Escape');
+    await settle();
+    expect(dialog()).toBeNull();
+    expect(calls('fleet_confirm')).toEqual([]);
+    expect(store.fleet.confirmList).toHaveLength(2);
+    expect(store.fleet.trustNeededList).toHaveLength(1);
+
+    store.fleet.handle({
+      type: 'fleet_confirm',
+      request: confirmRequest({ id: 'c', expires_at_ms: Date.now() + 200_000 }),
+    });
+    await settle();
+    expect(q('.fleet-request-confirm')!.dataset.request).toBe('c');
+    expect(q('.fleet-prompt-count')!.textContent).toBe('3 of 4');
+  });
+
+  it('"Decide later" puts them away; reopening shows the queue again', async () => {
+    await render();
+    await click(q('button[aria-label="Decide later"]'));
+    await settle();
+    expect(dialog()).toBeNull();
+    store.fleet.reopenPrompts();
+    await settle();
+    expect(q('.fleet-prompt-count')!.textContent).toBe('1 of 3');
   });
 });
 
@@ -325,7 +412,9 @@ describe('a prompt waiting on another computer', () => {
     expect(card.textContent).toContain(
       'Claude via cloud wants to start an Edit space in app on Studio Mac',
     );
-    expect(card.textContent).toContain('Your answer goes to Studio Mac.');
+    expect(q('.fleet-request-host')!.textContent).toBe(
+      'Waiting on Studio Mac. Your answer goes there.',
+    );
     await click(q('.fleet-request-allow'));
     await settle();
     expect(calls('fleet_confirm')).toEqual([

@@ -24,6 +24,7 @@ import { useRootStore, useUi } from '../stores/context';
 import type { Route } from '../stores/UiStore';
 import { PrMark, SpaceMark } from './AgentMark';
 import { K } from './bits';
+import { FleetChrome } from './fleet/FleetChrome';
 import { isBranchReview } from './project/sections';
 import { projectLabel } from './Projects';
 import { reviewTitle } from './space/mode';
@@ -208,6 +209,8 @@ export const TabBar = observer(function TabBar({
         </div>
       </Tabs>
       <span className="flex-1" />
+      {/* Auto mode on, decisions put away: chips here, never over the page. */}
+      <FleetChrome />
       <Tooltip>
         <Button
           isIconOnly
