@@ -1309,10 +1309,11 @@ export class McpFleet {
   /**
    * Whether the last start or send the host took (or hasn't answered yet:
    * it answers a start once the worktree is made, which can outlast the
-   * reply wait) hasn't begun its turn yet
-   * (nothing of a turn since: no turn, tool, reply, question or end line),
-   * for up to `TURN_START_MS`: a turn starts within
-   * seconds, and a missed event must not keep a space running for good.
+   * reply wait) is still owed its outcome: no reply, question or turn end
+   * since. Not the turn's start: a host sends `turn_started` a moment
+   * before `running`, and that moment still reads `idle`. For up to
+   * `TURN_START_MS`, so a missed event can't keep a space running; a
+   * longer turn says `running` itself by then.
    */
   private turnsOwed(user: string, space: string): boolean {
     const req = this.store.one<RequestRow>(
@@ -1326,7 +1327,7 @@ export class McpFleet {
     if (!req || this.env.now() - req.created_ms > TURN_START_MS) return false;
     const began = this.store.one<{ n: number }>(
       `SELECT COUNT(*) AS n FROM mcp_lines
-       WHERE space = ? AND kind IN ('turn', 'tool', 'reply', 'question', 'ended')
+       WHERE space = ? AND kind IN ('reply', 'question', 'ended')
          AND seq > ?`,
       space,
       req.seq_at,
