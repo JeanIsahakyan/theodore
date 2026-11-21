@@ -267,7 +267,9 @@ export const mockLines: Record<string, SpaceLine[]> = {
   ],
 };
 
-const T0 = Date.UTC(2026, 10, 14, 15, 0, 0);
+/** When the fixture's chat happened (fixed, for tests). */
+export const mockT0 = Date.UTC(2026, 10, 14, 15, 0, 0);
+const T0 = mockT0;
 const msg = (
   m: Partial<ChatMessage> & Pick<ChatMessage, 'id'>,
 ): ChatMessage => ({

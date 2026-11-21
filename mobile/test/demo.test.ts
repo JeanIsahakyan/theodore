@@ -17,6 +17,20 @@ describe('demo', () => {
     expect(me?.name).toBe('iPhone');
   });
 
+  it('moves the chat to just before now', () => {
+    const now = Date.UTC(2030, 0, 1);
+    createDemo(now);
+    const text = JSON.stringify(useFleetState.getState().mirrors);
+    const times = [...text.matchAll(/"(?:at|\w+_at)":(\d+)/g)].map((m) =>
+      Number(m[1]),
+    );
+    expect(times.length).toBeGreaterThan(0);
+    for (const t of times) {
+      expect(t).toBeLessThanOrEqual(now);
+      expect(now - t).toBeLessThan(60 * 60_000);
+    }
+  });
+
   it('carries no personal names', () => {
     createDemo();
     const text = JSON.stringify([

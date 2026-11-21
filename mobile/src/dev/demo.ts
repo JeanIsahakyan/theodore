@@ -6,7 +6,8 @@
  */
 import type { Organization, Session } from '../auth/types';
 import type { Services } from '../services';
-import { createMock, mockDevices } from './mock';
+import type { FleetSnapshot } from '../fleet/types';
+import { createMock, mockDevices, mockMirrors, mockT0 } from './mock';
 
 export const demoSession: Session = {
   userId: 'demo-user',
@@ -24,15 +25,38 @@ export const demoOrganizations: Organization[] = [
   { id: 'org-acme', name: 'Acme', role: 'member', personal: false },
 ];
 
-/** Fresh demo services; seeds the fleet store with the fixture. */
-export function createDemo(): Services {
+/** Timestamp keys in mirrored rows (`at`, `created_at`, `asked_at`, …). */
+const isTime = (key: string) => key === 'at' || key.endsWith('_at');
+
+/** `value` with every timestamp moved by `by` ms. */
+function shiftTimes<T>(value: T, by: number): T {
+  if (Array.isArray(value)) return value.map((v) => shiftTimes(v, by)) as T;
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value).map(([k, v]) => [
+        k,
+        isTime(k) && typeof v === 'number' ? v + by : shiftTimes(v, by),
+      ]),
+    ) as T;
+  }
+  return value;
+}
+
+/**
+ * Fresh demo services; seeds the fleet store with the fixture, its chat
+ * moved to a few minutes ago (the fixture's fixed dates would read as
+ * "working for 158 h").
+ */
+export function createDemo(now: number = Date.now()): Services {
+  const snapshot: Partial<FleetSnapshot> = {
+    devices: mockDevices.map((d) =>
+      d.thisDevice ? { ...d, name: 'iPhone' } : { ...d },
+    ),
+    mirrors: shiftTimes(mockMirrors, now - mockT0 - 5 * 60_000),
+  };
   return createMock({
     session: demoSession,
     organizations: demoOrganizations,
-    snapshot: {
-      devices: mockDevices.map((d) =>
-        d.thisDevice ? { ...d, name: 'iPhone' } : { ...d },
-      ),
-    },
+    snapshot,
   }).services;
 }
