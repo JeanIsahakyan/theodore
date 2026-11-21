@@ -546,17 +546,18 @@ Web push, hosting spaces on the phone, file transfer, tablets' layouts beyond
 
 ## Build and release
 
-The app is not part of the desktop release: no version bump, no tag. Web
-rides the branch flow like the Worker; iOS and Android are EAS builds the
-owner starts by hand.
+Web rides the branch flow like the Worker. iOS ships with the desktop
+release: a new version on `main` builds it on EAS and uploads it to
+TestFlight. Android is an EAS build the owner starts by hand.
 
 ```
 push staging, mobile/** ─▶ mobile-web.yml: checks ─▶ build:web ─▶ Pages theodore-web-staging
 push main,    mobile/** ─▶ mobile-web.yml: checks ─▶ build:web ─▶ Pages theodore-web
 every PR / push          ─▶ ci.yml `mobile`: typecheck, lint, format, test, build:web
 
-eas build --profile preview    ─▶ internal build (staging cloud) ─▶ TestFlight / Play internal
-eas build --profile production ─▶ store build (production cloud) ─▶ eas submit ─▶ review
+new version on main ─▶ release.yml `ios`: eas build --profile production ─▶ eas submit ─▶ TestFlight
+                                                               App Review: by hand in App Store Connect
+eas build --profile preview    ─▶ internal build (staging cloud) ─▶ Play internal / ad hoc
 ```
 
 ### Local development
@@ -641,8 +642,9 @@ production  ─▶ eas submit --platform ios     ─▶ App Store Connect ─▶
             ─▶ eas submit --platform android ─▶ Play Console, internal track ─▶ promote
 ```
 
-- TestFlight: `eas build --profile production --platform ios --auto-submit`
-  uploads to App Store Connect; add internal testers there. No device
+- TestFlight: every release does it (`release.yml` job `ios`, below); by
+  hand, `eas build --profile production --platform ios` then
+  `eas submit -p ios --id <build>`. Add internal testers in App Store Connect. No device
   registration. Prefer this to ad hoc for anyone beyond the owner's own devices.
 - Play internal testing: first upload of an app must be manual in the Play
   Console (Google rejects the API for a never-uploaded app); after that
@@ -653,13 +655,34 @@ production  ─▶ eas submit --platform ios     ─▶ App Store Connect ─▶
   must say how to sign in (a test WorkOS account) and that the app needs a
   computer running Theodore to do anything.
 
+### iOS release in CI
+
+`release.yml` job `ios` runs after the GitHub release is published (a new
+version only). The signing material is not stored on EAS; the job writes
+it from secrets into a gitignored `credentials.json` and points
+`credentialsSource` at it, and adds the App Store Connect API key to the
+submit profile (`eas submit --non-interactive` takes a local key only from
+there).
+
+| Secret | What |
+| --- | --- |
+| `EXPO_TOKEN` | Expo access token for `@jean_i` |
+| `IOS_DIST_P12`, `IOS_DIST_P12_PASSWORD` | Apple Distribution cert + key, `.p12` base64 (expires 2027-11-21) |
+| `IOS_APPSTORE_PROFILE` | App Store profile "Theodore App Store" for `app.theodore.mobile`, base64 (expires with the cert) |
+| `APPLE_API_KEY`, `APPLE_API_ISSUER`, `APPLE_API_KEY_P8` | App Store Connect API key, shared with macOS notarization (docs/releasing.md) |
+
+App Store Connect app: "Theodore code", Apple ID 6837583003 (`ascAppId` in
+`eas.json`), team J33CB2C73P. Renewing: the API key (Admin) can create a
+`DISTRIBUTION` certificate and an `IOS_APP_STORE` profile through the App
+Store Connect API; re-encode them into the secrets.
+
 ### One-time, by the owner
 
 | # | Step | How |
 | --- | --- | --- |
 | 1 | Expo account, EAS project | `npx eas-cli@latest login`, then `eas init` in `mobile/`: creates the project and writes `extra.eas.projectId` into `app.json`; commit it |
 | 2 | EAS env for production | the two `eas env:create` calls above |
-| 3 | Apple Developer Program, App Store Connect app | enrol; create the app with bundle id `app.theodore.mobile`; then `eas credentials` (iOS) lets EAS make the distribution cert and profile |
+| 3 | Apple Developer Program, App Store Connect app | done (2026-11-20): team J33CB2C73P, app 6837583003; cert and profile made through the API, in the secrets above |
 | 4 | iOS push key | `eas credentials` → iOS → Push Notifications: set up a new key (an APNs `.p8`); EAS hands it to Expo's push service. Never commit it |
 | 5 | Google Play Console | pay, create the app `app.theodore.mobile`; make a service account key for `eas submit` (`eas credentials` → Android) |
 | 6 | FCM for Android push | create a Firebase project, add the Android app, download `google-services.json`, point `expo.android.googleServicesFile` at it (upload it as an EAS file env var, not in git), then `eas credentials` → Android → FCM V1 service account key |
