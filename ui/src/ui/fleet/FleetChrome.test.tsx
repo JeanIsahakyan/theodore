@@ -1,6 +1,6 @@
 /** The fleet's chips in the tab bar: auto mode on (with its popover), and
  *  the reminder of decisions put away. */
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FleetAutoOn } from '../../gen/contract';
 import { setTransport } from '../../core/transport';
 import { RootStore } from '../../stores/RootStore';
@@ -37,7 +37,21 @@ afterEach(() => {
   m?.unmount();
   m = null;
   document.body.innerHTML = '';
+  vi.useRealTimers();
 });
+
+/** Pins the clock to a local midday, so an end an hour away is the same day
+ *  and one a day away is not, whatever the hour the test runs at. Timers
+ *  keep running (`settle` waits on them). */
+const NOON = new Date(2026, 5, 15, 12, 0, 0).getTime();
+const pinNoon = () => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(NOON);
+};
+const localTime = (ms: number) =>
+  new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+const localDay = (ms: number) =>
+  new Date(ms).toLocaleDateString([], { month: 'short', day: 'numeric' });
 
 async function render() {
   m = await mount(
@@ -72,14 +86,29 @@ describe('the auto mode chip', () => {
   });
 
   it('shows the mode and its end, and goes when turned off', async () => {
+    pinNoon();
     await render();
     expect(q('.fleet-auto-chip')).toBeNull();
-    store.fleet.setStatus(status({ autos: [here()] }));
+    const until = NOON + 3_600_000;
+    store.fleet.setStatus(status({ autos: [here({ until_ms: until })] }));
     await settle();
-    expect(q('.fleet-auto-chip-label')!.textContent).toMatch(/^Full auto · \d/);
+    // Same day: the time alone.
+    expect(q('.fleet-auto-chip-label')!.textContent).toBe(
+      `Full auto · ${localTime(until)}`,
+    );
     store.fleet.setStatus(status({ autos: [] }));
     await settle();
     expect(q('.fleet-auto-chip')).toBeNull();
+  });
+
+  it('dates an end that falls on another day', async () => {
+    pinNoon();
+    const until = NOON + 24 * 3_600_000;
+    store.fleet.setStatus(status({ autos: [here({ until_ms: until })] }));
+    await render();
+    expect(q('.fleet-auto-chip-label')!.textContent).toBe(
+      `Full auto · ${localDay(until)}, ${localTime(until)}`,
+    );
   });
 
   it('names no end for one until turned off', async () => {

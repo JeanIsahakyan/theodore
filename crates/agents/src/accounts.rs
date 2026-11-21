@@ -122,6 +122,70 @@ pub fn claude_project_dir(cwd: &str) -> String {
         .collect()
 }
 
+/// Claude Code's memory directories for a run in `cwd` under config dir
+/// `config`: `<config>/projects/<key>/memory` for every project key the
+/// run may use (docs/spaces.md §5). Claude Code keys a plain checkout by
+/// its cwd, but a git worktree by its repository's common dir (for a space,
+/// the bare mirror under `~/.theodore/repos`), so each spelling of both is
+/// a candidate: as given and with symlinks resolved. Nothing else is: no
+/// other project's memory is ever named here.
+///
+/// ```text
+/// cwd  ~/.theodore/spaces/<id>            ─▶ -Users-ada--theodore-spaces-<id>
+///   .git: gitdir: <mirror>/worktrees/<id>
+///   <gitdir>/commondir: ../..             ─▶ -Users-ada--theodore-repos-github-<owner>-<repo>-git
+/// ```
+pub fn claude_memory_dirs(config: &Path, cwd: &Path) -> Vec<PathBuf> {
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    let mut add = |p: &Path| {
+        let dir = config
+            .join("projects")
+            .join(claude_project_dir(&p.display().to_string()))
+            .join("memory");
+        if !dirs.contains(&dir) {
+            dirs.push(dir);
+        }
+    };
+    add(cwd);
+    if let Ok(real) = std::fs::canonicalize(cwd) {
+        add(&real);
+    }
+    if let Some(common) = git_common_dir(cwd) {
+        add(&common);
+        if let Ok(real) = std::fs::canonicalize(&common) {
+            add(&real);
+        }
+    }
+    dirs
+}
+
+/// The repository common dir of a linked worktree at `cwd` (`<cwd>/.git`
+/// is a `gitdir:` file, `<gitdir>/commondir` points at it), lexically
+/// normalized. `None` for a plain checkout or no repository: there the cwd
+/// itself is the key.
+fn git_common_dir(cwd: &Path) -> Option<PathBuf> {
+    let link = std::fs::read_to_string(cwd.join(".git")).ok()?;
+    let gitdir = link.strip_prefix("gitdir:")?.trim();
+    let gitdir = cwd.join(gitdir);
+    let common = std::fs::read_to_string(gitdir.join("commondir")).ok()?;
+    Some(normalize(&gitdir.join(common.trim())))
+}
+
+/// `p` without `.` and `..` components, lexically.
+fn normalize(p: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for c in p.components() {
+        match c {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other),
+        }
+    }
+    out
+}
+
 /// The session file `<config>/projects/<dir>/<session>.jsonl` of a session
 /// that ran in `cwd`: its own project dir first (as given, then resolved),
 /// else whichever project dir holds it.
@@ -276,6 +340,53 @@ mod tests {
             claude_project_dir("/Users/ada/.theodore/spaces/ab_12"),
             "-Users-ada--theodore-spaces-ab-12"
         );
+    }
+
+    #[test]
+    fn memory_dirs_are_the_cwd_key_and_the_worktrees_common_dir_key() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config = Path::new("/cfg");
+        let projects = config.join("projects");
+
+        // No repository: the cwd key only (plus its resolved spelling).
+        let plain = tmp.path().join("plain");
+        std::fs::create_dir_all(&plain).unwrap();
+        let dirs = claude_memory_dirs(config, &plain);
+        assert_eq!(
+            dirs[0],
+            projects
+                .join(claude_project_dir(&plain.display().to_string()))
+                .join("memory")
+        );
+        assert!(dirs.len() <= 2, "{dirs:?}");
+        assert!(claude_memory_dirs(config, Path::new("/no/such/dir")).len() == 1);
+
+        // A linked worktree of a bare mirror: the mirror's key too.
+        let mirror = tmp.path().join("repos/github/ada/app.git");
+        let wt = tmp.path().join("spaces/s1");
+        std::fs::create_dir_all(mirror.join("worktrees/s1")).unwrap();
+        std::fs::create_dir_all(&wt).unwrap();
+        std::fs::write(mirror.join("worktrees/s1/commondir"), "../..\n").unwrap();
+        std::fs::write(
+            wt.join(".git"),
+            format!("gitdir: {}\n", mirror.join("worktrees/s1").display()),
+        )
+        .unwrap();
+        let dirs = claude_memory_dirs(config, &wt);
+        let key = |p: &Path| {
+            projects
+                .join(claude_project_dir(&p.display().to_string()))
+                .join("memory")
+        };
+        assert!(dirs.contains(&key(&wt)), "{dirs:?}");
+        assert!(dirs.contains(&key(&mirror)), "{dirs:?}");
+        assert!(
+            dirs.contains(&key(&mirror.canonicalize().unwrap())),
+            "{dirs:?}"
+        );
+        // The owner's directory, or any other project, is never a key.
+        assert!(!dirs.contains(&key(mirror.parent().unwrap())));
+        assert!(dirs.len() <= 4, "{dirs:?}");
     }
 
     #[test]
