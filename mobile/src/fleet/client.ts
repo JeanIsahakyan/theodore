@@ -96,7 +96,9 @@ import {
   lineOf,
   pinName,
   remoteStatus,
+  READ_MESSAGES_MAX,
   safeCode,
+  spaceReadOf,
   truncate,
   uiAgents,
   uiMcpAuto,
@@ -1290,14 +1292,26 @@ export function createFleetClient(
     throw new FleetError(`no fleet space ${space} here`);
   };
 
-  /** A send, stop or answer: the host's verified ok within the wait, or throws. */
-  /** The host's `ok` value. */
-  const steer = async (space: string, op: RemoteOp): Promise<unknown> => {
-    const { answer } = await request(hostOf(space), op, false);
+  /** A request to `host`: its verified ok value within the wait, or throws. */
+  const steerOn = async (host: string, op: RemoteOp): Promise<unknown> => {
+    const { answer } = await request(host, op, false);
     const a = await within(answer, t.replyWaitMs);
     const err = answerError(a);
     if (err) throw err;
     return a.kind === 'ok' ? a.value : null;
+  };
+
+  /** A send, stop or answer of a space followed here: the host's verified
+   *  ok value within the wait, or throws. */
+  const steer = (space: string, op: RemoteOp): Promise<unknown> =>
+    steerOn(hostOf(space), op);
+
+  /** A space's local id on a host (12 hex, or an `rs_` id), nothing else
+   *  goes on the wire. */
+  const localSpaceId = (space: string): string => {
+    if (!/^[A-Za-z0-9_-]{1,100}$/.test(space))
+      throw new FleetError('not a space id');
+    return space;
   };
 
   /**
@@ -1581,6 +1595,42 @@ export function createFleetClient(
       );
       const err = answerError(await within(answer, t.replyWaitMs));
       if (err) throw err;
+    },
+
+    async readSpace(hostDevice, space, messages = READ_MESSAGES_MAX) {
+      const id = localSpaceId(space);
+      const value = await steerOn(hostDevice, {
+        op: 'read_space',
+        space: id,
+        messages: Math.max(
+          1,
+          Math.min(READ_MESSAGES_MAX, Math.floor(messages)),
+        ),
+      });
+      const read = spaceReadOf(value, id);
+      if (!read)
+        throw new FleetError("the host's answer wasn't about that space");
+      return read;
+    },
+
+    async sendTo(hostDevice, space, text) {
+      const message = text.trim();
+      if (!message) throw new FleetError('empty message');
+      const value = await steerOn(hostDevice, {
+        op: 'send_to',
+        space: localSpaceId(space),
+        message,
+      });
+      return sendResult(value);
+    },
+
+    async answerSpace(hostDevice, space, ask, answers) {
+      await steerOn(hostDevice, {
+        op: 'answer_space',
+        space: localSpaceId(space),
+        ask,
+        answers,
+      });
     },
   };
 

@@ -18,6 +18,7 @@ import type {
   SendResult,
   SpaceLine,
   SpaceStatus,
+  SubSpaceRead,
 } from './types';
 
 /** `^dev_[0-9a-f-]{36}$`: a device id as the cloud issues it. */
@@ -329,6 +330,81 @@ export function gapLine(from: number, to: number): SpaceLine {
     seq: from,
     kind: 'gap',
     text: `Events ${from}–${to} are no longer available`,
+  };
+}
+
+/** Most messages `read_space` is asked for (the host's own cap). */
+export const READ_MESSAGES_MAX = 50;
+const READ_TEXT_MAX = 8000;
+const READ_STATUSES = [
+  'setting_up',
+  'running',
+  'question',
+  'waiting',
+  'idle',
+  'failed',
+  'archived',
+] as const;
+const PROGRESS_STATES = ['pending', 'active', 'done'] as const;
+
+const isObj = (v: unknown): v is Record<string, unknown> =>
+  !!v && typeof v === 'object' && !Array.isArray(v);
+const optStr = (v: unknown, max: number): string | null =>
+  typeof v === 'string' ? truncate(v, max) : null;
+
+/**
+ * The host's `ok` value for `read_space` as the sub-space screen takes it,
+ * field by field (`crates/ports/src/local_spaces.rs` `LocalSpaceRead`);
+ * `null` unless it names `space`. Texts are cut, statuses and modes must be
+ * known words, lists are capped.
+ */
+export function spaceReadOf(
+  value: unknown,
+  space: string,
+): SubSpaceRead | null {
+  if (!isObj(value)) return null;
+  const s = isObj(value.space) ? value.space : null;
+  if (!s || s.space !== space) return null;
+  const q = isObj(value.question) ? value.question : null;
+  const ask =
+    q && typeof q.ask === 'string' && q.ask ? truncate(q.ask, NAME_MAX) : null;
+  return {
+    space,
+    title: str(s.title, NAME_MAX) || str(s.name, NAME_MAX),
+    status: (READ_STATUSES as readonly unknown[]).includes(s.status)
+      ? (s.status as string)
+      : 'unknown',
+    mode: isMode(s.mode) ? s.mode : null,
+    agent: optStr(s.agent, 40),
+    turns:
+      Number.isSafeInteger(s.turns) && (s.turns as number) >= 0
+        ? (s.turns as number)
+        : 0,
+    done: s.done === true,
+    goal: str(value.goal, READ_TEXT_MAX),
+    branch: str(value.branch, NAME_MAX),
+    progress: (Array.isArray(value.progress) ? value.progress : [])
+      .filter(isObj)
+      .slice(0, 50)
+      .map((p) => ({
+        label: str(p.label, 500),
+        state: (PROGRESS_STATES as readonly unknown[]).includes(p.state)
+          ? (p.state as (typeof PROGRESS_STATES)[number])
+          : 'pending',
+      })),
+    progressNote: optStr(value.progress_note, 500),
+    messages: (Array.isArray(value.messages) ? value.messages : [])
+      .filter(isObj)
+      .slice(-READ_MESSAGES_MAX)
+      .map((m) => ({
+        from: str(m.from, 120),
+        at: num(m.at),
+        text: str(m.text, READ_TEXT_MAX),
+        truncated: m.truncated === true,
+      })),
+    live: optStr(value.live, READ_TEXT_MAX),
+    question: ask && q ? { ask, questions: uiQuestions(q.questions) } : null,
+    error: optStr(value.error, 2000),
   };
 }
 
