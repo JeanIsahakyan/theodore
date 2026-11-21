@@ -209,6 +209,8 @@ export function spaceContextMenu(s: Space, ui: UiStore): ContextMenuItem[] {
 interface NavGroup {
   id: string;
   title?: string;
+  /** A button beside the title, e.g. "+" for New space. */
+  action?: { label: string; icon: ReactNode; onPress: () => void };
   items: NavItem[];
 }
 
@@ -428,6 +430,12 @@ export const Sidebar = observer(function Sidebar() {
           {
             id: 'spaces',
             title: 'Spaces',
+            // Always in reach: the "New space" row ends a list that can be long.
+            action: {
+              label: 'New space',
+              icon: <Plus />,
+              onPress: () => ui.openModal('new-space'),
+            },
             items: [
               // A sub-space sits under the space whose agent started it.
               ...spaceRows(
@@ -574,8 +582,16 @@ export const Sidebar = observer(function Sidebar() {
         {groups.map((g) => (
           <ListBox.Section key={g.id} id={g.id}>
             {g.title && (
-              <Header className="px-3 pb-1.5 pt-6 text-xs text-muted">
+              <Header className="flex items-center justify-between pb-1.5 pe-1 ps-3 pt-6 text-xs text-muted">
                 {g.title}
+                {g.action && (
+                  // -my: the 28px button doesn't make the header taller.
+                  <span className="-my-1.5">
+                    <IconBtn label={g.action.label} onPress={g.action.onPress}>
+                      {g.action.icon}
+                    </IconBtn>
+                  </span>
+                )}
               </Header>
             )}
             {g.items.map((i) => (
