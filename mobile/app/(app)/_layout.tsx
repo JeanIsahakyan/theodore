@@ -15,6 +15,8 @@
  * notification / deep link ─▶ space/[id] over Home (the anchor)
  * composer chip / where row (iOS) ─▶ model- | computer- | project-picker
  *                                   as a formSheet
+ * space's activity strip (iOS) ─▶ activity-sheet as a formSheet
+ * a sub-space row ─▶ push sub-space/[space]/[child] (Back)
  * ```
  *
  * Headers: Home's and a space's are `MainHeader` (menu, questions, new
@@ -115,6 +117,10 @@ export default function AppLayout() {
             name="space/[id]"
             options={{ ...home, title: 'Space', animation: 'fade' }}
           />
+          <Stack.Screen
+            name="sub-space/[space]/[child]"
+            options={pushed('Sub-space')}
+          />
           <Stack.Screen name="devices" options={pushed('Devices')} />
           <Stack.Screen name="settings/index" options={pushed('Settings')} />
           <Stack.Screen
@@ -130,6 +136,7 @@ export default function AppLayout() {
           <Stack.Screen name="model-picker" options={sheet('Model')} />
           <Stack.Screen name="computer-picker" options={sheet('Computer')} />
           <Stack.Screen name="project-picker" options={sheet('Project')} />
+          <Stack.Screen name="activity-sheet" options={sheet('Activity')} />
         </Stack>
       </AppShell>
     </DrawerProvider>

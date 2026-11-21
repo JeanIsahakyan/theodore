@@ -12,8 +12,9 @@ const screens = (dir: string) =>
     .sort();
 
 describe('signed-in routes', () => {
-  it('has Home, a space, Devices, Settings, the picker sheets and the /start redirect', () => {
+  it('has Home, a space, its sub-spaces, Devices, Settings, the sheets and the /start redirect', () => {
     expect(screens(app)).toEqual([
+      'activity-sheet.tsx',
       'computer-picker.tsx',
       'devices.tsx',
       'index.tsx',
@@ -22,8 +23,15 @@ describe('signed-in routes', () => {
       'settings/',
       'space/',
       'start.tsx',
+      'sub-space/',
     ]);
     expect(readdirSync(join(app, 'space'))).toEqual(['[id].tsx']);
+    // A sub-space of a followed space, by its local id on the host:
+    // /sub-space/<space>/<child>, pushed with Back.
+    expect(readdirSync(join(app, 'sub-space'))).toEqual(['[space]']);
+    expect(readdirSync(join(app, 'sub-space', '[space]'))).toEqual([
+      '[child].tsx',
+    ]);
     // Settings at /settings, its drill-down pages under it.
     expect(readdirSync(join(app, 'settings')).sort()).toEqual([
       'about.tsx',
@@ -49,8 +57,22 @@ describe('signed-in routes', () => {
       'model-picker',
       'computer-picker',
       'project-picker',
+      'activity-sheet',
+      'sub-space/[space]/[child]',
     ])
       expect(stack).toContain(`name="${name}"`);
+  });
+
+  it('polls a sub-space from its host while in front', () => {
+    const screen = readFileSync(
+      join(app, 'sub-space', '[space]', '[child].tsx'),
+      'utf8',
+    );
+    expect(screen).toContain('useFocusEffect');
+    expect(screen).toContain('SUB_SPACE_POLL_MS = 3000');
+    expect(screen).toMatch(/fleet\s*\.readSpace\(/);
+    expect(screen).toMatch(/fleet\s*\.sendTo\(/);
+    expect(screen).toMatch(/fleet\s*\.answerSpace\(/);
   });
 
   it('presents the picker sheets as form sheets with detents', () => {

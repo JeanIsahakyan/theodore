@@ -1970,6 +1970,187 @@ describe('auto mode (Claude via cloud)', () => {
   });
 });
 
+describe('any space on a host (sub-spaces)', () => {
+  const CHILD = 'a1b2c3d4e5f6';
+  const readValue = {
+    note: 'data',
+    space: {
+      space: CHILD,
+      name: 'flaky',
+      title: 'Fix the flaky test',
+      status: 'running',
+      mode: 'edit',
+      agent: 'claude',
+      turns: 2,
+      done: false,
+    },
+    goal: 'Fix it',
+    branch: 'agent/flaky',
+    messages: [{ from: 'user', at: 1, text: 'hi', truncated: false }],
+    live: 'Editing…',
+  };
+
+  it('reads a space by its local id with a signed read_space, shape-checked', async () => {
+    const { client, sock } = await connectedWithHost();
+    const read = client.readSpace(HOST, CHILD);
+    await waitFor(() => sock.of('request').length === 1, 'request');
+    const req = lastRequest(sock);
+    expect(req.target_device).toBe(HOST);
+    expect(req.target_key).toBe(hostKey.publicKey);
+    expect(req.op).toEqual({ op: 'read_space', space: CHILD, messages: 50 });
+    sock.deliver({
+      type: 'reply',
+      envelope: await reply(req, {
+        outcome: 'ok',
+        value: { ...readValue, extra: 'dropped' },
+      }),
+    });
+    const r = await read;
+    expect(r.space).toBe(CHILD);
+    expect(r.title).toBe('Fix the flaky test');
+    expect(r.status).toBe('running');
+    expect(r.messages).toEqual([
+      { from: 'user', at: 1, text: 'hi', truncated: false },
+    ]);
+    expect(r.live).toBe('Editing…');
+    expect(r.question).toBeNull();
+    expect('extra' in r).toBe(false);
+  });
+
+  it('caps the messages asked for at 50, at least 1', async () => {
+    const { client, sock } = await connectedWithHost();
+    void client.readSpace(HOST, CHILD, 500).catch(() => {});
+    void client.readSpace(HOST, CHILD, 0).catch(() => {});
+    await waitFor(() => sock.of('request').length === 2, 'requests');
+    const ops = sock
+      .of('request')
+      .map((r) => open(r.envelope, myKey.publicKey, 'request')!.op);
+    expect(ops).toEqual([
+      { op: 'read_space', space: CHILD, messages: 50 },
+      { op: 'read_space', space: CHILD, messages: 1 },
+    ]);
+  });
+
+  it('refuses an answer about another space, a refusal, silence, a bad id', async () => {
+    const { client, sock } = await connectedWithHost();
+    const wrong = client.readSpace(HOST, CHILD);
+    await waitFor(() => sock.of('request').length === 1, 'request');
+    sock.deliver({
+      type: 'reply',
+      envelope: await reply(lastRequest(sock), {
+        outcome: 'ok',
+        value: { ...readValue, space: { ...readValue.space, space: 'other' } },
+      }),
+    });
+    await expect(wrong).rejects.toThrow(/wasn't about that space/);
+
+    const refused = client.readSpace(HOST, CHILD);
+    await waitFor(() => sock.of('request').length === 2, 'request');
+    sock.deliver({
+      type: 'reply',
+      envelope: await reply(lastRequest(sock), {
+        outcome: 'err',
+        code: 'fleet.unknown_space',
+        message: 'gone',
+      }),
+    });
+    await expect(refused).rejects.toThrow(
+      'the other device refused: fleet.unknown_space: gone',
+    );
+
+    // A reply signed by someone else than the host is not an answer.
+    const forged = client.readSpace(HOST, CHILD);
+    await waitFor(() => sock.of('request').length === 3, 'request');
+    sock.deliver({
+      type: 'reply',
+      envelope: await reply(
+        lastRequest(sock),
+        { outcome: 'ok', value: readValue },
+        strangerKey,
+      ),
+    });
+    await expect(forged).rejects.toThrow(/in time/);
+
+    await expect(client.readSpace(HOST, 'not a space id')).rejects.toThrow(
+      /not a space id/,
+    );
+    expect(sock.of('request')).toHaveLength(3);
+    await expect(client.readSpace(OTHER, CHILD)).rejects.toThrow(
+      /isn't trusted/,
+    );
+  });
+
+  it('sends to it with send_to (its own mode, no agent), queued or not', async () => {
+    const { client, sock } = await connectedWithHost();
+    const sent = client.sendTo(HOST, CHILD, '  go on  ');
+    await waitFor(() => sock.of('request').length === 1, 'request');
+    const req = lastRequest(sock);
+    expect(req.op).toEqual({ op: 'send_to', space: CHILD, message: 'go on' });
+    sock.deliver({
+      type: 'reply',
+      envelope: await reply(req, {
+        outcome: 'ok',
+        value: { message: 'm9', queued: true, position: 1 },
+      }),
+    });
+    await expect(sent).resolves.toEqual({ queued: true, position: 1 });
+
+    const now = client.sendTo(HOST, CHILD, 'again');
+    await waitFor(() => sock.of('request').length === 2, 'request');
+    sock.deliver({
+      type: 'reply',
+      envelope: await reply(lastRequest(sock), {
+        outcome: 'ok',
+        value: { message: 'm10' },
+      }),
+    });
+    await expect(now).resolves.toEqual({ queued: false, position: null });
+
+    await expect(client.sendTo(HOST, CHILD, '   ')).rejects.toThrow(/empty/);
+    const busy = client.sendTo(HOST, CHILD, 'x');
+    await waitFor(() => sock.of('request').length === 3, 'request');
+    sock.deliver({
+      type: 'reply',
+      envelope: await reply(lastRequest(sock), {
+        outcome: 'err',
+        code: 'fleet.busy',
+        message: '',
+      }),
+    });
+    await expect(busy).rejects.toThrow('the other device refused: fleet.busy');
+  });
+
+  it('answers its question with answer_space', async () => {
+    const { client, sock } = await connectedWithHost();
+    const done = client.answerSpace(HOST, CHILD, 'ask-1', [['a'], ['b', 'c']]);
+    await waitFor(() => sock.of('request').length === 1, 'request');
+    const req = lastRequest(sock);
+    expect(req.op).toEqual({
+      op: 'answer_space',
+      space: CHILD,
+      ask: 'ask-1',
+      answers: [['a'], ['b', 'c']],
+    });
+    sock.deliver({
+      type: 'reply',
+      envelope: await reply(req, { outcome: 'ok', value: {} }),
+    });
+    await done;
+
+    const late = client.answerSpace(HOST, CHILD, 'ask-1', [['a']]);
+    await waitFor(() => sock.of('request').length === 2, 'request');
+    sock.deliver({
+      type: 'reply',
+      envelope: await reply(lastRequest(sock), {
+        outcome: 'err',
+        code: 'fleet.invalid',
+        message: '',
+      }),
+    });
+    await expect(late).rejects.toThrow('fleet.invalid');
+  });
+});
+
 describe('keys', () => {
   it('makes a seed key once, keeps it, and refuses to replace an unreadable one', async () => {
     const storage = memoryStorage();

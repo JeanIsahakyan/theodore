@@ -42,17 +42,24 @@ export function QuestionCard({
   question,
   onFocusAnswer,
   glass,
+  answer,
+  from: fromOverride,
 }: {
   question: QuestionView;
   /** The "Other…" field took focus: the host keeps the card in view. */
   onFocusAnswer?: () => void;
   /** On Liquid Glass (iOS 26+) rather than a card. */
   glass?: boolean;
+  /** How the answer goes out; default `fleet.answer` for a followed space
+   *  (a sub-space's goes with `answerSpace`). */
+  answer?: (answers: string[][]) => Promise<void>;
+  /** Who asks, when the space isn't followed here (a sub-space). */
+  from?: string;
 }) {
   const { fleet } = useServices();
   const p = usePalette();
   const spaces = useFleetState((s) => s.spaces);
-  const from = questionFrom(question, spaces);
+  const from = fromOverride ?? questionFrom(question, spaces);
   const [drafts, setDrafts] = useState<Draft[]>(() =>
     question.questions.map(emptyDraft),
   );
@@ -66,8 +73,8 @@ export function QuestionCard({
     if (!isAnswered(drafts) || busy) return;
     setBusy(true);
     setError(null);
-    fleet
-      .answer(question.space, question.askId, toWireAnswers(drafts))
+    const wire = toWireAnswers(drafts);
+    (answer ? answer(wire) : fleet.answer(question.space, question.askId, wire))
       .catch((e: unknown) => setError(errorText(e)))
       .finally(() => setBusy(false));
   };

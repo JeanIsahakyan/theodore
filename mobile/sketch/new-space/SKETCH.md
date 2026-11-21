@@ -218,3 +218,53 @@ computers; the sheet stays open.
   sheet is a route: sticky per space, reset when a turn runs in another
   mode; Revise sets Plan; `sendMode(picked, space.mode)` on send.
 - Run picked while the space isn't in Run: the warning above the composer.
+
+## Space: the activity strip, its sheet, a sub-space's screen
+
+Accepted (2026-11-21). What a running space is doing sits above the
+composer; the phone can open a sub-space.
+
+```
+ ... chat ...
+ ⟳ 2 of 5 · Edit auth · 1 queued             1m 12s   line 1: the plan's active
+                                                       step, else the newest live
+                                                       step / log line; a timer
+ ◌ 2 agents · 2 sub-spaces (1 waiting)            ⌃   line 2: tap ─▶ the sheet
+╭──────────────────────────────────────────────╮
+│ Add to the queue…                            │
+│ (Opus 4.1 High ⌄)                   (■) (↑)  │
+╰──────────────────────────────────────────────╯
+
+  Activity                                 the sheet: iOS formSheet route,
+    Plan · 2 of 5                          Android ModalBottomSheet, web modal
+      ✓ Read the flow
+      ⟳ Edit auth
+      ○ Tests
+    This turn
+      ◌ Explore the auth flow    running · 32s
+      ✓ Review the tests         done · 1m 4s
+    Sub-spaces
+      ? Fix the flaky test       waiting for an answer   ›  ─▶ its screen
+      ⟳ Update the docs          running                 ›
+      ✓ Split the crate          merged                  ›
+
+[‹]      Fix the flaky test                  /sub-space/<space>/<child>, Back
+         sub-space of Retry on 429 · on mac-A · Waiting for you
+ ... its last messages (read_space, 50, every 3 s while in front) ...
+ ⟳ Running: Edit tests/flaky.rs              32s
+ ╭ ? Which fixture should it use? ─────────╮ ─▶ answer_space
+ │ (fixtures/a)  (fixtures/b)  [Other…]    │
+ ╰─────────────────────────────────────────╯
+╭──────────────────────────────────────────────╮
+│ Message this sub-space…                 (↑) │ ─▶ send_to (its own mode, no chips)
+╰──────────────────────────────────────────────╯
+```
+
+- The strip replaces the progress card, the "Working" line and the
+  "Queued…" note over the composer; the Run warning and the chat error
+  stay as notes under it.
+- "Waiting for your answer ↓" is line 1 while a question waits; a tap
+  scrolls to the card.
+- The sub-space tree at the top of the chat is tappable to the same screen;
+  a long press still copies the id.
+- No per-subagent Stop: the protocol has none.
