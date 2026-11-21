@@ -494,9 +494,10 @@ impl Core {
         ))
     }
 
-    /// The space as this round's PR is about: itself before any Continue;
-    /// after one, its goal is what the round's net change does
-    /// (`change_summary`): the title, then whole sentences under it.
+    /// The space as this round's PR is about: its goal is what the change
+    /// does (`change_summary`, in English): the title, then whole
+    /// sentences under it. The first round keeps its own goal when no
+    /// proposal holds; after a Continue, the round's net change.
     pub(crate) async fn round_about(
         &self,
         space: &Space,
@@ -505,7 +506,18 @@ impl Core {
         head: &Sha,
     ) -> Space {
         let Some(round) = space.rounds.last() else {
-            return space.clone();
+            // The first PR: what the change does, in English (the goal may
+            // be in any language); the goal itself when no proposal holds.
+            let summary = self
+                .change_summary(space, project, repo_path, &space.base_sha, head, 0)
+                .await;
+            if !summary.proposed {
+                return space.clone();
+            }
+            return Space {
+                goal: summary.message(),
+                ..space.clone()
+            };
         };
         let summary = self
             .change_summary(space, project, repo_path, &space.base_sha, head, round.at)

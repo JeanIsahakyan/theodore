@@ -33,6 +33,7 @@ export function Menu({
   disabled,
   accessibilityLabel,
   testID,
+  compact,
   style,
 }: MenuProps) {
   const p = usePalette();
@@ -54,7 +55,12 @@ export function Menu({
             modifiers={mods}
           >
             <AssistChip.Label>
-              <Text maxLines={1}>{label}</Text>
+              <Text
+                maxLines={1}
+                style={compact ? { typography: 'labelMedium' } : undefined}
+              >
+                {label}
+              </Text>
             </AssistChip.Label>
             <AssistChip.TrailingIcon>
               <Text>▾</Text>

@@ -5,12 +5,15 @@
  *
  * ```text
  * [☰]  New space                       [🔔 3][✎]
+ * [☰]  fix the login bug…              [🔔 3][✎]   a space: two lines
+ *      on mac-A · Running
  * ```
  */
 import { Stack } from 'expo-router';
 import { Pressable, Text, View } from 'react-native';
 import { usePalette } from '../ui/theme';
 import { useHeaderActions, type MainHeaderProps } from './header-actions';
+import { TitleStack } from './space-title';
 import { SymbolImage, type SymbolName } from './symbol-image';
 
 function HeaderButton({
@@ -43,7 +46,7 @@ function HeaderButton({
   );
 }
 
-export function MainHeader({ title, onNewSpace }: MainHeaderProps) {
+export function MainHeader({ title, subtitle, onNewSpace }: MainHeaderProps) {
   const p = usePalette();
   const { openDrawer, newSpace, waiting, openQuestions } =
     useHeaderActions(onNewSpace);
@@ -52,6 +55,13 @@ export function MainHeader({ title, onNewSpace }: MainHeaderProps) {
       options={{
         title,
         headerShadowVisible: false,
+        ...(subtitle
+          ? {
+              headerTitle: () => (
+                <TitleStack title={title} subtitle={subtitle} align="start" />
+              ),
+            }
+          : null),
         headerLeft: () => (
           <HeaderButton
             icon="menu"

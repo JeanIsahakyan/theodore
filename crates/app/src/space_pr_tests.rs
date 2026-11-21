@@ -645,7 +645,8 @@ async fn the_pr_after_a_continue_takes_the_chat_agents_proposed_title() {
         .agents
         .utility_requests()
         .into_iter()
-        .find(is_ship_title)
+        // The last one: the first PR asked for its description too.
+        .rfind(is_ship_title)
         .expect("asked for a title");
     assert!(ask.prompt.contains("- notes/t3.md (+"), "{}", ask.prompt);
     assert!(
@@ -1010,7 +1011,12 @@ async fn open_pr_interrupted_during_the_fill_can_be_retried() {
         .unwrap();
     let s = idle(&f, &s.id).await;
 
-    f.agents.hang_next_utility();
+    // The template fill hangs (the change summary before the push doesn't).
+    f.agents.hang_matching(|r| {
+        r.system
+            .as_deref()
+            .is_some_and(|s| s.starts_with("You write pull request descriptions"))
+    });
     let interrupted = {
         let (core, req) = (core.clone(), open_pr(&s));
         tokio::spawn(async move { core.ship_space(req).await })

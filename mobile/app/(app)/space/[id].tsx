@@ -7,8 +7,8 @@
  * untrusted: no link opens and no image loads.
  *
  * ```text
- * [‹]        fix the login bug…                  SpaceHeader: the space's
- *            on mac-A · Running                  name, host · status
+ * [☰]        fix the login bug…       [🔔][✎]    SpaceHeader: the main
+ *            on mac-A · Running                  header, name, host · status
  * ┌ Conversation (Legend List, keyboard-aware) ─────────────────────┐
  * │  theodore · fix-login · Edit                  details, error     │
  * │  ╭ Sub-spaces: title (status) mode, nested ╮  its children        │
@@ -27,7 +27,10 @@
  * mirror for this space ─▶ chatView(mirror) ─▶ messages ─ live ─ queued ─ question
  * none                  ─▶ lines (started, turn, tool, reply, …)
  * (↑) Send ─▶ fleet.send(mode only when not the space's own, picks)
- * (■) Stop while running ─▶ confirm() ─▶ fleet.stopSpace
+ *     while it runs ─▶ the host queues it: a queued bubble (mirrored) or
+ *     "Queued: runs after the current turn" over the composer
+ * (■) Stop while running, beside Send ─▶ confirm() ─▶ fleet.stopSpace
+ * running, not mirrored ─▶ WorkingLine: the newest log line, Working · 12s
  * Revise ─▶ mode Plan, the field focused; Approve ─▶ send APPROVED_TEXT in the build mode
  * ```
  *
@@ -35,7 +38,7 @@
  * Glass, iOS < 26: chrome blur, Android: Material 3 surface, web: a card);
  * the list is inset by its height and rides on the keyboard with it.
  */
-import { Stack, useLocalSearchParams } from 'expo-router';
+import { useLocalSearchParams } from 'expo-router';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { StyleSheet, Text, View, type TextInputInstance } from 'react-native';
 import {
@@ -51,6 +54,7 @@ import {
   ModeMenu,
   ModelChip,
 } from '../../../src/components/pickers/composer-chips';
+import { MainHeader } from '../../../src/components/main-header';
 import { SpaceHeader } from '../../../src/components/space-header';
 import type { ChatMessage } from '../../../src/fleet/contract';
 import { mirrored } from '../../../src/fleet/mirror';
@@ -89,6 +93,7 @@ import {
   MessageRow,
   ProgressCard,
   QueuedRow,
+  WorkingLine,
   type PlanProps,
 } from '../../../src/ui/SpaceChat';
 import { mono, usePalette } from '../../../src/ui/theme';
@@ -218,7 +223,7 @@ function placeholderFor(
 ): string {
   switch (s.status) {
     case 'running':
-      return 'Running: stop it to say something else';
+      return 'Add to the queue…';
     case 'starting':
       return 'Starting on the other device…';
     case 'stopped':
@@ -253,6 +258,10 @@ export default function SpaceScreen() {
   const [reviseAsked, setRevising] = useState(false);
   const [stopping, setStopping] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // A host that doesn't mirror its rows shows no queued bubble: say where
+  // the message went, until the turn ends.
+  const [queuedAt, setQueuedAt] = useState<number | null>(null);
+  if (queuedAt !== null && space?.status !== 'running') setQueuedAt(null);
   const ownMode = space?.mode ?? 'edit';
   const [mode, setMode] = useState<FleetMode>(ownMode);
   const [modeOf, setModeOf] = useState<FleetMode>(ownMode);
@@ -299,7 +308,7 @@ export default function SpaceScreen() {
   if (!space) {
     return (
       <View style={{ paddingTop: top }}>
-        <Stack.Screen options={{ title: 'Space' }} />
+        <MainHeader title="Space" />
         <Empty
           title="This space isn't in your fleet any more"
           hint="It was removed, or you no longer follow it."
@@ -312,9 +321,11 @@ export default function SpaceScreen() {
   // A failed turn takes the next message; a space that failed to start
   // isn't on the host.
   const hosted = !!mirror?.space;
-  const sendable =
-    canSend(space.status) || (space.status === 'failed' && hosted);
   const running = canStop(space.status);
+  // While a turn runs the host queues what you send (docs/fleet.md
+  // "Sends queue"); Stop stays beside Send.
+  const sendable =
+    canSend(space.status) || running || (space.status === 'failed' && hosted);
   const modes = composerModes(host?.maxMode ?? null);
   const picked = modes.includes(mode) ? mode : (modes.at(-1) ?? 'ask');
   const build = mirror?.space ? buildMode(mirror.space) : 'edit';
@@ -331,9 +342,10 @@ export default function SpaceScreen() {
     toEnd();
     fleet
       .send(id, t, sendMode(picked, space.mode), picks)
-      .then(() => {
+      .then((r) => {
         setText('');
         setRevising(false);
+        if (r.queued && !chat) setQueuedAt(r.position ?? 1);
       })
       .catch((e: unknown) => setError(errorText(e)))
       .finally(() => setSending(false));
@@ -385,6 +397,9 @@ export default function SpaceScreen() {
   const footer = (
     <View style={styles.tail}>
       {chat?.live ? <LiveReply live={chat.live} waiting={!!question} /> : null}
+      {!chat && running && !question ? (
+        <WorkingLine last={lines.at(-1)?.text ?? null} />
+      ) : null}
       {chat?.queued.map((m) => (
         <QueuedRow key={m.id} m={m} />
       ))}
@@ -411,6 +426,13 @@ export default function SpaceScreen() {
         style={[styles.small, { color: p.danger }]}
       >
         {chat.error}
+      </Text>
+    ) : null,
+    queuedAt !== null ? (
+      <Text key="queued" style={[styles.small, { color: p.muted }]}>
+        {queuedAt === 1
+          ? 'Queued: runs after the current turn'
+          : `Queued: ${queuedAt - 1} ahead of it`}
       </Text>
     ) : null,
     chat?.progress ? (
@@ -500,6 +522,7 @@ export default function SpaceScreen() {
           running={running}
           onStop={() => void stop()}
           stopping={stopping}
+          queue={running}
           canSubmit={sendable && text.trim() !== ''}
           leading={chips}
           error={error}

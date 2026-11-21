@@ -22,6 +22,7 @@ import {
   NO_DRAFT,
   addRecent,
   chooseWhere,
+  lastProjectOn,
   resolveHome,
   type HomeDraft,
   type RecentProject,
@@ -135,6 +136,28 @@ export function applyEffort(space: string | null, effort: string | null): void {
 /** Reset to defaults: nothing picked. */
 export function resetPick(space: string | null): void {
   setPick(space, NO_PICK);
+}
+
+/** Home: another computer; its project the last started in there, else
+ *  the one shown (same computer), else its first. */
+export function applyDevice(deviceId: string): void {
+  const device = useFleetState
+    .getState()
+    .devices.find((d) => d.deviceId === deviceId);
+  if (!device) return;
+  useCompose.setState((c) => {
+    const shown = resolveHome(
+      startableDevices(useFleetState.getState().devices),
+      c.home,
+    );
+    const same = shown.device?.deviceId === deviceId;
+    const projectId =
+      (same ? shown.project?.id : null) ??
+      lastProjectOn(c.recent, device) ??
+      device.projects[0]?.id;
+    if (!projectId) return {};
+    return { home: chooseWhere(c.home, device, projectId) };
+  });
 }
 
 /** Home: where the next space runs. */

@@ -8,11 +8,14 @@
  *
  * ```text
  * [☰]  New space                     [🔔³][✎]
+ * [☰]  fix the login bug…            [🔔³][✎]   a space: two lines
+ *      on mac-A · Running
  * ```
  */
 import {
   Badge,
   BadgedBox,
+  Column,
   Host,
   Icon,
   IconButton,
@@ -31,12 +34,14 @@ const NO_INSETS = {};
 
 function AppBar({
   title,
+  subtitle,
   waiting,
   onMenu,
   onQuestions,
   onNewSpace,
 }: {
   title: string;
+  subtitle?: string;
   waiting: number;
   onMenu: () => void;
   onQuestions: () => void;
@@ -73,13 +78,31 @@ function AppBar({
             </IconButton>
           </TopAppBar.NavigationIcon>
           <TopAppBar.Title>
-            <Text
-              maxLines={1}
-              overflow="ellipsis"
-              style={{ typography: 'titleLarge' }}
+            <Column
+              modifiers={
+                subtitle
+                  ? [semantics({ contentDescription: `${title}, ${subtitle}` })]
+                  : []
+              }
             >
-              {title}
-            </Text>
+              <Text
+                maxLines={1}
+                overflow="ellipsis"
+                style={{ typography: 'titleLarge' }}
+              >
+                {title}
+              </Text>
+              {subtitle ? (
+                <Text
+                  maxLines={1}
+                  overflow="ellipsis"
+                  color={p.muted}
+                  style={{ typography: 'bodyMedium' }}
+                >
+                  {subtitle}
+                </Text>
+              ) : null}
+            </Column>
           </TopAppBar.Title>
           <TopAppBar.Actions>
             {waiting > 0 ? (
@@ -118,7 +141,7 @@ function AppBar({
   );
 }
 
-export function MainHeader({ title, onNewSpace }: MainHeaderProps) {
+export function MainHeader({ title, subtitle, onNewSpace }: MainHeaderProps) {
   const { openDrawer, newSpace, waiting, openQuestions } =
     useHeaderActions(onNewSpace);
   return (
@@ -128,6 +151,7 @@ export function MainHeader({ title, onNewSpace }: MainHeaderProps) {
         header: () => (
           <AppBar
             title={title}
+            subtitle={subtitle}
             waiting={waiting}
             onMenu={openDrawer}
             onQuestions={openQuestions}
