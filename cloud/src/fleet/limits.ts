@@ -63,6 +63,11 @@ export const MAX_CONNS_PER_USER = 10;
 /** A space whose host has been offline this long is forgotten. */
 export const HOST_OFFLINE_PRUNE_MS = 30 * 24 * 3_600_000;
 /**
+ * A deleted account is refused this long (`gone_users`): longer than any
+ * access token it signed in with lives, so none of them brings rows back.
+ */
+export const GONE_USER_MS = 24 * 3_600_000;
+/**
  * Token bucket per connection. The burst is above the spec's example (200)
  * so a device replaying its journal after a reconnect isn't cut off.
  */

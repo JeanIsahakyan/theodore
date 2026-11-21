@@ -19,6 +19,7 @@ Why it exists:
 | `GET /v1/orgs` | bearer access JWT | the caller's active organizations, personal first: `{ organizations: [{ id, name, role, personal }] }` |
 | `POST /v1/orgs/personal` | bearer access JWT | the caller's personal org, created once: `{ organization_id, created }` |
 | `POST /v1/auth/select-organization` | none (the pending token is the credential) | finishes a sign-in that needs an org picked: `{ user, organization_id, access_token, refresh_token }` |
+| `DELETE /v1/account` | bearer access JWT | deletes the caller's account and what the cloud keeps of it ("Account deletion" below): `204`, no body; idempotent |
 | `POST /mcp` | MCP OAuth access token (scope `fleet`) | MCP over Streamable HTTP for Claude ("MCP" below) |
 | `/.well-known/oauth-protected-resource/mcp`, `/.well-known/oauth-authorization-server`, `/oauth/register`, `/oauth/authorize`, `/oauth/callback`, `/oauth/org`, `/oauth/token` | none (OAuth itself) | the authorization server for `/mcp` ("MCP" below) |
 | `GET /v1/fleet/ws` | bearer access JWT with `org_id`; from a browser, the subprotocol `bearer.<JWT>` (below) | WebSocket upgrade to the org's fleet hub (below, and `docs/fleet.md`) |
@@ -38,8 +39,8 @@ environment in `wrangler.toml`):
 | production | `https://theodore-web.prd-instance.workers.dev` |
 
 ```
-OPTIONS /v1/orgs*, /v1/auth/select-organization, /v1/fleet/request
-  Origin in WEB_ORIGINS ─▶ 204 + Allow-Origin <origin>, Allow-Methods GET, POST, OPTIONS,
+OPTIONS /v1/orgs*, /v1/auth/select-organization, /v1/fleet/request, /v1/account
+  Origin in WEB_ORIGINS ─▶ 204 + Allow-Origin <origin>, Allow-Methods GET, POST, DELETE, OPTIONS,
                                Allow-Headers Authorization, Content-Type, Max-Age 600
   any other Origin      ─▶ 204, no CORS headers (the browser stops)
 answers (and errors) on those routes ─▶ Allow-Origin <origin>, Vary: Origin
@@ -68,7 +69,7 @@ environment; over: `429 cloud.rate_limited`):
 | Bucket | Key | Limit | Routes |
 | --- | --- | --- | --- |
 | `RL_PUBLIC` | client IP (`cf-connecting-ip`) | 30 / min | `POST /v1/auth/select-organization`, `GET /v1/fleet/ws` |
-| `RL_USER` | user (`sub`, after the token checks out) | 120 / min | `GET /v1/orgs`, `POST /v1/orgs/personal`, `POST /v1/fleet/request` |
+| `RL_USER` | user (`sub`, after the token checks out) | 120 / min | `GET /v1/orgs`, `POST /v1/orgs/personal`, `POST /v1/fleet/request`, `DELETE /v1/account` |
 
 ## Auth
 
@@ -104,6 +105,67 @@ switch org
 `/v1/orgs/personal` is idempotent and race-safe: two concurrent calls end
 with one org and one membership. A deactivated membership is not undone
 (`409 cloud.membership_inactive`).
+
+## Account deletion
+
+`DELETE /v1/account` (App Store guideline 5.1.1(v): the phone app, and the
+web app, offer it). Code: `src/account.ts`; the hub side is
+`Hub.purgeUser` / `purgeAll` and `McpFleet.forget`.
+
+```
+DELETE /v1/account + Bearer <access JWT> ─▶ verify (401) ─▶ RL_USER
+  ─▶ WorkOS GET user ── 404 ─▶ 204          (already deleted: a retry after step 4)
+  1 ─▶ OAUTH_KV: every MCP grant of the user revoked, its access and refresh tokens with it
+  2 ─▶ WorkOS: memberships (any status) + the org with external_id personal:<user>
+       ─▶ each other org's OrgHub ─ purge {scope: user} ─▶ the user's rows only
+  3 ─▶ personal org's OrgHub ─ purge {scope: org} ─▶ every row
+       ─▶ WorkOS DELETE /organizations/<personal>          (404 = done)
+  4 ─▶ WorkOS DELETE /user_management/users/<user>          (404 = done)
+       (memberships and sessions go with the user)
+  ─▶ 204
+any step fails ─▶ the usual error (500 cloud.internal, 502 cloud.workos, …);
+  every step is idempotent and the user goes last, so a retry finishes it
+```
+
+Purge in a hub, for the user:
+
+```
+gone_users ◀─ user, refused for 24 h (GONE_USER_MS): any socket, one-shot
+  request or MCP call for it ─▶ 401 fleet.unauthorized; a still-valid access
+  token can't bring rows back. The alarm drops the row after.
+connections (sockets, the MCP device's) ─▶ error + close 4001 fleet.unauthorized (no redial)
+rows ─▶ devices, spaces (+ events, mirrors, subs), asks, confirms, pending,
+        push_tokens, delegations, conns           where user_id = user
+        replies, subs, push_tokens, delegations   keyed by one of its devices
+        mcp_devices, mcp_pins, mcp_inbox, mcp_requests, mcp_spaces
+        (+ their mcp_lines, mcp_sub_spaces)       where user_id = user
+```
+
+Ownership: every row in a hub belongs to one user. Spaces, requests,
+questions, confirms and delegations never cross users (a request to
+another user's device is `fleet.not_yours`), so the user's spaces are the
+ones with its `user_id`: hosted on and started from its own devices.
+Another member's rows are never touched. `scope: org` (the personal org,
+gone from WorkOS next) empties every table, and closes every connection.
+
+What isn't deleted here:
+
+| What | Where it stays |
+| --- | --- |
+| Team orgs the user was in | kept for the other members (only the user's rows and membership go) |
+| Data on the user's own computers and phones (journals, spaces, keys, the session) | there; the app signs out after the `204` |
+| WorkOS audit logs and events | WorkOS, per its retention |
+| Expo push receipts, Cloudflare request logs, New Relic / PostHog diagnostics | those services, per their retention; the cloud's own logs carry error kinds only, never a token or an email |
+| The user id in `gone_users` | 24 h, then dropped |
+| OAuth clients Claude registered (DCR) | `OAUTH_KV`: a client record names no user; its grants for this user are gone |
+
+Gaps: memberships are read as one page (100, as `GET /v1/orgs`); an org
+past that keeps the user's rows until its hub prunes them (spaces after 30
+days offline; devices aren't pruned).
+
+Tests (`test/account.test.ts`): the route against a fake WorkOS and
+in-memory KV, hubs as `Hub` over node:sqlite behind the same purge
+handler, and the `OrgHub` shell's refusal after a purge.
 
 ## App side
 
@@ -164,7 +226,7 @@ Stable `area.kind` codes, same form as the app's `error.code`
 | `cloud.membership_inactive` | 409 | the caller's personal-org membership is inactive or pending |
 | `cloud.config` | 500 | `WORKOS_API_KEY` or `WORKOS_CLIENT_ID` missing |
 | `cloud.rate_limited` | 429 | over a rate limit (above) |
-| `cloud.internal` | 500 | anything unexpected; the log names the error kind, never the request |
+| `cloud.internal` | 500 | anything unexpected, or a hub's purge failed (account deletion); the log names the error kind (and the deletion step), never the request |
 
 ## Environments and secrets
 
@@ -506,7 +568,8 @@ Storage (DO SQLite):
 | `conns` | per-connection deadline (hello, token expiry) |
 | `push_tokens` | device ─ its Expo token, this minute's push count |
 | `delegations` | (origin, delegate) ─ the latest signed delegation, issued/expiry, revoked (tombstone) |
-| `meta` | `schema` = 7; on any other value every table but `devices`, `conns`, `push_tokens` and `delegations` is dropped (older rows carry older signatures); a new table (`confirms`) needs no bump. `mcp_schema` = 2 for the MCP device's own tables ("MCP" below) |
+| `gone_users` | a deleted account's user id, refused until `until_ms` (24 h) ("Account deletion") |
+| `meta` | `schema` = 7; on any other value every table but `devices`, `conns`, `push_tokens`, `delegations` and `gone_users` is dropped (older rows carry older signatures); a new table (`confirms`) needs no bump. `mcp_schema` = 2 for the MCP device's own tables ("MCP" below) |
 
 Limits:
 

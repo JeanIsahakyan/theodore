@@ -6,10 +6,9 @@ function recorder(responses: Array<[number, unknown]>) {
   const fetchFn = async (url: string, init: RequestInit) => {
     calls.push({ url, init });
     const [status, body] = responses.shift() ?? [500, {}];
-    return new Response(
-      typeof body === 'string' ? body : JSON.stringify(body),
-      { status },
-    );
+    // A 204 carries no body at all (not even '').
+    const text = typeof body === 'string' ? body : JSON.stringify(body);
+    return new Response(status === 204 ? null : text, { status });
   };
   return {
     calls,
@@ -133,5 +132,34 @@ describe('WorkosClient', () => {
     const { client } = recorder([[502, '<html>bad gateway</html>']]);
     const e = await client.user('u').catch((e) => e);
     expect(e).toMatchObject({ status: 502, code: undefined });
+  });
+
+  it('deletes a user and an org: empty 2xx bodies, a 404 counts as done', async () => {
+    const { calls, client } = recorder([
+      [204, ''],
+      [202, ''],
+      [404, { code: 'entity_not_found' }],
+      [404, { code: 'entity_not_found' }],
+    ]);
+    await client.deleteUser('user 1');
+    await client.deleteOrganization('org_1');
+    await client.deleteUser('user_1');
+    await client.deleteOrganization('org_1');
+    expect(calls.map((c) => [c.init.method, c.url])).toEqual([
+      ['DELETE', 'https://api.workos.test/user_management/users/user%201'],
+      ['DELETE', 'https://api.workos.test/organizations/org_1'],
+      ['DELETE', 'https://api.workos.test/user_management/users/user_1'],
+      ['DELETE', 'https://api.workos.test/organizations/org_1'],
+    ]);
+    expect(
+      (calls[0]!.init.headers as Record<string, string>).authorization,
+    ).toBe('Bearer sk_test_x');
+  });
+
+  it('fails a delete WorkOS refuses otherwise', async () => {
+    const { client } = recorder([[500, { message: 'down' }]]);
+    const e = await client.deleteUser('user_1').catch((e) => e);
+    expect(e).toBeInstanceOf(WorkosError);
+    expect(e).toMatchObject({ status: 500 });
   });
 });

@@ -12,52 +12,11 @@ import { mcpFetch } from '../src/mcp/oauth';
 import { WorkosError, type Authentication } from '../src/workos';
 import { FakeWorkos } from './fake-workos';
 import { MCP_TEST_SECRET } from './fleet-harness';
+import { doState, FakeKv } from './workers-fakes';
 
 const ORIGIN = 'https://cloud.test';
 const API = 'https://api.workos.test';
 const REDIRECT = 'http://localhost:33418/callback';
-
-/** Workers KV, in memory (expiry ignored). */
-class FakeKv {
-  m = new Map<string, string>();
-  async get(key: string, o?: unknown) {
-    const v = this.m.get(key);
-    if (v === undefined) return null;
-    const type = typeof o === 'string' ? o : (o as { type?: string })?.type;
-    return type === 'json' ? JSON.parse(v) : v;
-  }
-  async put(key: string, value: string) {
-    this.m.set(key, value);
-  }
-  async delete(key: string) {
-    this.m.delete(key);
-  }
-  async list(o: { prefix?: string } = {}) {
-    const keys = [...this.m.keys()]
-      .filter((k) => k.startsWith(o.prefix ?? ''))
-      .sort()
-      .map((name) => ({ name }));
-    return { keys, list_complete: true, cacheStatus: null };
-  }
-}
-
-/** A DO state for OrgHub outside workerd. */
-function doState(db: DatabaseSync): DurableObjectState {
-  return {
-    storage: {
-      sql: {
-        exec: (q: string, ...b: unknown[]) => ({
-          toArray: () => db.prepare(q).all(...b),
-        }),
-      },
-      getAlarm: async () => null,
-      setAlarm: async () => {},
-    },
-    getWebSockets: () => [],
-    acceptWebSocket: () => {},
-    waitUntil: () => {},
-  } as unknown as DurableObjectState;
-}
 
 const ctx = () =>
   ({

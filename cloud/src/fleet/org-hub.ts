@@ -9,6 +9,8 @@
  * webSocketMessage / webSocketClose / alarm ─▶ Hub ─▶ pushes (Expo) via ctx.waitUntil
  * Worker /mcp (OAuth grant: user, org) ─▶ POST /mcp/call ─▶ McpFleet: the
  *   user's MCP device, connected to the same Hub in process (src/mcp/)
+ * Worker DELETE /v1/account ─▶ POST /v1/account/purge ─▶ the user's rows (or,
+ *   a personal org, all) gone; that user refused on every path for a day
  * ```
  *
  * Not reachable from the internet: only the Worker holds the binding, and it
@@ -22,13 +24,17 @@
 import { verifierFor } from '../auth';
 import { McpFleet } from '../mcp/fleet';
 import { MCP_CALL_PATH, MCP_ENABLE_PATH, answerMcp } from '../mcp/route';
+import { McpStore } from '../mcp/store';
 import { Hub, type Conn, type ConnState, type FleetCaller } from './hub';
 import { expoSender } from './push';
 import {
+  answerPurge,
   answerRequest,
   BEARER_PROTOCOL,
   CALLER_HEADER,
+  PURGE_PATH,
   REQUEST_PATH,
+  type McpPurge,
 } from './route';
 
 export { CALLER_HEADER };
@@ -81,6 +87,7 @@ export function readCaller(header: string | null): FleetCaller | null {
 export class OrgHub implements DurableObject {
   private hub: Hub;
   private mcp: McpFleet | null;
+  private mcpPurge: McpPurge;
   /** The alarm as last set; undefined until read after a wake. */
   private alarmAt: number | null | undefined;
 
@@ -121,12 +128,34 @@ export class OrgHub implements DurableObject {
       ),
       defer: (work) => ctx.waitUntil(work),
     });
+    // MCP off now doesn't mean its tables never held rows.
+    const mcpStore = () => this.mcp?.store ?? new McpStore(sql);
+    this.mcpPurge = {
+      user: (u) => (this.mcp ? this.mcp.forget(u) : mcpStore().purgeUser(u)),
+      all: () => mcpStore().purgeAll(),
+    };
   }
 
   async fetch(request: Request): Promise<Response> {
     const caller = readCaller(request.headers.get(CALLER_HEADER));
     if (!caller) return new Response('no caller', { status: 400 });
     const path = new URL(request.url).pathname;
+    if (request.method === 'POST' && path === PURGE_PATH) {
+      // The alarm stays: it drops the `gone_users` row when it lapses.
+      return answerPurge(this.hub, this.mcpPurge, caller, request);
+    }
+    // A deleted account: no socket, request or MCP call brings rows back.
+    if (this.hub.isGone(caller.userId)) {
+      return Response.json(
+        {
+          error: {
+            code: 'fleet.unauthorized',
+            message: 'the account was deleted',
+          },
+        },
+        { status: 401 },
+      );
+    }
     if (request.method === 'POST' && path === REQUEST_PATH) {
       return answerRequest(this.hub, caller, request);
     }

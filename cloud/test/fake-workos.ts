@@ -15,6 +15,10 @@ export class FakeWorkos implements Workos {
   beforeCreateOrg?: () => void;
   beforeCreateMembership?: () => void;
   failWith?: WorkosError;
+  /** Users deleted (`user` answers 404 for them). */
+  deletedUsers = new Set<string>();
+  /** A delete fails with this once (then clears): a retry succeeds. */
+  failDeleteOnce?: { user?: WorkosError; org?: WorkosError };
 
   private seq = 0;
   private id = (p: string) => `${p}_${++this.seq}`;
@@ -43,6 +47,9 @@ export class FakeWorkos implements Workos {
   async user(userId: string) {
     this.calls.push(`getUser ${userId}`);
     this.check();
+    if (this.deletedUsers.has(userId)) {
+      throw new WorkosError(404, 'entity_not_found', 'no user');
+    }
     return { id: userId, email: `${userId}@example.test` };
   }
 
@@ -138,6 +145,32 @@ export class FakeWorkos implements Workos {
     const a = f(o.organizationId);
     if (a instanceof WorkosError) throw a;
     return a;
+  }
+
+  async deleteOrganization(id: string) {
+    this.calls.push(`deleteOrg ${id}`);
+    this.check();
+    const fail = this.failDeleteOnce?.org;
+    if (fail) {
+      this.failDeleteOnce!.org = undefined;
+      throw fail;
+    }
+    this.orgs = this.orgs.filter((o) => o.id !== id);
+    this.memberships_ = this.memberships_.filter(
+      (m) => m.organization_id !== id,
+    );
+  }
+
+  async deleteUser(userId: string) {
+    this.calls.push(`deleteUser ${userId}`);
+    this.check();
+    const fail = this.failDeleteOnce?.user;
+    if (fail) {
+      this.failDeleteOnce!.user = undefined;
+      throw fail;
+    }
+    this.deletedUsers.add(userId);
+    this.memberships_ = this.memberships_.filter((m) => m.user_id !== userId);
   }
 
   addMembership(

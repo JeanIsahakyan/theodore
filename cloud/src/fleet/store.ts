@@ -26,10 +26,13 @@
  * push_tokens  device_id ─ its Expo push token, this minute's push count
  * delegations  (origin, delegate) ─ the origin's latest signed delegation;
  *          a revocation stays as a tombstone for the 5 min freshness window
+ * gone_users  user ─ a deleted account (DELETE /v1/account): refused until
+ *          `until_ms` (GONE_USER_MS), so a token still valid can't bring
+ *          its rows back
  * meta     schema ─ SCHEMA_VERSION (7: pending.ttl_ms); on any other, every table but devices,
- *          conns, push_tokens and delegations is dropped (older rows carry
- *          older signatures). A new table needs no bump (`IF NOT EXISTS`):
- *          confirms came at 7
+ *          conns, push_tokens, delegations and gone_users is dropped (older
+ *          rows carry older signatures). A new table needs no bump (`IF NOT
+ *          EXISTS`): confirms came at 7, gone_users after
  * ```
  */
 import { CLOUD_RING, MAX_SPACE_EVENT_BYTES } from './limits';
@@ -172,6 +175,25 @@ const SCHEMA = [
     revoked INTEGER NOT NULL,
     PRIMARY KEY (origin_device, delegate_device))`,
   `CREATE INDEX IF NOT EXISTS delegations_delegate ON delegations (delegate_device)`,
+  `CREATE TABLE IF NOT EXISTS gone_users (
+    user_id TEXT PRIMARY KEY,
+    until_ms INTEGER NOT NULL)`,
+];
+
+/** The hub's tables that hold users' data (all but `meta`, `gone_users`). */
+export const DATA_TABLES = [
+  'devices',
+  'spaces',
+  'events',
+  'mirrors',
+  'pending',
+  'replies',
+  'asks',
+  'confirms',
+  'subs',
+  'conns',
+  'push_tokens',
+  'delegations',
 ];
 
 export interface DeviceRow {
