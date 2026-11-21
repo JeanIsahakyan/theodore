@@ -171,7 +171,7 @@ Bump the version and let it travel the branch flow; `main` makes the tag:
 
 ```sh
 git switch -c author/release-0.3.0 staging
-scripts/bump-version.sh 0.3.0   # Cargo.toml + tauri.conf.json
+scripts/bump-version.sh 0.3.0   # Cargo.toml, tauri.conf.json, ui/ and mobile/ (one version everywhere)
 git commit -am "chore: bump version to 0.3.0"
 git push -u origin HEAD          # PR into staging, merge
                                  # then PR staging → main, merge

@@ -610,19 +610,20 @@ The web origin must be in the cloud's CORS list (above).
 | --- | --- | --- | --- |
 | `development` | dev client | internal (iOS simulator build) | staging, literal |
 | `preview` | testers | internal (ad hoc iOS, APK Android) | staging, literal |
-| `production` | stores | store (AAB, App Store) | EAS environment `production` |
+| `production` | stores | store (AAB, App Store) | production, literal |
+| `apk` | installing by link, no store | internal (APK Android) | production, literal |
 
-- Production's client id and cloud URL are **not** in the repo: set them once as
-  EAS environment variables (`eas env:create --environment production
-  --name EXPO_PUBLIC_WORKOS_CLIENT_ID --visibility plaintext`, same for
-  `EXPO_PUBLIC_CLOUD_URL`). Same values as the `THEODORE_*` repo variables.
-  Check a production build's values with `eas env:list --environment production`.
+- The EAS project is `@jean_i/theodore` (id in `app.json`). Production's
+  client id and cloud URL are literal in `eas.json`: both are public (the
+  client id is in every sign-in link). Same values as the `THEODORE_*` repo
+  variables.
 - Versioning: `appVersionSource: remote`. The user-visible version is
   `expo.version` in `app.json`; the build number (iOS) and version code
   (Android) are counted by EAS and bumped by `autoIncrement` on `production`.
   Remote, because nothing in git then has to be bumped and merged per upload
   (Apple rejects a repeated build number, and a failed upload still burns
-  one). Bump `expo.version` by hand for a store release.
+  one). `expo.version` is the desktop's version: `scripts/bump-version.sh` sets it
+  with the rest.
 - `runtimeVersion` policy `appVersion`: a build's runtime is its
   `expo.version`. Inert until `expo-updates` is added; then an OTA update only
   reaches builds with the same version, so JS that needs a new native module
