@@ -79,9 +79,9 @@ a separate feature island.
   opening anything — the same job the Inbox count does for review requests.
 - My PRs is "all my changes, by stage": Drafting · In review · Merged. A space
   moves down that list as it moves through its stages.
-- ⌘K "New space…", the `+` beside the Spaces title and the "New space" row
-  that ends the list all open the same dialog. ⌘K alone would hide running
-  work; the title's `+` stays in reach when the list is long.
+- ⌘K "New space…" and the `+` beside the Spaces title open the same
+  dialog. ⌘K alone would hide running work. While there are no spaces, a
+  "New space" row stands in the empty section (a lone `+` is easy to miss).
 - In "All projects" the section lists every project's spaces, prefixed with
   the project name; "New space" asks which project.
 - A local-folder workspace has no Inbox or My PRs; its Spaces section is the

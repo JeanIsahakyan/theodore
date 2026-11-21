@@ -79,9 +79,7 @@ describe('a remote space in the sidebar', () => {
 
   it('is listed with the local ones, its device beside its name', () => {
     const labels = rows().map((r) => r.textContent);
-    expect(labels).toEqual(
-      expect.arrayContaining(['a', 'rs_1on Studio Mac', 'New space']),
-    );
+    expect(labels).toEqual(expect.arrayContaining(['a', 'rs_1on Studio Mac']));
     const badge = view.host.querySelector<HTMLElement>('.space-device')!;
     expect(badge.textContent).toBe('on Studio Mac');
     expect(badge.title).toBe('api · Studio Mac');
