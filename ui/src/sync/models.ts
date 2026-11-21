@@ -176,6 +176,8 @@ export function modelAccessors(pool: ObjectPool) {
       of: (agent: string, account: string) =>
         pool.get('agent_limit', `${agent}:${account}`),
     },
+    /** Followed spaces' sub-spaces on their hosts (docs/fleet.md). */
+    remoteSubSpaces: of('remote_sub_space'),
   };
 }
 

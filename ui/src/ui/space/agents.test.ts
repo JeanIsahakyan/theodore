@@ -16,6 +16,7 @@ import {
   turnSource,
 } from './agents';
 import { spaceChatKey } from './spaces';
+import { childStage, type ChildStage } from './subspaces';
 
 const agent = (
   id: string,
@@ -150,10 +151,7 @@ describe('the strip', () => {
   });
 
   it('says it all in one line', () => {
-    const subs = [{ status: 'running' }, { status: 'idle' }] as Pick<
-      Space,
-      'status'
-    >[];
+    const subs: ChildStage[] = ['running', 'done'];
     const turn = subagentsOf(steps, { running: false });
     expect(turn.map((a) => a.status)).toEqual(['done', 'done']);
     expect(stripHeadline(turn, [], [])).toBe('2 agents');
@@ -164,20 +162,21 @@ describe('the strip', () => {
     expect(
       stripHeadline(turn, [task({}), cmd({}), cmd({ id: 'c2' })], subs),
     ).toBe('1 agent running · 2 sub-spaces, 1 running · 2 commands running');
-    expect(stripHeadline([], [], [{ status: 'idle' }])).toBe('1 sub-space');
-    // Merged ones: how many of them, while one still runs or not.
-    const merged = {
-      status: 'idle' as const,
-      head_sha: 'h',
-      shipped: { how: 'merged_into_parent', head: 'h' } as Space['shipped'],
-    };
-    expect(stripHeadline([], [], [merged, merged, { status: 'running' }])).toBe(
+    expect(stripHeadline([], [], ['done'])).toBe('1 sub-space');
+    // Merged ones: how many of them, while one still runs or not; one
+    // waiting for you runs.
+    expect(stripHeadline([], [], ['merged', 'merged', 'asking'])).toBe(
       '3 sub-spaces, 1 running, 2 of 3 merged',
     );
     // Merged, then changed since: not counted.
-    expect(stripHeadline([], [], [{ ...merged, head_sha: 'h2' }])).toBe(
-      '1 sub-space',
-    );
+    const changed = childStage({
+      status: 'idle',
+      question: null,
+      turns: 2,
+      head_sha: 'h2',
+      shipped: { how: 'merged_into_parent', head: 'h' } as Space['shipped'],
+    });
+    expect(stripHeadline([], [], [changed])).toBe('1 sub-space');
     // Ended commands: the worst outcome, else that they ended.
     expect(
       stripHeadline([], [cmd({ status: 'lost' }), cmd({ status: 'cut' })], []),

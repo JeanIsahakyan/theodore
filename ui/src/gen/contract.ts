@@ -2054,6 +2054,41 @@ export type ReactionCount = {
 	viewer_reacted: boolean,
 };
 
+/**
+ *  A sub-space a followed space started on its host (docs/fleet.md "What a
+ *  hosted space's agent may do"): the latest of its `sub_space` mirror, kept as a
+ *  `remote_sub_space` row keyed `<root>:<space>`. Shown in its root's tree;
+ *  never a space here (no worktree, no chat, no commands).
+ */
+export type RemoteSubSpace = {
+	/**
+	 *  The followed space at the top of its tree (`rs_…`), a `space` row
+	 *  here with `remote` set.
+	 */
+	root: string,
+	/**  Its local id on the host. */
+	space: string,
+	/**  `root`, or another sub-space's `space`. */
+	parent: string,
+	title: string,
+	status: RemoteSubSpaceStatus,
+	mode: SpaceMode,
+	/**  Merged into its parent, or shipped. */
+	done: boolean,
+	/**  The event it last changed at: newer is more recently active. */
+	seq: number,
+};
+
+/**
+ *  Where a followed space's sub-space stands, as its host words it
+ *  (`spaces_list`'s words).
+ */
+export type RemoteSubSpaceStatus = "setting_up" | "running" |
+/**  Its agent waits on an answer. */
+"question" |
+/**  Its setup waits. */
+"waiting" | "idle" | "failed" | "archived";
+
 export type ReplyRequest = {
 	pr: PrId,
 	thread: ThreadId,

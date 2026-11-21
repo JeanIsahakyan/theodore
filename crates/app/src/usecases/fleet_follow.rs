@@ -10,6 +10,8 @@
 //!                   remote set ─▶ upsert (never over a local space)
 //!   chat_message ─▶ pr = space:rs_, run under it ─▶ upsert / delete
 //!   turn_step    ─▶ <run>:<n>, run under it ─▶ Ephemeral::RunStep (not kept)
+//!   sub_space    ─▶ remote_sub_space <rs_>:<id> upsert / delete (never a
+//!                   space row) + a history line
 //!   else         ─▶ dropped (debug log)
 //! each event ─▶ kv fleet.follow:<rs_> {seq, …} (a space with a row)
 //! start ─▶ Space rows with remote ─▶ followed again ─▶ subscribe{since: seq}
@@ -24,8 +26,8 @@ use std::collections::{HashMap, VecDeque};
 use serde::{Deserialize, Serialize};
 use theodore_contract::{
     ChatMessage, Ephemeral, FleetAnswerRequest, FleetLineKind, FleetRemoteSpace, FleetSendRequest,
-    FleetSpaceLine, FleetSpaceStatus, Space, SpaceAnswerRequest, SpaceRemote, SpaceSendRequest,
-    SpaceStatus, TurnStep, models,
+    FleetSpaceLine, FleetSpaceStatus, RemoteSubSpace, RemoteSubSpaceStatus, Space,
+    SpaceAnswerRequest, SpaceRemote, SpaceSendRequest, SpaceStatus, TurnStep, models,
 };
 use theodore_fleet_protocol::{ClientMessage, MIRROR_MODELS, MirroredSubSpace, SUB_SPACE_MODEL};
 use theodore_ports::{NewAction, SyncActionCode};
@@ -41,6 +43,12 @@ pub(crate) const TURN_STEP: &str = "turn_step";
 /// Where a followed space's bookkeeping is kept across restarts.
 fn follow_key(space: &str) -> String {
     format!("fleet.follow:{space}")
+}
+
+/// The `remote_sub_space` key of followed space `root`'s sub-space `id`:
+/// host-local ids are unique only on their host.
+fn remote_sub_key(root: &str, id: &str) -> String {
+    format!("{root}:{id}")
 }
 
 /// What a restart needs to follow a mirrored space again: the last seq
@@ -241,6 +249,26 @@ impl Core {
         }
     }
 
+    /// Deletes of every `remote_sub_space` row under followed space `root`.
+    async fn remote_sub_deletes(&self, root: &str) -> AppResult<Vec<NewAction>> {
+        let store = self.0.deps.store.clone();
+        let root = root.to_string();
+        let rows = tokio::task::spawn_blocking(move || {
+            store.query(models::REMOTE_SUB_SPACE, "root", &root)
+        })
+        .await
+        .map_err(AppError::join)??;
+        Ok(rows
+            .into_iter()
+            .map(|r| NewAction {
+                model: models::REMOTE_SUB_SPACE.into(),
+                model_id: r.id,
+                action: SyncActionCode::D,
+                data: None,
+            })
+            .collect())
+    }
+
     /// Stops following `space`: its rows here go, the cloud stops sending.
     pub(crate) async fn fleet_forget_followed(&self, space: &str) -> AppResult<()> {
         let store = self.0.deps.store.clone();
@@ -258,6 +286,7 @@ impl Core {
                 data: None,
             })
             .collect();
+        actions.extend(self.remote_sub_deletes(space).await?);
         actions.push(NewAction {
             model: models::SPACE.into(),
             model_id: space.to_string(),
@@ -295,7 +324,7 @@ impl Core {
         let applied = match model {
             models::SPACE => self.fleet_mirror_space(space, id, data).await,
             models::CHAT_MESSAGE => self.fleet_mirror_chat(space, id, data).await,
-            SUB_SPACE_MODEL => self.fleet_follow_sub_space(space, id, data),
+            SUB_SPACE_MODEL => self.fleet_follow_sub_space(space, id, data).await,
             _ => self.fleet_follow_step(space, id, data).await,
         };
         match applied {
@@ -309,27 +338,82 @@ impl Core {
         }
     }
 
-    /// A sub-space the followed space started on its host: a line of its
-    /// history (`<id> · <title> · <status>`), at the event's seq.
-    fn fleet_follow_sub_space(
+    /// A sub-space the followed space started on its host: its
+    /// `remote_sub_space` row (latest kept, `null` removes it), and a line
+    /// of the space's history (`<id> · <title> · <status>`) at the event's
+    /// seq.
+    async fn fleet_follow_sub_space(
         &self,
         space: &str,
         id: &str,
         data: Option<serde_json::Value>,
     ) -> Result<(), Dropped> {
-        let text = match data {
-            None => format!("{id} · gone"),
+        let seq = {
+            let mem = self.fleet();
+            mem.outbound
+                .get(space)
+                .ok_or(Dropped::Invalid("a space not followed here"))?
+                .last_seq
+        };
+        if id.is_empty() || id == space {
+            return Err(Dropped::Invalid("a sub-space with the space's own id"));
+        }
+        let key = remote_sub_key(space, id);
+        let (text, action) = match data {
+            None => (
+                format!("{id} · gone"),
+                NewAction {
+                    model: models::REMOTE_SUB_SPACE.into(),
+                    model_id: key,
+                    action: SyncActionCode::D,
+                    data: None,
+                },
+            ),
             Some(v) => {
                 let s: MirroredSubSpace =
                     serde_json::from_value(v).map_err(|_| Dropped::Invalid("not a sub-space"))?;
                 if s.space != id {
                     return Err(Dropped::Invalid("a sub-space row of another id"));
                 }
+                if s.parent.is_empty() || s.parent == id {
+                    return Err(Dropped::Invalid("a sub-space that is its own parent"));
+                }
                 let title = crate::usecases::fleet_origin::truncate(&s.title, 120);
                 let status = if s.done { "merged" } else { s.status.as_str() };
-                format!("{id} · {title} · {status}")
+                let text = format!("{id} · {title} · {status}");
+                let row = RemoteSubSpace {
+                    root: space.to_string(),
+                    space: s.space,
+                    parent: s.parent,
+                    title,
+                    status: RemoteSubSpaceStatus::from_word(&s.status),
+                    mode: crate::usecases::fleet::space_mode(s.mode),
+                    done: s.done,
+                    seq,
+                };
+                let value =
+                    serde_json::to_value(&row).map_err(|_| Dropped::Invalid("not a sub-space"))?;
+                (
+                    text,
+                    NewAction {
+                        model: models::REMOTE_SUB_SPACE.into(),
+                        model_id: key,
+                        action: SyncActionCode::U,
+                        data: Some(value),
+                    },
+                )
             }
         };
+        let exists = self
+            .get_row(models::REMOTE_SUB_SPACE, &action.model_id)
+            .await
+            .map_err(Dropped::Store)?
+            .is_some();
+        if action.data.is_some() || exists {
+            self.apply(vec![action])
+                .await
+                .map_err(|e| Dropped::Store(e.into()))?;
+        }
         let line = {
             let mut mem = self.fleet();
             let o = mem
@@ -416,14 +500,20 @@ impl Core {
         let existing = self.fleet_own_mirror(space, &remote).await?;
         let Some(data) = data else {
             if existing.is_some() {
-                self.apply(vec![NewAction {
+                // Its tree goes with it.
+                let mut actions = self
+                    .remote_sub_deletes(space)
+                    .await
+                    .map_err(Dropped::Store)?;
+                actions.push(NewAction {
                     model: models::SPACE.into(),
                     model_id: space.to_string(),
                     action: SyncActionCode::D,
                     data: None,
-                }])
-                .await
-                .map_err(|e| Dropped::Store(e.into()))?;
+                });
+                self.apply(actions)
+                    .await
+                    .map_err(|e| Dropped::Store(e.into()))?;
             }
             return Ok(());
         };

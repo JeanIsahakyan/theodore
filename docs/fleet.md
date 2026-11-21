@@ -302,6 +302,27 @@ sent as a `sub_space` mirror of the hosted space at the top of its tree
 hosted `rs_` id or another child's id), on every change, latest kept; the
 origin reaches it by its local id through the ops on any space below.
 
+A desktop that follows the hosted space keeps each child as a
+`remote_sub_space` row and shows the tree under the mirrored space, like
+local sub-spaces (docs/spaces.md "Seeing sub-spaces and agents"):
+
+```
+mirror{sub_space, c, data} of followed rs_
+  data ─▶ space == c, parent ≠ c ─▶ remote_sub_space <rs_>:c upsert
+          {root: rs_, space, parent, title, status, mode, done, seq}
+       └▶ else dropped (debug log)
+  null ─▶ the row deleted (nothing written if none)
+  both ─▶ a history line `<c> · <title> · <status>` too
+mirror{space, rs_, null} / archive here (forget) ─▶ every <rs_>:* row deleted
+```
+
+| | `remote_sub_space` row | `space` row |
+| --- | --- | --- |
+| a worktree, chat, page, commands | no | yes (or "runs on <host>") |
+| `list_spaces`, recovery, sweep, MCP `spaces_list` | not read | read |
+| a client transaction may write it | no (core-owned) | no |
+| key | `<rs_>:<host-local id>` (unique only on its host) | its id |
+
 ## Settings (per device)
 
 | Key | Default | |
@@ -609,8 +630,9 @@ run step (live)                  ─▶ mirror{turn_step}     ─▶ relay only 
 | `sub_space` | the child's local id | `MirroredSubSpace`, `parent` the `rs_` id or another child's id | on change | latest |
 
 A follower drops a model it doesn't know (a protocol-6 one, `sub_space`);
-a desktop follower shows a `sub_space` row as a history line
-(`<id> · <title> · <status>`, kind `sub_space`).
+a desktop follower keeps a `sub_space` row as a `remote_sub_space` row,
+nested under the mirrored space ("What a hosted space's agent may do"), and as a
+history line (`<id> · <title> · <status>`, kind `sub_space`).
 
 - **Ids.** The host rewrites its local space id to the fleet id in every
   row (`id`, `pr`, `run`), so all followers share one id. Message ids stay.

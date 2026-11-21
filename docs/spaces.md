@@ -2004,12 +2004,39 @@ sub-spaces ───────────────────────
 | --- | --- |
 | sidebar | a child goes under its parent when the parent is listed, merged ones after their live siblings (muted); else at the top with `from <parent>` (`from a removed space` when it's gone). A mirrored space's parent is its host's: not named. Loops never nest |
 | sidebar, collapsed | the count, a spinner while a hidden one runs, a dot while one waits for you; hide/show from the row's hover button or its right-click menu, kept per machine (`ui/space/collapsed.ts`) |
+| a mirrored space's sub-spaces | below |
 | a child's stage | `childStage`: waiting for you (a question), running, failed, merged (its parent's `space_merge`, no turn since), done (a turn ended), starting (none yet). Merged, then more turns: done again, and its strip says "changed since its last merge" |
 | strip | the running turn's live steps, else the last reply with steps; top-level subagents only (a subagent's own stay in its row); background tasks as in § "Background tasks"; sub-spaces. Hidden with nothing to show |
 | strip line | agents (background ones included), sub-spaces, commands; a spinner while any of them runs; open or closed per space for the window's life |
 | a subagent's model | read from its call's payload once the strip shows it, quietly; none for a mirrored space. Named as the model chip names it (`agent_models`: `claude-opus-5-5` → `Opus 5.5`, an alias as its newest), else the id as given |
 | a subagent's time | from when this window saw its call start and end (`EphemeralStore.stepTimes`), or its background task; a turn from before the window opened has none |
 | click a subagent | its turn's chat row comes into view, the fold holding it opens, the row glows (`revealCall`, `rowState.ts`) |
+
+A space mirrored from another computer (docs/fleet.md "What a hosted
+space's agent may do") nests the sub-spaces its agent started there the
+same way. They
+are `remote_sub_space` rows, the latest of each `sub_space` mirror, never
+spaces here: no worktree, no chat, no commands, no page.
+
+```
+sidebar        Port it              on Studio Mac   3 ›   the mirrored space: count, hide/show
+                 ◌ Parser                                 its tree from the host, its stage mark;
+                   • Its tests                            hover: "<title> · <stage> · runs on
+                 ⑃ Docs                 (muted, last)       Studio Mac as a sub-space of <parent>"
+                 └─▶ press: opens Port it                 no archive, no right-click but hide/show
+
+space page     composer ◌ 2 sub-spaces, 1 running, 1 of 2 merged ▾
+(Port it)                Sub-spaces  ◌ Parser  Edit  running        not a button: nothing to open
+                                     ⑃ Docs    Edit  merged  (muted, last)
+```
+
+| Rule | |
+| --- | --- |
+| tree | under the mirrored space at the top of the tree (`Space.remote.space == id`); a child of a child under its parent; one whose parent isn't kept (archived, not sent yet) right under the top; loops never nest |
+| stage | the host's word: question → waiting for you, running, setting up → starting, failed, `done` → merged, archived (hidden), else done |
+| order | merged after the live ones, else the latest change (`seq`) first |
+| strip | the direct ones (and those whose parent isn't kept); stage chip, mode, the "N of M merged" line; the grandchildren only in the sidebar |
+| gone | `null` from the host, the mirrored space removed by its host, or archived here (forgotten): the rows go. The space's history keeps its `<id> · <title> · <status>` lines |
 
 Pure rules: `ui/space/subspaces.ts` (the tree, a child's stage),
 `ui/spaceTools.ts` (the parent's rows), `ui/space/agents.ts` (subagents, the
