@@ -986,6 +986,14 @@ remaining prompts and limits.
     | Codex | its own `workspace-write` sandbox: writes only in cwd (plus `/tmp` and `$TMPDIR`), for shell and patches alike | flags only |
     | Gemini | its file tools refuse paths outside the workspace (the CLI's own check); nothing added | not installed here |
 
+  - One place outside the worktree is writable: Claude Code's memory
+    directory for this project, `<config dir>/projects/<key>/memory/*.md`
+    (`MEMORY.md` and one file per memory, `.md` files directly in it; no
+    subdirectory, no symlink out of it). The guard gets it as
+    `--memory=<dir>`, derived from the space's cwd and its repository's
+    common dir (Claude Code keys a worktree by the latter) under the run's
+    account config dir, so another project's memory stays denied. Codex and
+    Gemini: nothing added.
   - Not an OS sandbox: in Edit and Run, a shell command (Claude's Bash,
     Gemini's shell) can still write outside its directory. Later: run agents
     under a macOS sandbox profile that only allows writes inside the space
