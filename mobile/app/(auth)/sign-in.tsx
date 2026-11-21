@@ -6,7 +6,7 @@
  * ```text
  * ┌──────────────────────────────┐
  * │            [logo]            │   a welcome screen: logo, name, one line,
- * │           Theodore           │   centered in the space above the action
+ * │        Theodore Code         │   centered in the space above the action
  * │   Start, follow and answer…  │
  * │                              │
  * │  [         Sign in        ]  │   native prominent button, full width,
@@ -77,7 +77,7 @@ export default function SignIn() {
               { color: p.text },
             ]}
           >
-            Theodore
+            Theodore Code
           </Text>
           <Text style={[styles.lead, { color: p.muted }]}>
             Start, follow and answer the spaces running on your computers.
