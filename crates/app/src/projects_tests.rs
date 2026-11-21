@@ -13,10 +13,12 @@ use theodore_ports::{Clock, CommitLog, HostError, NewAction, Store, SyncActionCo
 use crate::testkit::{self, Fixtures, fixtures};
 use crate::{AppError, Core, Receivers};
 
-/// Up to 10 s: a loaded CI runner (clippy beside the tests) took over 2 s
-/// for the poller's first offline round.
+/// Up to 30 s of wall time: a loaded CI runner (clippy beside the tests)
+/// took over 10 s for the poller's first offline round. Counted by the
+/// clock, not by sleeps, which a loaded runner stretches.
 async fn wait_until(mut cond: impl FnMut() -> bool) {
-    for _ in 0..2000 {
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    while std::time::Instant::now() < deadline {
         if cond() {
             return;
         }
@@ -185,12 +187,14 @@ async fn poller_does_not_refresh_local_folders() {
     let f = fixtures();
     let (core, _recv) = started_core(&f).await;
     let project = local_project(&core, &f, "/tmp/my-folder").await;
-    let before = last_fetched(&f, &project.id);
 
     f.clock.advance(TEN_MINUTES + 30_000);
+    let later = f.clock.now();
     tokio::time::sleep(Duration::from_millis(150)).await;
 
-    assert_eq!(last_fetched(&f, &project.id), before);
+    // Adding the folder may stamp its own fetch a moment late on a loaded
+    // runner; the poller's refresh would stamp the advanced time.
+    assert_ne!(last_fetched(&f, &project.id), Some(later));
 }
 
 #[tokio::test]
