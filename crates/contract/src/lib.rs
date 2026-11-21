@@ -53,6 +53,8 @@ mod terminal;
 pub use terminal::*;
 mod agent_accounts;
 pub use agent_accounts::*;
+mod space_notes;
+pub use space_notes::*;
 
 /// Model names used in transactions and sync frames.
 pub mod models {
@@ -81,6 +83,9 @@ pub mod models {
     /// The latest usage limit of each agent account, keyed
     /// `<agent>:<account>` (`AgentLimitRow`).
     pub const AGENT_LIMIT: &str = "agent_limit";
+    /// A space's timeline notes that aren't its conversation (`SpaceNote`),
+    /// keyed by id, `pr = "space:<id>"`; never read where chat rows are.
+    pub const SPACE_NOTE: &str = "space_note";
     pub const ALL: &[&str] = &[
         PR,
         PR_DETAIL,
@@ -100,6 +105,7 @@ pub mod models {
         SPACE,
         REPORT,
         AGENT_LIMIT,
+        SPACE_NOTE,
     ];
 }
 
@@ -1225,6 +1231,9 @@ pub fn types() -> specta::Types {
         .register::<AddAgentAccountRequest>()
         .register::<AgentAccountRequest>()
         .register::<ChatNotice>()
+        .register::<SpaceNote>()
+        .register::<SpaceAskNote>()
+        .register::<AskedBy>()
         .register::<SpacePause>()
         .register::<SpacePauseRequest>()
         .register::<SpaceFeedback>()

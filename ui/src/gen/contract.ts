@@ -273,6 +273,13 @@ export type AskRequest = {
 	attachments?: string[] | null,
 };
 
+/**  Who asked, as they were named then. */
+export type AskedBy =
+/**  Another space's agent, on this computer. */
+{ kind: "space"; space: string; title: string } |
+/**  One of the user's devices (or an MCP client) through the fleet. */
+{ kind: "device"; name: string };
+
 export type Assignee = { kind: "human"; id: string } | { kind: "agent"; id: AgentId };
 
 /**  A saved file. `path` is absolute: the agent reads it from there. */
@@ -2678,6 +2685,30 @@ export type SpaceAnswerRequest = {
 };
 
 /**
+ *  Someone asked the space a question (`space_ask`, or the fleet's
+ *  `ask_space`); a read-only copy of its agent answered or failed.
+ */
+export type SpaceAskNote = {
+	from: AskedBy,
+	question: string,
+	/**  None when it failed. */
+	answer?: string | null,
+	/**  Why there is no answer (timed out, the agent failed). */
+	failed?: string | null,
+	/**
+	 *  The agent that answered (or last tried), and its model; none: the
+	 *  CLI's default.
+	 */
+	agent?: AgentId | null,
+	model?: string | null,
+	/**
+	 *  `fork`: a copy of the space's own session; `fresh`: a new agent
+	 *  told what the space holds.
+	 */
+	how?: string | null,
+};
+
+/**
  *  How far the space's base branch moved on since its `base_sha`, as of
  *  the project's last fetch (`space_base_status`).
  */
@@ -2798,6 +2829,15 @@ export type SpaceMode =
  *  (the next turn implements it in `Space::build_mode`) or revise.
  */
 "plan";
+
+/**  A `space_note` row, keyed by its own id. */
+export type SpaceNote = {
+	id: string,
+	/**  The space's chat key, `space:<id>`: loaded with its transcript. */
+	pr: PrId,
+	at: number,
+	ask: SpaceAskNote,
+};
 
 /**  The space whose agent started this one. */
 export type SpaceParent = {
