@@ -147,6 +147,13 @@ export type LineKind =
   | 'question'
   | 'gap';
 
+/** What the host did with a message: ran it, or queued it behind the
+ *  running turn (`position` 1 runs next). */
+export interface SendResult {
+  queued: boolean;
+  position: number | null;
+}
+
 export interface SpaceLine {
   seq: number;
   kind: LineKind;
@@ -184,13 +191,14 @@ export interface FleetClient {
     } & AgentPicks,
   ): Promise<SpaceView>;
   /** `mode`: the turn's, when it isn't the space's own; `picks`: an agent,
-   *  model or effort from this turn on (none: the space's own). */
+   *  model or effort from this turn on (none: the space's own). While the
+   *  space runs the host queues it (docs/fleet.md "Sends queue"). */
   send(
     space: string,
     text: string,
     mode?: FleetMode | null,
     picks?: AgentPicks,
-  ): Promise<void>;
+  ): Promise<SendResult>;
   stopSpace(space: string): Promise<void>;
   /** One entry per question: chosen options, or one free text. */
   answer(space: string, askId: string, answers: string[][]): Promise<void>;

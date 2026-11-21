@@ -32,7 +32,7 @@ export const NO_DRAFT: HomeDraft = {
   pick: NO_PICK,
 };
 
-/** A project a space was started in, for the quick chips. */
+/** A project a space was started in (the project sheet's Recent). */
 export interface RecentProject {
   deviceId: string;
   projectId: string;
@@ -40,8 +40,6 @@ export interface RecentProject {
 
 /** Recent projects kept (newest first). */
 export const RECENT_MAX = 5;
-/** Quick chips shown under the empty state. */
-export const RECENT_SHOWN = 3;
 
 export interface ResolvedHome {
   device: FleetDeviceView | null;
@@ -120,53 +118,45 @@ export function addRecent(
   ].slice(0, RECENT_MAX);
 }
 
-export interface RecentChip extends RecentProject {
-  /** "theodore · mac-A" */
-  label: string;
-  accessibilityLabel: string;
-}
-
-/** Quick chips: recent projects still startable, not the one shown. */
-export function recentChips(
+/** The project a space was last started in on `device`, still on it. */
+export function lastProjectOn(
   recent: readonly RecentProject[],
-  startable: readonly FleetDeviceView[],
-  shown: { deviceId: string; projectId: string } | null,
-): RecentChip[] {
-  const out: RecentChip[] = [];
+  device: FleetDeviceView,
+): string | null {
   for (const r of recent) {
-    if (
-      shown &&
-      r.deviceId === shown.deviceId &&
-      r.projectId === shown.projectId
-    )
-      continue;
-    const d = startable.find((x) => x.deviceId === r.deviceId);
-    const p = d?.projects.find((x) => x.id === r.projectId);
-    if (!d || !p) continue;
-    out.push({
-      ...r,
-      label: `${shorten(p.name, 18)} · ${shorten(d.name, 14)}`,
-      accessibilityLabel: `Use ${p.name} on ${d.name}`,
-    });
-    if (out.length === RECENT_SHOWN) break;
+    if (r.deviceId !== device.deviceId) continue;
+    if (device.projects.some((p) => p.id === r.projectId)) return r.projectId;
   }
-  return out;
+  return null;
 }
 
-/** `s` cut to `max` characters with an ellipsis. */
-export function shorten(s: string, max: number): string {
-  const chars = [...s];
-  return chars.length <= max ? s : `${chars.slice(0, max - 1).join('')}…`;
+/** The project sheet offers a search field from this many projects on. */
+export const PROJECT_SEARCH_MIN = 7;
+
+export interface ProjectGroups {
+  /** Recently started in, newest first. */
+  recent: { id: string; name: string }[];
+  /** The others, as the device lists them. */
+  rest: { id: string; name: string }[];
 }
 
-/** The where chip: "mac-A · theodore" (short), read as "Runs on mac-A, project theodore". */
-export function whereLabel(
-  device: { name: string },
-  project: { name: string },
-): { label: string; accessibilityLabel: string } {
+/** The project sheet's lists for `device`, cut to those naming `query`. */
+export function projectGroups(
+  device: FleetDeviceView,
+  recent: readonly RecentProject[],
+  query = '',
+): ProjectGroups {
+  const q = query.trim().toLowerCase();
+  const hit = (p: { name: string }) => !q || p.name.toLowerCase().includes(q);
+  const ids = recent
+    .filter((r) => r.deviceId === device.deviceId)
+    .map((r) => r.projectId);
+  const mine = ids
+    .map((id) => device.projects.find((p) => p.id === id))
+    .filter((p): p is { id: string; name: string } => !!p);
   return {
-    label: `${shorten(device.name, 14)} · ${shorten(project.name, 16)}`,
-    accessibilityLabel: `Runs on ${device.name}, project ${project.name}`,
+    recent: mine.filter(hit),
+    rest: device.projects.filter((p) => !ids.includes(p.id) && hit(p)),
   };
 }
 
@@ -179,7 +169,7 @@ export interface DeviceRow {
 }
 
 /**
- * The where sheet's devices: computers you trust, those that can take a
+ * The computer sheet's devices: computers you trust, those that can take a
  * space first, then online, then by name; the others say why not.
  */
 export function deviceRows(

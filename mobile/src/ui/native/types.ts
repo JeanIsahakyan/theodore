@@ -135,6 +135,8 @@ export interface MenuProps extends Common, Placed, Floating {
   label: string;
   groups: readonly MenuGroup[];
   disabled?: boolean;
+  /** The composer's small chip (30 high, 13 pt). */
+  compact?: boolean;
 }
 
 export interface SwitchProps extends Common, Placed, WithIcon {

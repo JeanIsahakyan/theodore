@@ -8,15 +8,18 @@
  * drawer ─ spaces by day, search, Devices, account / Settings
  *    │ pick
  *    ▼
- * Home ── push ─▶ space/[id] | devices | settings ── back ─▶ Home
- *                                          └─ push ─▶ settings/organization | device | about
- *      └─ Send ─▶ push space/[id]
+ * Home ── push ─▶ devices | settings ── back ─▶ Home
+ *                          └─ push ─▶ settings/organization | device | about
+ *      ── Send / drawer ─▶ space/[id]: a fade, no edge swipe back, the main
+ *                          header (☰, not Back); Android Back ─▶ Home
  * notification / deep link ─▶ space/[id] over Home (the anchor)
- * composer chip (iOS) ─▶ model-picker | where-picker as a formSheet
+ * composer chip / where row (iOS) ─▶ model- | computer- | project-picker
+ *                                   as a formSheet
  * ```
  *
- * Headers: Home's is `MainHeader` (menu, questions, new space; iOS bar
- * items, Android a Material 3 top app bar, web the JS header). Pushed
+ * Headers: Home's and a space's are `MainHeader` (menu, questions, new
+ * space; iOS bar items, Android a Material 3 top app bar, web the JS
+ * header). Pushed
  * screens use `PushedHeader` (a Material top app bar on Android), except
  * on iOS 26+, where every header is the native Liquid Glass bar over the
  * content (`src/shell/glassHeader.ts`).
@@ -108,7 +111,10 @@ export default function AppLayout() {
           screenOptions={{ contentStyle: { backgroundColor: p.background } }}
         >
           <Stack.Screen name="index" options={home} />
-          <Stack.Screen name="space/[id]" options={pushed('Space')} />
+          <Stack.Screen
+            name="space/[id]"
+            options={{ ...home, title: 'Space', animation: 'fade' }}
+          />
           <Stack.Screen name="devices" options={pushed('Devices')} />
           <Stack.Screen name="settings/index" options={pushed('Settings')} />
           <Stack.Screen
@@ -122,7 +128,8 @@ export default function AppLayout() {
           <Stack.Screen name="settings/about" options={pushed('About')} />
           <Stack.Screen name="start" options={{ headerShown: false }} />
           <Stack.Screen name="model-picker" options={sheet('Model')} />
-          <Stack.Screen name="where-picker" options={sheet('Runs on')} />
+          <Stack.Screen name="computer-picker" options={sheet('Computer')} />
+          <Stack.Screen name="project-picker" options={sheet('Project')} />
         </Stack>
       </AppShell>
     </DrawerProvider>

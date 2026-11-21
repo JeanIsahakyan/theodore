@@ -27,6 +27,7 @@ pub(crate) const SHIP_TITLE_SYSTEM: &str = "You write the title of a commit and 
      in Theodore, a code review tool, from the change's diff stat and the notes of the agent \
      that made it. Describe only what the diff stat shows: the notes may tell of edits that \
      were undone later, and a file missing from the diff stat is not part of the change. \
+     Write in English, whatever language the notes are in. \
      Answer in exactly this form and nothing else:\n\
      TITLE: an imperative summary of the whole change, under 60 characters, no closing period \
      (\"Add notes on ages\", never \"Added …\" or \"I added …\").\n\
@@ -53,6 +54,8 @@ const TIMEOUT: Duration = Duration::from_secs(30);
 pub(crate) struct ChangeSummary {
     pub title: String,
     pub bullets: Vec<String>,
+    /// The agent's proposal (in English), not the paths' fallback.
+    pub proposed: bool,
 }
 
 impl ChangeSummary {
@@ -92,6 +95,7 @@ impl Core {
         let fallback = ChangeSummary {
             title: fallback_title(&files, &space.name),
             bullets: Vec::new(),
+            proposed: false,
         };
         if files.is_empty() {
             return fallback;
@@ -208,7 +212,11 @@ fn parse(answer: &str, files: &[FileDiff]) -> Option<ChangeSummary> {
     }
     // A lone bullet that only repeats the title says nothing more.
     bullets.retain(|b| b.trim_end_matches('.') != title);
-    Some(ChangeSummary { title, bullets })
+    Some(ChangeSummary {
+        title,
+        bullets,
+        proposed: true,
+    })
 }
 
 /// `line` as `"<key>: <rest>"`, case-insensitively.

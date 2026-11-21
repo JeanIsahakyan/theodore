@@ -301,6 +301,30 @@ export function LiveReply({
   );
 }
 
+/** A running turn on a host that doesn't mirror its rows: the newest
+ *  line of its log (what it does now) over "Working · 12s". */
+export function WorkingLine({ last }: { last: string | null }) {
+  const p = usePalette();
+  return (
+    <Message from="assistant" accessibilityLabel="The agent is working">
+      <View style={styles.working}>
+        <Spinner color={p.accent} />
+        {last ? (
+          <Text
+            numberOfLines={2}
+            style={[styles.workingText, { color: p.text }]}
+          >
+            {last}
+          </Text>
+        ) : null}
+      </View>
+      <View style={styles.status}>
+        <LiveTimer since={null} />
+      </View>
+    </Message>
+  );
+}
+
 /** The agent's progress for the running turn, above the composer. */
 export function ProgressCard({ progress }: { progress: SpaceProgress }) {
   const p = usePalette();
@@ -351,6 +375,8 @@ export function ProgressCard({ progress }: { progress: SpaceProgress }) {
 }
 
 const styles = StyleSheet.create({
+  working: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  workingText: { flexShrink: 1, fontSize: 14 },
   small: { fontSize: 12 },
   shrink: { flexShrink: 1 },
   dim: { opacity: 0.5 },

@@ -1210,6 +1210,22 @@ describe('steering', () => {
     expect(state().spaces[0]!.status).toBe('idle');
   });
 
+  it('a send while it runs is queued by the host: queued, its position', async () => {
+    const { client, sock, space } = await runningSpace();
+    const sent = client.send(space, 'and the tests');
+    expect(state().spaces[0]!.status).toBe('running');
+    await waitFor(() => sock.of('request').length === 2, 'send');
+    sock.deliver({
+      type: 'reply',
+      envelope: await reply(lastRequest(sock), {
+        outcome: 'ok',
+        value: { message: 'm1', queued: true, position: 2 },
+      }),
+    });
+    await expect(sent).resolves.toEqual({ queued: true, position: 2 });
+    expect(state().spaces[0]!.status).toBe('running');
+  });
+
   it('puts an agent, model or effort picked on the send, and only those', async () => {
     const { client, sock, space } = await runningSpace();
     const sent = client.send(space, 'go on', null, {

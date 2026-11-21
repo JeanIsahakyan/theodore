@@ -719,10 +719,12 @@ waiting for auto-archive (§7):
                               next turn's prompt: "the previous PR (#123) merged…"
 ```
 
-The next round's Open PR isn't about the goal any more, and its title is
-never a sentence copied from the chat (an agent's reply is first person and
-tells the round's story, edits it undid included). It is an imperative
-summary of the round's net change (`ship_title.rs`):
+Open PR isn't about the goal as typed — it may be in any language, and
+after a Continue it isn't what the round did — and its title is never a
+sentence copied from the chat (an agent's reply is first person and tells
+the round's story, edits it undid included). It is an imperative summary of
+the net change, in English (`ship_title.rs`): the first PR's from the base,
+the next round's from the round's start.
 
 ```
 net diff (base ─▶ head) ─┬─ empty ──────────────────────────▶ Update <name>
@@ -735,7 +737,9 @@ A proposed title is refused, never cut: over 72 characters, first person
 ("I created …"), or naming a path the net diff doesn't have. A summary line
 is a whole sentence or dropped, the same way. The PR body is those lines,
 the commit message the title and those lines. Open PR's title field starts
-empty after a Continue; left empty, this is the title, typed, yours is.
+empty after a Continue; left empty, this is the title, typed, yours is. The
+first PR falls back to the goal (its first line, the rest as the body) only
+when no proposal holds.
 
 **Send to agent** sits next to a thread's Resolve, a draft's edit/delete and
 a finding's Add to review — in the diff and in the side panel — but only when
@@ -1607,15 +1611,17 @@ Update ─▶ fetch the base ─▶ tip == base_sha? ─▶ "already up to date"
   after a failure — never opens a second PR, and a retry with no new turns
   pushes nothing.
 - *PR body*: the repo's PR template when the change has one, else the
-  goal (when it says more than the title); then a link back to the space.
+  summary lines in English (above; the goal when no proposal holds); then a
+  link back to the space. Branch names, titles and filled-in templates are
+  asked for in English too, whatever language the goal is in.
 
   ```
   template? first of .github/pull_request_template.md · .github/PULL_REQUEST_TEMPLATE.md
             · docs/pull_request_template.md · pull_request_template.md   (at the checkpoint)
-    yes ─▶ the space's agent fills it in (read-only, Claude on haiku, 60 s,
+    yes ─▶ the space's agent fills it in, in English (read-only, Claude on haiku, 60 s,
     │      from the goal + changed files) ─▶ kept only if every heading survived
     │      └─ failed / timed out / dropped headings ─▶ goal + the template as is
-    no  ─▶ the goal
+    no  ─▶ the summary lines (the goal when no proposal holds)
   then  ─▶ <!-- theodore-space:<id> -->
            <sub>From a Theodore space: theodore://space/<id></sub>
   ```

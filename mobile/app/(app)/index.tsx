@@ -9,12 +9,15 @@
  *
  *                  ⌘  New space
  *       It runs on your computer; follow it from here.
- *        ( api · build-box ) ( web · mac-A )        recent projects: one tap
  *
  *  ╭ Run lets the agent run any command… ╮          only in Run
  * ╭──────────────────────────────────────────────╮
+ * │ 🖥  mac-A ●                   up to Edit  ⌄ │  WhereCard: computer sheet
+ * │ ──────────────────────────────────────────── │
+ * │ 📁  theodore                              ⌄ │  project sheet
+ * ├──────────────────────────────────────────────┤
  * │ What should the agent work on?               │
- * │ (mac-A · repo ⌄)(Opus 4.1 · High ⌄)(Edit ⌄)(↑)│  chips scroll sideways
+ * │ (Opus 4.1 High ⌄)(Edit ⌄)                (↑) │  small chips
  * ╰──────────────────────────────────────────────╯
  *
  * picks: src/state/compose.ts (shared with the sheets, remembered per
@@ -23,12 +26,13 @@
  *        (not at a cold start: the keyboard would cover Home at launch)
  * no computer can take one ─▶ "No computer can take a space right now…",
  *                             Devices, the composer off
- * Send ─▶ fleet.startSpace ─▶ recent projects ─▶ push /space/<id>
+ * Send ─▶ fleet.startSpace ─▶ recent projects ─▶ /space/<id>, no slide,
+ *        its header the main one (☰), not Back
  * ```
  */
 import { router, type Href } from 'expo-router';
 import * as Haptics from 'expo-haptics';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   Keyboard,
   Pressable,
@@ -41,15 +45,14 @@ import { MainHeader } from '../../src/components/main-header';
 import {
   ModeMenu,
   ModelChip,
-  WhereChip,
 } from '../../src/components/pickers/composer-chips';
+import { WhereCard } from '../../src/components/pickers/where-card';
 import { useHome } from '../../src/components/pickers/use-picker';
 import { SymbolImage } from '../../src/components/symbol-image';
 import { useServices } from '../../src/services';
 import { useGlassHeaderInset } from '../../src/shell/glassHeader';
 import { spaceHref } from '../../src/shell/navigate';
 import {
-  applyWhere,
   noteStarted,
   requestNewSpace,
   setHomeMode,
@@ -57,7 +60,6 @@ import {
 } from '../../src/state/compose';
 import { startPicks } from '../../src/ui/agents';
 import { ConnectionBanner } from '../../src/ui/ConnectionBanner';
-import { recentChips } from '../../src/ui/homeDraft';
 import { RUN_WARNING, errorText, modesUpTo } from '../../src/ui/logic';
 import { Button, Glass } from '../../src/ui/native';
 import { QuestionsBanner } from '../../src/ui/QuestionsBanner';
@@ -72,8 +74,7 @@ export default function NewSpaceScreen() {
   const { fleet } = useServices();
   const p = usePalette();
   const top = useGlassHeaderInset();
-  const { device, project, mode, pick, startable } = useHome();
-  const recent = useCompose((s) => s.recent);
+  const { device, project, mode, pick } = useHome();
   const fresh = useCompose((s) => s.fresh);
   const [goal, setGoal] = useState('');
   const [busy, setBusy] = useState(false);
@@ -92,18 +93,6 @@ export default function NewSpaceScreen() {
     const t = setTimeout(() => input.current?.focus(), web ? 0 : 300);
     return () => clearTimeout(t);
   }, [fresh]);
-
-  const quick = useMemo(
-    () =>
-      recentChips(
-        recent,
-        startable,
-        device && project
-          ? { deviceId: device.deviceId, projectId: project.id }
-          : null,
-      ),
-    [recent, startable, device, project],
-  );
 
   const ready = !!device && !!project && goal.trim() !== '' && !busy;
 
@@ -135,7 +124,6 @@ export default function NewSpaceScreen() {
   const chips =
     device && project ? (
       <>
-        <WhereChip disabled={busy} />
         <ModelChip disabled={busy} />
         <ModeMenu
           modes={modesUpTo(device.maxMode)}
@@ -170,20 +158,6 @@ export default function NewSpaceScreen() {
             <Text className="max-w-xs text-center text-sm text-muted-foreground">
               {HINT}
             </Text>
-            {quick.length > 0 ? (
-              <View className="mt-3 flex-row flex-wrap justify-center gap-2">
-                {quick.map((r) => (
-                  <Button
-                    key={`${r.deviceId}/${r.projectId}`}
-                    label={r.label}
-                    accessibilityLabel={r.accessibilityLabel}
-                    variant="secondary"
-                    pill
-                    onPress={() => applyWhere(r.deviceId, r.projectId)}
-                  />
-                ))}
-              </View>
-            ) : null}
           </>
         ) : (
           <>
@@ -223,6 +197,7 @@ export default function NewSpaceScreen() {
           disabled={!device || !project}
           sending={busy}
           canSubmit={ready}
+          header={device && project ? <WhereCard disabled={busy} /> : null}
           leading={chips}
           error={error}
           autoFocus={web}

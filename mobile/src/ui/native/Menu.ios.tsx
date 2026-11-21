@@ -16,6 +16,7 @@ import {
   accessibilityLabel as a11yLabel,
   buttonBorderShape,
   buttonStyle,
+  controlSize,
   disabled as disabledMod,
   lineLimit,
   menuStyle,
@@ -34,6 +35,7 @@ export function Menu({
   label,
   groups,
   disabled,
+  compact,
   glass,
   accessibilityLabel,
   testID,
@@ -43,6 +45,7 @@ export function Menu({
     menuStyle('button'),
     buttonStyle(glass && liquidGlass ? 'glass' : 'bordered'),
     buttonBorderShape('capsule'),
+    ...(compact ? [controlSize('small')] : []),
     a11yLabel(accessibilityLabel ?? label),
     ...(disabled ? [disabledMod(true)] : []),
   ];

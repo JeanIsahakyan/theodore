@@ -560,8 +560,9 @@ fn fill_prompt(template: &str, goal: &str, files: &str) -> String {
         "Fill in this repository's pull request template for the change in the current \
          directory. Keep every heading and checklist of the template; replace its \
          placeholder text and HTML comments with what this change does. Don't invent \
-         anything you can't see; leave a checklist item unchecked when unsure. Answer with \
-         the filled-in markdown only, no preamble, no code fence.\n\n\
+         anything you can't see; leave a checklist item unchecked when unsure. Write in \
+         English, whatever language the request below is in. Answer with the filled-in \
+         markdown only, no preamble, no code fence.\n\n\
          What the change is for:\n{goal}\n\n\
          Files changed:\n{files}\n\n\
          The template:\n{template}"

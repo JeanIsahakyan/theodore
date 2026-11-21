@@ -15,6 +15,7 @@ import type {
   McpAutoView,
   FleetModelView,
   LineKind,
+  SendResult,
   SpaceLine,
   SpaceStatus,
 } from './types';
@@ -329,4 +330,18 @@ export function gapLine(from: number, to: number): SpaceLine {
     kind: 'gap',
     text: `Events ${from}–${to} are no longer available`,
   };
+}
+
+/** The host's `ok` value for a send, shape-checked (another device's word). */
+export function sendResult(value: unknown): SendResult {
+  const v = (value ?? {}) as { queued?: unknown; position?: unknown };
+  const queued = v.queued === true;
+  const position =
+    queued &&
+    typeof v.position === 'number' &&
+    Number.isInteger(v.position) &&
+    v.position > 0
+      ? v.position
+      : null;
+  return { queued, position };
 }

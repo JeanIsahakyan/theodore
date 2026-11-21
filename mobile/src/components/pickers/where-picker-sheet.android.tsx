@@ -1,9 +1,13 @@
 /**
- * Android: the where sheet's content in Compose (inside the chip's
- * `ModalBottomSheet`); the same steps as `where-picker-list.tsx`: devices
- * with an online dot ─▶ a device's projects.
+ * Android: Home's computer and project sheets in Compose (inside a
+ * `ModalBottomSheet`); the same rows as `where-picker-list.tsx`.
  */
-import { Column, Icon, IconButton } from '@expo/ui/jetpack-compose';
+import {
+  Column,
+  OutlinedTextField,
+  Text,
+  useNativeState,
+} from '@expo/ui/jetpack-compose';
 import {
   fillMaxWidth,
   padding,
@@ -11,85 +15,104 @@ import {
   verticalScroll,
 } from '@expo/ui/jetpack-compose/modifiers';
 import { useState } from 'react';
-import { applyWhere } from '../../state/compose';
+import { applyDevice, applyWhere } from '../../state/compose';
+import { PROJECT_SEARCH_MIN } from '../../ui/homeDraft';
 import { usePalette } from '../../ui/theme';
 import { tick } from './haptics';
-import { SheetRow, SheetTitle } from './sheet-parts.android';
-import { useDeviceRows, useHome } from './use-picker';
-import { firstStep } from './where-steps';
+import { SheetHeading, SheetRow, SheetTitle } from './sheet-parts.android';
+import { useDeviceRows, useHome, useProjectGroups } from './use-picker';
 
-const BACK = require('../../../assets/icons/arrow_back.xml');
+const COLUMN = [fillMaxWidth(), verticalScroll(), padding(0, 0, 0, 24)];
 
-export function WherePickerSheet({ onClose }: { onClose: () => void }) {
-  const p = usePalette();
+export function ComputerPickerSheet({ onClose }: { onClose: () => void }) {
   const rows = useDeviceRows();
   const shown = useHome();
-  const [step, setStep] = useState<string | null>(() => firstStep(rows));
-  const open = step ? rows.find((r) => r.device.deviceId === step) : null;
-  const pickProject = (deviceId: string, projectId: string) => {
-    applyWhere(deviceId, projectId);
-    tick();
-    onClose();
-  };
-  const several = rows.filter((r) => r.enabled).length > 1;
-
   return (
-    <Column
-      modifiers={[fillMaxWidth(), verticalScroll(), padding(0, 0, 0, 24)]}
+    <Column modifiers={COLUMN}>
+      <SheetTitle>Computer</SheetTitle>
+      {rows.map((r) => {
+        const d = r.device;
+        return (
+          <SheetRow
+            key={d.deviceId}
+            label={d.name}
+            detail={r.detail}
+            dot={d.online ? 'on' : 'off'}
+            disabled={!r.enabled}
+            selected={shown.device?.deviceId === d.deviceId}
+            accessibilityLabel={`${d.name}, ${d.online ? 'online' : 'offline'}, ${r.detail}`}
+            onPress={() => {
+              applyDevice(d.deviceId);
+              tick();
+              onClose();
+            }}
+          />
+        );
+      })}
+    </Column>
+  );
+}
+
+function Search({ onChange }: { onChange: (q: string) => void }) {
+  const text = useNativeState('');
+  return (
+    <OutlinedTextField
+      value={text}
+      singleLine
+      keyboardOptions={{
+        capitalization: 'none',
+        autoCorrectEnabled: false,
+        imeAction: 'search',
+      }}
+      onValueChange={onChange}
+      modifiers={[
+        fillMaxWidth(),
+        padding(24, 4, 24, 8),
+        semantics({ contentDescription: 'Search projects' }),
+      ]}
     >
-      {open ? (
-        <>
-          <SheetTitle
-            leading={
-              several ? (
-                <IconButton
-                  onClick={() => setStep(null)}
-                  modifiers={[semantics({ contentDescription: 'Devices' })]}
-                >
-                  <Icon source={BACK} size={24} tint={p.text} />
-                </IconButton>
-              ) : undefined
-            }
-          >
-            {`Runs on ${open.device.name}`}
-          </SheetTitle>
-          {open.device.projects.map((x) => (
-            <SheetRow
-              key={x.id}
-              label={x.name}
-              selected={
-                shown.device?.deviceId === open.device.deviceId &&
-                shown.project?.id === x.id
-              }
-              onPress={() => pickProject(open.device.deviceId, x.id)}
-            />
-          ))}
-        </>
-      ) : (
-        <>
-          <SheetTitle>Runs on</SheetTitle>
-          {rows.map((r) => {
-            const d = r.device;
-            const one = d.projects.length === 1 ? d.projects[0] : null;
-            return (
-              <SheetRow
-                key={d.deviceId}
-                label={d.name}
-                detail={r.detail}
-                dot={d.online ? 'on' : 'off'}
-                disabled={!r.enabled}
-                chevron={r.enabled && !one}
-                selected={!!one && shown.device?.deviceId === d.deviceId}
-                accessibilityLabel={`${d.name}, ${d.online ? 'online' : 'offline'}, ${r.detail}`}
-                onPress={() => {
-                  if (one) pickProject(d.deviceId, one.id);
-                  else setStep(d.deviceId);
-                }}
-              />
-            );
-          })}
-        </>
-      )}
+      <OutlinedTextField.Placeholder>
+        <Text>Search projects</Text>
+      </OutlinedTextField.Placeholder>
+    </OutlinedTextField>
+  );
+}
+
+export function ProjectPickerSheet({ onClose }: { onClose: () => void }) {
+  const p = usePalette();
+  const [query, setQuery] = useState('');
+  const { device, project } = useHome();
+  const groups = useProjectGroups(query);
+  if (!device) return null;
+  const deviceId = device.deviceId;
+  const row = (x: { id: string; name: string }) => (
+    <SheetRow
+      key={x.id}
+      label={x.name}
+      selected={project?.id === x.id}
+      onPress={() => {
+        applyWhere(deviceId, x.id);
+        tick();
+        onClose();
+      }}
+    />
+  );
+  const headings = groups.recent.length > 0 && groups.rest.length > 0;
+  return (
+    <Column modifiers={COLUMN}>
+      <SheetTitle>{`Project · ${device.name}`}</SheetTitle>
+      {device.projects.length >= PROJECT_SEARCH_MIN ? (
+        <Search onChange={setQuery} />
+      ) : null}
+      {headings ? <SheetHeading>Recent</SheetHeading> : null}
+      {groups.recent.map(row)}
+      {headings ? <SheetHeading>All</SheetHeading> : null}
+      {groups.rest.map(row)}
+      {groups.recent.length + groups.rest.length === 0 ? (
+        <Text color={p.muted} modifiers={[padding(24, 8, 24, 8)]}>
+          No project matches.
+        </Text>
+      ) : null}
     </Column>
   );
 }

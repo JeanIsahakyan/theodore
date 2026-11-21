@@ -25,7 +25,8 @@ use crate::usecases::spaces::{slug, unique_name};
 /// other one-shot utility call (`space_handoff`'s own system prompt).
 pub(crate) const IDENTITY_SYSTEM: &str = "You name short-lived work in Theodore, a code review tool, from \
      what someone asked an agent to change. Answer with exactly two lines and nothing else:\n\
-     NAME: 2 to 4 lowercase words for the change, separated by hyphens, no other punctuation.\n\
+     NAME: 2 to 4 lowercase English words for the change (whatever language the request is \
+     in), separated by hyphens, no other punctuation.\n\
      TITLE: a title for this chat, 6 words or fewer, in sentence case. If the request names an \
      issue or ticket key (like LIN-145 or #123), put it first.";
 

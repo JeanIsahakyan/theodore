@@ -8,14 +8,26 @@
  * web      pill ─▶ a modal over the window
  * ```
  */
-export type SheetKind = 'model' | 'where';
+import type { ReactNode } from 'react';
+
+export type SheetKind = 'model' | 'computer' | 'project';
+
+/** A sheet to open from a chip or a row (`useSheet`, per platform). */
+export interface SheetHandle {
+  open: () => void;
+  isOpen: boolean;
+  /** Render it next to the trigger (Android, web); iOS: `null` (a route). */
+  element: ReactNode;
+}
 
 export interface SheetChipProps {
   sheet: SheetKind;
   /** The model sheet's target: a space's id; none: Home's draft. */
   space?: string | null;
-  /** Short, what the chip shows ("Opus 4.1 · High"). */
+  /** Short, what the chip shows ("Opus 4.1"). */
   label: string;
+  /** After the label, muted ("High"). */
+  detail?: string | null;
   /** What it is read as ("Agent: Claude, Opus 4.1, High"). */
   accessibilityLabel: string;
   disabled?: boolean;

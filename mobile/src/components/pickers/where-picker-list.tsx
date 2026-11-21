@@ -1,86 +1,37 @@
 /**
- * The where sheet's content in React Native (iOS formSheet route, web
- * modal); Android draws the same in Compose (`where-picker-sheet.android.tsx`).
+ * Home's computer and project sheets in React Native (iOS formSheet
+ * routes, web modal); Android draws the same in Compose
+ * (`where-picker-sheet.android.tsx`).
  *
  * ```text
- * Runs on                                 Runs on mac-A          (‹ back)
- * ● mac-A     2 projects · up to Edit  ›    theodore      ✓
- * ● build-box 1 project · up to Run         api
- * ○ Work Mac  Offline                (dim)
+ * Computer                                 Project · mac-A
+ * ● mac-A     3 projects · up to Edit ✓    [Search projects]   (7+)
+ * ● build-box 1 project · up to Run        RECENT
+ * ○ Work Mac  Offline              (dim)     theodore        ✓
+ *                                          ALL
+ *                                            cloud
  *
- * a device with one project ─▶ picked, closed; several ─▶ its projects
- * a project ─▶ device + project picked (tick), closed
+ * a computer ─▶ applyDevice(): its last project, else its first; closed
+ * a project  ─▶ applyWhere(): picked, closed
  * ```
  */
 import { useState } from 'react';
-import { Pressable, View } from 'react-native';
-import { applyWhere } from '../../state/compose';
+import { Text, TextInput, View } from 'react-native';
+import { applyDevice, applyWhere } from '../../state/compose';
+import { PROJECT_SEARCH_MIN } from '../../ui/homeDraft';
 import { usePalette } from '../../ui/theme';
-import { SymbolImage } from '../symbol-image';
 import { tick } from './haptics';
-import { SheetRow, SheetTitle } from './sheet-rows';
-import { useDeviceRows, useHome } from './use-picker';
-import { firstStep } from './where-steps';
+import { SheetHeading, SheetRow, SheetTitle } from './sheet-rows';
+import { useDeviceRows, useHome, useProjectGroups } from './use-picker';
 
-export function WherePickerList({ onClose }: { onClose: () => void }) {
-  const p = usePalette();
+export function ComputerPickerList({ onClose }: { onClose: () => void }) {
   const rows = useDeviceRows();
   const shown = useHome();
-  const [step, setStep] = useState<string | null>(() => firstStep(rows));
-  const open = step ? rows.find((r) => r.device.deviceId === step) : null;
-  const pickProject = (deviceId: string, projectId: string) => {
-    applyWhere(deviceId, projectId);
-    tick();
-    onClose();
-  };
-
-  if (open) {
-    const several = rows.filter((r) => r.enabled).length > 1;
-    return (
-      <View className="pb-6" testID="where-picker">
-        <SheetTitle
-          leading={
-            several ? (
-              <Pressable
-                onPress={() => setStep(null)}
-                accessibilityRole="button"
-                accessibilityLabel="Devices"
-                hitSlop={10}
-                className="-ml-1 h-8 w-8 items-center justify-center rounded-full active:bg-muted"
-              >
-                <SymbolImage
-                  name="chevron.right"
-                  size={16}
-                  color={p.accent}
-                  style={{ transform: [{ scaleX: -1 }] }}
-                />
-              </Pressable>
-            ) : undefined
-          }
-        >
-          {`Runs on ${open.device.name}`}
-        </SheetTitle>
-        {open.device.projects.map((x) => (
-          <SheetRow
-            key={x.id}
-            label={x.name}
-            selected={
-              shown.device?.deviceId === open.device.deviceId &&
-              shown.project?.id === x.id
-            }
-            onPress={() => pickProject(open.device.deviceId, x.id)}
-          />
-        ))}
-      </View>
-    );
-  }
-
   return (
-    <View className="pb-6" testID="where-picker">
-      <SheetTitle>Runs on</SheetTitle>
+    <View className="pb-6" testID="computer-picker">
+      <SheetTitle>Computer</SheetTitle>
       {rows.map((r) => {
         const d = r.device;
-        const one = d.projects.length === 1 ? d.projects[0] : null;
         return (
           <SheetRow
             key={d.deviceId}
@@ -88,17 +39,67 @@ export function WherePickerList({ onClose }: { onClose: () => void }) {
             detail={r.detail}
             dot={d.online ? 'on' : 'off'}
             disabled={!r.enabled}
-            chevron={r.enabled && !one}
-            selected={one ? shown.device?.deviceId === d.deviceId : undefined}
+            selected={shown.device?.deviceId === d.deviceId}
             accessibilityLabel={`${d.name}, ${d.online ? 'online' : 'offline'}, ${r.detail}`}
             onPress={() => {
-              if (!r.enabled) return;
-              if (one) pickProject(d.deviceId, one.id);
-              else setStep(d.deviceId);
+              applyDevice(d.deviceId);
+              tick();
+              onClose();
             }}
           />
         );
       })}
+    </View>
+  );
+}
+
+export function ProjectPickerList({ onClose }: { onClose: () => void }) {
+  const p = usePalette();
+  const [query, setQuery] = useState('');
+  const { device, project } = useHome();
+  const groups = useProjectGroups(query);
+  if (!device) return null;
+  const pick = (projectId: string) => {
+    applyWhere(device.deviceId, projectId);
+    tick();
+    onClose();
+  };
+  const row = (x: { id: string; name: string }) => (
+    <SheetRow
+      key={x.id}
+      label={x.name}
+      selected={project?.id === x.id}
+      onPress={() => pick(x.id)}
+    />
+  );
+  const headings = groups.recent.length > 0 && groups.rest.length > 0;
+  return (
+    <View className="pb-6" testID="project-picker">
+      <SheetTitle>{`Project · ${device.name}`}</SheetTitle>
+      {device.projects.length >= PROJECT_SEARCH_MIN ? (
+        <View className="px-5 pt-1 pb-2">
+          <TextInput
+            value={query}
+            onChangeText={setQuery}
+            placeholder="Search projects"
+            placeholderTextColor={p.muted}
+            autoCorrect={false}
+            autoCapitalize="none"
+            clearButtonMode="while-editing"
+            accessibilityLabel="Search projects"
+            className="h-10 rounded-xl bg-muted px-3 text-[16px] text-foreground"
+          />
+        </View>
+      ) : null}
+      {headings ? <SheetHeading>Recent</SheetHeading> : null}
+      {groups.recent.map(row)}
+      {headings ? <SheetHeading>All</SheetHeading> : null}
+      {groups.rest.map(row)}
+      {groups.recent.length + groups.rest.length === 0 ? (
+        <Text className="px-5 py-3 text-[15px] text-muted-foreground">
+          No project matches.
+        </Text>
+      ) : null}
     </View>
   );
 }

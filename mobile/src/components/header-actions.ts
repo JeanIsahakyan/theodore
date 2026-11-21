@@ -15,6 +15,8 @@ import { useDrawer } from './drawer-context';
 
 export interface MainHeaderProps {
   title: string;
+  /** A space's second line ("on mac-A · Running"), under the title. */
+  subtitle?: string;
   /** What "new space" does on Home itself (clear the draft); elsewhere it
    *  goes to Home. */
   onNewSpace?: () => void;

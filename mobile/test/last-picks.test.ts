@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mockDevices, mockMirrors, resetFleetState } from '../src/dev/mock';
 import { memoryStorage } from '../src/keys/storage-types';
 import {
+  applyDevice,
   applyEffort,
   applyModel,
   applyWhere,
@@ -222,6 +223,25 @@ describe('kept per account and organization', () => {
     const ctx = pickerContext(useFleetState.getState(), c, 'sp-idle');
     expect(ctx.current.agent).toBe('claude');
     expect(ctx.agents.map((a) => a.id)).toEqual(['claude', 'codex']);
+  });
+
+  it('another computer: its last project, else its first; the same keeps the shown one', () => {
+    const mac = mockDevices.find((d) => d.deviceId === 'dev-mac')!;
+    const box = mockDevices.find((d) => d.deviceId === 'dev-box')!;
+    applyWhere('dev-mac', 'p-tama');
+    applyDevice('dev-mac');
+    expect(useCompose.getState().home.projectId).toBe('p-tama');
+    applyDevice('dev-box');
+    expect(useCompose.getState().home).toMatchObject({
+      deviceId: 'dev-box',
+      projectId: box.projects[0]!.id,
+    });
+    noteStarted('dev-mac', mac.projects.at(-1)!.id);
+    applyDevice('dev-mac');
+    expect(useCompose.getState().home).toMatchObject({
+      deviceId: 'dev-mac',
+      projectId: mac.projects.at(-1)!.id,
+    });
   });
 
   it('"new space" bumps the request Home answers', () => {

@@ -14,13 +14,14 @@ const screens = (dir: string) =>
 describe('signed-in routes', () => {
   it('has Home, a space, Devices, Settings, the picker sheets and the /start redirect', () => {
     expect(screens(app)).toEqual([
+      'computer-picker.tsx',
       'devices.tsx',
       'index.tsx',
       'model-picker.tsx',
+      'project-picker.tsx',
       'settings/',
       'space/',
       'start.tsx',
-      'where-picker.tsx',
     ]);
     expect(readdirSync(join(app, 'space'))).toEqual(['[id].tsx']);
     // Settings at /settings, its drill-down pages under it.
@@ -46,7 +47,8 @@ describe('signed-in routes', () => {
       'settings/about',
       'start',
       'model-picker',
-      'where-picker',
+      'computer-picker',
+      'project-picker',
     ])
       expect(stack).toContain(`name="${name}"`);
   });
