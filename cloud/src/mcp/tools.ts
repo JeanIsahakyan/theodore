@@ -542,7 +542,10 @@ export async function callTool(
       case 'theodore_status':
         return ok(await fleet.status(c));
       case 'devices_list':
-        return ok({ computers: await fleet.devices(c) });
+        return ok({
+          computers: await fleet.devices(c),
+          note: 'trusted_here: whether this MCP connection trusts the computer (device_trust with the fingerprint shown on it). Separately, the computer must trust "Claude (MCP)" in Theodore → Devices; a computer that does not answers fleet.untrusted.',
+        });
       case 'device_trust':
         return ok(
           await fleet.trust(c, needDevice(a), needStr(a, 'fingerprint', 100)),
