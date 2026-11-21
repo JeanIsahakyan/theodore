@@ -223,7 +223,7 @@ async function handle(
     // (a confirm's opens Home, where it waits).
     await Notifications.scheduleNotificationAsync({
       content: {
-        title: notification.request.content.title ?? 'Theodore',
+        title: notification.request.content.title ?? 'Theodore Code',
         body: "Couldn't send your answer. Tap to answer in the app.",
         data: { ...data, options: [] },
       },
