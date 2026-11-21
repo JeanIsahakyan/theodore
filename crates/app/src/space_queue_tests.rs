@@ -16,8 +16,11 @@ use crate::testkit::{Fixtures, fixtures};
 use crate::usecases::spaces::space_chat_key;
 use crate::{AppError, Core, Receivers};
 
+/// Waits on wall time, not a count of polls: on a loaded runner a 5 ms
+/// sleep can take far longer, and a turn hands over through spawned tasks.
 async fn wait_until(mut cond: impl FnMut() -> bool) {
-    for _ in 0..400 {
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    while std::time::Instant::now() < deadline {
         if cond() {
             return;
         }
@@ -97,6 +100,7 @@ fn send(id: &str, text: &str) -> SpaceSendRequest {
         mode: None,
         attachments: None,
         effort: None,
+        mentions: None,
     }
 }
 
@@ -123,11 +127,16 @@ async fn idle(f: &Fixtures, id: &str) -> Space {
 /// A space whose goal turn is running until the returned sender fires.
 async fn running(f: &Fixtures, core: &Core, project: &Project) -> (Space, impl FnOnce()) {
     let go = f.agents.pause_next_run();
+    let runs = f.agents.requests().len();
     let s = core
         .create_space(request(project, "Long job"))
         .await
         .unwrap();
     assert_eq!(space(f, &s.id).status, SpaceStatus::Running);
+    // The space reads Running as soon as `create_space` returns, but its
+    // agent is called from the spawned `drive_turn`, after a few awaits: on
+    // a loaded runner a test counting `requests()` raced that task.
+    wait_until(|| f.agents.requests().len() == runs + 1).await;
     (s, move || go.send(()).unwrap())
 }
 
@@ -537,9 +546,11 @@ async fn send_now_goes_into_a_running_turn_that_takes_it() {
     f.agents.take_steering();
     f.git.push_checkpoint(Sha::new("turn1"));
     let (s, release) = running(&f, &core, &project).await;
-    // The agent is up: its run takes messages from here on.
-    wait_until(|| f.agents.requests().len() == 1).await;
-    tokio::time::sleep(Duration::from_millis(20)).await;
+    // The agent is up: its run takes messages from here on. Its steer
+    // handle is registered just after the agent call returns, so wait for
+    // that rather than a fixed sleep.
+    let run = space(&f, &s.id).run.unwrap();
+    wait_until(|| core.steer_of(&run).is_some()).await;
     let id = core
         .space_send_now(send(&s.id, "also handle 404s"))
         .await

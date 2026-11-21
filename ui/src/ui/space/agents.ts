@@ -21,7 +21,7 @@ import { toolRow } from '../toolSummary';
 import { endedLabel } from './backgroundTaskRows';
 import { pairTurns } from './chatTurns';
 import { splitQueue } from './queue';
-import { mergedIntoParent } from './subspaces';
+import type { ChildStage } from './subspaces';
 
 export type SubagentStatus = 'running' | 'background' | 'done' | 'failed';
 
@@ -208,12 +208,11 @@ const plural = (n: number, one: string) => `${n} ${one}${n === 1 ? '' : 's'}`;
  *  "2 agents running · 3 sub-spaces, 1 running, 2 of 3 merged · 1 command
  *  running". A
  *  background subagent counts as an agent, a background command as a
- *  command. */
+ *  command. `subs` are the sub-spaces' stages, local or on a host. */
 export function stripHeadline(
   agents: readonly Pick<SubagentView, 'status'>[],
   background: readonly Pick<BackgroundTask, 'kind' | 'status'>[],
-  subs: readonly (Pick<Space, 'status'> &
-    Partial<Pick<Space, 'shipped' | 'head_sha'>>)[],
+  subs: readonly ChildStage[],
 ): string {
   const parts: string[] = [];
   const bgAgents = background.filter((t) => t.kind === 'subagent');
@@ -224,8 +223,10 @@ export function stripHeadline(
   if (live > 0) parts.push(`${plural(live, 'agent')} running`);
   else if (total > 0) parts.push(plural(total, 'agent'));
   if (subs.length > 0) {
-    const running = subs.filter((s) => s.status === 'running').length;
-    const merged = subs.filter(mergedIntoParent).length;
+    const running = subs.filter(
+      (g) => g === 'running' || g === 'asking',
+    ).length;
+    const merged = subs.filter((g) => g === 'merged').length;
     parts.push(
       [
         plural(subs.length, 'sub-space'),

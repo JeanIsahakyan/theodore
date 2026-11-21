@@ -338,7 +338,8 @@ until_ms?: number | null } |
 { op: "ask_space"; space: string; question: string } |
 /**
  *  A message as the space's next turn, in the space's own mode (never
- *  changed); refused while it runs (`fleet.busy`).
+ *  changed); queued while it runs, `fleet.busy` once 5 from other
+ *  devices wait (docs/fleet.md "Sends queue").
  */
 { op: "send_to"; space: string; message: string } |
 /**  Answers question set `ask` waiting in `space`, as `Answer` does. */

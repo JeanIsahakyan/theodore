@@ -317,6 +317,59 @@ pub enum FleetLineKind {
     SubSpace,
 }
 
+/// Where a followed space's sub-space stands, as its host words it
+/// (`spaces_list`'s words).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum RemoteSubSpaceStatus {
+    SettingUp,
+    Running,
+    /// Its agent waits on an answer.
+    Question,
+    /// Its setup waits.
+    Waiting,
+    Idle,
+    Failed,
+    Archived,
+}
+
+impl RemoteSubSpaceStatus {
+    /// The host's word; one this build doesn't know reads as `idle`.
+    pub fn from_word(w: &str) -> Self {
+        match w {
+            "setting_up" => Self::SettingUp,
+            "running" => Self::Running,
+            "question" => Self::Question,
+            "waiting" => Self::Waiting,
+            "failed" => Self::Failed,
+            "archived" => Self::Archived,
+            _ => Self::Idle,
+        }
+    }
+}
+
+/// A sub-space a followed space started on its host (docs/fleet.md "What a
+/// hosted space's agent may do"): the latest of its `sub_space` mirror, kept as a
+/// `remote_sub_space` row keyed `<root>:<space>`. Shown in its root's tree;
+/// never a space here (no worktree, no chat, no commands).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+pub struct RemoteSubSpace {
+    /// The followed space at the top of its tree (`rs_…`), a `space` row
+    /// here with `remote` set.
+    pub root: String,
+    /// Its local id on the host.
+    pub space: String,
+    /// `root`, or another sub-space's `space`.
+    pub parent: String,
+    pub title: String,
+    pub status: RemoteSubSpaceStatus,
+    pub mode: SpaceMode,
+    /// Merged into its parent, or shipped.
+    pub done: bool,
+    /// The event it last changed at: newer is more recently active.
+    pub seq: u64,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
 pub struct FleetSpaceLine {
     pub seq: u64,

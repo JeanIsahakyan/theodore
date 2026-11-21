@@ -59,6 +59,7 @@ use tokio::sync::broadcast::error::RecvError;
 use crate::core::Core;
 use crate::error::AppError;
 use crate::usecases::fleet_spaces::HostedAsk;
+use crate::usecases::space_notes::AskTry;
 
 /// `spaces.sub_spaces`: the sub-space tools are on (user scope, default on).
 pub const SUB_SPACES_KEY: &str = "spaces.sub_spaces";
@@ -443,7 +444,7 @@ impl Core {
 
     /// `space`'s change against its base, in short; none for a mirror
     /// (its worktree is on its host) or when it can't be told.
-    async fn diff_stat(&self, space: &Space) -> Option<LocalDiffStat> {
+    pub(crate) async fn diff_stat(&self, space: &Space) -> Option<LocalDiffStat> {
         if space.remote.is_some() {
             return None;
         }
@@ -718,11 +719,6 @@ impl Core {
         row: Space,
         question: &str,
     ) -> Result<LocalSpaceAsk, SpaceToolError> {
-        let target = row.id.clone();
-        let asker = match &from {
-            AskFrom::Space(f) => f.space.clone(),
-            AskFrom::Device(name) => format!("device {name}"),
-        };
         let question = question.trim();
         if question.is_empty() {
             return Err(refuse("invalid", "the question is empty"));
@@ -731,10 +727,36 @@ impl Core {
         if !cwd.is_dir() {
             return Err(refuse(
                 "failed",
-                format!("{target}'s worktree isn't there; space_read it instead"),
+                format!("{}'s worktree isn't there; space_read it instead", row.id),
             ));
         }
         let _slot = self.ask_slot(slot)?;
+        // Whatever comes of it, the space's owner sees it was asked: a
+        // note in its timeline that its agent never reads (`space_note`).
+        let mut tried = None;
+        let asked = self
+            .ask_run(&from, me, &row, cwd, question, &mut tried)
+            .await;
+        self.note_ask(&row, &from, question, &asked, tried).await;
+        asked
+    }
+
+    /// The run behind [`Self::ask_space_as`]: the fork, else a fresh read.
+    /// `tried`: the agent, model and way of the last attempt.
+    async fn ask_run(
+        &self,
+        from: &AskFrom,
+        me: Option<&Space>,
+        row: &Space,
+        cwd: PathBuf,
+        question: &str,
+        tried: &mut Option<AskTry>,
+    ) -> Result<LocalSpaceAsk, SpaceToolError> {
+        let target = row.id.clone();
+        let asker = match from {
+            AskFrom::Space(f) => f.space.clone(),
+            AskFrom::Device(name) => format!("device {name}"),
+        };
         let secs = self
             .setting_u32(ASK_TIMEOUT_KEY, SPACE_ASK_TIMEOUT_SECS)
             .await
@@ -759,7 +781,7 @@ impl Core {
             model: None,
             effort: None,
             stall_after_ms: self.stall_after_ms().await,
-            env: self.space_agent_env(&row).await,
+            env: self.space_agent_env(row).await,
             user_mcp: false,
             attachments: Vec::new(),
             resume: None,
@@ -770,7 +792,7 @@ impl Core {
         };
         let answered = |answer: String, agent: AgentId, model: Option<String>, how| LocalSpaceAsk {
             note: OTHER_SPACE_NOTE,
-            space: item(&row, me),
+            space: item(row, me),
             answer,
             agent: agent.as_str().into(),
             model,
@@ -786,9 +808,10 @@ impl Core {
                 .then(|| row.model.clone())
                 .flatten();
             let model = crate::agent_defaults::run_model(store, AgentId::Claude, asked).await;
+            *tried = Some((AgentId::Claude, model.clone(), "fork"));
             let req = AgentRequest {
                 agent: AgentId::Claude,
-                prompt: ask_prompt(&from, question),
+                prompt: ask_prompt(from, question),
                 model: model.clone(),
                 resume: Some(session.id.clone()),
                 fork_session: true,
@@ -811,11 +834,12 @@ impl Core {
                 }
             }
         }
-        let history = self.space_history(&row).await.unwrap_or_default();
-        let diff = self.diff_stat(&row).await;
+        let history = self.space_history(row).await.unwrap_or_default();
+        let diff = self.diff_stat(row).await;
         let model = crate::agent_defaults::run_model(store, row.agent, row.model.clone()).await;
+        *tried = Some((row.agent, model.clone(), "fresh"));
         let req = AgentRequest {
-            prompt: fresh_ask_prompt(&row, &history, diff.as_ref(), &from, question),
+            prompt: fresh_ask_prompt(row, &history, diff.as_ref(), from, question),
             model: model.clone(),
             ..base
         };
@@ -1079,6 +1103,7 @@ impl Core {
                 mode: mine.then_some(mode),
                 attachments: None,
                 effort: None,
+                mentions: None,
             },
             Some(from_of(&me)),
         )

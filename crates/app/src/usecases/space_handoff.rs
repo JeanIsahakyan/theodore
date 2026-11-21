@@ -128,6 +128,7 @@ mod tests {
             mode: None,
             from_space: None,
             notice: None,
+            mentions: vec![],
         }
     }
 

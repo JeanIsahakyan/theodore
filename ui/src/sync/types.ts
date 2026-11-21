@@ -19,7 +19,9 @@ import type {
   PrDetail,
   PrSummary,
   Project,
+  RemoteSubSpace,
   Space,
+  SpaceNote,
   Setting,
   TrackedReport,
   SkillRun,
@@ -44,6 +46,8 @@ export const MODEL_NAMES = [
   'space',
   'report',
   'agent_limit',
+  'space_note',
+  'remote_sub_space',
 ] as const;
 
 export type ModelName = (typeof MODEL_NAMES)[number];
@@ -73,6 +77,11 @@ export interface ModelRows {
   report: WithId<TrackedReport>;
   /** Keyed `<agent>:<account>`. */
   agent_limit: WithId<AgentLimitRow>;
+  /** Who asked a space what: in its timeline, never its conversation. */
+  space_note: WithId<SpaceNote>;
+  /** A followed space's sub-space on its host, keyed `<rs_>:<id>`: its
+   *  tree, never a space here. */
+  remote_sub_space: WithId<RemoteSubSpace>;
 }
 
 /**

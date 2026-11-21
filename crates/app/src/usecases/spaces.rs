@@ -314,6 +314,7 @@ impl Core {
                 mode: None,
                 attachments: None,
                 effort: None,
+                mentions: None,
             })
             .await?;
         }
@@ -429,7 +430,10 @@ impl Core {
         let text = req.text.trim().to_string();
         // Checked before anything is stored: an unknown id fails the send.
         let attachments = self.resolve_attachments(req.attachments.as_deref()).await?;
-        if text.is_empty() && attachments.is_empty() {
+        let mentions = self
+            .resolve_mentions(&space, req.mentions.as_deref())
+            .await?;
+        if text.is_empty() && attachments.is_empty() && mentions.is_empty() {
             return Err(AppError::Invalid("empty message".into()));
         }
         if running {
@@ -440,7 +444,7 @@ impl Core {
                 ));
             }
             return self
-                .queue_message(&space, &req, text, attachments, from)
+                .queue_message(&space, &req, text, attachments, mentions, from)
                 .await;
         }
         let message = ChatMessage {
@@ -467,6 +471,7 @@ impl Core {
             mode: None,
             from_space: from,
             notice: None,
+            mentions,
         };
         self.start_turn(space, &req, message, false, prompt).await
     }
@@ -609,6 +614,7 @@ impl Core {
                 .unwrap_or_else(|| text.clone())
         });
         let ask = with_attachments(ask, &attachments);
+        let ask = self.with_mentions(ask, &message.mentions).await;
         let ask = match &message.from_space {
             Some(from) => from_space_prompt(from, &ask),
             None => ask,
@@ -1970,6 +1976,7 @@ async fn drive_turn(core: &Core, turn: Turn) {
         mode: Some(mode),
         from_space: None,
         notice: None,
+        mentions: vec![],
     };
     let head = checkpoint.as_ref().map(|cp| cp.sha.clone());
     let changed = head.as_ref().is_some_and(|h| *h != space.head_sha);
@@ -2464,6 +2471,10 @@ pub(crate) fn turn_prompt(history: &[ChatMessage], text: &str) -> String {
             let names: Vec<&str> = m.attachments.iter().map(|a| a.name.as_str()).collect();
             out.push_str(&format!("(attached: {})\n", names.join(", ")));
         }
+        if !m.mentions.is_empty() {
+            let names: Vec<&str> = m.mentions.iter().map(|s| s.title.as_str()).collect();
+            out.push_str(&format!("(mentioned spaces: {})\n", names.join(", ")));
+        }
     }
     out.push_str(&format!("\n---\n\nNew message from the user:\n{text}"));
     out
@@ -2603,6 +2614,7 @@ mod tests {
             mode: None,
             from_space: None,
             notice: None,
+            mentions: vec![],
         }
     }
 

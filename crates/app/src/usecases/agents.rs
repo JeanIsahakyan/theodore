@@ -139,6 +139,7 @@ impl Core {
             mode: None,
             from_space: None,
             notice: None,
+            mentions: vec![],
         };
         let data = serde_json::to_value(&question).map_err(|e| AppError::Invalid(e.to_string()))?;
         self.apply(vec![NewAction {
@@ -657,6 +658,7 @@ async fn persist_failed_run(
         mode: None,
         from_space: None,
         notice: None,
+        mentions: vec![],
     };
     if let Ok(data) = serde_json::to_value(&message) {
         let _ = core
@@ -1009,6 +1011,7 @@ async fn drive_ask(
         mode: None,
         from_space: None,
         notice: None,
+        mentions: vec![],
     };
     if let Ok(data) = serde_json::to_value(&reply) {
         let _ = core

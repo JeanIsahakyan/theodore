@@ -164,6 +164,8 @@ export function modelAccessors(pool: ObjectPool) {
     tasks: scoped('task'),
     skillRuns: scoped('skill_run'),
     chatMessages: scoped('chat_message'),
+    /** A space's notes (who asked it what), by its chat key. */
+    spaceNotes: scoped('space_note'),
     settings: of('setting'),
     projects: of('project'),
     spaces: of('space'),
@@ -174,6 +176,8 @@ export function modelAccessors(pool: ObjectPool) {
       of: (agent: string, account: string) =>
         pool.get('agent_limit', `${agent}:${account}`),
     },
+    /** Followed spaces' sub-spaces on their hosts (docs/fleet.md). */
+    remoteSubSpaces: of('remote_sub_space'),
   };
 }
 

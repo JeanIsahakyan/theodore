@@ -8,6 +8,7 @@ import { observer } from 'mobx-react-lite';
 import type { ChatMessage, Space } from '../../gen/contract';
 import { useRootStore } from '../../stores/context';
 import type { SpaceSend } from '../../stores/EphemeralStore';
+import { AskNoteRow } from './AskNote';
 import { ChatEmpty, ChatLive, ChatLog, mixedAgents } from '../ChatTurn';
 import { FilePreviewScope } from '../FileHoverPreview';
 import {
@@ -49,6 +50,8 @@ export const SpaceLog = observer(function SpaceLog({
   const sends = store.ephemeral.spaceSends.get(space.id) ?? EMPTY_SENDS;
   const sending = sends.map((s) => sendingMessage(space.id, s));
   const sent = [...stored.sent, ...sending.filter((m) => !m.queued)];
+  // Who asked this space what: shown between turns, never part of them.
+  const notes = store.models.spaceNotes.byPr(spaceChatKey(space.id));
   const queued = [...stored.queued, ...sending.filter((m) => m.queued)];
   const keyOf = (id: string) => store.ephemeral.turnKeys.get(id) ?? id;
   const turns = pairTurns(sent, keyOf);
@@ -101,7 +104,7 @@ export const SpaceLog = observer(function SpaceLog({
     () => new Set(callsKey ? callsKey.split('\n') : []),
     [callsKey],
   );
-  if (turns.length === 0 && !run && !live) {
+  if (turns.length === 0 && notes.length === 0 && !run && !live) {
     return (
       <ChatLog scope={space.id}>
         {head}
@@ -116,11 +119,15 @@ export const SpaceLog = observer(function SpaceLog({
       </ChatLog>
     );
   }
-  const rows = chatRows(turns, {
-    head: setup != null,
-    live,
-    tail: queued.length > 0 || asking,
-  });
+  const rows = chatRows(
+    turns,
+    {
+      head: setup != null,
+      live,
+      tail: queued.length > 0 || asking,
+    },
+    notes,
+  );
   return (
     <BackgroundCallsContext.Provider value={calls}>
       <VirtualChat
@@ -151,6 +158,8 @@ function useRowRenderer(
           return tail;
         case 'live':
           return <SpaceLive spaceId={spaceId} tagged={tagged} />;
+        case 'note':
+          return <AskNoteRow note={row.note} />;
         case 'turn':
           return (
             <TurnRow

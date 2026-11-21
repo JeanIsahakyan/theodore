@@ -7,11 +7,12 @@
  * turn   you ─ reply, timeline, cards   keyed by your message's id
  *        (a notice row: part of the turn it ends, after its reply)
  * turn   …
+ * note   asked by another space/device  between turns, at its time
  * turn   you ─ the live reply
  * tail   queued messages, the question  stays mounted
  * ```
  */
-import type { ChatMessage } from '../../gen/contract';
+import type { ChatMessage, SpaceNote } from '../../gen/contract';
 
 export interface ChatTurn {
   key: string;
@@ -21,6 +22,8 @@ export interface ChatTurn {
 export type ChatRow =
   | { kind: 'head'; key: 'head' }
   | { kind: 'turn'; key: string; messages: ChatMessage[]; live: boolean }
+  /** Someone asked the space something: not part of its conversation. */
+  | { kind: 'note'; key: string; note: SpaceNote }
   /** A running turn before its message arrived. */
   | { kind: 'live'; key: 'live' }
   | { kind: 'tail'; key: 'tail' };
@@ -57,21 +60,33 @@ export function pairTurns(
 
 /** The rows, in the order the chat shows them. The live reply goes on the
  *  last turn: it is what that turn is waiting for, and it stays in the same
- *  row when its reply lands. */
+ *  row when its reply lands. A note goes before the first turn that began
+ *  after it: one asked mid-turn follows that turn. */
 export function chatRows(
   turns: readonly ChatTurn[],
   has: { head: boolean; live: boolean; tail: boolean },
+  notes: readonly SpaceNote[] = [],
 ): ChatRow[] {
   const rows: ChatRow[] = [];
   if (has.head) rows.push({ kind: 'head', key: 'head' });
-  turns.forEach((t, i) =>
+  const byTime = [...notes].sort((a, b) => a.at - b.at);
+  let n = 0;
+  const notesUntil = (at: number) => {
+    for (; n < byTime.length && byTime[n]!.at < at; n++) {
+      const note = byTime[n]!;
+      rows.push({ kind: 'note', key: `note:${note.id}`, note });
+    }
+  };
+  turns.forEach((t, i) => {
+    notesUntil(t.messages[0]?.at ?? Infinity);
     rows.push({
       kind: 'turn',
       key: t.key,
       messages: t.messages,
       live: has.live && i === turns.length - 1,
-    }),
-  );
+    });
+  });
+  notesUntil(Infinity);
   if (has.live && turns.length === 0) rows.push({ kind: 'live', key: 'live' });
   if (has.tail) rows.push({ kind: 'tail', key: 'tail' });
   return rows;
@@ -87,6 +102,8 @@ const GAP = 20;
 /** A row's height before it was measured: near enough that scrolling up
  *  through rows nobody saw yet has little to correct. */
 export function estimateRowHeight(row: ChatRow): number {
+  // A note: one short muted line until opened.
+  if (row.kind === 'note') return LINE + GAP;
   if (row.kind !== 'turn') return row.kind === 'live' ? 120 : 80;
   let height = GAP + (row.live ? 120 : 0);
   for (const m of row.messages) {

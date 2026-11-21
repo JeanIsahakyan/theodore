@@ -381,6 +381,55 @@ describe('space_send', () => {
     });
   });
 
+  it('says the computer queued it behind the running turn, and where', async () => {
+    const { h, mac } = await setup();
+    const { out } = await served(
+      h,
+      mac,
+      'space_send',
+      { device: 'mac', space: LOCAL, message: 'After that' },
+      { message: 'msg_2', queued: true, position: 2 },
+    );
+    expect(out.error).toBe(false);
+    expect(out.v).toMatchObject({
+      computer: { device: mac.id, name: 'mac' },
+      space: LOCAL,
+      result: 'queued',
+      position: 2,
+      message: 'msg_2',
+    });
+    expect(out.v.note).toContain(
+      'queued (position 2), runs after the current turn',
+    );
+    expect(out.v.note).toContain(COMPUTER_NOTE);
+    // A position that isn't one is no queue: as an ordinary ok.
+    const { out: odd } = await served(
+      h,
+      mac,
+      'space_send',
+      { device: 'mac', space: LOCAL, message: 'x' },
+      { message: 'msg_3', queued: true, position: 'first' },
+    );
+    expect(odd.v.result).toBe('ok');
+  });
+
+  it('keeps fleet.busy from a computer that never queues', async () => {
+    const { h, mac } = await setup();
+    const p = tool(h, 'space_send', {
+      device: mac.id,
+      space: LOCAL,
+      message: 'x',
+    });
+    await serve(mac, {
+      outcome: 'err',
+      code: 'fleet.busy',
+      message: 'the space is still working',
+    });
+    const out = await p;
+    expect(out.error).toBe(true);
+    expect(out.v.error.code).toBe('fleet.busy');
+  });
+
   it('keeps a space it didn’t start in its own mode, and needs a device', async () => {
     const { h, mac } = await setup();
     const withMode = await tool(h, 'space_send', {

@@ -339,7 +339,7 @@ pub(crate) async fn run(program: &Path, args: &[String], cwd: &Path, env: &Probe
     if let Some(path) = &env.path {
         cmd.env("PATH", path);
     }
-    let Ok(child) = cmd.spawn() else {
+    let Some(child) = spawn_retrying_busy(&mut cmd).await else {
         return Run::Failed;
     };
     match tokio::time::timeout(env.timeout, child.wait_with_output()).await {
@@ -347,6 +347,25 @@ pub(crate) async fn run(program: &Path, args: &[String], cwd: &Path, env: &Probe
         Ok(_) => Run::Failed,
         Err(_) => Run::Timeout,
     }
+}
+
+/// `cmd.spawn()`, waiting out ETXTBSY. A file just written (a server just
+/// unpacked, a runtime just updated, a test's fake) is still open for
+/// writing in any child another thread forked meanwhile, until that child
+/// execs; Linux refuses to exec a file open for writing, so the spawn raced
+/// every other process this app starts. The window is short: retry briefly.
+async fn spawn_retrying_busy(cmd: &mut tokio::process::Command) -> Option<tokio::process::Child> {
+    const TRIES: u32 = 10;
+    for attempt in 1..=TRIES {
+        match cmd.spawn() {
+            Ok(child) => return Some(child),
+            Err(e) if e.kind() == std::io::ErrorKind::ExecutableFileBusy && attempt < TRIES => {
+                tokio::time::sleep(Duration::from_millis(5 * u64::from(attempt))).await;
+            }
+            Err(_) => return None,
+        }
+    }
+    None
 }
 
 fn first_line(out: &std::process::Output) -> Option<String> {

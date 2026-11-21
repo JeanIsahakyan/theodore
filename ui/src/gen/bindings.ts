@@ -2853,6 +2853,8 @@ export type SpaceSendRequest = {
 	attachments?: string[] | null,
 	/**  From this turn on; `None` keeps the space's. */
 	effort?: string | null,
+	/**  Other spaces mentioned (`@`, docs/spaces.md "Mentions"): their ids. */
+	mentions?: string[] | null,
 };
 
 /**  The "Setting up…" stage after create, before the first turn. */

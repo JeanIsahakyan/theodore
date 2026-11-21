@@ -29,6 +29,7 @@ import {
 import {
   isMode,
   MODES,
+  queuedPosition,
   validComputerSpaceId,
   validDeviceId,
   validProjectId,
@@ -167,7 +168,7 @@ export const TOOLS: ToolDef[] = [
   {
     name: 'space_send',
     title: 'Send to a space',
-    description: `Send the next message to a space once it settled (not while its agent works: fleet.busy). A space this connection started (rs_…): space alone; mode: for this turn and on, default the space's. Any other space on a trusted computer: device and its local id (computer_spaces); it keeps its own mode, so no mode. ${APPROVAL_NOTE}`,
+    description: `Send the next message to a space. While its agent works the computer queues it: result "queued" with its position, and it runs after the current turn (space_wait waits for it); fleet.busy when 5 messages from other devices already wait there, or from a computer on an older Theodore, which never queues: wait for the space to settle, then send again. A space this connection started (rs_…): space alone; mode: for this turn and on, default the space's. Any other space on a trusted computer: device and its local id (computer_spaces); it keeps its own mode, so no mode. ${APPROVAL_NOTE}`,
     inputSchema: {
       type: 'object',
       properties: {
@@ -443,8 +444,18 @@ function sentResult(
   extra: Record<string, unknown> = {},
 ): ToolResult {
   switch (sent.state) {
-    case 'ok':
+    case 'ok': {
+      const position = queuedPosition(sent.value);
+      if (position !== null) {
+        return ok({
+          ...extra,
+          result: 'queued',
+          position,
+          note: `${queuedNote(position)}. space_wait waits for it.`,
+        });
+      }
       return ok({ ...extra, result: 'ok' });
+    }
     case 'refused':
       return refusal(
         sent.code,
@@ -462,6 +473,13 @@ function sentResult(
           : 'no answer from the computer yet. Check with space_wait or space_read.',
       });
   }
+}
+
+/** A send the computer queued behind the space's running turn, in words. */
+function queuedNote(position: number): string {
+  return position === 1
+    ? 'queued (position 1), runs after the current turn'
+    : `queued (position ${position}), runs after the current turn and the ${position - 1} queued before it`;
 }
 
 function needComputerSpace(v: unknown, k = 'space'): string {
@@ -601,6 +619,18 @@ export async function callTool(
           space,
           message,
         });
+        const position =
+          out.sent.state === 'ok' ? queuedPosition(out.sent.value) : null;
+        if (out.sent.state === 'ok' && position !== null) {
+          return ok({
+            computer: out.computer,
+            space,
+            result: 'queued',
+            position,
+            note: `${queuedNote(position)}: check with computer_space_read. ${COMPUTER_NOTE}`,
+            ...sentToOf(out.sent.value),
+          });
+        }
         return computerResult(
           out,
           sentToOf,

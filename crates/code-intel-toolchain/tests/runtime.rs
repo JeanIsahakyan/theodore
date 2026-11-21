@@ -659,6 +659,77 @@ esac"#
     );
 }
 
+/// A runtime rewritten over and over, within the same second, while other
+/// threads keep spawning processes (as parallel tests do): every probe sees
+/// what the file says now. A child forked by another thread holds the
+/// just-written file open for writing until it execs, and Linux refuses to
+/// exec a file open for writing (ETXTBSY) — the probe must wait that out,
+/// not report the runtime missing.
+#[tokio::test]
+async fn a_runtime_rewritten_while_others_spawn_is_probed_anew() {
+    let yaml = r#"
+servers:
+  - name: rt
+    detect: [["rt-ls"]]
+    launch: ["{bin}"]
+    requires: { runtime: dotnet, min: 10 }
+languages:
+  - id: rt
+    globs: ["*.rt"]
+    servers: [rt]
+"#;
+    let env = Env::new();
+    script(&env.bin.join("rt-ls"), "exit 0");
+    let tc = env.toolchain(yaml);
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let spawners: Vec<_> = (0..4)
+        .map(|_| {
+            let stop = stop.clone();
+            std::thread::spawn(move || {
+                while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+                    let _ = std::process::Command::new("true").status();
+                }
+            })
+        })
+        .collect();
+    for i in 0..60 {
+        let major = if i % 2 == 0 { 8 } else { 10 };
+        script(
+            &env.bin.join("dotnet"),
+            &format!(
+                r#"[ "$1" = --list-runtimes ] && echo 'Microsoft.NETCore.App {major}.0.{i} [/d/shared/Microsoft.NETCore.App]' && exit 0; exit 1"#
+            ),
+        );
+        let got = tc
+            .server_for(
+                &LanguageId::new("rt"),
+                None,
+                &env.worktree,
+                TrustMode::Review,
+            )
+            .await
+            .unwrap()
+            .1;
+        if major == 10 {
+            assert!(matches!(got, InstallState::System { .. }), "#{i}: {got:?}");
+        } else {
+            assert_eq!(
+                got,
+                InstallState::NeedsRuntime {
+                    runtime: "dotnet".into(),
+                    min: "10".into(),
+                    found: Some(format!("8.0.{i}"))
+                },
+                "#{i}"
+            );
+        }
+    }
+    stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    for s in spawners {
+        s.join().unwrap();
+    }
+}
+
 #[tokio::test]
 async fn trusted_only_serves_spaces_and_can_still_be_installed_for_them() {
     let yaml = format!(

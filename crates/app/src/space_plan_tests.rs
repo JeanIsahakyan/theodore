@@ -83,6 +83,7 @@ fn send(space: &Space, text: &str, mode: Option<SpaceMode>) -> SpaceSendRequest 
         mode,
         attachments: None,
         effort: None,
+        mentions: None,
     }
 }
 

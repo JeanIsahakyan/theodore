@@ -93,7 +93,7 @@ sign-out ─▶ the set is removed     org switch ─▶ kept (sets are per org)
 | Kept per space | Not kept |
 | --- | --- |
 | the list's view (host, name, project, branch, mode, status, last reply, question), last seq | live turn steps |
-| newest 100 lines, the mirrored space row, newest 100 chat messages (≤ 512 KB) | older messages: not replayed, the resubscribe starts after the last seq |
+| newest 100 lines, the mirrored space row, its sub-spaces (≤ 50), newest 100 chat messages (≤ 512 KB) | older messages: not replayed, the resubscribe starts after the last seq |
 
 - At most 50 spaces, the most recently active; the others' records are removed.
 - Where: files in the app's documents directory (`expo-file-system`) on
@@ -365,6 +365,37 @@ new space (✎)      ─▶ dismissTo Home         bell ─▶ the first waiting
 - Fleet text is untrusted in the markdown too: a link is its words and its
   address in muted text (nothing opens), an image is `[image: alt]`
   (nothing loads), raw HTML is text, nesting deeper than 16 is plain text.
+
+### Sub-spaces
+
+A followed space's children (docs/fleet.md "What a hosted space's agent
+may do") arrive as `mirror{sub_space, <child id>}` events of that space.
+The phone keeps them with its mirror and shows them as a tree.
+
+```text
+mirror{sub_space, id, MirroredSubSpace} ─▶ mirror.subSpaces[id], latest wins
+  null data ─▶ removed     not its shape ─▶ dropped     ≤ 50 per space
+  ─▶ saved with the space (src/fleet/saved.ts), shape-checked on load
+
+Space screen, top of the chat           Drawer row
+╭ Sub-spaces ──────────────────────╮     Fix the login redirect      ●
+│ Split the crate  (Running)  Edit │     3 sub-spaces, 1 running
+│   Move the types (Merged)   Edit │
+╰──────────────────────────────────╯
+```
+
+| Host says | Chip |
+| --- | --- |
+| `done` | Merged |
+| `running`, `setting_up` | Running |
+| `question`, `waiting` | Waiting for you |
+| `failed` | Failed |
+| `idle`, `archived`, anything else | Done |
+
+- Children are listed under their parent, siblings in the order first seen;
+  one whose parent is unknown sits at the top level after the tree.
+- A child isn't followed here: a tap opens nothing, a long press copies its
+  id. Logic: `src/ui/subSpaceTree.ts`; view: `src/ui/SubSpaces.tsx`.
 
 ### New space: chips and sheets
 

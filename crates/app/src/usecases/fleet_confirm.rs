@@ -115,8 +115,8 @@ impl Core {
     /// After the claim, right before a request that needs a person runs:
     /// auto mode (read again now, from the pin it verified against) lets it
     /// through, logged like an allowed one; else a person's yes, or a
-    /// daemon's no.
-    pub(crate) async fn fleet_confirm_or_auto(&self, c: &Claimed) -> Result<(), Refusal> {
+    /// daemon's no. `Ok(true)`: a person said yes (`Ok(false)`: auto).
+    pub(crate) async fn fleet_confirm_or_auto(&self, c: &Claimed) -> Result<bool, Refusal> {
         let pin = self
             .fleet_pinned(&c.req.origin_device)
             .await
@@ -130,14 +130,14 @@ impl Core {
                 mode = %self.fleet_auto_note(&pin, c.mode),
                 "auto"
             );
-            return Ok(());
+            return Ok(false);
         }
         if self.fleet_kind() == DeviceKind::Daemon {
             return Err(denied(
                 "nobody sits at this device to allow an edit or run from Claude via the cloud",
             ));
         }
-        self.fleet_confirm_wait(c).await
+        self.fleet_confirm_wait(c).await.map(|()| true)
     }
 
     /// Shows the prompt for claimed request `c` and waits for Allow, Deny

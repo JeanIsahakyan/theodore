@@ -161,6 +161,7 @@ async fn turn(f: &Fixtures, core: &Core, s: &Space, text: &str, head: &str) -> S
         mode: None,
         attachments: None,
         effort: None,
+        mentions: None,
     })
     .await
     .unwrap();
@@ -494,6 +495,7 @@ async fn a_push_commit_says_what_changed_not_what_was_said() {
             mode: None,
             attachments: None,
             effort: None,
+            mentions: None,
         })
     };
     say(
@@ -771,6 +773,7 @@ async fn run_mode_reaches_the_agent() {
         mode: Some(SpaceMode::Run),
         attachments: None,
         effort: None,
+        mentions: None,
     })
     .await
     .unwrap();

@@ -6,15 +6,16 @@
 //! harness.
 
 use theodore_contract::{
-    CreateSpaceRequest, FleetAuto, FleetAutoRequest, FleetConfirm, FleetConfirmAction,
-    FleetConfirmAnswer, FleetSettingsRequest, Project, Space, SpaceMode, SpaceStatus,
+    AskedBy, CreateSpaceRequest, FleetAuto, FleetAutoRequest, FleetConfirm, FleetConfirmAction,
+    FleetConfirmAnswer, FleetSettingsRequest, Project, Space, SpaceMode, SpaceNote, SpaceStatus,
+    models,
 };
 use theodore_domain::Sha;
 use theodore_fleet_protocol::{
     DeviceKey, DeviceKind, FleetMode, MirroredSubSpace, RemoteOp, RemoteSpaceEvent, ReplyOutcome,
     SUB_SPACE_MODEL, codes,
 };
-use theodore_ports::{AgentEvent, LocalSpaceStart, SpaceToolError};
+use theodore_ports::{AgentEvent, LocalSpaceStart, SpaceToolError, Store};
 
 use super::{
     ORIGIN, STRANGER, claim_result, claimed, client, connect, deliver, done, events, local_of,
@@ -299,10 +300,32 @@ async fn ask_space_answers_from_the_space_and_leaves_it_unchanged() {
         .find(|r| r.prompt.contains("Which store?"))
         .unwrap();
     assert_eq!(ask.mode, theodore_ports::AgentMode::ReadOnly);
+
+    // The space's timeline notes the device that asked, not a space.
+    let notes: Vec<SpaceNote> = f
+        .store
+        .query(
+            models::SPACE_NOTE,
+            "pr",
+            &crate::usecases::spaces::space_chat_key(&a.id).0,
+        )
+        .unwrap()
+        .into_iter()
+        .map(|r| serde_json::from_value(r.data).unwrap())
+        .collect();
+    assert_eq!(notes.len(), 1);
+    assert_eq!(
+        notes[0].ask.from,
+        AskedBy::Device {
+            name: "mac1".into()
+        }
+    );
+    assert_eq!(notes[0].ask.question, "Which store?");
+    assert_eq!(notes[0].ask.answer.as_deref(), Some("SQLite."));
 }
 
 #[tokio::test]
-async fn send_to_keeps_the_spaces_mode_never_queues_and_stays_under_the_cap() {
+async fn send_to_keeps_the_spaces_mode_queues_while_it_runs_and_stays_under_the_cap() {
     let f = fixtures();
     let h = host(&f, DeviceKind::Desktop, SpaceMode::Edit).await;
     let plan = own_space(&f, &h, "Look around", SpaceMode::Plan).await;
@@ -317,15 +340,16 @@ async fn send_to_keeps_the_spaces_mode_never_queues_and_stays_under_the_cap() {
     );
     assert_eq!(row.turns, plan.turns + 1);
 
-    // While it works: refused, not queued.
+    // While it works: queued (docs/fleet.md "Sends queue").
     f.agents.hang_next_run();
     h.core
         .space_send(crate::space_children_tests::send(&plan.id, "busy"))
         .await
         .unwrap();
     wait_until("running", || space(&f, &plan.id).run.is_some()).await;
-    let busy = run(&f, &h.key, send_to(&plan.id, "now")).await;
-    assert_eq!(err_code(busy), codes::BUSY);
+    let queued = ok_value(run(&f, &h.key, send_to(&plan.id, "now")).await);
+    assert_eq!(queued["queued"], true);
+    assert_eq!(queued["position"], 1);
     h.core.space_stop(&plan.id).await.unwrap();
 
     // A Run space is above this computer's Edit cap.
@@ -667,3 +691,6 @@ async fn a_hosted_computers_space_starts_sub_spaces_within_max_mode() {
         .await;
     assert_eq!(tool_code(r), "sub_spaces.hosted");
 }
+
+#[path = "fleet_queue_tests.rs"]
+mod queue;

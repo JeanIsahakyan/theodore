@@ -172,6 +172,7 @@ impl Core {
                     mode: None,
                     attachments: None,
                     effort: None,
+                    mentions: None,
                 })
                 .await
         {
@@ -330,6 +331,7 @@ impl Core {
             mode: Some(SpaceMode::Edit),
             attachments: None,
             effort: None,
+            mentions: None,
         })
         .await?;
         self.space_row(space).await
@@ -372,6 +374,7 @@ impl Core {
             mode: Some(SpaceMode::Edit),
             attachments: None,
             effort: None,
+            mentions: None,
         })
         .await?;
         self.space_row(space).await

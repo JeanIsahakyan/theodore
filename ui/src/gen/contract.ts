@@ -273,6 +273,13 @@ export type AskRequest = {
 	attachments?: string[] | null,
 };
 
+/**  Who asked, as they were named then. */
+export type AskedBy =
+/**  Another space's agent, on this computer. */
+{ kind: "space"; space: string; title: string } |
+/**  One of the user's devices (or an MCP client) through the fleet. */
+{ kind: "device"; name: string };
+
 export type Assignee = { kind: "human"; id: string } | { kind: "agent"; id: AgentId };
 
 /**  A saved file. `path` is absolute: the agent reads it from there. */
@@ -444,6 +451,11 @@ export type ChatMessage = {
 	 *  limit): `text` says it in words; never part of a prompt.
 	 */
 	notice?: ChatNotice | null,
+	/**
+	 *  Other spaces you mentioned with `@` (docs/spaces.md "Mentions"), as
+	 *  they were named then; the turn's prompt carries their context.
+	 */
+	mentions?: SpaceMention[],
 };
 
 /**  A small system row in a space's chat (docs/spaces.md "Usage limits"). */
@@ -455,7 +467,13 @@ export type ChatNotice =
  */
 { kind: "account_switch"; from: string; to: string; resets_at: number | null; continued: boolean } |
 /**  `account` hit its limit and nothing else could take over. */
-{ kind: "limit_hit"; account: string; resets_at: number | null };
+{ kind: "limit_hit"; account: string; resets_at: number | null } |
+/**
+ *  A message another device queued here was dropped before it ran:
+ *  that device's trust, or the mode it may use, changed meanwhile
+ *  (docs/fleet.md "Sends queue"). `from`: the device's name as pinned.
+ */
+{ kind: "remote_dropped"; from: string; reason: string };
 
 export type Check = {
 	id: string,
@@ -2047,6 +2065,41 @@ export type ReactionCount = {
 	viewer_reacted: boolean,
 };
 
+/**
+ *  A sub-space a followed space started on its host (docs/fleet.md "What a
+ *  hosted space's agent may do"): the latest of its `sub_space` mirror, kept as a
+ *  `remote_sub_space` row keyed `<root>:<space>`. Shown in its root's tree;
+ *  never a space here (no worktree, no chat, no commands).
+ */
+export type RemoteSubSpace = {
+	/**
+	 *  The followed space at the top of its tree (`rs_…`), a `space` row
+	 *  here with `remote` set.
+	 */
+	root: string,
+	/**  Its local id on the host. */
+	space: string,
+	/**  `root`, or another sub-space's `space`. */
+	parent: string,
+	title: string,
+	status: RemoteSubSpaceStatus,
+	mode: SpaceMode,
+	/**  Merged into its parent, or shipped. */
+	done: boolean,
+	/**  The event it last changed at: newer is more recently active. */
+	seq: number,
+};
+
+/**
+ *  Where a followed space's sub-space stands, as its host words it
+ *  (`spaces_list`'s words).
+ */
+export type RemoteSubSpaceStatus = "setting_up" | "running" |
+/**  Its agent waits on an answer. */
+"question" |
+/**  Its setup waits. */
+"waiting" | "idle" | "failed" | "archived";
+
 export type ReplyRequest = {
 	pr: PrId,
 	thread: ThreadId,
@@ -2678,6 +2731,30 @@ export type SpaceAnswerRequest = {
 };
 
 /**
+ *  Someone asked the space a question (`space_ask`, or the fleet's
+ *  `ask_space`); a read-only copy of its agent answered or failed.
+ */
+export type SpaceAskNote = {
+	from: AskedBy,
+	question: string,
+	/**  None when it failed. */
+	answer?: string | null,
+	/**  Why there is no answer (timed out, the agent failed). */
+	failed?: string | null,
+	/**
+	 *  The agent that answered (or last tried), and its model; none: the
+	 *  CLI's default.
+	 */
+	agent?: AgentId | null,
+	model?: string | null,
+	/**
+	 *  `fork`: a copy of the space's own session; `fresh`: a new agent
+	 *  told what the space holds.
+	 */
+	how?: string | null,
+};
+
+/**
  *  How far the space's base branch moved on since its `base_sha`, as of
  *  the project's last fetch (`space_base_status`).
  */
@@ -2755,6 +2832,15 @@ export type SpaceLogLine = {
 	at: number,
 };
 
+/**  A space mentioned in a message. */
+export type SpaceMention = {
+	/**  `Space::id` here (a mirror's own id for a remote one). */
+	space: string,
+	title: string,
+	/**  The device it runs on, for a mirrored one. */
+	host?: string | null,
+};
+
 /**
  *  `Space::mirror`: the folder's own state before mirroring began (what
  *  Mirror off restores), and the running set of paths mirroring has ever
@@ -2798,6 +2884,15 @@ export type SpaceMode =
  *  (the next turn implements it in `Space::build_mode`) or revise.
  */
 "plan";
+
+/**  A `space_note` row, keyed by its own id. */
+export type SpaceNote = {
+	id: string,
+	/**  The space's chat key, `space:<id>`: loaded with its transcript. */
+	pr: PrId,
+	at: number,
+	ask: SpaceAskNote,
+};
 
 /**  The space whose agent started this one. */
 export type SpaceParent = {
@@ -2943,6 +3038,8 @@ export type SpaceSendRequest = {
 	attachments?: string[] | null,
 	/**  From this turn on; `None` keeps the space's. */
 	effort?: string | null,
+	/**  Other spaces mentioned (`@`, docs/spaces.md "Mentions"): their ids. */
+	mentions?: string[] | null,
 };
 
 /**  The "Setting up…" stage after create, before the first turn. */

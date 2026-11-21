@@ -63,14 +63,23 @@ import {
 import { collapsedSpaces, toggleSubSpaces } from './space/collapsed';
 import {
   CHILD_STAGE_LABEL,
+  addStats,
   childStage,
+  nestRemoteSubs,
   nestSpaces,
   parentId,
+  remoteRoot,
+  remoteStage,
+  remoteSubPlace,
+  remoteSubRows,
+  remoteSubtreeStats,
   spaceRows,
   subtreeLabel,
   type ChildStage,
+  type RemoteSubRow,
   type SubtreeStats,
 } from './space/subspaces';
+import { RemoteStageMark } from './space/SpaceAgents';
 
 interface NavItem {
   key: string;
@@ -100,6 +109,48 @@ interface NavItem {
   sub?: { stats: SubtreeStats; collapsed: boolean; onToggle: () => void };
   /** A sub-space's stage: a mark after its name, a merged one muted. */
   child?: ChildStage;
+  /** The label's hover text, when it says more than the label. */
+  hint?: string;
+  /** A sub-space a mirrored space started on its host: no page of its own. */
+  remoteSub?: boolean;
+}
+
+/** A row of a mirrored space's tree on its host (docs/fleet.md): its stage
+ *  mark, where it runs on hover; pressing it opens the mirrored space at the
+ *  top of the tree, where its agents strip lists it. */
+function remoteSubItem(
+  r: RemoteSubRow,
+  root: Space,
+  host: string,
+  ui: UiStore,
+): NavItem {
+  const stage = remoteStage(r.sub);
+  const toggle = r.stats
+    ? {
+        id: 'toggle-subs',
+        label: r.collapsed ? 'Show sub-spaces' : 'Hide sub-spaces',
+        icon: <ChevronRight className="size-4" />,
+        onAction: () => toggleSubSpaces(r.sub.id),
+      }
+    : null;
+  return {
+    key: `remote-sub:${r.sub.id}`,
+    icon: <RemoteStageMark stage={stage} />,
+    label: r.sub.title,
+    hint: `${r.sub.title} · ${CHILD_STAGE_LABEL[stage]} · ${remoteSubPlace(host, r.parentTitle)}`,
+    onPress: () => ui.go({ name: 'space', id: root.id }),
+    contextMenu: toggle ? () => [toggle] : undefined,
+    depth: r.depth,
+    child: stage,
+    remoteSub: true,
+    sub: r.stats
+      ? {
+          stats: r.stats,
+          collapsed: r.collapsed,
+          onToggle: () => toggleSubSpaces(r.sub.id),
+        }
+      : undefined,
+  };
 }
 
 /** Archive from the sidebar: the space page's own `archive`, which steps
@@ -353,6 +404,7 @@ export const Sidebar = observer(function Sidebar() {
   const spaces = isBuildMode(store)
     ? spacesIn(ui.workspace, store.models.spaces.all())
     : null;
+  const remoteSubs = spaces ? store.models.remoteSubSpaces.all() : [];
   // ⌘F over the Spaces section (search.ts): while it's open, the section's
   // own search block takes over below and this group is left out of the
   // ListBox, so the two never show at once.
@@ -382,7 +434,7 @@ export const Sidebar = observer(function Sidebar() {
                 nestSpaces(spaces),
                 collapsedSpaces,
                 store.models.spaces.all(),
-              ).map((row): NavItem => {
+              ).flatMap((row): NavItem[] => {
                 const s = row.space;
                 const g = spaceGlyph(s, spaceSeen.get(s.id));
                 // In review: `⎇ #n`, tinted by the PR's checks, unless a
@@ -390,7 +442,32 @@ export const Sidebar = observer(function Sidebar() {
                 const pr = s.pr
                   ? store.models.prSummaries.get(s.pr)
                   : undefined;
-                return {
+                // A mirrored space's sub-spaces on its host nest under it
+                // too, after any of its own.
+                const tree = remoteRoot(s)
+                  ? nestRemoteSubs(s.id, remoteSubs)
+                  : [];
+                const stats = addStats(
+                  row.stats,
+                  tree.length ? remoteSubtreeStats(tree) : null,
+                );
+                const shut = stats != null && collapsedSpaces.has(s.id);
+                const remoteRows = shut
+                  ? []
+                  : remoteSubRows(
+                      tree,
+                      collapsedSpaces,
+                      row.depth + 1,
+                      spaceTitle(s),
+                    ).map((r) =>
+                      remoteSubItem(
+                        r,
+                        s,
+                        remoteOf(s)?.host_name ?? 'its host',
+                        ui,
+                      ),
+                    );
+                const item: NavItem = {
                   key: routeKey({ name: 'space', id: s.id }),
                   icon: (
                     <SpaceMark
@@ -414,13 +491,11 @@ export const Sidebar = observer(function Sidebar() {
                   label: withPrNumber(pr?.pr.number, spaceTitle(s)),
                   route: { name: 'space', id: s.id },
                   contextMenu: () => [
-                    ...(row.stats
+                    ...(stats
                       ? [
                           {
                             id: 'toggle-subs',
-                            label: row.collapsed
-                              ? 'Show sub-spaces'
-                              : 'Hide sub-spaces',
+                            label: shut ? 'Show sub-spaces' : 'Hide sub-spaces',
                             icon: <ChevronRight className="size-4" />,
                             onAction: () => toggleSubSpaces(s.id),
                           },
@@ -435,14 +510,15 @@ export const Sidebar = observer(function Sidebar() {
                   depth: row.depth,
                   from: row.from,
                   child: parentId(s) ? childStage(s) : undefined,
-                  sub: row.stats
+                  sub: stats
                     ? {
-                        stats: row.stats,
-                        collapsed: row.collapsed,
+                        stats,
+                        collapsed: shut,
                         onToggle: () => toggleSubSpaces(s.id),
                       }
                     : undefined,
                 };
+                return [item, ...remoteRows];
               }),
               {
                 key: 'new-space',
@@ -510,6 +586,7 @@ export const Sidebar = observer(function Sidebar() {
                 aria-current={current?.key === i.key ? 'page' : undefined}
                 className={`nav group gap-3 px-3 text-sm ${current?.key === i.key ? 'bg-default font-medium' : ''}`}
                 data-depth={i.depth || undefined}
+                data-remote-sub={i.remoteSub || undefined}
                 style={
                   i.depth
                     ? { paddingInlineStart: `${12 + i.depth * 16}px` }
@@ -532,9 +609,10 @@ export const Sidebar = observer(function Sidebar() {
                   <span
                     className={`min-w-0 flex-1 truncate ${i.child === 'merged' ? 'text-muted' : ''}`}
                     title={
-                      i.child
+                      i.hint ??
+                      (i.child
                         ? `${i.label} · ${CHILD_STAGE_LABEL[i.child]}`
-                        : i.label
+                        : i.label)
                     }
                   >
                     {i.label}
@@ -565,7 +643,7 @@ export const Sidebar = observer(function Sidebar() {
                       {i.n}
                     </span>
                   )}
-                  {i.onArchive && (
+                  {(i.onArchive || i.sub) && (
                     // Over the row's right edge on a fade, so the label
                     // doesn't shift. Pressing it archives and nothing else:
                     // React Aria's press stops at the button, and the click
@@ -599,26 +677,28 @@ export const Sidebar = observer(function Sidebar() {
                           </Tooltip.Content>
                         </Tooltip>
                       )}
-                      <Tooltip>
-                        <Button
-                          isIconOnly
-                          size="sm"
-                          variant="ghost"
-                          aria-label="Archive space"
-                          className="size-6 min-w-6 rounded-xl text-muted"
-                          isDisabled={i.archiveDisabled}
-                          onPress={i.onArchive}
-                        >
-                          <Archive className="size-3.5" />
-                        </Button>
-                        <Tooltip.Content>
-                          {i.archiveDisabled
-                            ? 'Stop the agent before archiving'
-                            : i.device
-                              ? 'Archive — forgets it here; it stays on its host'
-                              : 'Archive — removes the worktree; the transcript and checkpoints are kept'}
-                        </Tooltip.Content>
-                      </Tooltip>
+                      {i.onArchive && (
+                        <Tooltip>
+                          <Button
+                            isIconOnly
+                            size="sm"
+                            variant="ghost"
+                            aria-label="Archive space"
+                            className="size-6 min-w-6 rounded-xl text-muted"
+                            isDisabled={i.archiveDisabled}
+                            onPress={i.onArchive}
+                          >
+                            <Archive className="size-3.5" />
+                          </Button>
+                          <Tooltip.Content>
+                            {i.archiveDisabled
+                              ? 'Stop the agent before archiving'
+                              : i.device
+                                ? 'Archive — forgets it here; it stays on its host'
+                                : 'Archive — removes the worktree; the transcript and checkpoints are kept'}
+                          </Tooltip.Content>
+                        </Tooltip>
+                      )}
                     </span>
                   )}
                 </span>

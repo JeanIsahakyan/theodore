@@ -87,6 +87,22 @@ async function started(h: Harness, mac: Device, mode = 'plan') {
   return { out, space: op.space, body };
 }
 
+/** `mac` claims the next request (a send) and answers it as queued. */
+async function queuedReply(mac: Device, position: number) {
+  const { req, body } = await nextRequest(mac);
+  await mac.send({
+    type: 'claim',
+    req_id: body.req_id,
+    generation: req.generation,
+  });
+  mac.take('claim_result');
+  await mac.reply(body.req_id, {
+    outcome: 'ok',
+    value: { message: 'm2', queued: true, position },
+  });
+  return body;
+}
+
 describe('MCP device', () => {
   it('is a device of kind mcp, with a fingerprint to compare', async () => {
     const { h, mac } = await setup({ trust: false });
@@ -258,6 +274,77 @@ describe('MCP device', () => {
     await mac.emit(space, 3, { kind: 'turn_started', turn: 1, text: 'fix' });
     await mac.emit(space, 4, { kind: 'turn_ended', turn: 1, outcome: 'done' });
     await mac.emit(space, 5, { kind: 'status', status: 'idle' });
+    const w = await tool(h, 'space_wait', {
+      spaces: [space],
+      timeout_ms: 2000,
+    });
+    expect(w.v.settled).toBe(true);
+  });
+
+  it('reports a send queued behind the running turn, and waits for its turn', async () => {
+    const { h, mac, mcpId } = await setup();
+    const { space } = await started(h, mac);
+    await mac.emit(space, 1, {
+      kind: 'started',
+      host_device: mac.id!,
+      origin_device: mcpId(),
+      project_id: 'p1',
+      project_name: 'theodore',
+      name: 'Fix',
+      branch: 'fix-bug',
+      mode: 'plan',
+      depth: 0,
+    });
+    await mac.emit(space, 2, { kind: 'turn_started', turn: 1, text: 'fix' });
+    await mac.emit(space, 3, { kind: 'status', status: 'running' });
+    const p = tool(h, 'space_send', { space, message: 'and then this' });
+    const body = await queuedReply(mac, 1);
+    expect(body.op).toMatchObject({ op: 'send', text: 'and then this' });
+    const out = await p;
+    expect(out.v).toMatchObject({ space, result: 'queued', position: 1 });
+    expect(out.v.note).toContain(
+      'queued (position 1), runs after the current turn',
+    );
+
+    // The running turn ends: idle a moment before the queued one starts.
+    await mac.emit(space, 4, { kind: 'reply', turn: 1, text: 'first' });
+    await mac.emit(space, 5, { kind: 'turn_ended', turn: 1, outcome: 'done' });
+    await mac.emit(space, 6, { kind: 'status', status: 'idle' });
+    const gap = await tool(h, 'space_wait', {
+      spaces: [space],
+      timeout_ms: 300,
+    });
+    expect(gap.v.settled).toBe(false);
+    expect(gap.v.spaces[0].status).toBe('running');
+    await mac.emit(space, 7, {
+      kind: 'turn_started',
+      turn: 2,
+      text: 'and then this',
+    });
+    await mac.emit(space, 8, { kind: 'reply', turn: 2, text: 'second' });
+    await mac.emit(space, 9, { kind: 'turn_ended', turn: 2, outcome: 'done' });
+    await mac.emit(space, 10, { kind: 'status', status: 'idle' });
+    const w = await tool(h, 'space_wait', {
+      spaces: [space],
+      timeout_ms: 2000,
+    });
+    expect(w.v.settled).toBe(true);
+  });
+
+  it('settles a queued send once the host holds its queue', async () => {
+    const { h, mac } = await setup();
+    const { space } = await started(h, mac);
+    await mac.emit(space, 1, { kind: 'status', status: 'running' });
+    const p = tool(h, 'space_send', { space, message: 'later' });
+    await queuedReply(mac, 1);
+    expect((await p).v.result).toBe('queued');
+    // Stopped: the host holds the queue for a person, nothing runs.
+    await mac.emit(space, 2, {
+      kind: 'turn_ended',
+      turn: 1,
+      outcome: 'stopped',
+    });
+    await mac.emit(space, 3, { kind: 'status', status: 'idle' });
     const w = await tool(h, 'space_wait', {
       spaces: [space],
       timeout_ms: 2000,

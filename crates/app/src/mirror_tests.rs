@@ -106,6 +106,7 @@ async fn turn(f: &Fixtures, core: &Core, s: &Space, text: &str, head: &str) -> S
         mode: None,
         attachments: None,
         effort: None,
+        mentions: None,
     })
     .await
     .unwrap();

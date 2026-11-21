@@ -74,6 +74,7 @@ import { sendToSpace, stopSpace } from './send';
 import type { VirtualChatControl } from './VirtualChat';
 import { canSendNow } from './queue';
 import { attachTerminalMention, stripTerminalMention } from './terminalMention';
+import { useSpaceMentions } from './spaceMention';
 import { latinKey, useViewKeys } from '../keys';
 import {
   AgentChip,
@@ -1233,6 +1234,21 @@ const SpaceComposer = observer(function SpaceComposer({
     input.current?.focus();
   };
 
+  const attachTerminal = () =>
+    void attachTerminalMention(space.id, files, (text) =>
+      store.ephemeral.toast(text, 'info'),
+    );
+  // `@` mentions another space (docs/spaces.md "Mentions"); a space on
+  // another device takes none, like files.
+  const mentions = useSpaceMentions({
+    space: space.id,
+    spaces: () => store.models.spaces.all(),
+    projectName: (id) => store.models.projects.get(id)?.repo.name,
+    text,
+    setText,
+    onTerminal: remote ? undefined : attachTerminal,
+    focus: () => input.current?.focus(),
+  });
   const send = (now = false) => {
     const t = text.trim();
     // `/report …`: a problem report about this chat, not a turn.
@@ -1242,7 +1258,8 @@ const SpaceComposer = observer(function SpaceComposer({
       void reportChat(store, spaceChatKey(space.id), null, report);
       return;
     }
-    if ((!t && !files.ids.length) || files.busy) return;
+    const mentioned = remote ? [] : mentions.mentions;
+    if ((!t && !files.ids.length && !mentioned.length) || files.busy) return;
     if (space.status === 'archived') return;
     if (remote) {
       if (!t || run) return;
@@ -1270,6 +1287,7 @@ const SpaceComposer = observer(function SpaceComposer({
     setText('');
     setRevising(false);
     files.clear();
+    mentions.clear();
     log.current?.jumpToLatest();
     sendToSpace(
       store,
@@ -1286,11 +1304,13 @@ const SpaceComposer = observer(function SpaceComposer({
         effort: now ? null : sendEffort(agent, pickedEffort),
         mode: mode === space.mode ? null : mode,
         attachments: attached.length ? attached.map((a) => a.id) : null,
+        mentions: mentioned.length ? mentioned.map((m) => m.space) : null,
       },
-      { now, agent, attachments: attached },
+      { now, agent, attachments: attached, mentions: mentioned },
     ).catch(() => {
       setText(t);
       attached.forEach(files.addSaved);
+      mentions.restore(mentioned);
     });
   };
   const sendNow =
@@ -1298,7 +1318,8 @@ const SpaceComposer = observer(function SpaceComposer({
     canSendNow(space, {
       agent,
       mode,
-      files: files.ids.length,
+      // A mention, like a file, can't join a running turn.
+      files: files.ids.length + mentions.mentions.length,
     })
       ? () => send(true)
       : undefined;
@@ -1309,9 +1330,7 @@ const SpaceComposer = observer(function SpaceComposer({
     const stripped = stripTerminalMention(next);
     if (stripped.found && !remote) {
       setText(stripped.text);
-      void attachTerminalMention(space.id, files, (text) =>
-        store.ephemeral.toast(text, 'info'),
-      );
+      attachTerminal();
       return;
     }
     setText(next);
@@ -1355,6 +1374,10 @@ const SpaceComposer = observer(function SpaceComposer({
           queueWhileRunning={!remote}
           skills={skills}
           attachments={remote ? undefined : files}
+          menu={remote ? undefined : mentions.menu}
+          strip={remote ? undefined : mentions.chips}
+          canSubmitEmpty={!remote && mentions.mentions.length > 0}
+          onEmptyBackspace={remote ? undefined : () => void mentions.popLast()}
           chips={
             <>
               <AgentChip

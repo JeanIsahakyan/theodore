@@ -47,6 +47,12 @@ export class FleetStore {
   /** Requests from Claude via the cloud waiting for your yes, by id. */
   readonly confirms = observable.map<string, FleetConfirm>({}, { deep: false });
 
+  /** Decision prompts (a request above, a "wants to run spaces here") put
+   *  away unanswered — Esc or a click outside their dialog — by prompt
+   *  key. The dialog stays shut until one not among them comes, or the
+   *  reminder in the tab bar opens it again. */
+  readonly promptsAway = observable.set<string>();
+
   constructor() {
     makeObservable(this, {
       status: observableRef,
@@ -66,6 +72,8 @@ export class FleetStore {
       upsertSpace: action,
       dismissTrustNeeded: action,
       dropAsk: action,
+      putAwayPrompts: action,
+      reopenPrompts: action,
     });
   }
 
@@ -180,6 +188,16 @@ export class FleetStore {
 
   dropConfirm(id: string): void {
     this.confirms.delete(id);
+  }
+
+  /** Puts the decision dialog away with these prompts in it, unanswered. */
+  putAwayPrompts(keys: readonly string[]): void {
+    this.promptsAway.replace(keys);
+  }
+
+  /** The reminder's click: the dialog shows every prompt waiting again. */
+  reopenPrompts(): void {
+    this.promptsAway.clear();
   }
 
   /** Allow or Deny a request waiting here. It goes at once; one that

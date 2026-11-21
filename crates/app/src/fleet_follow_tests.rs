@@ -6,8 +6,9 @@
 
 use serde_json::{Value, json};
 use theodore_contract::{
-    Ephemeral, SetSpaceSettingsRequest, Space, SpaceAnswerItem, SpaceAnswerRequest, SpaceMode,
-    SpaceReviewRequest, SpaceSendRequest, SpaceStatus, models,
+    BootstrapScope, Ephemeral, FleetLineKind, MutationOp, RemoteSubSpace, RemoteSubSpaceStatus,
+    SetSpaceSettingsRequest, Space, SpaceAnswerItem, SpaceAnswerRequest, SpaceMode,
+    SpaceReviewRequest, SpaceSendRequest, SpaceStatus, Transaction, TransactionResult, models,
 };
 use theodore_fleet_protocol::{
     ClientMessage, DeviceKey, FleetMode, RemoteOp, RemoteSpaceEvent, ReplyOutcome, StartedSpace,
@@ -487,6 +488,7 @@ async fn send_stop_answer_and_approve_go_to_the_host() {
                 mode: Some(SpaceMode::Plan),
                 attachments: None,
                 effort: Some("high".into()),
+                mentions: None,
             })
             .await
         })
@@ -513,6 +515,7 @@ async fn send_stop_answer_and_approve_go_to_the_host() {
             mode: None,
             attachments: Some(vec!["att1".into()]),
             effort: None,
+            mentions: None,
         })
         .await;
     assert!(with_files.unwrap_err().to_string().contains("mac1"));
@@ -778,49 +781,191 @@ async fn a_mirrored_space_survives_a_restart_and_is_followed_from_its_last_seq()
     stopped.await.unwrap().unwrap();
 }
 
+fn sub(id: &str, parent: &str, title: &str, status: &str, done: bool) -> Value {
+    json!({
+        "space": id, "parent": parent, "title": title,
+        "status": status, "mode": "edit", "done": done,
+    })
+}
+
+fn sub_row(f: &Fixtures, rs: &str, id: &str) -> Option<RemoteSubSpace> {
+    row(f, models::REMOTE_SUB_SPACE, &format!("{rs}:{id}"))
+        .map(|v| serde_json::from_value(v).expect("a remote sub-space row"))
+}
+
+async fn sub_lines(core: &Core, rs: &str) -> Vec<String> {
+    core.fleet_space_lines(rs, 0)
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|l| l.kind == FleetLineKind::SubSpace)
+        .map(|l| l.text)
+        .collect()
+}
+
 #[tokio::test]
-async fn a_followed_spaces_sub_spaces_show_as_lines_of_its_history() {
+async fn a_followed_spaces_sub_spaces_are_kept_as_its_tree_never_as_spaces() {
     let f = fixtures();
     let (core, _recv, host, rs) = following(&f).await;
     mirrored(&f, &host, &rs, 1, "running").await;
-    let child = json!({
-        "space": "c1", "parent": rs, "title": "Port the parser",
-        "status": "running", "mode": "edit", "done": false,
-    });
-    mirror(&f, &host, &rs, 2, "sub_space", "c1", child);
-    eventually("the line", || async {
-        core.fleet_space_lines(&rs, 0)
-            .await
-            .unwrap()
-            .iter()
-            .any(|l| {
-                l.kind == theodore_contract::FleetLineKind::SubSpace
-                    && l.text == "c1 · Port the parser · running"
-            })
-    })
-    .await;
-    // Neither a turn step nor a space row.
-    assert!(row(&f, models::SPACE, "c1").is_none());
-    // A row naming another id is dropped; a delete says it's gone.
-    let other = json!({
-        "space": "c2", "parent": rs, "title": "x", "status": "idle", "mode": "edit", "done": false,
-    });
-    mirror(&f, &host, &rs, 3, "sub_space", "c9", other);
-    mirror(&f, &host, &rs, 4, "sub_space", "c1", Value::Null);
-    eventually("gone", || async {
-        core.fleet_space_lines(&rs, 0)
-            .await
-            .unwrap()
-            .iter()
-            .any(|l| l.text == "c1 · gone")
-    })
-    .await;
-    assert!(
-        !core
-            .fleet_space_lines(&rs, 0)
-            .await
-            .unwrap()
-            .iter()
-            .any(|l| l.text.starts_with("c9"))
+    let c1 = sub("c1", &rs, "Port the parser", "running", false);
+    mirror(&f, &host, &rs, 2, "sub_space", "c1", c1);
+    // A grandchild: under c1, not the root.
+    let c2 = sub("c2", "c1", "Its tests", "question", false);
+    mirror(&f, &host, &rs, 3, "sub_space", "c2", c2);
+    wait_until("the tree", || sub_row(&f, &rs, "c2").is_some()).await;
+
+    let c1 = sub_row(&f, &rs, "c1").expect("the child");
+    assert_eq!(
+        (
+            c1.root.as_str(),
+            c1.space.as_str(),
+            c1.parent.as_str(),
+            c1.title.as_str()
+        ),
+        (rs.as_str(), "c1", rs.as_str(), "Port the parser")
     );
+    assert_eq!(
+        (c1.status, c1.mode, c1.done, c1.seq),
+        (RemoteSubSpaceStatus::Running, SpaceMode::Edit, false, 2)
+    );
+    let c2 = sub_row(&f, &rs, "c2").expect("the grandchild");
+    assert_eq!(
+        (c2.parent.as_str(), c2.status),
+        ("c1", RemoteSubSpaceStatus::Question)
+    );
+    // The history lines stay.
+    eventually("both lines", || async {
+        sub_lines(&core, &rs).await
+            == [
+                "c1 · Port the parser · running".to_string(),
+                "c2 · Its tests · question".to_string(),
+            ]
+    })
+    .await;
+
+    // Never a space here: no row, not listed, no command reaches it.
+    for id in ["c1", "c2"] {
+        assert!(row(&f, models::SPACE, id).is_none());
+        assert!(core.space_stop(id).await.is_err());
+        assert!(core.archive_space(id).await.is_err());
+    }
+    assert!(
+        core.list_spaces(None)
+            .await
+            .unwrap()
+            .iter()
+            .all(|s| s.id == rs)
+    );
+    // The UI gets them with the other global rows.
+    let boot = core.bootstrap(BootstrapScope::Global).await.unwrap();
+    let mut kept: Vec<&str> = boot
+        .rows
+        .iter()
+        .filter(|r| r.model == models::REMOTE_SUB_SPACE)
+        .map(|r| r.id.as_str())
+        .collect();
+    kept.sort_unstable();
+    assert_eq!(kept, [format!("{rs}:c1"), format!("{rs}:c2")]);
+    // ...and can't write them.
+    let refused = core
+        .transact(Transaction {
+            id: "t1".into(),
+            ops: vec![MutationOp::Delete {
+                model: models::REMOTE_SUB_SPACE.into(),
+                id: format!("{rs}:c1"),
+            }],
+        })
+        .await;
+    assert!(
+        matches!(refused, TransactionResult::Rejected { .. }),
+        "{refused:?}"
+    );
+    assert!(sub_row(&f, &rs, "c1").is_some());
+}
+
+#[tokio::test]
+async fn a_remote_sub_space_keeps_its_latest_state_and_goes_on_null() {
+    let f = fixtures();
+    let (core, _recv, host, rs) = following(&f).await;
+    mirrored(&f, &host, &rs, 1, "running").await;
+    let c1 = sub("c1", &rs, "Port the parser", "running", false);
+    mirror(&f, &host, &rs, 2, "sub_space", "c1", c1);
+    wait_until("the child", || sub_row(&f, &rs, "c1").is_some()).await;
+
+    // An update: the latest wins.
+    let merged = sub("c1", &rs, "Port the parser", "idle", true);
+    mirror(&f, &host, &rs, 3, "sub_space", "c1", merged);
+    wait_until("merged", || {
+        sub_row(&f, &rs, "c1").is_some_and(|s| s.done && s.seq == 3)
+    })
+    .await;
+    assert_eq!(
+        sub_row(&f, &rs, "c1").unwrap().status,
+        RemoteSubSpaceStatus::Idle
+    );
+
+    // Dropped, nothing kept: under another id, its own parent.
+    let other = sub("c2", &rs, "x", "idle", false);
+    mirror(&f, &host, &rs, 4, "sub_space", "c9", other);
+    let looped = sub("c3", "c3", "loop", "idle", false);
+    mirror(&f, &host, &rs, 5, "sub_space", "c3", looped);
+
+    // `null` removes the row; the history says so.
+    mirror(&f, &host, &rs, 6, "sub_space", "c1", Value::Null);
+    wait_until("removed", || sub_row(&f, &rs, "c1").is_none()).await;
+    for id in ["c2", "c3", "c9"] {
+        assert!(sub_row(&f, &rs, id).is_none(), "{id} kept");
+    }
+    eventually("the lines", || async {
+        sub_lines(&core, &rs).await
+            == [
+                "c1 · Port the parser · running".to_string(),
+                "c1 · Port the parser · merged".to_string(),
+                "c1 · gone".to_string(),
+            ]
+    })
+    .await;
+    // A `null` for one never seen writes nothing.
+    mirror(&f, &host, &rs, 7, "sub_space", "c8", Value::Null);
+    eventually("its line", || async {
+        sub_lines(&core, &rs).await.iter().any(|l| l == "c8 · gone")
+    })
+    .await;
+    assert!(sub_row(&f, &rs, "c8").is_none());
+}
+
+#[tokio::test]
+async fn forgetting_a_followed_space_drops_its_tree() {
+    let f = fixtures();
+    let (core, _recv, host, rs) = following(&f).await;
+    mirrored(&f, &host, &rs, 1, "idle").await;
+    let c1 = sub("c1", &rs, "a", "idle", false);
+    mirror(&f, &host, &rs, 2, "sub_space", "c1", c1);
+    let c2 = sub("c2", "c1", "b", "idle", false);
+    mirror(&f, &host, &rs, 3, "sub_space", "c2", c2);
+    wait_until("the tree", || sub_row(&f, &rs, "c2").is_some()).await;
+
+    core.archive_space(&rs).await.unwrap();
+    assert!(row(&f, models::SPACE, &rs).is_none());
+    assert!(sub_row(&f, &rs, "c1").is_none() && sub_row(&f, &rs, "c2").is_none());
+    // No longer followed: what the host still sends isn't kept.
+    let again = sub("c1", &rs, "a", "running", false);
+    mirror(&f, &host, &rs, 4, "sub_space", "c1", again);
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    assert!(sub_row(&f, &rs, "c1").is_none());
+}
+
+#[tokio::test]
+async fn the_hosts_removal_of_a_followed_space_takes_its_tree() {
+    let f = fixtures();
+    let (_core, _recv, host, rs) = following(&f).await;
+    mirrored(&f, &host, &rs, 1, "idle").await;
+    let c1 = sub("c1", &rs, "a", "idle", false);
+    mirror(&f, &host, &rs, 2, "sub_space", "c1", c1);
+    wait_until("the child", || sub_row(&f, &rs, "c1").is_some()).await;
+
+    mirror(&f, &host, &rs, 3, models::SPACE, &rs, Value::Null);
+    wait_until("the space gone", || row(&f, models::SPACE, &rs).is_none()).await;
+    assert!(sub_row(&f, &rs, "c1").is_none());
 }
