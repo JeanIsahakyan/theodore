@@ -268,3 +268,37 @@ composer; the phone can open a sub-space.
 - The sub-space tree at the top of the chat is tappable to the same screen;
   a long press still copies the id.
 - No per-subagent Stop: the protocol has none.
+
+## Appendix: optimistic sends, answers and starts (0.1.29)
+
+Accepted (2026-11-21). What you do shows before the host answers, as on
+the desktop; nothing waits on the round trip, nothing is lost silently.
+
+```
+Send                                  Approve                 Answer
+             Sending…                          Sending…        ╭ ◌ Answered: SQLite ╮
+   ╭ and fix the tests ╮      ╭ Plan approved, implement it. ╮
+╭──────────────────────────╮  (Approve) busy meanwhile          refused ─▶ the card
+│ Add to the queue…        │                                    is back + error
+╰──────────────────────────╯  field cleared at once
+
+host ok {message}         ─▶ Sent, until the row with that id arrives ─▶ row
+host ok {queued, position}─▶ Queued (· 3 in line), "· 1 queued" on the strip
+refused / 15 s silence    ─▶ Not sent · why   ╭ and fix the tests ╮
+                                                    (Retry) (Edit)
+
+Start from Home
+Home ──Start──▶ /space/pending_<n>, no slide      [☰]  Fix the login redirect  [🔔][✎]
+                                                       on mac-A · Starting · Edit
+                                                              ╭ Fix the login redirect ╮
+                                                       ◌ Starting on mac-A…
+                                                  ╭ Starting on the other device… ╮ (off)
+   host ok {space} ─▶ route replaced with /space/<rs_id>
+   refused         ─▶ Home, the goal back in the field, the error over the composer
+```
+
+- State: `src/state/pending.ts` (zustand, keyed by space); rules and words
+  `src/ui/pending.ts`; the bubble `PendingRow` in `src/ui/SpaceChat.tsx`.
+- A host that mirrors no rows: the bubble stays until a "Turn n: <text>"
+  line past the send shows it was received. The sub-space screen matches
+  by text and time (`read_space` carries no ids).

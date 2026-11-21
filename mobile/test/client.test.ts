@@ -1222,7 +1222,11 @@ describe('steering', () => {
         value: { message: 'm1', queued: true, position: 2 },
       }),
     });
-    await expect(sent).resolves.toEqual({ queued: true, position: 2 });
+    await expect(sent).resolves.toEqual({
+      message: 'm1',
+      queued: true,
+      position: 2,
+    });
     expect(state().spaces[0]!.status).toBe('running');
   });
 
@@ -2093,7 +2097,11 @@ describe('any space on a host (sub-spaces)', () => {
         value: { message: 'm9', queued: true, position: 1 },
       }),
     });
-    await expect(sent).resolves.toEqual({ queued: true, position: 1 });
+    await expect(sent).resolves.toEqual({
+      message: 'm9',
+      queued: true,
+      position: 1,
+    });
 
     const now = client.sendTo(HOST, CHILD, 'again');
     await waitFor(() => sock.of('request').length === 2, 'request');
@@ -2104,7 +2112,11 @@ describe('any space on a host (sub-spaces)', () => {
         value: { message: 'm10' },
       }),
     });
-    await expect(now).resolves.toEqual({ queued: false, position: null });
+    await expect(now).resolves.toEqual({
+      message: 'm10',
+      queued: false,
+      position: null,
+    });
 
     await expect(client.sendTo(HOST, CHILD, '   ')).rejects.toThrow(/empty/);
     const busy = client.sendTo(HOST, CHILD, 'x');

@@ -12,6 +12,7 @@
  *  ╭ ? Which fixture should it use? ─────────╮       its question ─▶ answer_space
  *  │ (fixtures/a)  (fixtures/b)  [Reply…]    │
  *  ╰─────────────────────────────────────────╯
+ *                     Sending…  ╭ and the tests ╮  your send, at once
  * ╭──────────────────────────────────────────────╮
  * │ Message this sub-space…                 (↑) │  ─▶ send_to (its own mode: no chips)
  * ╰──────────────────────────────────────────────╯
@@ -19,11 +20,14 @@
  * focused ─▶ readSpace now, then every 3 s ─▶ the host's signed, shape-checked
  *   answer ─▶ drawn        refused / offline ─▶ one line, the last read stays
  * blurred ─▶ the polling stops
+ * send ─▶ the field cleared, your bubble "Sending…" (src/state/pending.ts)
+ *   ─▶ ok ─▶ "Queued" while it runs, else kept until a read message of yours
+ *      with that text (close in time) stands for it; refused ─▶ Retry / Edit
  * ```
  */
 import { Stack, useFocusEffect, useLocalSearchParams } from 'expo-router';
-import { useCallback, useRef, useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { StyleSheet, Text, View, type TextInputInstance } from 'react-native';
 import {
   ComposerDock,
   Conversation,
@@ -40,10 +44,22 @@ import type {
 import { useServices } from '../../../../src/services';
 import { useGlassHeaderInset } from '../../../../src/shell/glassHeader';
 import { useFleetState } from '../../../../src/state/fleet';
+import {
+  addSend,
+  dropSend,
+  dropSends,
+  selectSends,
+  sendFailed,
+  sendRetried,
+  sendSettled,
+  usePending,
+} from '../../../../src/state/pending';
 import { Empty, Notice } from '../../../../src/ui/kit';
 import { errorText, spaceTitle } from '../../../../src/ui/logic';
 import { Glass } from '../../../../src/ui/native';
+import { rowOfSubSpaceMessage, unmatched } from '../../../../src/ui/pending';
 import { QuestionCard } from '../../../../src/ui/QuestionCard';
+import { PendingRow } from '../../../../src/ui/SpaceChat';
 import { Spinner } from '../../../../src/ui/Spinner';
 import {
   messageFrom,
@@ -122,14 +138,30 @@ export default function SubSpaceScreen() {
   const [read, setRead] = useState<SubSpaceRead | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [text, setText] = useState('');
-  const [sending, setSending] = useState(false);
-  const [sendError, setSendError] = useState<string | null>(null);
-  const [queued, setQueued] = useState(false);
   const [dock, setDock] = useState(DOCK_GUESS);
   const list = useRef<ConversationHandle>(null);
+  const input = useRef<TextInputInstance>(null);
   const top = useGlassHeaderInset();
   const hostDevice = host?.hostDevice ?? null;
   const hostName = host?.hostName ?? 'its computer';
+  // Your messages the host hasn't shown yet, under the child's id
+  // (src/state/pending.ts); a read message of yours with the same text,
+  // close in time, stands for one.
+  const pending = usePending(selectSends(child));
+  const shown = useMemo(
+    () =>
+      pending.length && read
+        ? unmatched(pending, read.messages.map(rowOfSubSpaceMessage))
+        : pending,
+    [pending, read],
+  );
+  useEffect(() => {
+    if (shown.length === pending.length) return;
+    dropSends(
+      child,
+      pending.filter((x) => !shown.includes(x)).map((x) => x.key),
+    );
+  }, [child, pending, shown]);
 
   // Read now and every 3 s while in front; a read under way isn't doubled.
   const busy = useRef(false);
@@ -154,8 +186,6 @@ export default function SubSpaceScreen() {
     }, [poll]),
   );
   const status = read?.status ?? mirrored?.status ?? 'unknown';
-  // The queue note lasts while the turn it waits behind runs.
-  if (queued && status !== 'running') setQueued(false);
 
   const title = read?.title || mirrored?.title || child;
   const toEnd = useCallback(() => list.current?.scrollToEnd(), []);
@@ -173,21 +203,36 @@ export default function SubSpaceScreen() {
   }
 
   const sendable = subSpaceSendable(status);
-  const send = () => {
-    const t = text.trim();
-    if (!t || sending || !sendable || !hostDevice) return;
-    setSending(true);
-    setSendError(null);
-    toEnd();
+  /** The request behind a bubble: its answer settles or fails the bubble. */
+  const dispatch = (key: string, t: string) => {
+    if (!hostDevice) return;
     fleet
       .sendTo(hostDevice, child, t)
       .then((r) => {
-        setText('');
-        setQueued(r.queued);
+        sendSettled(child, key, r);
         void poll();
       })
-      .catch((e: unknown) => setSendError(errorText(e)))
-      .finally(() => setSending(false));
+      .catch((e: unknown) => sendFailed(child, key, errorText(e)));
+  };
+  const send = () => {
+    const t = text.trim();
+    if (!t || !sendable || !hostDevice) return;
+    setText('');
+    const key = addSend({ space: child, text: t, at: Date.now() });
+    toEnd();
+    dispatch(key, t);
+  };
+  const retry = (key: string) => {
+    const again = sendRetried(child, key);
+    if (again) dispatch(key, again.text);
+  };
+  const edit = (key: string) => {
+    const back = pending.find((x) => x.key === key);
+    dropSend(child, key);
+    if (back) {
+      setText(back.text);
+      input.current?.focus();
+    }
   };
 
   const question = read ? subSpaceQuestion(read) : null;
@@ -215,6 +260,14 @@ export default function SubSpaceScreen() {
   const footer = (
     <View style={styles.tail}>
       {status === 'running' ? <Running text={read?.live ?? null} /> : null}
+      {shown.map((x) => (
+        <PendingRow
+          key={x.key}
+          p={x}
+          onRetry={() => retry(x.key)}
+          onEdit={() => edit(x.key)}
+        />
+      ))}
       {question && hostDevice ? (
         <QuestionCard
           key={question.askId}
@@ -230,7 +283,7 @@ export default function SubSpaceScreen() {
       ) : null}
     </View>
   );
-  const empty = read ? (
+  const empty = shown.length ? null : read ? (
     <Text style={[styles.small, styles.center, { color: p.muted }]}>
       Nothing said yet.
     </Text>
@@ -248,11 +301,6 @@ export default function SubSpaceScreen() {
         style={[styles.small, { color: p.danger }]}
       >
         {error}
-      </Text>
-    ) : null,
-    queued ? (
-      <Text key="queued" style={[styles.small, { color: p.muted }]}>
-        Queued: runs after the current turn
       </Text>
     ) : null,
   ].filter((n) => n !== null);
@@ -289,10 +337,9 @@ export default function SubSpaceScreen() {
               : 'Message this sub-space…'
           }
           disabled={!sendable || !hostDevice}
-          editable={sendable && !sending}
-          sending={sending}
+          editable={sendable}
           canSubmit={sendable && text.trim() !== ''}
-          error={sendError}
+          inputRef={input}
           testID="sub-space-composer"
         />
       </ComposerDock>

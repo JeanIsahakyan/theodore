@@ -26,7 +26,7 @@ iPhone / Android / browser                     Theodore cloud            your co
 | Home (new space) | The goal in the composer; under the hint a project chip and a computer chip ("theodore on mac-A", a sheet each; the computer's sheet holds the mode up to its cap), in the composer the model chip (top 4, All models, Effort); last picks remembered (below, "New space") |
 | Devices | This device's fingerprint (large, copy) to show on the computer; a card per device, computers first (kind, online, OS · mode cap · agents, fingerprint), trust / untrust with the fingerprint confirm; on a computer, its auto mode per Claude via cloud device (Off / Auto Edit / Full auto, for 1 hour, until end of day or until turned off) |
 | Settings | Account card; Organization (switch), Devices, This device (fingerprint, copy), Appearance (Light / Dark / System), Notifications, About (version, server); sign out |
-| Space | Its chat (or history lines), send a message any time: while a turn runs the host queues it (a queued bubble, "· 1 queued" on the strip), Stop beside Send; the composer's one chip is the model's, its sheet also holds the next message's mode (shown in the header: "on mac-A · Running · Edit"); the running turn's steps; above the composer the activity strip ("Activity strip" below): what runs now and a timer, the turn's subagents and the space's sub-spaces, a tap opens the activity sheet; Approve / Revise a plan, answer its question |
+| Space | Its chat (or history lines), send a message any time: your bubble shows at once, "Sending…" over it, and the field clears ("Optimistic sends" below); while a turn runs the host queues it (the bubble reads "Queued", "· 1 queued" on the strip), Stop beside Send; not sent ─▶ "Not sent · why", Retry / Edit; the composer's one chip is the model's, its sheet also holds the next message's mode (shown in the header: "on mac-A · Running · Edit"); the running turn's steps; above the composer the activity strip ("Activity strip" below): what runs now and a timer, the turn's subagents and the space's sub-spaces, a tap opens the activity sheet; Approve / Revise a plan (Approve shows as your message at once), answer its question (the card collapses to "Answered: …" at once); a space started from Home opens here before the host answers ("Starting on mac-A…") |
 | Sub-space | A sub-space of a followed space, read from its host by its local id every 3 s while in front: its last messages, running text, question (answered there), a composer that messages it in its own mode ("Sub-spaces" below) |
 
 Questions and "space finished" arrive as push notifications; a question's
@@ -352,6 +352,7 @@ new space (✎)      ─▶ dismissTo Home         bell ─▶ the first waiting
 | Markdown: mdast (micromark, GFM tables and strikethrough) ─▶ React Native views; code blocks highlighted (highlight.js, a fixed set of languages, never guessed) | `src/components/markdown/` |
 | A space's header (name, "on host · status") | `src/components/space-header.tsx` (the main header with a subtitle), `space-title.tsx` |
 | A space's steps: compact grey rows that open in place (folding: `src/ui/turnRows.ts`) | `src/ui/Timeline.tsx`, `src/ui/SpaceChat.tsx` |
+| What you did before the host answered: sends, Approve, answers, a start (rules: `src/ui/pending.ts`) | `src/state/pending.ts`, `PendingRow` in `src/ui/SpaceChat.tsx` |
 | The activity strip above a space's composer and its sheet (rules: `src/ui/activity.ts`) | `src/ui/ActivityStrip.tsx`, `src/ui/ActivitySheet{.android,}.tsx`, route `app/(app)/activity-sheet.tsx` |
 | A sub-space's screen (words: `src/ui/subSpaceScreen.ts`) | `app/(app)/sub-space/[space]/[child].tsx` |
 | Composer chip, Home's where chips and picker sheets (computer + Mode, project, agent · model · effort + a space's Mode) | `src/components/pickers/` (`sheet-chip.*` a chip per platform, `sheet-host.*` opens a sheet per platform, `where-chips.tsx`), routes `app/(app)/model-picker.tsx`, `computer-picker.tsx`, `project-picker.tsx`; logic `src/ui/modelPicker.ts`, `src/ui/homeDraft.ts`, `modeRows` in `src/ui/logic.ts`; picks `src/state/compose.ts` |
@@ -476,19 +477,65 @@ in front ─▶ readSpace{space: <child>, messages: 50} now, then every 3 s
    ─▶ refused / offline / silent ─▶ one line ("Can't reach mac-A", or the
       refusal as errorText says it); the last read stays on screen
 left ─▶ the polling stops
-send ─▶ sendTo: queued while it runs ("Queued: runs after the current turn")
+send ─▶ your bubble at once ("Sending…"), sendTo: "Queued" while it runs; a
+   read message of yours with that text replaces it ("Optimistic sends")
 ```
 
 | Client (`src/fleet/client.ts`) | Op | Signed to | Answer |
 | --- | --- | --- | --- |
 | `readSpace(host, space, messages ≤ 50)` | `read_space` | the host's pin | `SubSpaceRead`: title, status, mode, goal, progress, messages `{from, at, text, truncated}`, live, question `{ask, questions}`, error; refused unless it names that space |
-| `sendTo(host, space, text)` | `send_to` | same | `{queued, position}` as a send's |
+| `sendTo(host, space, text)` | `send_to` | same | `{message, queued, position}` as a send's |
 | `answerSpace(host, space, ask, answers)` | `answer_space` | same | — |
 
 - `from` is `user`, `space:<id>` (its parent's agent: "From its parent
   space" over the bubble) or the agent's name.
 - The parent space gone from the fleet ─▶ "This sub-space's space isn't in
   your fleet any more".
+
+### Optimistic sends
+
+What you do shows before the host answers, as on the desktop
+(docs/spaces.md "What you do shows before the core answers"). The pending
+state lives in a small store keyed by space (`src/state/pending.ts`,
+zustand), so a bubble survives leaving and reopening the space; the rules
+are plain TS (`src/ui/pending.ts`), the bubble `PendingRow`
+(`src/ui/SpaceChat.tsx`).
+
+```text
+send ─▶ the field cleared, your bubble at once        Sending…  ╭ and the tests ╮
+  │
+  ├─ host: ok {message}            ─▶ "Sent": kept until its chat_message row
+  │     (space screen)                 arrives (by that id; a host that names
+  │                                    none: your text within 5 min), then
+  │                                    dropped in favour of the row
+  │     (a host that mirrors no rows)  until a "Turn n: <text>" line past the
+  │                                    send shows it was received
+  │     (sub-space screen)             until a read message of yours with that
+  │                                    text, close in time (read_space has no ids)
+  ├─ host: ok {queued, position}   ─▶ "Queued" ("Queued · 3 in line"), counted
+  │                                    on the strip; the mirrored queued row
+  │                                    replaces it
+  └─ refused / no answer in 15 s   ─▶ Not sent · <why>  ╭ and the tests ╮
+                                                            (Retry) (Edit)
+                                       Retry sends it again as new (same mode
+                                       and picks); Edit puts the text back in
+                                       the field; nothing is lost silently
+Approve ─▶ "Plan approved, implement it." as your bubble at once, in the
+           build mode: the same rules; Approve is busy meanwhile
+answer  ─▶ the card collapses to "◌ Answered: SQLite" at once; the host's row
+           drops the question; refused ─▶ the card is back, the error under it
+start   ─▶ /space/pending_<n> at once: the goal as your bubble, "Starting on
+           mac-A…", the composer off; the host's ok (or the 30 s wait's end)
+           names the space ─▶ the route is replaced with /space/<rs_id>;
+           refused ─▶ back on Home, the goal in the field, the error shown
+```
+
+- The send's reply carries the row's id (`{message, queued?, position?}`,
+  `fleet_queue.rs`); `sendResult` keeps it (`SendResult.message`).
+- A row takes at most one bubble (the oldest with its text); an agent's row
+  or a failed bubble never match.
+- Push notification actions answer without a card: nothing optimistic there.
+- Sign-out or an org switch clears the store.
 
 ### New space: where chips, the model chip and the sheets
 
@@ -543,10 +590,11 @@ sent:  only what was picked (startPicks / sendPicks), the host's defaults otherw
   shows above the composer.
 - A host too old to list agents: a space's chip shows the mode instead
   ("Edit ⌄"), so its Mode step stays reachable.
-- Start ─▶ the space opens with a fade, not a slide: it is a top-level
-  screen like Home, its header the main one (☰ / 🔔 / ✎, no Back, no iOS
-  edge swipe back); Android Back goes to Home. Devices and Settings stay
-  pushed with Back.
+- Start ─▶ the space opens with a fade, not a slide, at once under a
+  pending id ("Optimistic sends" above): it is a top-level screen like
+  Home, its header the main one (☰ / 🔔 / ✎, no Back, no iOS edge swipe
+  back); Android Back goes to Home. Devices and Settings stay pushed with
+  Back.
 - Design record: `mobile/sketch/new-space/SKETCH.md`.
 ### Settings and Devices
 

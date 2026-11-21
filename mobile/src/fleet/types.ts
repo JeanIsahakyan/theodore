@@ -150,6 +150,9 @@ export type LineKind =
 /** What the host did with a message: ran it, or queued it behind the
  *  running turn (`position` 1 runs next). */
 export interface SendResult {
+  /** The chat row's id on the host (its mirrored `chat_message`); `null`
+   *  from a host that doesn't say. */
+  message: string | null;
   queued: boolean;
   position: number | null;
 }

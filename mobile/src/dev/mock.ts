@@ -635,13 +635,40 @@ export function createMock(options: MockOptions = {}): Mock {
       const running = useFleetState
         .getState()
         .spaces.some((s) => s.space === space && s.status === 'running');
+      counter += 1;
+      const id = `sent-${counter}`;
+      // A mirrored space gets the row the host would mirror (the optimistic
+      // bubble is replaced by it); the others a history line.
+      const mirror = useFleetState.getState().mirrors[space];
+      if (mirror) {
+        const seq = running ? (queuedHere[space] ?? 0) + 1 : 0;
+        useFleetState.setState((s) => ({
+          mirrors: {
+            ...s.mirrors,
+            [space]: {
+              ...mirror,
+              messages: {
+                ...mirror.messages,
+                [id]: msg({
+                  id,
+                  pr: `space:${space}`,
+                  author: { kind: 'me' },
+                  text,
+                  at: Date.now(),
+                  queued: running ? { seq } : null,
+                }),
+              },
+            },
+          },
+        }));
+      }
       if (running) {
         queuedHere[space] = (queuedHere[space] ?? 0) + 1;
-        return { queued: true, position: queuedHere[space] };
+        return { message: id, queued: true, position: queuedHere[space] };
       }
-      appendLine(space, 'turn', text);
+      appendLine(space, 'turn', `Turn 1: ${text}`);
       patchSpace(space, { status: 'running' });
-      return { queued: false, position: null };
+      return { message: id, queued: false, position: null };
     },
     async stopSpace(space) {
       await call('stopSpace', space);
@@ -699,9 +726,11 @@ export function createMock(options: MockOptions = {}): Mock {
     async sendTo(hostDevice, space, text) {
       await call('sendTo', hostDevice, space, text);
       const read = mockSubSpaceReads[space];
+      counter += 1;
+      const message = `sent-${counter}`;
       return read?.status === 'running'
-        ? { queued: true, position: 1 }
-        : { queued: false, position: null };
+        ? { message, queued: true, position: 1 }
+        : { message, queued: false, position: null };
     },
     async answerSpace(hostDevice, space, ask, answers) {
       await call('answerSpace', hostDevice, space, ask, answers);

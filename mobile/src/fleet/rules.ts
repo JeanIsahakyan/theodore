@@ -408,9 +408,18 @@ export function spaceReadOf(
   };
 }
 
-/** The host's `ok` value for a send, shape-checked (another device's word). */
+/**
+ * The host's `ok` value for a send, shape-checked (another device's word):
+ * `{message, queued?, position?}` (`fleet_queue.rs` `fleet_send_or_queue`).
+ * `message` is the chat row's id the host mirrors later; an older host
+ * sends none.
+ */
 export function sendResult(value: unknown): SendResult {
-  const v = (value ?? {}) as { queued?: unknown; position?: unknown };
+  const v = (value ?? {}) as {
+    message?: unknown;
+    queued?: unknown;
+    position?: unknown;
+  };
   const queued = v.queued === true;
   const position =
     queued &&
@@ -419,5 +428,5 @@ export function sendResult(value: unknown): SendResult {
     v.position > 0
       ? v.position
       : null;
-  return { queued, position };
+  return { message: pickId(v.message, NAME_MAX), queued, position };
 }

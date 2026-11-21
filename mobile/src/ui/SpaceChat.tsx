@@ -30,6 +30,7 @@ import {
   type LiveTurn,
 } from './chat';
 import { MODE_LABEL } from './logic';
+import { pendingLabel, type PendingSend } from './pending';
 import { mono, usePalette } from './theme';
 import { fileChips, formatDuration } from './turnRows';
 import type { FleetMode } from '../gen/fleet';
@@ -252,6 +253,58 @@ export const MessageRow = memo(function MessageRow({
 
 export function QueuedRow({ m }: { m: ChatMessage }) {
   return <UserBubble m={m} queued />;
+}
+
+/**
+ * A message of yours the host hasn't shown yet (`src/ui/pending.ts`): the
+ * bubble at once, "Sending…" over it, then "Queued" when the host queued
+ * it; not sent ─▶ "Not sent · <why>" with Retry and Edit under it.
+ *
+ * ```text
+ *                              Sending…
+ *                    ╭ and fix the tests ╮
+ *
+ *            Not sent · the other device didn't answer in time
+ *                    ╭ and fix the tests ╮
+ *                           (Retry) (Edit)
+ * ```
+ */
+export function PendingRow({
+  p,
+  onRetry,
+  onEdit,
+}: {
+  p: PendingSend;
+  onRetry: () => void;
+  onEdit: () => void;
+}) {
+  const palette = usePalette();
+  const failed = p.state === 'failed';
+  const label = pendingLabel(p);
+  return (
+    <View
+      style={[styles.userRow, !failed && styles.dim]}
+      accessibilityLabel={failed ? 'Message not sent' : `${label} message`}
+    >
+      <Text
+        numberOfLines={2}
+        style={[
+          styles.small,
+          styles.end,
+          { color: failed ? palette.danger : palette.muted },
+        ]}
+      >
+        {failed && p.error ? `${label} · ${p.error}` : label}
+      </Text>
+      <Message from="user">{p.text}</Message>
+      {failed ? (
+        <View style={styles.planActions}>
+          <Button label="Retry" variant="secondary" pill onPress={onRetry} />
+          <Button label="Edit" variant="plain" pill onPress={onEdit} />
+        </View>
+      ) : null}
+    </View>
+  );
 }
 
 /** Elapsed time under a running turn, in its shimmering status line. */

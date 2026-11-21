@@ -31,6 +31,13 @@ export function openFromDrawer(href: Href, path: string): void {
   else router.replace(href, { withAnchor: true });
 }
 
+/** Back to Home, whatever is over it (a refused start leaves its pending
+ *  screen); the goal stays as it is. */
+export function backHome(): void {
+  if (router.canDismiss()) router.dismissTo('/' as Href);
+  else router.replace('/' as Href);
+}
+
 export function goNewSpace(path: string): void {
   requestNewSpace();
   if (path === '/') return;
