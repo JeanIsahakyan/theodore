@@ -1,15 +1,27 @@
 // Adapted from EvanBacon/chat-template (MIT)
 /**
  * The app's drawer (iOS, Android), forked from react-native-drawer-layout
- * by the template: left side, LTR, a pan from the left edge opens it, a
- * pan anywhere or a tap on the content closes it.
+ * by the template: left side, LTR. Closed: a rightward pan from anywhere on
+ * the content opens it (ChatGPT, Telegram). Open: a pan anywhere or a tap
+ * on the content closes it. It follows the finger; distance or velocity
+ * decides where it settles.
  *
  * ```text
  * iOS      "back": the drawer lies behind; the content (rounded corners)
  *          slides right off it, the drawer grows from 95 % to full size
  * Android  "front": Material 3 modal navigation drawer; the sheet slides
  *          in over the content, a 32 % scrim behind it, Back closes it
+ *
+ * closed   dx > +12 ─▶ opens      dx < −5 or |dy| > 10 ─▶ fails: the chat
+ *          list scrolls, a leftward swipe is nothing
+ * open     |dx| > 5 ─▶ drags      |dy| > 5 ─▶ fails
  * ```
+ *
+ * Horizontal scroll views inside (composer chips, code blocks, tables) win
+ * over the pan: a native scroll begins at its platform's touch slop (8 dp
+ * on Android, ~10 pt on iOS), under the pan's 12 pt, and the first to
+ * recognize cancels the other (RNGH's root helper on Android, UIKit's
+ * exclusivity on iOS). A code block scrolled to the right scrolls back.
  */
 import * as Haptics from 'expo-haptics';
 import { useCallback, useEffect, useMemo, type ReactNode } from 'react';
@@ -40,8 +52,12 @@ const webDeps = <T extends unknown[]>(deps: T): T | undefined =>
 
 const APPROX_APP_BAR_HEIGHT = 56;
 const DEFAULT_DRAWER_WIDTH = 360;
-const SWIPE_EDGE_WIDTH = 32;
 const SWIPE_MIN_OFFSET = 5;
+/** Closed: the rightward move that opens. Above the native scroll views'
+ * touch slop, so a horizontal one under the finger takes the touch first. */
+const SWIPE_OPEN_OFFSET = 12;
+/** Closed: this much vertical movement is a scroll, not a swipe. */
+const SWIPE_FAIL_OFFSET_Y = 10;
 const SWIPE_MIN_DISTANCE = 60;
 const SWIPE_MIN_VELOCITY = 500;
 const PROGRESS_EPSILON = 0.05;
@@ -64,7 +80,8 @@ export interface DrawerLayoutProps {
   onOpen: () => void;
   onClose: () => void;
   drawerContent: ReactNode;
-  /** Off on pushed screens: the left edge is the system's back swipe. */
+  /** Swipe-to-open; off on pushed screens, where the left edge is the
+   * system's back swipe. An open drawer always takes the pan. */
   swipeEnabled?: boolean;
   children: ReactNode;
 }
@@ -153,11 +170,21 @@ export function DrawerLayout({
         toggleDrawer(nextOpen, event.velocityX);
         scheduleOnRN(onGestureFinish);
       })
-      .activeOffsetX([-SWIPE_MIN_OFFSET, SWIPE_MIN_OFFSET])
-      .failOffsetY([-SWIPE_MIN_OFFSET, SWIPE_MIN_OFFSET])
+      .maxPointers(1)
       .enabled(swipeEnabled || open);
-    // Closed: only from the left edge. Open: from anywhere.
-    if (!open) gesture.hitSlop({ left: 0, width: SWIPE_EDGE_WIDTH });
+    if (open) {
+      // Either way, from anywhere.
+      gesture
+        .activeOffsetX([-SWIPE_MIN_OFFSET, SWIPE_MIN_OFFSET])
+        .failOffsetY([-SWIPE_MIN_OFFSET, SWIPE_MIN_OFFSET]);
+    } else {
+      // Rightward only, from anywhere; a leftward or vertical move is the
+      // content's (the chat list scrolls, a code block scrolls back).
+      gesture
+        .activeOffsetX(SWIPE_OPEN_OFFSET)
+        .failOffsetX(-SWIPE_MIN_OFFSET)
+        .failOffsetY([-SWIPE_FAIL_OFFSET_Y, SWIPE_FAIL_OFFSET_Y]);
+    }
     return gesture;
   }, [
     drawerWidth,
