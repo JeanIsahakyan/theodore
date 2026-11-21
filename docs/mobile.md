@@ -26,7 +26,8 @@ iPhone / Android / browser                     Theodore cloud            your co
 | Home (new space) | The goal in the composer; under the hint a project chip and a computer chip ("theodore on mac-A", a sheet each; the computer's sheet holds the mode up to its cap), in the composer the model chip (top 4, All models, Effort); last picks remembered (below, "New space") |
 | Devices | This device's fingerprint (large, copy) to show on the computer; a card per device, computers first (kind, online, OS · mode cap · agents, fingerprint), trust / untrust with the fingerprint confirm; on a computer, its auto mode per Claude via cloud device (Off / Auto Edit / Full auto, for 1 hour, until end of day or until turned off) |
 | Settings | Account card; Organization (switch), Devices, This device (fingerprint, copy), Appearance (Light / Dark / System), Notifications, About (version, server); sign out |
-| Space | Its chat (or history lines), send a message any time: while a turn runs the host queues it (a queued bubble, or "Queued: runs after the current turn"), Stop beside Send; the composer's one chip is the model's, its sheet also holds the next message's mode (shown in the header: "on mac-A · Running · Edit"); the running turn's steps, or the newest log line with "Working · 12s" on a host that doesn't mirror; Approve / Revise a plan, answer its question |
+| Space | Its chat (or history lines), send a message any time: your bubble shows at once, "Sending…" over it, and the field clears ("Optimistic sends" below); while a turn runs the host queues it (the bubble reads "Queued", "· 1 queued" on the strip), Stop beside Send; not sent ─▶ "Not sent · why", Retry / Edit; the composer's one chip is the model's, its sheet also holds the next message's mode (shown in the header: "on mac-A · Running · Edit"); the running turn's steps; above the composer the activity strip ("Activity strip" below): what runs now and a timer, the turn's subagents and the space's sub-spaces, a tap opens the activity sheet; Approve / Revise a plan (Approve shows as your message at once), answer its question (the card collapses to "Answered: …" at once); a space started from Home opens here before the host answers ("Starting on mac-A…") |
+| Sub-space | A sub-space of a followed space, read from its host by its local id every 3 s while in front: its last messages, running text, question (answered there), a composer that messages it in its own mode ("Sub-spaces" below) |
 
 Questions and "space finished" arrive as push notifications; a question's
 options are notification buttons (one tap answers it, signed on the phone,
@@ -145,9 +146,11 @@ mobile/
   app/                 expo-router routes: (auth)/sign-in, choose-organization, callback;
                        (app)/ drawer around a stack: index (Home, new space),
                        space/[id], devices, settings pushed over it; start ─▶ /;
-                       model-, computer-, project-picker: the composer's sheets (iOS)
-                       space/[id], devices, settings (+ settings/organization,
-                       device, about) pushed over it; start ─▶ /
+                       model-, computer-, project-picker, activity-sheet: the
+                       composer's and the strip's sheets (iOS);
+                       space/[id], sub-space/[space]/[child], devices, settings
+                       (+ settings/organization, device, about) pushed over it;
+                       start ─▶ /
   src/components/      the shell and composer, adapted from the chat template (below)
   src/auth/            AuthKit PKCE, session + refresh, org select/switch via cloud, RS256 check
   src/shell/           wiring: AppProviders (auth + fleet clients, auth state, fleet lifecycle)
@@ -349,6 +352,9 @@ new space (✎)      ─▶ dismissTo Home         bell ─▶ the first waiting
 | Markdown: mdast (micromark, GFM tables and strikethrough) ─▶ React Native views; code blocks highlighted (highlight.js, a fixed set of languages, never guessed) | `src/components/markdown/` |
 | A space's header (name, "on host · status") | `src/components/space-header.tsx` (the main header with a subtitle), `space-title.tsx` |
 | A space's steps: compact grey rows that open in place (folding: `src/ui/turnRows.ts`) | `src/ui/Timeline.tsx`, `src/ui/SpaceChat.tsx` |
+| What you did before the host answered: sends, Approve, answers, a start (rules: `src/ui/pending.ts`) | `src/state/pending.ts`, `PendingRow` in `src/ui/SpaceChat.tsx` |
+| The activity strip above a space's composer and its sheet (rules: `src/ui/activity.ts`) | `src/ui/ActivityStrip.tsx`, `src/ui/ActivitySheet{.android,}.tsx`, route `app/(app)/activity-sheet.tsx` |
+| A sub-space's screen (words: `src/ui/subSpaceScreen.ts`) | `app/(app)/sub-space/[space]/[child].tsx` |
 | Composer chip, Home's where chips and picker sheets (computer + Mode, project, agent · model · effort + a space's Mode) | `src/components/pickers/` (`sheet-chip.*` a chip per platform, `sheet-host.*` opens a sheet per platform, `where-chips.tsx`), routes `app/(app)/model-picker.tsx`, `computer-picker.tsx`, `project-picker.tsx`; logic `src/ui/modelPicker.ts`, `src/ui/homeDraft.ts`, `modeRows` in `src/ui/logic.ts`; picks `src/state/compose.ts` |
 | Icons: SF Symbols (iOS), Material Symbols (Android), Lucide (web) | `src/components/symbol-image.tsx` |
 | Settings and Devices: rows, sections, account / fingerprint / device cards | `src/components/settings/` (below) |
@@ -364,6 +370,56 @@ new space (✎)      ─▶ dismissTo Home         bell ─▶ the first waiting
 - Fleet text is untrusted in the markdown too: a link is its words and its
   address in muted text (nothing opens), an image is `[image: alt]`
   (nothing loads), raw HTML is text, nesting deeper than 16 is plain text.
+
+### Activity strip
+
+What a running space is doing, above its composer, on the notes panel
+(Glass on iOS 26+, a card elsewhere), the desktop's `SpaceProgress` and
+`SpaceAgents` in two lines. Rules: `src/ui/activity.ts`; views
+`src/ui/ActivityStrip.tsx`, `src/ui/ActivitySheet{.android,}.tsx`.
+
+```text
+ ... chat ...
+ ⟳ 2 of 5 · Edit auth · 1 queued             1m 12s   line 1, while a turn runs
+ ◌ 2 agents · 2 sub-spaces (1 waiting)            ⌃   line 2 ─▶ the activity sheet
+╭──────────────────────────────────────────────╮
+│ Add to the queue…                            │
+│ (Opus 4.1 High ⌄)                   (■) (↑)  │
+╰──────────────────────────────────────────────╯
+
+line 1   running ─▶ the plan ("<done> of <n> · <active step>", update_progress)
+                    else the newest live step ("Edit auth.ts"), else (a host
+                    that doesn't mirror) the newest log line, else "Working";
+                    a timer since your message; "· N queued" after it
+         a question waits ─▶ "Waiting for your answer ↓": a tap scrolls to the card
+         else ─▶ no line
+line 2   the turn's subagents (live, or the last turn's) and the space's
+         sub-spaces: "2 agents · 3 sub-spaces (1 running, 1 waiting)"; a
+         spinner while any runs or waits; none of either ─▶ no line
+neither ─▶ no strip (the Run warning and the chat error keep their notes)
+```
+
+Subagents are the turn's top-level `Task` / `Agent` steps with a call id
+(`toolRow` kind `agent`, `src/ui/turnRows.ts`): one with no result runs
+while the turn does, a `background` one until its summary lands; their
+times are this app's (first seen, settled), kept per space while it lives.
+The protocol has no per-subagent Stop, so the sheet offers none.
+
+```text
+Activity (the sheet: iOS formSheet route /activity-sheet?space=<id>,
+          Android Compose ModalBottomSheet in place, web a modal)
+  Plan · 2 of 5
+    ✓ Read the flow
+    ⟳ Edit auth
+    ○ Tests
+  This turn                         ("Last turn" once it ended)
+    ◌ Explore the auth flow         running · 32s
+    ✓ Review the tests              done · 1m 4s
+  Sub-spaces
+    ? Fix the flaky test            waiting for an answer · Edit  ›  ─▶ its screen
+    ⟳ Update the docs               running · Edit                ›
+    ✓ Split the crate               merged · Edit                 ›
+```
 
 ### Sub-spaces
 
@@ -393,8 +449,93 @@ Space screen, top of the chat           Drawer row
 
 - Children are listed under their parent, siblings in the order first seen;
   one whose parent is unknown sits at the top level after the tree.
-- A child isn't followed here: a tap opens nothing, a long press copies its
-  id. Logic: `src/ui/subSpaceTree.ts`; view: `src/ui/SubSpaces.tsx`.
+- A tap (here, or on a row of the activity sheet) opens the sub-space's
+  screen; a long press copies its id. Logic: `src/ui/subSpaceTree.ts`;
+  view: `src/ui/SubSpaces.tsx`.
+
+#### The sub-space screen
+
+A child isn't followed here (no `rs_` id, nothing mirrored), so its screen
+reads it from the host through the ops on any space (docs/fleet.md "Any
+space on a computer"), by its local id.
+
+```text
+[‹]      Fix the flaky test                          /sub-space/<space>/<child>
+         sub-space of Retry on 429 · on mac-A · Waiting for you
+ ... its last messages (read_space, up to 50) ...    yours and its parent agent's
+ ⟳ Running: Edit tests/flaky.rs              32s     as bubbles, the agent's full width
+ ╭ ? Which fixture should it use? ─────────╮         its question ─▶ answer_space
+ │ (fixtures/a)  (fixtures/b)  [Other…]    │
+ ╰─────────────────────────────────────────╯
+╭──────────────────────────────────────────────╮
+│ Message this sub-space…                 (↑) │     ─▶ send_to: its own mode, no chips
+╰──────────────────────────────────────────────╯
+
+in front ─▶ readSpace{space: <child>, messages: 50} now, then every 3 s
+   (no subscription exists for it; one read at a time)
+   ─▶ the host's signed reply, every field shape-checked (spaceReadOf)
+   ─▶ refused / offline / silent ─▶ one line ("Can't reach mac-A", or the
+      refusal as errorText says it); the last read stays on screen
+left ─▶ the polling stops
+send ─▶ your bubble at once ("Sending…"), sendTo: "Queued" while it runs; a
+   read message of yours with that text replaces it ("Optimistic sends")
+```
+
+| Client (`src/fleet/client.ts`) | Op | Signed to | Answer |
+| --- | --- | --- | --- |
+| `readSpace(host, space, messages ≤ 50)` | `read_space` | the host's pin | `SubSpaceRead`: title, status, mode, goal, progress, messages `{from, at, text, truncated}`, live, question `{ask, questions}`, error; refused unless it names that space |
+| `sendTo(host, space, text)` | `send_to` | same | `{message, queued, position}` as a send's |
+| `answerSpace(host, space, ask, answers)` | `answer_space` | same | — |
+
+- `from` is `user`, `space:<id>` (its parent's agent: "From its parent
+  space" over the bubble) or the agent's name.
+- The parent space gone from the fleet ─▶ "This sub-space's space isn't in
+  your fleet any more".
+
+### Optimistic sends
+
+What you do shows before the host answers, as on the desktop
+(docs/spaces.md "What you do shows before the core answers"). The pending
+state lives in a small store keyed by space (`src/state/pending.ts`,
+zustand), so a bubble survives leaving and reopening the space; the rules
+are plain TS (`src/ui/pending.ts`), the bubble `PendingRow`
+(`src/ui/SpaceChat.tsx`).
+
+```text
+send ─▶ the field cleared, your bubble at once        Sending…  ╭ and the tests ╮
+  │
+  ├─ host: ok {message}            ─▶ "Sent": kept until its chat_message row
+  │     (space screen)                 arrives (by that id; a host that names
+  │                                    none: your text within 5 min), then
+  │                                    dropped in favour of the row
+  │     (a host that mirrors no rows)  until a "Turn n: <text>" line past the
+  │                                    send shows it was received
+  │     (sub-space screen)             until a read message of yours with that
+  │                                    text, close in time (read_space has no ids)
+  ├─ host: ok {queued, position}   ─▶ "Queued" ("Queued · 3 in line"), counted
+  │                                    on the strip; the mirrored queued row
+  │                                    replaces it
+  └─ refused / no answer in 15 s   ─▶ Not sent · <why>  ╭ and the tests ╮
+                                                            (Retry) (Edit)
+                                       Retry sends it again as new (same mode
+                                       and picks); Edit puts the text back in
+                                       the field; nothing is lost silently
+Approve ─▶ "Plan approved, implement it." as your bubble at once, in the
+           build mode: the same rules; Approve is busy meanwhile
+answer  ─▶ the card collapses to "◌ Answered: SQLite" at once; the host's row
+           drops the question; refused ─▶ the card is back, the error under it
+start   ─▶ /space/pending_<n> at once: the goal as your bubble, "Starting on
+           mac-A…", the composer off; the host's ok (or the 30 s wait's end)
+           names the space ─▶ the route is replaced with /space/<rs_id>;
+           refused ─▶ back on Home, the goal in the field, the error shown
+```
+
+- The send's reply carries the row's id (`{message, queued?, position?}`,
+  `fleet_queue.rs`); `sendResult` keeps it (`SendResult.message`).
+- A row takes at most one bubble (the oldest with its text); an agent's row
+  or a failed bubble never match.
+- Push notification actions answer without a card: nothing optimistic there.
+- Sign-out or an org switch clears the store.
 
 ### New space: where chips, the model chip and the sheets
 
@@ -449,10 +590,11 @@ sent:  only what was picked (startPicks / sendPicks), the host's defaults otherw
   shows above the composer.
 - A host too old to list agents: a space's chip shows the mode instead
   ("Edit ⌄"), so its Mode step stays reachable.
-- Start ─▶ the space opens with a fade, not a slide: it is a top-level
-  screen like Home, its header the main one (☰ / 🔔 / ✎, no Back, no iOS
-  edge swipe back); Android Back goes to Home. Devices and Settings stay
-  pushed with Back.
+- Start ─▶ the space opens with a fade, not a slide, at once under a
+  pending id ("Optimistic sends" above): it is a top-level screen like
+  Home, its header the main one (☰ / 🔔 / ✎, no Back, no iOS edge swipe
+  back); Android Back goes to Home. Devices and Settings stay pushed with
+  Back.
 - Design record: `mobile/sketch/new-space/SKETCH.md`.
 ### Settings and Devices
 

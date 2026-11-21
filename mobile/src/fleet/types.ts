@@ -150,6 +150,9 @@ export type LineKind =
 /** What the host did with a message: ran it, or queued it behind the
  *  running turn (`position` 1 runs next). */
 export interface SendResult {
+  /** The chat row's id on the host (its mirrored `chat_message`); `null`
+   *  from a host that doesn't say. */
+  message: string | null;
   queued: boolean;
   position: number | null;
 }
@@ -158,6 +161,46 @@ export interface SpaceLine {
   seq: number;
   kind: LineKind;
   text: string;
+}
+
+/** One of a sub-space's last messages (`read_space`), shape-checked. */
+export interface SubSpaceMessage {
+  /** `user`, `space:<id>` (another space's agent), or the agent's name. */
+  from: string;
+  at: number;
+  text: string;
+  truncated: boolean;
+}
+
+/**
+ * A space on a host read by its local id (`read_space`, docs/fleet.md "Any
+ * space on a computer"): what the sub-space screen shows. Every field is
+ * shape-checked (`src/fleet/rules.ts` `spaceReadOf`): it is the host's
+ * signed word, but still another device's text.
+ */
+export interface SubSpaceRead {
+  /** Its local id on the host. */
+  space: string;
+  title: string;
+  /** `setting_up`, `running`, `question`, `waiting`, `idle`, `failed`, `archived`. */
+  status: string;
+  mode: FleetMode | null;
+  agent: string | null;
+  turns: number;
+  done: boolean;
+  goal: string;
+  branch: string;
+  progress: { label: string; state: 'pending' | 'active' | 'done' }[];
+  progressNote: string | null;
+  /** The newest, oldest first. */
+  messages: SubSpaceMessage[];
+  /** The running turn's text so far. */
+  live: string | null;
+  question: {
+    ask: string;
+    questions: { question: string; options: string[]; multi: boolean }[];
+  } | null;
+  error: string | null;
 }
 
 export interface FleetSnapshot {
@@ -235,5 +278,25 @@ export interface FleetClient {
     mcpDevice: string,
     auto: McpAuto,
     untilMs: number | null,
+  ): Promise<void>;
+  /**
+   * Reads a space on `hostDevice` by its local id (a sub-space of a space
+   * followed here): its last `messages` (at most 50), running text,
+   * question (`read_space`). The host's verified answer, shape-checked.
+   */
+  readSpace(
+    hostDevice: string,
+    space: string,
+    messages?: number,
+  ): Promise<SubSpaceRead>;
+  /** A message as that space's next turn, in its own mode (`send_to`);
+   *  queued while it runs. */
+  sendTo(hostDevice: string, space: string, text: string): Promise<SendResult>;
+  /** Answers the question set `ask` waiting in that space (`answer_space`). */
+  answerSpace(
+    hostDevice: string,
+    space: string,
+    ask: string,
+    answers: string[][],
   ): Promise<void>;
 }

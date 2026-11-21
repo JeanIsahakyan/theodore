@@ -30,6 +30,7 @@ import { createAuthClient } from '../auth/platform';
 import { createFleetClient } from '../fleet/client';
 import { savedScope } from '../fleet/saved';
 import { persistPicks, picksStore, restorePicks } from '../state/compose';
+import { resetPending } from '../state/pending';
 import { createDemo } from '../dev/demo';
 import { resetFleetState } from '../dev/mock';
 import type { FleetClient } from '../fleet/types';
@@ -165,6 +166,8 @@ export function AppProviders({ children }: { children: ReactNode }) {
   useEffect(() => {
     const prev = lastScope.current;
     lastScope.current = scope;
+    // Another account or org (or none): nothing of the old one is pending.
+    if (prev !== scope) resetPending();
     if (prev && !scope && status === 'signed_out')
       void picksStore()
         .clear(prev)

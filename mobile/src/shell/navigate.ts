@@ -16,10 +16,26 @@ import { requestNewSpace } from '../state/compose';
 export const spaceHref = (id: string): Href =>
   `/space/${encodeURIComponent(id)}` as Href;
 
+/** `/sub-space/<space>/<child>`: a sub-space of a followed space, by its
+ *  local id on the host (docs/mobile.md "Sub-spaces"). Pushed with Back. */
+export const subSpaceHref = (space: string, child: string): Href =>
+  `/sub-space/${encodeURIComponent(space)}/${encodeURIComponent(child)}` as Href;
+
+export function openSubSpace(space: string, child: string): void {
+  router.push(subSpaceHref(space, child));
+}
+
 export function openFromDrawer(href: Href, path: string): void {
   if (path === href) return;
   if (path === '/') router.push(href);
   else router.replace(href, { withAnchor: true });
+}
+
+/** Back to Home, whatever is over it (a refused start leaves its pending
+ *  screen); the goal stays as it is. */
+export function backHome(): void {
+  if (router.canDismiss()) router.dismissTo('/' as Href);
+  else router.replace('/' as Href);
 }
 
 export function goNewSpace(path: string): void {
