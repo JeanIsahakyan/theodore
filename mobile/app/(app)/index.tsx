@@ -21,7 +21,7 @@
  *
  * picks: src/state/compose.ts (shared with the sheets, remembered per
  *        account + org); only what was picked is sent
- * ✎ / drawer "New space" ─▶ the goal cleared, the composer focused
+ * ✎ (the header)   ─▶ the goal cleared, the composer focused
  *        (not at a cold start: the keyboard would cover Home at launch)
  * no computer can take one ─▶ "No computer can take a space right now…",
  *                             Devices, the composer off
@@ -98,7 +98,7 @@ export default function NewSpaceScreen() {
     [],
   );
 
-  // "New space" (✎, the drawer): a clean field, focused. Not at a cold
+  // "New space" (✎ in the header): a clean field, focused. Not at a cold
   // start: only a request made after Home mounted.
   const handled = useRef(fresh);
   useEffect(() => {
