@@ -268,7 +268,7 @@ core (`Core::fleet_hosted_may`, `space_tool_check` / `space_tool_start` /
 | Tool | Ask · Plan | Edit | Run |
 | --- | --- | --- | --- |
 | `run_check`, `start_app` | refused | refused | allowed |
-| `ship` (open PR, push, keep branch) | refused | allowed | allowed |
+| `ship` (open PR, push, merge the PR, keep branch) | refused | allowed | allowed |
 | `ship` `merge_locally` | refused | refused | refused |
 | user MCP servers (`agents.user_mcp`), `approve_tool` | off | off | off |
 

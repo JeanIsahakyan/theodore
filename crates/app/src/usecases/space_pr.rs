@@ -181,12 +181,25 @@ impl Core {
     /// yet and the host offers it; the merge queue when the base has one.
     /// Refused with turns not pushed yet: they'd be left out.
     pub async fn merge_space(&self, req: MergeSpaceRequest) -> AppResult<MergeSpaceResult> {
+        self.merge_space_as(req, None).await
+    }
+
+    /// `merge_space` asked for by the agent of the turn `turn` (the `ship`
+    /// tool's `merge`): the space is running that very turn, which doesn't
+    /// block it — but the turn's own edits since the last push do, like
+    /// any turn not pushed.
+    pub(crate) async fn merge_space_as(
+        &self,
+        req: MergeSpaceRequest,
+        turn: Option<&str>,
+    ) -> AppResult<MergeSpaceResult> {
         let space = self.space_row(&req.space).await?;
         let pr = space
             .pr
             .clone()
             .ok_or_else(|| AppError::Invalid("this space has no PR to merge".into()))?;
-        if space.status == SpaceStatus::Running {
+        let own_turn = turn.is_some() && space.run.as_deref() == turn;
+        if space.status == SpaceStatus::Running && !own_turn {
             return Err(AppError::Invalid(
                 "the agent is still working; let the turn end and push it first".into(),
             ));
@@ -194,6 +207,12 @@ impl Core {
         if pushed_head(&space).is_some_and(|pushed| pushed != &space.head_sha) {
             return Err(AppError::Invalid(
                 "some turns aren't pushed yet; push them first so the merge has them".into(),
+            ));
+        }
+        if own_turn && self.worktree_edited_since(&space, &space.head_sha).await? {
+            return Err(AppError::Invalid(
+                "this turn's edits aren't pushed yet; ship with push first so the merge has them"
+                    .into(),
             ));
         }
         // No row yet: the fetch after opening it failed. Merge goes by it.
@@ -225,6 +244,24 @@ impl Core {
             auto,
             queue,
         })
+    }
+
+    /// Whether the worktree's files differ from the checkpoint `since`: a
+    /// snapshot through a temporary index (no ref moves), compared by
+    /// tree. `false` without a worktree (archived: the checkpoint is all
+    /// there is).
+    async fn worktree_edited_since(&self, space: &Space, since: &Sha) -> AppResult<bool> {
+        let wt = Path::new(&space.worktree);
+        if !wt.exists() {
+            return Ok(false);
+        }
+        let git = &self.0.deps.git;
+        let snapshot = match git.space_snapshot(wt).await {
+            Ok(sha) => sha,
+            Err(GitError::NotAWorktree(_)) => return Ok(false),
+            Err(e) => return Err(e.into()),
+        };
+        Ok(!git.same_tree(wt, &snapshot, since).await?)
     }
 
     /// The space page's poll of its PR (docs/spaces.md "Space page — in

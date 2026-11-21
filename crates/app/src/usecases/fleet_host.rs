@@ -227,8 +227,9 @@ pub(crate) enum HostedTool {
 impl Core {
     /// `Err` with why when `space` is hosted here for another device and
     /// its mode doesn't allow `tool`: `run_check` / `start_app` only in
-    /// Run, `ship` only in Edit or Run, and never `merge_locally` (that
-    /// writes into the user's own checkout). Any other space: `Ok`.
+    /// Run, `ship` (a PR, a push, a merge of the PR, a kept branch) only in
+    /// Edit or Run, and never `merge_locally` (that writes into the user's
+    /// own checkout). Any other space: `Ok`.
     pub(crate) async fn fleet_hosted_may(
         &self,
         space: &Space,
