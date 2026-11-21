@@ -390,3 +390,22 @@ describe('logout', () => {
     expect(f.calls[0].url).toContain('session_id=session_1');
   });
 });
+
+describe('deleteAccount', () => {
+  it('is a DELETE to the cloud with the bearer token', async () => {
+    const f = fakeFetch({
+      [`DELETE ${CLOUD}/v1/account`]: () => ({ status: 204, body: '' }),
+    });
+    await api(f).deleteAccount('tok');
+    expect(f.calls[0].method).toBe('DELETE');
+    expect(f.calls[0].headers.authorization).toBe('Bearer tok');
+  });
+
+  it('a cloud failure is a network error (retryable)', async () => {
+    const f = fakeFetch({
+      [`DELETE ${CLOUD}/v1/account`]: () => ({ status: 502, body: '' }),
+    });
+    const e = await errorOf(api(f).deleteAccount('tok'));
+    expect(e.kind).toBe('network');
+  });
+});

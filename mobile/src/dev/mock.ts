@@ -267,7 +267,9 @@ export const mockLines: Record<string, SpaceLine[]> = {
   ],
 };
 
-const T0 = Date.UTC(2026, 10, 14, 15, 0, 0);
+/** When the fixture's chat happened (fixed, for tests). */
+export const mockT0 = Date.UTC(2026, 10, 14, 15, 0, 0);
+const T0 = mockT0;
 const msg = (
   m: Partial<ChatMessage> & Pick<ChatMessage, 'id'>,
 ): ChatMessage => ({
@@ -465,6 +467,10 @@ export interface MockOptions {
   failing?: Partial<Record<string, string>>;
   /** Start with this much of the fixture; defaults to all. */
   snapshot?: Partial<FleetSnapshot>;
+  /** Who is signed in; defaults to `mockSession`. */
+  session?: Session;
+  /** What `organizations()` lists; defaults to `mockOrganizations`. */
+  organizations?: Organization[];
 }
 
 export interface Mock {
@@ -494,7 +500,9 @@ export function mockSnapshot(over: Partial<FleetSnapshot> = {}): FleetSnapshot {
 export function createMock(options: MockOptions = {}): Mock {
   const calls: MockCall[] = [];
   const failing = options.failing ?? {};
-  let session: Session | null = { ...mockSession };
+  const base = options.session ?? mockSession;
+  const orgs = options.organizations ?? mockOrganizations;
+  let session: Session | null = { ...base };
   const listeners = new Set<(s: Session | null) => void>();
   let counter = 0;
 
@@ -625,31 +633,36 @@ export function createMock(options: MockOptions = {}): Mock {
     },
     async signIn(): Promise<SignInResult> {
       await call('signIn');
-      session = { ...mockSession };
+      session = { ...base };
       notify();
       return { kind: 'signed_in', session };
     },
     async chooseOrganization(id) {
       await call('chooseOrganization', id);
-      session = { ...mockSession, organizationId: id };
+      session = { ...base, organizationId: id };
       notify();
       return { kind: 'signed_in', session };
     },
     async switchOrganization(id) {
       await call('switchOrganization', id);
-      session = { ...(session ?? mockSession), organizationId: id };
+      session = { ...(session ?? base), organizationId: id };
       notify();
       return session;
     },
     async organizations() {
       await call('organizations');
-      return mockOrganizations;
+      return orgs;
     },
     async accessToken() {
       return session?.accessToken ?? null;
     },
     async signOut() {
       await call('signOut');
+      session = null;
+      notify();
+    },
+    async deleteAccount() {
+      await call('deleteAccount');
       session = null;
       notify();
     },

@@ -104,6 +104,10 @@ function fakeApi(over: Partial<AccountApi> = {}) {
     ),
     organizations: rec('organizations', over.organizations ?? (async () => [])),
     logout: rec('logout', over.logout ?? (async () => {})),
+    deleteAccount: rec(
+      'deleteAccount',
+      over.deleteAccount ?? unexpected('deleteAccount'),
+    ),
   };
   return { api, calls };
 }
@@ -546,5 +550,36 @@ describe('switch, list, sign-out', () => {
     expect(t.pending.size).toBe(0);
     expect(calls.at(-1)).toEqual({ method: 'logout', args: ['sid_1'] });
     expect(await client.current()).toBeNull();
+  });
+});
+
+describe('deleteAccount', () => {
+  it('deletes in the cloud with the access token, then forgets the session', async () => {
+    const s = session();
+    const { client, store, calls } = setup({
+      stored: s,
+      api: { deleteAccount: async () => {} },
+    });
+    await client.deleteAccount();
+    expect(calls.find((c) => c.method === 'deleteAccount')?.args).toEqual([
+      s.accessToken,
+    ]);
+    expect(calls.some((c) => c.method === 'logout')).toBe(false);
+    expect(store.value).toBeNull();
+    expect(await client.current()).toBeNull();
+  });
+
+  it('keeps the session when the cloud fails', async () => {
+    const s = session();
+    const { client, store } = setup({
+      stored: s,
+      api: {
+        deleteAccount: async () => {
+          throw new Error('down');
+        },
+      },
+    });
+    await expect(client.deleteAccount()).rejects.toThrow('down');
+    expect(store.value).not.toBeNull();
   });
 });

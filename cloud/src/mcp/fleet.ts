@@ -241,6 +241,21 @@ export class McpFleet {
     this.store = new McpStore(env.sql);
   }
 
+  /**
+   * A deleted account: its rows gone (`purgeUser`; the hub closed its
+   * connection first) and nothing of it left in memory.
+   */
+  forget(user: string): void {
+    this.store.purgeUser(user);
+    this.challenges.delete(user);
+    this.errors.delete(user);
+    this.gates.delete(user);
+    this.drains.delete(user);
+    for (const k of [...this.keys.keys()]) {
+      if (k.startsWith(`${user}\0`)) this.keys.delete(k);
+    }
+  }
+
   /** The open in-process connections, for the hub's `conns`. */
   conns(user?: string): Conn[] {
     const rows =

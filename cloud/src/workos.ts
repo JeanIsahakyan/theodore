@@ -78,6 +78,10 @@ export interface Workos {
     refreshToken: string;
     organizationId?: string;
   }): Promise<Authentication>;
+  /** Deletes an organization; one already gone (404) is fine. */
+  deleteOrganization(id: string): Promise<void>;
+  /** Deletes a user (and their memberships, sessions); 404 is fine. */
+  deleteUser(userId: string): Promise<void>;
 }
 
 /** A WorkOS answer other than 2xx. `status` decides what the caller does. */
@@ -106,7 +110,7 @@ export class WorkosClient implements Workos {
   ) {}
 
   private async call<T>(
-    method: 'GET' | 'POST',
+    method: 'GET' | 'POST' | 'DELETE',
     path: string,
     body?: unknown,
     form?: Record<string, string>,
@@ -147,7 +151,18 @@ export class WorkosClient implements Workos {
       }
       throw new WorkosError(res.status, code, message, body);
     }
-    return JSON.parse(text) as T;
+    // A DELETE answers 202 or 204 with no body.
+    return (text === '' ? undefined : JSON.parse(text)) as T;
+  }
+
+  /** A DELETE that already happened (404) counts as done. */
+  private async remove(path: string): Promise<void> {
+    try {
+      await this.call<unknown>('DELETE', path);
+    } catch (e) {
+      if (e instanceof WorkosError && e.status === 404) return;
+      throw e;
+    }
   }
 
   async organizationByExternalId(
@@ -196,6 +211,14 @@ export class WorkosClient implements Workos {
 
   organization(id: string): Promise<Organization> {
     return this.call('GET', `/organizations/${encodeURIComponent(id)}`);
+  }
+
+  deleteOrganization(id: string): Promise<void> {
+    return this.remove(`/organizations/${encodeURIComponent(id)}`);
+  }
+
+  deleteUser(userId: string): Promise<void> {
+    return this.remove(`/user_management/users/${encodeURIComponent(userId)}`);
   }
 
   createMembership(o: {

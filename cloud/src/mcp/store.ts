@@ -46,6 +46,9 @@ const RESET = [
   'mcp_sub_spaces',
 ];
 
+/** Every MCP table (all hold users' data). */
+export const MCP_TABLES = ['mcp_devices', 'mcp_pins', ...RESET];
+
 const SCHEMA = [
   `CREATE TABLE IF NOT EXISTS mcp_devices (
     user_id TEXT PRIMARY KEY,
@@ -320,6 +323,30 @@ export class McpStore {
       'SELECT * FROM mcp_sub_spaces WHERE space = ? ORDER BY seq',
       space,
     );
+  }
+
+  /**
+   * Every row of `user` (a deleted account): its MCP device, pins, inbox,
+   * requests, and the spaces it started with their lines and sub-spaces.
+   */
+  purgeUser(user: string): void {
+    const mine = 'SELECT space FROM mcp_spaces WHERE user_id = ?';
+    this.run(`DELETE FROM mcp_lines WHERE space IN (${mine})`, user);
+    this.run(`DELETE FROM mcp_sub_spaces WHERE space IN (${mine})`, user);
+    for (const t of [
+      'mcp_spaces',
+      'mcp_inbox',
+      'mcp_requests',
+      'mcp_pins',
+      'mcp_devices',
+    ]) {
+      this.run(`DELETE FROM ${t} WHERE user_id = ?`, user);
+    }
+  }
+
+  /** Every row of every user (a deleted personal org). */
+  purgeAll(): void {
+    for (const t of MCP_TABLES) this.run(`DELETE FROM ${t}`);
   }
 
   /** Requests past REQUESTS_KEPT per user go, oldest first. */

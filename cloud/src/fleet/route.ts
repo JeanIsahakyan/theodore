@@ -15,6 +15,10 @@
  * POST /v1/fleet/request {device_id, envelope} + Bearer <access JWT>
  *   ─▶ verify ─▶ org_id? ─▶ OrgHub /v1/fleet/request + caller
  *   ─▶ 202 {accepted: true, req_id} │ 409 (400) {accepted: false, req_id, refused: {code, message}}
+ *
+ * DELETE /v1/account (src/account.ts), per org the user is in:
+ *   ─▶ OrgHub /v1/account/purge {scope: user │ org} + caller {userId, orgId}
+ *   ─▶ 200 {ok: true} │ 500
  * ```
  */
 import { bearer, type Caller } from '../auth';
@@ -35,6 +39,12 @@ export const BEARER_PROTOCOL = 'bearer';
 
 /** The path the DO answers one-shot requests on. */
 export const REQUEST_PATH = '/v1/fleet/request';
+
+/** The path the DO purges a deleted account on (never routed from outside). */
+export const PURGE_PATH = '/v1/account/purge';
+
+/** `user`: the caller's rows only. `org`: the whole hub (a personal org). */
+export type PurgeScope = 'user' | 'org';
 
 /**
  * The access token of a fleet call: the `Authorization` bearer, or (a
@@ -207,4 +217,74 @@ export async function answerRequest(
     status,
     headers: { 'cache-control': 'no-store' },
   });
+}
+
+/** The caller's (or, `org`, everyone's) data dropped from `orgId`'s hub. */
+export async function purgeInHub(
+  hubFor: HubFor,
+  origin: string,
+  userId: string,
+  orgId: string,
+  scope: PurgeScope,
+): Promise<void> {
+  const caller: FleetCaller = { userId, orgId, expMs: 0 };
+  const res = await hubFor(orgId).fetch(
+    new Request(new URL(PURGE_PATH, origin), {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        [CALLER_HEADER]: JSON.stringify(caller),
+      },
+      body: JSON.stringify({ scope }),
+    }),
+  );
+  if (!res.ok) {
+    throw new CloudError(500, 'cloud.internal', 'the fleet hub failed');
+  }
+}
+
+/** The MCP tables' side of a purge (MCP may be off, its rows still there). */
+export interface McpPurge {
+  user(userId: string): void;
+  all(): void;
+}
+
+/** Inside the DO: a purge for `caller` (hub first: it closes connections). */
+export async function answerPurge(
+  hub: Pick<Hub, 'purgeUser' | 'purgeAll'>,
+  mcp: McpPurge,
+  caller: FleetCaller,
+  request: Request,
+): Promise<Response> {
+  let scope: unknown;
+  try {
+    scope = ((await request.json()) as { scope?: unknown }).scope;
+  } catch {
+    // answered below
+  }
+  if (scope !== 'user' && scope !== 'org') {
+    return Response.json(
+      { error: { code: 'cloud.bad_request', message: 'bad purge scope' } },
+      { status: 400 },
+    );
+  }
+  try {
+    if (scope === 'org') {
+      await hub.purgeAll(caller.userId);
+      mcp.all();
+    } else {
+      await hub.purgeUser(caller.userId);
+      mcp.user(caller.userId);
+    }
+  } catch (e) {
+    console.error('fleet.purge', e instanceof Error ? e.name : typeof e);
+    return Response.json(
+      { error: { code: 'cloud.internal', message: 'purge failed' } },
+      { status: 500 },
+    );
+  }
+  return Response.json(
+    { ok: true },
+    { headers: { 'cache-control': 'no-store' } },
+  );
 }

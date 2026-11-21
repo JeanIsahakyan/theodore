@@ -15,6 +15,7 @@
  * About          1.0.0       › ─▶ settings/about (version, server)
  * ──────────
  * ⇥ Sign out (red)  ─▶ system confirm ─▶ signed out
+ * ✕ Delete account (red) ─▶ system confirm ─▶ cloud deletes ─▶ signed out
  * ```
  */
 import Constants from 'expo-constants';
@@ -73,6 +74,25 @@ export default function SettingsScreen() {
       setNotify(!on);
       setNotifyError(errorText(e));
     });
+  };
+
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const deleteAccount = async () => {
+    const ok = await confirm({
+      title: 'Delete your Theodore account?',
+      message:
+        'Your account, devices, spaces and organizations you own are deleted from the Theodore cloud for good. Code and spaces on your computers stay there.',
+      confirmLabel: 'Delete account',
+      destructive: true,
+    });
+    if (!ok) return;
+    setDeleting(true);
+    setDeleteError(null);
+    auth
+      .deleteAccount()
+      .catch((e: unknown) => setDeleteError(errorText(e)))
+      .finally(() => setDeleting(false));
   };
 
   const signOut = async () => {
@@ -165,6 +185,15 @@ export default function SettingsScreen() {
         testID="settings-sign-out"
       />
       {signOutError ? <SectionNote danger>{signOutError}</SectionNote> : null}
+      <SettingsRow
+        icon="delete-account"
+        label="Delete account"
+        destructive
+        loading={deleting}
+        onPress={() => void deleteAccount()}
+        testID="settings-delete-account"
+      />
+      {deleteError ? <SectionNote danger>{deleteError}</SectionNote> : null}
     </SettingsScroll>
   );
 }
