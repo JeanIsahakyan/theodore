@@ -245,8 +245,8 @@ jobs:
       # used: under CI=true it skips its Finder layout, and on macOS 26 that
       # layout loses the background anyway. Volume name = product name, as
       # the bundler had it. With a Developer ID the DMG is signed with it,
-      # as the bundler did (never notarized: the app inside is); ad-hoc
-      # builds leave it unsigned, as the bundler did.
+      # then notarized and stapled like the app inside; ad-hoc builds leave
+      # it unsigned, as the bundler did.
       - name: build dmg
         run: |
           bundle="target/aarch64-apple-darwin/release/bundle"
@@ -273,6 +273,18 @@ jobs:
             codesign --force --timestamp --keychain "$keychain" \
               --sign "$APPLE_SIGNING_IDENTITY" "$dmg"
             codesign --verify --verbose "$dmg"
+            # Notarize the DMG too: a quarantined, unnotarized image makes
+            # Gatekeeper warn before the (notarized) app is even reached.
+            if [ -n "${APPLE_API_KEY_PATH:-}" ]; then
+              xcrun notarytool submit "$dmg" --wait \
+                --key "$APPLE_API_KEY_PATH" --key-id "$APPLE_API_KEY" \
+                --issuer "$APPLE_API_ISSUER"
+            else
+              xcrun notarytool submit "$dmg" --wait \
+                --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" \
+                --team-id "$APPLE_TEAM_ID"
+            fi
+            xcrun stapler staple "$dmg"
             security delete-keychain "$keychain"
           fi
 
