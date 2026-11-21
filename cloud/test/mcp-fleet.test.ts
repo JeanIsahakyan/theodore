@@ -208,6 +208,57 @@ describe('MCP device', () => {
     expect(r.v.name).toBe('Fix the login bug');
   });
 
+  it('is not settled while the start is unanswered and the host says idle', async () => {
+    const { h, mac, mcpId } = await setup({ replyWaitMs: 100 });
+    const p = tool(h, 'space_start', {
+      device: mac.id,
+      project: 'p1',
+      goal: 'fix the bug',
+      mode: 'ask',
+    });
+    const { req, body } = await nextRequest(mac);
+    await mac.send({
+      type: 'claim',
+      req_id: body.req_id,
+      generation: req.generation,
+    });
+    mac.take('claim_result');
+    // The worktree takes a while: space_start gives up waiting first.
+    const out = await p;
+    expect(out.v.result).toBe('pending');
+    const op = body.op as Extract<RemoteRequest['op'], { op: 'start_space' }>;
+    const space = op.space;
+    await mac.emit(space, 1, {
+      kind: 'started',
+      host_device: mac.id!,
+      origin_device: mcpId(),
+      project_id: 'p1',
+      project_name: 'theodore',
+      name: 'Fix',
+      branch: 'fix-bug',
+      mode: 'ask',
+      depth: 0,
+    });
+    await mac.emit(space, 2, { kind: 'status', status: 'idle' });
+    const early = await tool(h, 'space_wait', {
+      spaces: [space],
+      timeout_ms: 300,
+    });
+    expect(early.v.settled).toBe(false);
+    await mac.reply(body.req_id, {
+      outcome: 'ok',
+      value: { space, name: 'Fix', branch: 'fix-bug' },
+    });
+    await mac.emit(space, 3, { kind: 'turn_started', turn: 1, text: 'fix' });
+    await mac.emit(space, 4, { kind: 'turn_ended', turn: 1, outcome: 'done' });
+    await mac.emit(space, 5, { kind: 'status', status: 'idle' });
+    const w = await tool(h, 'space_wait', {
+      spaces: [space],
+      timeout_ms: 2000,
+    });
+    expect(w.v.settled).toBe(true);
+  });
+
   it('follows the space from verified events: reply, plan, approve', async () => {
     const { h, mac, mcpId } = await setup();
     const { space } = await started(h, mac);
