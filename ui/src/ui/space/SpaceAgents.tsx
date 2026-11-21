@@ -17,6 +17,10 @@
  *   ✓ Update the docs          claude · Edit · 2 turns  merged   (muted, last)
  * ```
  *
+ * A space mirrored from another computer lists the sub-spaces it started
+ * there the same way (`remote_sub_space` rows): stage and mode, "runs on
+ * <host> as a sub-space of <parent>" on hover, nothing to open.
+ *
  * A sub-space's own page has `SubSpaceBanner` under its header: "Sub-space
  * of <parent> · started by its agent · merged back ✓" or "not merged yet".
  */
@@ -26,6 +30,7 @@ import {
   ChevronDown,
   CircleQuestion,
   CircleXmark,
+  CodeMerge,
   Cpu,
   Pencil,
 } from '@gravity-ui/icons';
@@ -58,8 +63,14 @@ import {
   childStage,
   everMerged,
   mergedIntoParent,
+  nestRemoteSubs,
   parentId,
+  remoteRoot,
+  remoteStage,
+  remoteSubPlace,
   subSpacesOf,
+  type ChildStage,
+  type RemoteSub,
   type StageFields,
 } from './subspaces';
 import type { VirtualChatControl } from './VirtualChat';
@@ -274,6 +285,78 @@ export const SubSpaceLine = observer(function SubSpaceLine({
   );
 });
 
+/** A sub-space a mirrored space started on its host: its stage and mode,
+ *  "runs on <host> as a sub-space of <parent>" on hover; nothing to open. */
+export function RemoteSubSpaceLine({
+  sub,
+  place,
+}: {
+  sub: RemoteSub;
+  place: string;
+}) {
+  const stage = remoteStage(sub);
+  const ask = stage === 'asking';
+  const merged = stage === 'merged';
+  return (
+    <li
+      data-stage={stage}
+      className="space-subspace space-remote-subspace min-w-0"
+    >
+      <div
+        className="flex w-full min-w-0 items-center gap-2 rounded-md px-1 py-0.5"
+        title={`${sub.title} · ${place}`}
+      >
+        <span className="grid size-3.5 shrink-0 place-items-center text-muted [&>svg]:size-3">
+          <RemoteStageMark stage={stage} />
+        </span>
+        <span
+          className={`min-w-0 flex-1 truncate ${merged ? 'text-muted' : ''}`}
+        >
+          {sub.title}
+        </span>
+        {ask && (
+          <CircleQuestion
+            className="size-3 shrink-0 text-accent"
+            aria-label="Waiting for an answer"
+          />
+        )}
+        <span className="shrink-0 truncate text-muted">
+          {MODE_LABEL[sub.mode]}
+        </span>
+        <span
+          className={`space-subspace-stage shrink-0 ${stage === 'failed' ? 'text-danger' : ask ? 'text-accent' : 'text-muted'}`}
+        >
+          {CHILD_STAGE_LABEL[stage]}
+        </span>
+      </div>
+    </li>
+  );
+}
+
+/** A remote sub-space's mark: no agent of it shows here, so its stage. */
+export function RemoteStageMark({ stage }: { stage: ChildStage }) {
+  switch (stage) {
+    case 'running':
+    case 'starting':
+      return <Spinner />;
+    case 'asking':
+      return (
+        <span
+          className="size-2 rounded-full bg-accent"
+          aria-label="Waiting for an answer"
+        />
+      );
+    case 'failed':
+      return <CircleXmark className="text-danger" aria-label="Failed" />;
+    case 'merged':
+      return <CodeMerge aria-label="Merged into its parent" />;
+    case 'done':
+      return <Check />;
+    default:
+      return <Pencil />;
+  }
+}
+
 // ── the strip above the composer ────────────────────────────────────────────
 
 /** Open or closed, per space, for as long as the window lives. */
@@ -315,9 +398,16 @@ export const SpaceAgents = observer(function SpaceAgents({
       })
     : [];
   const subs = subSpacesOf(space.id, store.models.spaces.all());
+  // A mirrored space's own sub-spaces run on its host: listed, not opened.
+  const remoteSubs = remoteRoot(space)
+    ? nestRemoteSubs(space.id, store.models.remoteSubSpaces.all()).map(
+        (n) => n.sub,
+      )
+    : [];
+  const stages = [...subs.map(childStage), ...remoteSubs.map(remoteStage)];
   const busy =
     agents.some(subagentLive) ||
-    subs.some((s) => s.status === 'running') ||
+    stages.some((g) => g === 'running' || g === 'asking') ||
     runningTasks(space).length > 0;
   // Tasks tick even closed: an ended one goes a few seconds after it ends.
   const now = useNow(
@@ -335,7 +425,7 @@ export const SpaceAgents = observer(function SpaceAgents({
     );
     return () => cancelAnimationFrame(frame);
   }, [space.id, log]);
-  if (!agents.length && !background.length && !subs.length) return null;
+  if (!agents.length && !background.length && !stages.length) return null;
   const reveal = (a: SubagentView) => {
     const turn = source?.turn ?? null;
     if (turn) log?.current?.scrollToKey(turn, 'start');
@@ -361,7 +451,7 @@ export const SpaceAgents = observer(function SpaceAgents({
           <Cpu className="size-3 shrink-0" />
         )}
         <span className="min-w-0 truncate">
-          {stripHeadline(agents, background, subs)}
+          {stripHeadline(agents, background, stages)}
         </span>
         <ChevronDown
           className={`ml-auto size-3 shrink-0 transition-transform ${open ? 'rotate-180' : ''}`}
@@ -404,7 +494,7 @@ export const SpaceAgents = observer(function SpaceAgents({
               </ul>
             </>
           )}
-          {subs.length > 0 && (
+          {stages.length > 0 && (
             <>
               <Section title="Sub-spaces" />
               <ul className="flex flex-col">
@@ -413,6 +503,16 @@ export const SpaceAgents = observer(function SpaceAgents({
                     key={s.id}
                     space={s}
                     onOpen={() => ui.go({ name: 'space', id: s.id })}
+                  />
+                ))}
+                {remoteSubs.map((s) => (
+                  <RemoteSubSpaceLine
+                    key={s.id}
+                    sub={s}
+                    place={remoteSubPlace(
+                      remoteOf(space)?.host_name ?? 'its host',
+                      spaceTitle(space),
+                    )}
                   />
                 ))}
               </ul>

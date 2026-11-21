@@ -282,6 +282,60 @@ describe('the strip', () => {
     await click(m!.host.querySelector('.space-subspace button'));
     expect(store.ui.route).toEqual({ name: 'space', id: 'c' });
   });
+
+  it("lists a mirrored space's sub-spaces on its host, with nothing to open", async () => {
+    const remote = {
+      space: 'rs_1',
+      host_device: 'd2',
+      host_name: 'Studio Mac',
+      project_name: 'app',
+      started_here: true,
+    };
+    const rs = space('rs_1', { title: 'Port it', worktree: '', remote });
+    put(rs);
+    const sub = (id: string, parent: string, over: object) =>
+      store.sync.pool.put('remote_sub_space', `rs_1:${id}`, {
+        root: 'rs_1',
+        space: id,
+        parent,
+        title: `Sub ${id}`,
+        status: 'idle',
+        mode: 'edit',
+        done: false,
+        seq: 1,
+        ...over,
+      });
+    sub('c1', 'rs_1', { status: 'running', seq: 3 });
+    sub('c2', 'rs_1', { done: true, mode: 'plan', seq: 4 });
+    // A grandchild: the sidebar nests it; the strip lists direct ones.
+    sub('c3', 'c1', {});
+    // Another followed space's: not this one's.
+    store.sync.pool.put('remote_sub_space', 'rs_2:c9', {
+      root: 'rs_2',
+      space: 'c9',
+      parent: 'rs_2',
+      title: 'Elsewhere',
+      status: 'idle',
+      mode: 'edit',
+      done: false,
+      seq: 1,
+    });
+    await render(<SpaceAgents space={rs} />);
+    const host = m!.host;
+    expect(host.textContent).toContain(
+      '2 sub-spaces, 1 running, 1 of 2 merged',
+    );
+    await openPanel();
+    const lines = [...host.querySelectorAll<HTMLElement>('.space-subspace')];
+    expect(lines.map((l) => l.textContent)).toEqual([
+      'Sub c1Editrunning',
+      'Sub c2Planmerged',
+    ]);
+    expect(lines[0]!.querySelector<HTMLElement>('[title]')!.title).toBe(
+      'Sub c1 · runs on Studio Mac as a sub-space of Port it',
+    );
+    expect(host.querySelector('.space-subspace button')).toBeNull();
+  });
 });
 
 describe("a sub-space's strip", () => {

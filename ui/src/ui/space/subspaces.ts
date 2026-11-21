@@ -21,7 +21,7 @@
  * merged, then more turns ─▶ done again: there's work the parent hasn't taken
  * ```
  */
-import type { Space } from '../../gen/contract';
+import type { RemoteSubSpace, Space } from '../../gen/contract';
 import { spaceTitle } from './spaces';
 
 /** How deep the tree goes at most; a deeper (or circular) chain stops here. */
@@ -219,3 +219,171 @@ export function subSpacesOf(space: string, all: readonly Space[]): Space[] {
         b.updated_at - a.updated_at,
     );
 }
+
+// ── a followed space's sub-spaces on its host ──────────────────────────────
+//
+// A space hosted on another computer can start sub-spaces there; they reach
+// this device as `remote_sub_space` rows (docs/fleet.md "What a hosted
+// space's agent may do"), never as spaces: they nest under the mirrored space at the top
+// of their tree, and nothing opens them.
+//
+// ```text
+// rs_1  (mirrored space, a `space` row)
+//   c1  parent rs_1           ─▶ under rs_1
+//     c2  parent c1           ─▶ under c1
+//   c3  parent c9 (not shown) ─▶ under rs_1
+// ```
+
+/** A `remote_sub_space` row: keyed `<root>:<space>`. */
+export type RemoteSub = RemoteSubSpace & { id: string };
+
+export interface RemoteSubNode {
+  sub: RemoteSub;
+  children: RemoteSubNode[];
+}
+
+/** Where a remote sub-space stands, in a local one's words. */
+export function remoteStage(
+  s: Pick<RemoteSubSpace, 'status' | 'done'>,
+): ChildStage {
+  switch (s.status) {
+    case 'question':
+      return 'asking';
+    case 'running':
+      return 'running';
+    case 'setting_up':
+    case 'waiting':
+      return 'starting';
+    case 'failed':
+      return 'failed';
+    default:
+      if (s.done) return 'merged';
+      return s.status === 'archived' ? 'archived' : 'done';
+  }
+}
+
+/** A mirrored space at the top of its tree: the one remote sub-spaces nest
+ *  under. */
+export const remoteRoot = (s: Pick<Space, 'id' | 'remote'>): boolean =>
+  s.remote?.space === s.id;
+
+/** `root`'s sub-spaces as a tree, archived ones aside, merged ones after
+ *  the live ones, else most recently changed first. One whose parent isn't
+ *  shown sits right under `root`; a loop never nests. */
+export function nestRemoteSubs(
+  root: string,
+  all: readonly RemoteSub[],
+): RemoteSubNode[] {
+  const listed = all
+    .filter((s) => s.root === root && s.status !== 'archived')
+    .sort(
+      (a, b) =>
+        Number(remoteStage(a) === 'merged') -
+          Number(remoteStage(b) === 'merged') || b.seq - a.seq,
+    );
+  const nodes = new Map(
+    listed.map((s): [string, RemoteSubNode] => [
+      s.space,
+      { sub: s, children: [] },
+    ]),
+  );
+  const nests = (s: RemoteSub): boolean => {
+    let at = s.parent;
+    for (let hops = 0; hops < MAX_DEPTH; hops += 1) {
+      if (at === root) return true;
+      if (at === s.space) return false;
+      const up = nodes.get(at);
+      if (!up) return true;
+      at = up.sub.parent;
+    }
+    return false;
+  };
+  const top: RemoteSubNode[] = [];
+  for (const s of listed) {
+    const node = nodes.get(s.space)!;
+    const parent = s.parent !== root ? nodes.get(s.parent) : undefined;
+    if (parent && parent !== node && nests(s)) parent.children.push(node);
+    else top.push(node);
+  }
+  return top;
+}
+
+/** Every remote sub-space in `nodes` and under them, nearest first. */
+function remoteDescendants(nodes: readonly RemoteSubNode[]): RemoteSub[] {
+  const out: RemoteSub[] = [];
+  const walk = (ns: readonly RemoteSubNode[], depth: number) => {
+    if (depth > MAX_DEPTH) return;
+    for (const n of ns) {
+      out.push(n.sub);
+      walk(n.children, depth + 1);
+    }
+  };
+  walk(nodes, 0);
+  return out;
+}
+
+export function remoteSubtreeStats(
+  nodes: readonly RemoteSubNode[],
+): SubtreeStats {
+  const stages = remoteDescendants(nodes).map(remoteStage);
+  return {
+    total: stages.length,
+    running: stages.filter((g) => g === 'running' || g === 'asking').length,
+    asking: stages.filter((g) => g === 'asking').length,
+  };
+}
+
+/** Two counts as one: a parent with both local and remote sub-spaces. */
+export function addStats(
+  a: SubtreeStats | null,
+  b: SubtreeStats | null,
+): SubtreeStats | null {
+  if (!a || !b) return a ?? b;
+  return {
+    total: a.total + b.total,
+    running: a.running + b.running,
+    asking: a.asking + b.asking,
+  };
+}
+
+/** One row of a flattened remote tree. */
+export interface RemoteSubRow {
+  sub: RemoteSub;
+  depth: number;
+  /** Set on a row with children. */
+  stats: SubtreeStats | null;
+  collapsed: boolean;
+  /** What it is a sub-space of: the root's title, or its parent's. */
+  parentTitle: string;
+}
+
+/** `nodes` as the rows a list shows from `depth` on, children right under
+ *  their parent; a collapsed one's (by row id) are left out. */
+export function remoteSubRows(
+  nodes: readonly RemoteSubNode[],
+  collapsed: ReadonlySet<string>,
+  depth: number,
+  rootTitle: string,
+): RemoteSubRow[] {
+  const rows: RemoteSubRow[] = [];
+  const walk = (ns: readonly RemoteSubNode[], d: number, parent: string) => {
+    for (const n of ns) {
+      const has = n.children.length > 0;
+      const shut = has && collapsed.has(n.sub.id);
+      rows.push({
+        sub: n.sub,
+        depth: d,
+        stats: has ? remoteSubtreeStats(n.children) : null,
+        collapsed: shut,
+        parentTitle: parent,
+      });
+      if (!shut && d < depth + MAX_DEPTH) walk(n.children, d + 1, n.sub.title);
+    }
+  };
+  walk(nodes, depth, rootTitle);
+  return rows;
+}
+
+/** "runs on mac1 as a sub-space of Port it". */
+export const remoteSubPlace = (host: string, parentTitle: string): string =>
+  `runs on ${host} as a sub-space of ${parentTitle}`;
