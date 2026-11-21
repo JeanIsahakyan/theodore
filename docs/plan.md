@@ -29,7 +29,7 @@ alphabetical list of files. The agents help; the reviewer decides.
 | D17 | Data lives in `~/.theodore` (other builds: `~/.theodore-<env>`) | decided |
 | D18 | Later, not v1: billing and the cloud features behind the Theodore account (sign-in is D21, organizations D23), Linux and Windows | revised 2026-11-11 |
 | D19 | Tooling: `specta` + `tauri-specta` for TS types and typed commands, `rusqlite` for SQLite, `pnpm` for the UI | decided |
-| D20 | No Apple Developer ID yet: releases are ad-hoc signed, not notarized; CI adds Developer ID signing + notarization once secrets exist | decided |
+| D20 | Releases are signed with Developer ID (team J33CB2C73P) and notarized (app and DMG, App Store Connect API key) from 0.1.25; ad-hoc signing stays the fallback when the secrets are absent | decided |
 | D21 | Theodore account = WorkOS AuthKit as a public client: hosted page + PKCE, redirect to `theodore://callback` in the app bundle and to a loopback listener elsewhere, device code as fallback; no secret in the app; what needs the secret goes through the cloud (D23, §6.12) | decided |
 | D22 | Telemetry = one `tracing` stream, one redaction step, sinks by setting: a local JSON-lines log always; OTLP error reports and PostHog product events only when configured and opted into (two separate choices, recorded before anything is sent), both keyed by a random install id — never the account (docs/telemetry.md) | decided |
 | D23 | Theodore cloud = one Cloudflare Worker per channel (`cloud/`, docs/cloud.md) holding the WorkOS API key: personal organizations, org selection at sign-in. Every user is in an organization, alone a personal one, so later cloud state (fleet) keys by `org_id` | decided 2026-11-11 |

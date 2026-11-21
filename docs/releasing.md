@@ -529,8 +529,10 @@ icons/src/dmg-background.svg ──▶ scripts/dmg-background.sh
 
 ## First launch on a clean Mac (ad-hoc signed builds)
 
-Without a Developer ID, Gatekeeper blocks the first launch of a downloaded
-`.app` (it does not block the updater's own installs — see plan §11.2). Either:
+CI builds with the Developer ID secrets (staging, production) are notarized,
+app and DMG, and open without a warning. Local and nightly builds are
+ad-hoc signed: without a Developer ID, Gatekeeper blocks the first launch of a
+downloaded `.app` (it does not block the updater's own installs — see plan §11.2). Either:
 
 - System Settings → Privacy & Security → scroll down → "Open Anyway" next to
   the blocked-app notice, then open Theodore.app again and confirm, **or**
