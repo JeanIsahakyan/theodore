@@ -188,6 +188,7 @@ impl Core {
             failed: None,
             from_tasks: vec![],
             attachments: vec![],
+            mentions: vec![],
             queued: None,
             activity: vec![],
             duration_ms: None,

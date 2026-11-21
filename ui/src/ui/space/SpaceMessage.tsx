@@ -18,6 +18,7 @@ import { PlanActions } from './SpacePlan';
 import { BackToHere } from './SpaceRewind';
 import { messageView, type MessageView } from './messageView';
 import { spaceTitle } from './spaces';
+import { MentionLinks } from './spaceMention';
 
 const NOTHING: MessageView = {
   undone: false,
@@ -71,9 +72,17 @@ export const SpaceMessage = memo(
           onOpenFile={onOpenFile}
           className={v.undone ? 'space-undone opacity-50' : ''}
           badges={
-            undoneReply || v.undoHere || v.back || v.plan || m.from_space ? (
+            undoneReply ||
+            v.undoHere ||
+            v.back ||
+            v.plan ||
+            m.from_space ||
+            m.mentions?.length ? (
               <>
                 {m.from_space && <FromSpaceLink from={m.from_space} />}
+                {m.mentions?.length ? (
+                  <MentionLinks mentions={m.mentions} />
+                ) : null}
                 {v.plan && (
                   <span className="space-plan-badge rounded-full bg-default px-1.5 text-[10px] text-accent">
                     plan

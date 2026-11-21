@@ -444,7 +444,7 @@ impl Core {
 
     /// `space`'s change against its base, in short; none for a mirror
     /// (its worktree is on its host) or when it can't be told.
-    async fn diff_stat(&self, space: &Space) -> Option<LocalDiffStat> {
+    pub(crate) async fn diff_stat(&self, space: &Space) -> Option<LocalDiffStat> {
         if space.remote.is_some() {
             return None;
         }
@@ -1103,6 +1103,7 @@ impl Core {
                 mode: mine.then_some(mode),
                 attachments: None,
                 effort: None,
+                mentions: None,
             },
             Some(from_of(&me)),
         )

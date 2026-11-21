@@ -1058,6 +1058,21 @@ pub struct ChatMessage {
     /// limit): `text` says it in words; never part of a prompt.
     #[serde(default)]
     pub notice: Option<ChatNotice>,
+    /// Other spaces you mentioned with `@` (docs/spaces.md "Mentions"), as
+    /// they were named then; the turn's prompt carries their context.
+    #[serde(default)]
+    pub mentions: Vec<SpaceMention>,
+}
+
+/// A space mentioned in a message.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct SpaceMention {
+    /// `Space::id` here (a mirror's own id for a remote one).
+    pub space: String,
+    pub title: String,
+    /// The device it runs on, for a mirrored one.
+    #[serde(default)]
+    pub host: Option<String>,
 }
 
 /// The space whose agent sent a message, as it was named then.

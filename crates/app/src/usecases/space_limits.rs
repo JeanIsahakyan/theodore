@@ -202,6 +202,7 @@ impl Core {
             mode: None,
             from_space: None,
             notice: Some(notice),
+            mentions: vec![],
         };
         let Ok(data) = serde_json::to_value(&msg) else {
             return;
@@ -228,6 +229,7 @@ impl Core {
                 mode: None,
                 attachments: None,
                 effort: None,
+                mentions: None,
             },
             None,
         )

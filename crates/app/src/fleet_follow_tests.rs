@@ -488,6 +488,7 @@ async fn send_stop_answer_and_approve_go_to_the_host() {
                 mode: Some(SpaceMode::Plan),
                 attachments: None,
                 effort: Some("high".into()),
+                mentions: None,
             })
             .await
         })
@@ -514,6 +515,7 @@ async fn send_stop_answer_and_approve_go_to_the_host() {
             mode: None,
             attachments: Some(vec!["att1".into()]),
             effort: None,
+            mentions: None,
         })
         .await;
     assert!(with_files.unwrap_err().to_string().contains("mac1"));

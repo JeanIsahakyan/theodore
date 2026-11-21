@@ -451,6 +451,11 @@ export type ChatMessage = {
 	 *  limit): `text` says it in words; never part of a prompt.
 	 */
 	notice?: ChatNotice | null,
+	/**
+	 *  Other spaces you mentioned with `@` (docs/spaces.md "Mentions"), as
+	 *  they were named then; the turn's prompt carries their context.
+	 */
+	mentions?: SpaceMention[],
 };
 
 /**  A small system row in a space's chat (docs/spaces.md "Usage limits"). */
@@ -2827,6 +2832,15 @@ export type SpaceLogLine = {
 	at: number,
 };
 
+/**  A space mentioned in a message. */
+export type SpaceMention = {
+	/**  `Space::id` here (a mirror's own id for a remote one). */
+	space: string,
+	title: string,
+	/**  The device it runs on, for a mirrored one. */
+	host?: string | null,
+};
+
 /**
  *  `Space::mirror`: the folder's own state before mirroring began (what
  *  Mirror off restores), and the running set of paths mirroring has ever
@@ -3024,6 +3038,8 @@ export type SpaceSendRequest = {
 	attachments?: string[] | null,
 	/**  From this turn on; `None` keeps the space's. */
 	effort?: string | null,
+	/**  Other spaces mentioned (`@`, docs/spaces.md "Mentions"): their ids. */
+	mentions?: string[] | null,
 };
 
 /**  The "Setting up…" stage after create, before the first turn. */

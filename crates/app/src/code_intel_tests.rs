@@ -355,6 +355,7 @@ async fn a_turns_mode_decides_whether_its_code_tools_edit() {
                 mode: Some(mode),
                 attachments: None,
                 effort: None,
+                mentions: None,
             })
             .await
             .unwrap();
@@ -398,6 +399,7 @@ async fn a_turn_reindexes_the_files_it_changed() {
             mode: Some(theodore_contract::SpaceMode::Edit),
             attachments: None,
             effort: None,
+            mentions: None,
         })
         .await
         .unwrap();
@@ -450,6 +452,7 @@ async fn undo_back_to_here_and_revert_reindex_the_files_they_moved() {
                 mode: Some(theodore_contract::SpaceMode::Edit),
                 attachments: None,
                 effort: None,
+                mentions: None,
             })
             .await
             .unwrap();

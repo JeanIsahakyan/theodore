@@ -127,6 +127,7 @@ async fn send(f: &Fixtures, core: &Core, s: &Space, text: &str, head: Option<&st
         mode: None,
         attachments: None,
         effort: None,
+        mentions: None,
     })
     .await
     .unwrap();
@@ -549,6 +550,7 @@ async fn send_reply(
         mode: None,
         attachments: None,
         effort: None,
+        mentions: None,
     })
     .await
     .unwrap();
@@ -949,6 +951,7 @@ async fn back_to_here_stops_at_continue() {
         mode: None,
         attachments: None,
         effort: None,
+        mentions: None,
     };
     f.agents.push_script(done("done"));
     f.git.push_checkpoint(Sha::new("turn222"));

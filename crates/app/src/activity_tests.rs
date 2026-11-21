@@ -84,6 +84,7 @@ fn send(id: &str, text: &str, mode: Option<SpaceMode>) -> SpaceSendRequest {
         mode,
         attachments: None,
         effort: None,
+        mentions: None,
     }
 }
 
@@ -251,6 +252,7 @@ fn chat_message(pr: &str, id: &str, author: Author, at: i64, run: Option<&str>) 
         mode: None,
         from_space: None,
         notice: None,
+        mentions: vec![],
     };
     NewAction {
         model: models::CHAT_MESSAGE.into(),

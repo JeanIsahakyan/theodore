@@ -87,6 +87,7 @@ impl Core {
                     mode: Some(build_mode(row.build_mode)),
                     attachments: None,
                     effort: None,
+                    mentions: None,
                 },
                 Some(approved_prompt(&plan)),
             )

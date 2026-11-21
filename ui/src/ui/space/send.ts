@@ -16,6 +16,7 @@ import type {
   Attachment,
   ChatMessage,
   Space,
+  SpaceMention,
   SpaceSendRequest,
 } from '../../gen/contract';
 import type { RootStore } from '../../stores/RootStore';
@@ -38,6 +39,7 @@ export function sendingMessage(space: string, send: SpaceSend): ChatMessage {
     at: send.at,
     failed: null,
     attachments: send.attachments,
+    ...(send.mentions?.length ? { mentions: send.mentions } : {}),
     ...(send.queued ? { queued: { seq: send.at, held: false } } : {}),
   };
 }
@@ -52,7 +54,12 @@ export function sendToSpace(
   store: RootStore,
   space: Pick<Space, 'id' | 'status'>,
   req: SpaceSendRequest,
-  show: { now: boolean; agent: AgentId; attachments: Attachment[] },
+  show: {
+    now: boolean;
+    agent: AgentId;
+    attachments: Attachment[];
+    mentions?: SpaceMention[];
+  },
 ): Promise<void> {
   const { ephemeral } = store;
   const chat = spaceChatKey(space.id);
@@ -63,6 +70,7 @@ export function sendToSpace(
     key: `sending-${(sends += 1)}`,
     text: req.text,
     attachments: show.attachments,
+    mentions: show.mentions,
     agent: show.agent,
     at: Date.now(),
     // A turn is about to start: this one waits behind it, as the core will.

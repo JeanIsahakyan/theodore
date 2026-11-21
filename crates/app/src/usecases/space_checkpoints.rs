@@ -226,6 +226,7 @@ impl Core {
             mode: None,
             from_space: None,
             notice: None,
+            mentions: vec![],
         };
         let mut log = space.turn_log.clone();
         log.push(SpaceTurn {

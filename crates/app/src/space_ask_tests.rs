@@ -701,6 +701,7 @@ fn a_replayed_transcript_names_the_sending_space() {
         mode: None,
         from_space: from,
         notice: None,
+        mentions: vec![],
     };
     let from = FromSpace {
         space: "a1".into(),
