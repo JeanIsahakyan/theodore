@@ -62,7 +62,7 @@ const space = (
   startedName: 'Space',
   seenAt,
   lines: [{ seq: 7, kind: 'status', text: 'idle' }],
-  mirror: { space: null, messages: [message(id, 'm1', 1)] },
+  mirror: { space: null, messages: [message(id, 'm1', 1)], subSpaces: [] },
   ...over,
 });
 
@@ -86,6 +86,36 @@ describe('saved spaces', () => {
     });
     // Another account or org sees nothing of it.
     expect(await store.load(savedScope('user_1', 'org_other'), ME)).toEqual([]);
+  });
+
+  it('keeps sub-spaces, shape-checked again', async () => {
+    const storage = memoryStorage();
+    const store = savedSpaces(storage);
+    const child = {
+      space: 'a1b2c3d4e5f6',
+      parent: 'rs_a',
+      title: 'Split it',
+      status: 'running',
+      mode: 'edit' as const,
+      done: false,
+    };
+    const a = space('rs_a', 1, {
+      mirror: { space: null, messages: [], subSpaces: [child] },
+    });
+    await store.write(SCOPE, ME, [a], new Set(['rs_a']));
+    expect((await store.load(SCOPE, ME))[0]!.mirror.subSpaces).toEqual([child]);
+    // A tampered record: rows that aren't sub-spaces go.
+    const key = `theodore.fleet.space.${SCOPE}.rs_a`;
+    const rec = JSON.parse((await storage.get(key))!) as {
+      mirror: { subSpaces: unknown[] };
+    };
+    rec.mirror.subSpaces.push({ ...child, space: 'bad id!' }, 'x', {
+      ...child,
+      space: 'b2c3d4e5f6a1',
+      mode: 'god',
+    });
+    await storage.set(key, JSON.stringify(rec));
+    expect((await store.load(SCOPE, ME))[0]!.mirror.subSpaces).toEqual([child]);
   });
 
   it('writes only changed records, and new ones', async () => {
