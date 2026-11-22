@@ -25,6 +25,10 @@
  *        (not at a cold start: the keyboard would cover Home at launch)
  * no computer can take one ─▶ "No computer can take a space right now…",
  *                             Devices, the composer off
+ * before the first devices list of this run (src/ui/load.ts)
+ *   ─▶ skeleton chips (the last picks muted, when saved spaces name them),
+ *      "Connecting to your devices…"; typing allowed, Send off
+ *   error, or 10 s connecting ─▶ "Can't reach the server", Retry (fleet.start)
  * Send ─▶ /space/pending_<n> at once (the goal as your bubble, "Starting
  *        on mac-A…"), no slide, its header the main one (☰), not Back
  *        ─▶ fleet.startSpace ─▶ ok: recent projects, the route becomes the
@@ -62,12 +66,22 @@ import {
   takeHomeRestore,
   usePending,
 } from '../../src/state/pending';
+import { useFleetState } from '../../src/state/fleet';
 import { startPicks } from '../../src/ui/agents';
 import { ConnectionBanner } from '../../src/ui/ConnectionBanner';
+import {
+  LOADING_TEXT,
+  UNREACHABLE_TITLE,
+  lastPicksPreview,
+  unreachableHint,
+} from '../../src/ui/load';
 import { RUN_WARNING, errorText } from '../../src/ui/logic';
 import { Button, Glass } from '../../src/ui/native';
 import { QuestionsBanner } from '../../src/ui/QuestionsBanner';
+import { SkeletonChip } from '../../src/ui/Skeleton';
+import { Spinner } from '../../src/ui/Spinner';
 import { usePalette } from '../../src/ui/theme';
+import { useHomeLoadState } from '../../src/ui/useLoadState';
 
 const TITLE = 'New space';
 const PLACEHOLDER = 'What should the agent work on?';
@@ -78,8 +92,9 @@ export default function NewSpaceScreen() {
   const { fleet } = useServices();
   const p = usePalette();
   const top = useGlassHeaderInset();
-  const { device, project, mode, pick } = useHome();
+  const { device, project, mode, pick, startable } = useHome();
   const fresh = useCompose((s) => s.fresh);
+  const load = useHomeLoadState(startable.length > 0);
   const [goal, setGoal] = useState('');
   const [error, setError] = useState<string | null>(null);
   const input = useRef<TextInputInstance>(null);
@@ -151,13 +166,20 @@ export default function NewSpaceScreen() {
       .catch((e: unknown) => startFailed(id, errorText(e)));
   };
 
-  const chips = device && project ? <ModelChip /> : null;
+  // Loading or unreachable: a chip-sized placeholder where the model chip
+  // goes; the field takes typing, Send waits for the devices.
+  const settled = load === 'ready' || load === 'empty';
+  const chips =
+    device && project ? <ModelChip /> : settled ? null : <SkeletonChip />;
 
   return (
     <View className="flex-1 bg-background" style={{ paddingTop: top }}>
       <MainHeader title={TITLE} onNewSpace={requestNewSpace} />
       <QuestionsBanner glass />
-      <ConnectionBanner style={{ alignSelf: 'center', marginTop: 8 }} />
+      {/* Before the first list, Home itself says what the link does. */}
+      {settled ? (
+        <ConnectionBanner style={{ alignSelf: 'center', marginTop: 8 }} />
+      ) : null}
 
       <Pressable
         accessible={false}
@@ -180,6 +202,11 @@ export default function NewSpaceScreen() {
               <WhereChips />
             </View>
           </>
+        ) : !settled ? (
+          <FirstConnect
+            unreachable={load === 'unreachable'}
+            onRetry={() => void fleet.start()}
+          />
         ) : (
           <>
             <SymbolImage name="computer" size={44} color={p.muted} />
@@ -215,7 +242,8 @@ export default function NewSpaceScreen() {
           onSubmit={start}
           placeholder={PLACEHOLDER}
           submitLabel="Start"
-          disabled={!device || !project}
+          // Loading: the goal can be typed already; Send waits for a computer.
+          disabled={settled && (!device || !project)}
           canSubmit={ready}
           leading={chips}
           error={error}
@@ -224,6 +252,121 @@ export default function NewSpaceScreen() {
           testID="start-space"
         />
       </ComposerDock>
+    </View>
+  );
+}
+
+/**
+ * Home before this run's first devices list: the title, the where chips as
+ * skeletons (or the last picks, muted, when a saved space names them), and
+ * either "Connecting to your devices…" or why the server can't be reached
+ * with Retry.
+ */
+function FirstConnect({
+  unreachable,
+  onRetry,
+}: {
+  unreachable: boolean;
+  onRetry: () => void;
+}) {
+  const p = usePalette();
+  const error = useFleetState((s) => s.error);
+  const spaces = useFleetState((s) => s.spaces);
+  const draft = useCompose((s) => s.home);
+  const last = lastPicksPreview(draft, spaces);
+  return (
+    <>
+      <SymbolImage name="chat" size={44} color={p.muted} />
+      <Text
+        accessibilityRole="header"
+        className="text-xl font-semibold text-foreground"
+      >
+        {TITLE}
+      </Text>
+      <View
+        testID="start-where-loading"
+        className="mt-3 flex-row flex-wrap items-center justify-center gap-x-2 gap-y-2"
+      >
+        {last.project ? (
+          <MutedChip icon="folder" label={last.project} />
+        ) : (
+          <SkeletonChip width={120} />
+        )}
+        <View className="flex-row items-center gap-2">
+          <Text className="text-[13px] text-muted-foreground">on</Text>
+          {last.host ? (
+            <MutedChip icon="computer" label={last.host} />
+          ) : (
+            <SkeletonChip width={96} />
+          )}
+        </View>
+      </View>
+      {unreachable ? (
+        <View
+          accessible
+          accessibilityRole="alert"
+          accessibilityLiveRegion="polite"
+          className="mt-3 items-center gap-1"
+        >
+          <Text className="text-center text-[15px] font-semibold text-foreground">
+            {UNREACHABLE_TITLE}
+          </Text>
+          <Text
+            selectable
+            className="max-w-xs text-center text-sm text-muted-foreground"
+          >
+            {unreachableHint(error)}
+          </Text>
+          <Button
+            label="Retry"
+            variant="secondary"
+            onPress={onRetry}
+            style={{ marginTop: 8 }}
+            testID="start-retry"
+          />
+        </View>
+      ) : (
+        <View
+          accessible
+          accessibilityRole="progressbar"
+          accessibilityLabel={LOADING_TEXT}
+          accessibilityLiveRegion="polite"
+          className="mt-3 flex-row items-center gap-2"
+        >
+          <Spinner color={p.muted} />
+          <Text className="text-[13px] text-muted-foreground">
+            {LOADING_TEXT}
+          </Text>
+        </View>
+      )}
+    </>
+  );
+}
+
+/** A last pick as a quiet chip: what was picked, until the devices confirm it. */
+function MutedChip({
+  icon,
+  label,
+}: {
+  icon: 'folder' | 'computer';
+  label: string;
+}) {
+  const p = usePalette();
+  return (
+    <View
+      accessible
+      accessibilityRole="text"
+      accessibilityLabel={label}
+      className="h-[30px] max-w-60 flex-row items-center gap-1 rounded-full px-2.5 opacity-60"
+      style={{ backgroundColor: p.surfaceMuted }}
+    >
+      <SymbolImage name={icon} size={13} color={p.muted} />
+      <Text
+        numberOfLines={1}
+        className="shrink text-[13px] font-medium text-muted-foreground"
+      >
+        {label}
+      </Text>
     </View>
   );
 }

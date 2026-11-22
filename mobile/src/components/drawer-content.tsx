@@ -18,6 +18,11 @@
  * No "New space" row: the ✎ button in the main header, on Home and every
  * space, is the one way to start one.
  *
+ * Before this run's first devices list (src/ui/load.ts) an empty list is
+ * skeleton rows, not "Spaces you start or follow show here."; the server
+ * unreachable ─▶ "Can't reach the server" and Retry under the list (saved
+ * or empty).
+ *
  * iOS: grouped-list look (10 pt rounded highlight). Android: Material 3
  * navigation drawer items (full pill, 56 dp, the active one tinted).
  */
@@ -37,9 +42,13 @@ import { useAuthState } from '../shell/AppProviders';
 import { spaceHref } from '../shell/navigate';
 import { useFleetState } from '../state/fleet';
 import { initials, spaceDot, spaceSections, type SpaceDot } from '../ui/drawer';
+import { UNREACHABLE_TITLE } from '../ui/load';
 import { spaceTitle } from '../ui/logic';
+import { Button } from '../ui/native';
+import { SkeletonRows } from '../ui/Skeleton';
 import { subSpaceSummary } from '../ui/subSpaceTree';
 import { usePalette } from '../ui/theme';
+import { useLoadState } from '../ui/useLoadState';
 import { SymbolImage, type SymbolName } from './symbol-image';
 import { SafeAreaView } from './tw';
 
@@ -257,13 +266,16 @@ export function DrawerContent({
 }) {
   const p = usePalette();
   const path = usePathname();
+  const { fleet } = useServices();
   const spaces = useFleetState((s) => s.spaces);
+  const load = useLoadState();
   const [query, setQuery] = useState('');
   const now = useMinute();
   const sections = useMemo(
     () => spaceSections(spaces, now, query),
     [spaces, now, query],
   );
+  const searching = query.trim() !== '';
 
   return (
     <SafeAreaView className="flex-1 bg-sidebar" edges={edges}>
@@ -313,11 +325,40 @@ export function DrawerContent({
           );
         }}
         ListEmptyComponent={
-          <Text className="px-6 pt-6 text-[15px] text-muted-foreground">
-            {query.trim()
-              ? `No space matches “${query.trim()}”`
-              : 'Spaces you start or follow show here.'}
-          </Text>
+          load === 'loading' && !searching ? (
+            <View className="pt-3">
+              <SkeletonRows />
+            </View>
+          ) : (
+            <Text className="px-6 pt-6 text-[15px] text-muted-foreground">
+              {searching
+                ? `No space matches “${query.trim()}”`
+                : load === 'unreachable'
+                  ? 'Nothing loaded yet.'
+                  : 'Spaces you start or follow show here.'}
+            </Text>
+          )
+        }
+        ListFooterComponent={
+          load === 'unreachable' && !searching ? (
+            <View
+              accessible
+              accessibilityRole="alert"
+              accessibilityLiveRegion="polite"
+              className="mx-6 mt-6 items-start gap-2"
+            >
+              <Text className="text-[13px] text-muted-foreground">
+                {UNREACHABLE_TITLE}
+              </Text>
+              <Button
+                label="Retry"
+                variant="secondary"
+                pill
+                onPress={() => void fleet.start()}
+                testID="drawer-retry"
+              />
+            </View>
+          ) : undefined
         }
       />
 

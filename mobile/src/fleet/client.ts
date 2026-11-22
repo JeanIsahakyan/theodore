@@ -859,7 +859,11 @@ export function createFleetClient(
             )
           : [];
         await verifyDelegations();
-        return publishDevices();
+        await publishDevices();
+        // The first list of this run: Home and the drawer leave their
+        // loading state (src/ui/load.ts).
+        if (!superseded) set({ welcomed: true });
+        return;
       case 'reply':
         return onReply(msg.envelope);
       case 'refused':
