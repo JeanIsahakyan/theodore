@@ -50,7 +50,9 @@ export default function SignIn() {
             break;
           case 'failed':
             track('sign_in_failed', { reason: 'failed' });
-            log.warn('sign-in failed', { 'error.code': 'account.sign_in_failed' });
+            log.warn('sign-in failed', {
+              'error.code': 'account.sign_in_failed',
+            });
             setError(r.message);
             break;
           case 'cancelled':

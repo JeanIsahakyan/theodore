@@ -85,7 +85,10 @@ export function installErrorHandlers(): void {
       previous?.(error, isFatal);
     });
   }
-  if (typeof g.addEventListener === 'function' && typeof g.window !== 'undefined') {
+  if (
+    typeof g.addEventListener === 'function' &&
+    typeof g.window !== 'undefined'
+  ) {
     g.addEventListener('error', (ev: ErrorEvent) => {
       reportJsError('ui.uncaught', ev.error ?? ev.message, { fatal: false });
     });
@@ -95,9 +98,9 @@ export function installErrorHandlers(): void {
   } else {
     // Hermes: no `unhandledrejection` event; the promise polyfill offers a
     // tracker hook instead.
-    const hermes = (globalThis as { HermesInternal?: unknown }).HermesInternal as
-      | { enablePromiseRejectionTracker?: (o: unknown) => void }
-      | undefined;
+    const hermes = (globalThis as { HermesInternal?: unknown })
+      .HermesInternal as
+      { enablePromiseRejectionTracker?: (o: unknown) => void } | undefined;
     hermes?.enablePromiseRejectionTracker?.({
       allRejections: true,
       onUnhandled: (_id: number, reason: unknown) =>

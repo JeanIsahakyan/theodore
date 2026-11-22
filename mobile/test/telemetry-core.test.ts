@@ -5,7 +5,12 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { memoryStorage } from '../src/keys/storage-types';
-import { applyChoice, NO_CHOICE, parseChoice, useConsent } from '../src/telemetry/consent';
+import {
+  applyChoice,
+  NO_CHOICE,
+  parseChoice,
+  useConsent,
+} from '../src/telemetry/consent';
 import { diagnosticsText, recordCount } from '../src/telemetry/export';
 import { admit } from '../src/telemetry/errors';
 import { isAccountId, loadIdentity } from '../src/telemetry/identity';
@@ -51,7 +56,8 @@ function fakeFetch(status: () => number = () => 200) {
 }
 
 let uuid = 0;
-const randomUUID = () => `00000000-0000-4000-8000-${String(++uuid).padStart(12, '0')}`;
+const randomUUID = () =>
+  `00000000-0000-4000-8000-${String(++uuid).padStart(12, '0')}`;
 
 async function rig(over: Partial<TelemetryDeps> = {}, posthog = true) {
   const net = fakeFetch();
@@ -70,7 +76,8 @@ async function rig(over: Partial<TelemetryDeps> = {}, posthog = true) {
     ...over,
   };
   await t.configure(deps);
-  const posthogCalls = () => net.calls.filter((c) => c.url.startsWith('https://ph.test'));
+  const posthogCalls = () =>
+    net.calls.filter((c) => c.url.startsWith('https://ph.test'));
   const relayCalls = () => net.calls.filter((c) => c.url.startsWith(CLOUD));
   return {
     t,
@@ -95,7 +102,12 @@ describe('the choice', () => {
   it('starts absent; a first switch answers both; on is consent 2, off clears it', () => {
     expect(parseChoice(null)).toEqual(NO_CHOICE);
     const a = applyChoice(NO_CHOICE, { usage: true });
-    expect(a).toEqual({ usage: true, errors: false, usageConsent: 2, errorsConsent: null });
+    expect(a).toEqual({
+      usage: true,
+      errors: false,
+      usageConsent: 2,
+      errorsConsent: null,
+    });
     const b = applyChoice(a, { errors: true });
     expect(b.errorsConsent).toBe(2);
     const c = applyChoice(b, { usage: false });
@@ -176,7 +188,10 @@ describe('consent gating', () => {
     });
     (r.t.track as (e: string) => void)('not_an_event');
     await r.flush();
-    const batch = r.posthogCalls()[0]!.body.batch as { event: string; properties: Record<string, unknown> }[];
+    const batch = r.posthogCalls()[0]!.body.batch as {
+      event: string;
+      properties: Record<string, unknown>;
+    }[];
     expect(batch.map((e) => e.event)).toEqual(['space_started']);
     expect(batch[0]!.properties.goal).toBeUndefined();
     expect(batch[0]!.properties.text).toBeUndefined();
@@ -244,7 +259,10 @@ describe('identity', () => {
     // The relay names the account only with error-report consent.
     r.t.log.warn('w');
     await r.flush();
-    const relay = r.relayCalls().at(-1)!.body.resource as Record<string, string>;
+    const relay = r.relayCalls().at(-1)!.body.resource as Record<
+      string,
+      string
+    >;
     expect(relay['enduser.id']).toBe(USER);
     expect(relay['service.instance.id']).toBe(install);
 
@@ -257,7 +275,10 @@ describe('identity', () => {
     expect(out.distinct_id).not.toBe(USER);
     expect(out.distinct_id).not.toBe(install);
     expect(out.distinct_id).not.toBe(identify.properties.$anon_distinct_id);
-    const relay2 = r.relayCalls().at(-1)!.body.resource as Record<string, string>;
+    const relay2 = r.relayCalls().at(-1)!.body.resource as Record<
+      string,
+      string
+    >;
     expect('enduser.id' in relay2).toBe(false);
     // The local log never has the account id.
     expect(r.t.exportText()).not.toContain(USER);
@@ -270,7 +291,11 @@ describe('identity', () => {
     r.t.log.error('e');
     await r.flush();
     expect(r.posthogCalls()).toEqual([]);
-    expect((r.relayCalls()[0]!.body.resource as Record<string, string>)['enduser.id']).toBe(USER);
+    expect(
+      (r.relayCalls()[0]!.body.resource as Record<string, string>)[
+        'enduser.id'
+      ],
+    ).toBe(USER);
     await r.t.setChoice({ usage: true, errors: false });
     r.t.log.error('e2');
     await r.flush();
@@ -294,7 +319,15 @@ describe('the relay payload', () => {
     expect(Object.keys(rec.attrs).length).toBeLessThanOrEqual(30);
     expect(rec.attrs.op_id).toBe('req_1');
     expect(rec.attrs.kind).toBe('error');
-    expect(toRelayRecord({ ts: 1, level: 'info', kind: 'log', msg: 'x', fields: {} })).toBeNull();
+    expect(
+      toRelayRecord({
+        ts: 1,
+        level: 'info',
+        kind: 'log',
+        msg: 'x',
+        fields: {},
+      }),
+    ).toBeNull();
     const body = relayBody([rec], FACTS, 'install-1', null);
     expect(body.resource).toEqual({
       'service.name': 'theodore-mobile',
@@ -320,11 +353,16 @@ describe('the relay payload', () => {
     for (const c of calls) {
       expect(c.url).toBe(`${CLOUD}/v1/telemetry/logs`);
       expect(c.headers.authorization).toBe('Bearer jwt.abc.def');
-      expect(JSON.stringify(c.body).length).toBeLessThanOrEqual(RELAY_REQUEST_BYTES);
+      expect(JSON.stringify(c.body).length).toBeLessThanOrEqual(
+        RELAY_REQUEST_BYTES,
+      );
       for (const rec of c.body.records as { level: string }[])
         expect(['warn', 'error']).toContain(rec.level);
     }
-    const total = calls.reduce((n, c) => n + (c.body.records as unknown[]).length, 0);
+    const total = calls.reduce(
+      (n, c) => n + (c.body.records as unknown[]).length,
+      0,
+    );
     expect(total).toBe(60);
   });
 
@@ -475,16 +513,38 @@ describe('batching and backoff', () => {
 describe('the local log', () => {
   it('keeps the newest within its bounds and comes back after a restart', async () => {
     const storage = memoryStorage();
-    const ring = createRing(storage, { max: 5, bytes: 100_000, saveDelayMs: 1 });
+    const ring = createRing(storage, {
+      max: 5,
+      bytes: 100_000,
+      saveDelayMs: 1,
+    });
     await ring.load();
     for (let i = 0; i < 8; i++)
-      ring.push({ ts: i, level: 'info', kind: 'log', msg: `m${i}`, fields: {} });
-    expect(ring.records().map((r) => r.msg)).toEqual(['m3', 'm4', 'm5', 'm6', 'm7']);
+      ring.push({
+        ts: i,
+        level: 'info',
+        kind: 'log',
+        msg: `m${i}`,
+        fields: {},
+      });
+    expect(ring.records().map((r) => r.msg)).toEqual([
+      'm3',
+      'm4',
+      'm5',
+      'm6',
+      'm7',
+    ]);
     await ring.flush();
     const again = createRing(storage, { max: 5, bytes: 100_000 });
     again.push({ ts: 9, level: 'warn', kind: 'log', msg: 'm9', fields: {} });
     await again.load();
-    expect(again.records().map((r) => r.msg)).toEqual(['m4', 'm5', 'm6', 'm7', 'm9']);
+    expect(again.records().map((r) => r.msg)).toEqual([
+      'm4',
+      'm5',
+      'm6',
+      'm7',
+      'm9',
+    ]);
   });
 
   it('trims by bytes too, and drops records that are not records', () => {

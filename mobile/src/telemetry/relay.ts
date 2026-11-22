@@ -56,7 +56,12 @@ export function toRelayRecord(r: TelemetryRecord): RelayRecord | null {
     if (v === null || v === undefined) continue;
     attrs[k] = typeof v === 'string' ? v.slice(0, RELAY_MSG_MAX) : v;
   }
-  return { ts: r.ts, level: r.level, msg: r.msg.slice(0, RELAY_MSG_MAX), attrs };
+  return {
+    ts: r.ts,
+    level: r.level,
+    msg: r.msg.slice(0, RELAY_MSG_MAX),
+    attrs,
+  };
 }
 
 export interface RelayOptions {

@@ -654,7 +654,8 @@ export function createFleetClient(
   };
 
   const disconnected = (
-    reason: 'lost' | 'replaced' | 'fatal' | 'background' | 'stopped' | 'account',
+    reason:
+      'lost' | 'replaced' | 'fatal' | 'background' | 'stopped' | 'account',
     code: string | number | null = null,
   ) => {
     if (!welcomedAt) return;

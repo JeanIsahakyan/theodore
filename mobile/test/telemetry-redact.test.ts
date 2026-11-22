@@ -39,12 +39,12 @@ describe('redactText', () => {
   });
 
   it('keeps the shape of headers, URLs and pairs, drops the value', () => {
-    expect(redactText('Authorization: Bearer abc.def.ghi-jkl', KEY)).not.toContain(
-      'abc.def',
-    );
     expect(
-      redactText('https://user:pa55word@example.com/x', KEY),
-    ).toBe('https://user:[redacted]@example.com/x');
+      redactText('Authorization: Bearer abc.def.ghi-jkl', KEY),
+    ).not.toContain('abc.def');
+    expect(redactText('https://user:pa55word@example.com/x', KEY)).toBe(
+      'https://user:[redacted]@example.com/x',
+    );
     expect(redactText('https://a.b/cb?code=SECRET1&state=S2', KEY)).toBe(
       'https://a.b/cb?code=[redacted]&state=[redacted]',
     );

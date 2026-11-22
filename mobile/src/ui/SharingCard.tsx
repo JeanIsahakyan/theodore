@@ -22,7 +22,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useAuthState } from '../shell/AppProviders';
 import { useConsent } from '../telemetry/consent';
 import { telemetry, track } from '../telemetry/log';
-import { Button, Glass, liquidGlass } from './native';
+import { Button, Glass, Switch, liquidGlass } from './native';
 import {
   SHARE_ROWS,
   SHARE_TITLE,
@@ -31,7 +31,6 @@ import {
   needsSharingChoice,
 } from './privacy';
 import { usePalette } from './theme';
-import { Switch } from './native';
 
 export function SharingCard() {
   const p = usePalette();

@@ -123,6 +123,7 @@ import {
   isPendingId,
   queuedCount,
   rowOfMessage,
+  sentMs,
   startTitle,
   startingLabel,
   unmatched,
@@ -500,8 +501,7 @@ function LiveSpaceScreen({ id }: { id: string }) {
     with_: AgentPicks,
     kind: 'send' | 'approve' = 'send',
   ) => {
-    const at = Date.now();
-    const retries = pending.find((x) => x.key === key)?.retries ?? 0;
+    const row = () => pending.find((x) => x.key === key);
     fleet
       .send(id, t, mode, with_)
       .then((r) => {
@@ -509,8 +509,8 @@ function LiveSpaceScreen({ id }: { id: string }) {
           surface: 'space',
           kind,
           queued: r.queued,
-          ms: Date.now() - at,
-          retries,
+          ms: sentMs(row()),
+          retries: row()?.retries ?? 0,
           outcome: 'ok',
           code: null,
         });
@@ -522,8 +522,8 @@ function LiveSpaceScreen({ id }: { id: string }) {
           surface: 'space',
           kind,
           queued: false,
-          ms: Date.now() - at,
-          retries,
+          ms: sentMs(row()),
+          retries: row()?.retries ?? 0,
           outcome: 'failed',
           code,
         });

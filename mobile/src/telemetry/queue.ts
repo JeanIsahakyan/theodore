@@ -71,7 +71,8 @@ export function createQueue<T>(o: QueueOptions<T>): BatchQueue<T> {
     while (items.length && out.length < o.batchSize) {
       const next = items[0]!.item;
       const size = o.bytesOf?.(next) ?? 0;
-      if (o.maxBatchBytes && out.length && bytes + size > o.maxBatchBytes) break;
+      if (o.maxBatchBytes && out.length && bytes + size > o.maxBatchBytes)
+        break;
       out.push(next);
       bytes += size;
       items.shift();
@@ -121,7 +122,8 @@ export function createQueue<T>(o: QueueOptions<T>): BatchQueue<T> {
   return {
     push(item) {
       items.push({ at: now(), item });
-      if (items.length > o.maxQueued) items.splice(0, items.length - o.maxQueued);
+      if (items.length > o.maxQueued)
+        items.splice(0, items.length - o.maxQueued);
       if (items.length >= o.batchSize) void flush();
       else schedule(o.flushMs);
     },

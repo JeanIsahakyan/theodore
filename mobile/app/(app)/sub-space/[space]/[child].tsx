@@ -56,13 +56,13 @@ import {
 } from '../../../../src/state/pending';
 import { log, track } from '../../../../src/telemetry/log';
 import { Empty, Notice } from '../../../../src/ui/kit';
-import {
-  errorText,
-  refusalCode,
-  spaceTitle,
-} from '../../../../src/ui/logic';
+import { errorText, refusalCode, spaceTitle } from '../../../../src/ui/logic';
 import { Glass } from '../../../../src/ui/native';
-import { rowOfSubSpaceMessage, unmatched } from '../../../../src/ui/pending';
+import {
+  rowOfSubSpaceMessage,
+  sentMs,
+  unmatched,
+} from '../../../../src/ui/pending';
 import { QuestionCard } from '../../../../src/ui/QuestionCard';
 import { PendingRow } from '../../../../src/ui/SpaceChat';
 import { Spinner } from '../../../../src/ui/Spinner';
@@ -224,8 +224,7 @@ export default function SubSpaceScreen() {
   /** The request behind a bubble: its answer settles or fails the bubble. */
   const dispatch = (key: string, t: string) => {
     if (!hostDevice) return;
-    const at = Date.now();
-    const retries = pending.find((x) => x.key === key)?.retries ?? 0;
+    const row = () => pending.find((x) => x.key === key);
     fleet
       .sendTo(hostDevice, child, t)
       .then((r) => {
@@ -233,8 +232,8 @@ export default function SubSpaceScreen() {
           surface: 'sub_space',
           kind: 'send',
           queued: r.queued,
-          ms: Date.now() - at,
-          retries,
+          ms: sentMs(row()),
+          retries: row()?.retries ?? 0,
           outcome: 'ok',
           code: null,
         });
@@ -246,8 +245,8 @@ export default function SubSpaceScreen() {
           surface: 'sub_space',
           kind: 'send',
           queued: false,
-          ms: Date.now() - at,
-          retries,
+          ms: sentMs(row()),
+          retries: row()?.retries ?? 0,
           outcome: 'failed',
           code: refusalCode(e),
         });

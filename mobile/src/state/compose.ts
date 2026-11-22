@@ -39,8 +39,18 @@ import { lastPicksStore, type LastPicksStore } from './lastPicks';
 const picked = (
   what: 'model' | 'effort' | 'mode' | 'computer' | 'project' | 'reset',
   space: string | null,
-  extra: { agent?: string | null; model?: string | null; effort?: string | null; mode?: FleetMode } = {},
-) => track('pick_made', { what, surface: space === null ? 'home' : 'space', ...extra });
+  extra: {
+    agent?: string | null;
+    model?: string | null;
+    effort?: string | null;
+    mode?: FleetMode;
+  } = {},
+) =>
+  track('pick_made', {
+    what,
+    surface: space === null ? 'home' : 'space',
+    ...extra,
+  });
 
 export interface ComposeState {
   /** `<user>.<org>` the picks belong to; `null`: none (signed out). */

@@ -246,7 +246,11 @@ function redactValue(
   const stack = segs.includes('stack') || segs.includes('backtrace');
   const max = stack ? STACK_MAX : FIELD_MAX;
   const tail = segs[segs.length - 1] === 'tail';
-  return cut(redactText(value.replace(/\/Users\/[^/\s]+/g, '~'), o.key), max, tail);
+  return cut(
+    redactText(value.replace(/\/Users\/[^/\s]+/g, '~'), o.key),
+    max,
+    tail,
+  );
 }
 
 export function redactFields(fields: Fields, o: RedactOptions): Fields {

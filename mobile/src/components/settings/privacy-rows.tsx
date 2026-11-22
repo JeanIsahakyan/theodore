@@ -31,15 +31,13 @@ export function PrivacyRows() {
     errors: status.errorsAvailable,
   };
   const flip = (kind: 'usage' | 'errors', value: boolean) => {
-    void telemetry
-      .setChoice({ [kind]: value })
-      .then((c) =>
-        track('consent_changed', {
-          usage: c.usage ?? false,
-          errors: c.errors ?? false,
-          where: 'settings',
-        }),
-      );
+    void telemetry.setChoice({ [kind]: value }).then((c) =>
+      track('consent_changed', {
+        usage: c.usage ?? false,
+        errors: c.errors ?? false,
+        where: 'settings',
+      }),
+    );
   };
   return (
     <>

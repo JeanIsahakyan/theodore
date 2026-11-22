@@ -28,7 +28,12 @@ function cleanFields(v: unknown): Fields {
   if (!isObj(v)) return {};
   const out: Fields = {};
   for (const [k, x] of Object.entries(v)) {
-    if (x === null || typeof x === 'string' || typeof x === 'number' || typeof x === 'boolean')
+    if (
+      x === null ||
+      typeof x === 'string' ||
+      typeof x === 'number' ||
+      typeof x === 'boolean'
+    )
       out[k] = x as FieldValue;
   }
   return out;
@@ -58,7 +63,8 @@ export function trimRing(
   max = RING_MAX,
   bytes = RING_BYTES,
 ): TelemetryRecord[] {
-  let out = records.length > max ? records.slice(records.length - max) : records;
+  let out =
+    records.length > max ? records.slice(records.length - max) : records;
   let size = out.reduce((n, r) => n + JSON.stringify(r).length + 1, 0);
   let drop = 0;
   while (size > bytes && drop < out.length - 1) {
@@ -97,9 +103,7 @@ export function createRing(
     if (timer) clearTimeout(timer);
     timer = null;
     const text = JSON.stringify(records);
-    writing = writing
-      .then(() => storage.set(RING_KEY, text))
-      .catch(() => {});
+    writing = writing.then(() => storage.set(RING_KEY, text)).catch(() => {});
     return writing;
   };
   const schedule = () => {

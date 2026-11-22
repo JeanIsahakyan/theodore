@@ -24,7 +24,8 @@ describe('the event catalog', () => {
   it('names events in snake_case with snake_case props', () => {
     for (const name of EVENT_NAMES) {
       expect(name).toMatch(/^[a-z][a-z0-9_]*$/);
-      for (const p of CATALOG[name].props) expect(p).toMatch(/^[a-z][a-z0-9_]*$/);
+      for (const p of CATALOG[name].props)
+        expect(p).toMatch(/^[a-z][a-z0-9_]*$/);
       expect(CATALOG[name].answers.length).toBeGreaterThan(8);
     }
   });
@@ -77,8 +78,11 @@ describe('the event catalog', () => {
         if (!isCatalogEvent(m[1]!)) unknown.push(`${f}: ${m[1]}`);
       }
       // A dynamic name would escape the check above.
-      for (const m of text.matchAll(/\btrack\(\s*([a-zA-Z_$][\w$.]*)\s*[,)]/g)) {
-        if (m[1] !== 'event') unknown.push(`${f}: track(${m[1]}) is not a literal`);
+      for (const m of text.matchAll(
+        /\btrack\(\s*([a-zA-Z_$][\w$.]*)\s*[,)]/g,
+      )) {
+        if (m[1] !== 'event')
+          unknown.push(`${f}: track(${m[1]}) is not a literal`);
       }
     }
     expect(unknown).toEqual([]);

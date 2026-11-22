@@ -154,9 +154,12 @@ export function AppProviders({ children }: { children: ReactNode }) {
       if (!live) return;
       // The account id (never the email) follows the session; the demo's
       // neutral account isn't a real one and stays anonymous.
-      void telemetry.setAccount(auth === real.auth ? (s?.userId ?? null) : null);
+      void telemetry.setAccount(
+        auth === real.auth ? (s?.userId ?? null) : null,
+      );
       if (last !== undefined) {
-        if (s && !last) track('signed_in', { how: auth === real.auth ? 'account' : 'demo' });
+        if (s && !last)
+          track('signed_in', { how: auth === real.auth ? 'account' : 'demo' });
         else if (!s && last) track('signed_out');
         else if (s && last && s.organizationId !== last.organizationId)
           track('org_switched', { ok: true });

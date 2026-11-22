@@ -20,13 +20,17 @@ describe('the sharing words', () => {
     const all = { usage: true, errors: true };
     expect(needsSharingChoice(NO_CHOICE, all, false)).toBe(false);
     expect(needsSharingChoice(NO_CHOICE, all, true)).toBe(true);
-    expect(needsSharingChoice(NO_CHOICE, { usage: false, errors: false }, true)).toBe(false);
+    expect(
+      needsSharingChoice(NO_CHOICE, { usage: false, errors: false }, true),
+    ).toBe(false);
     const chosen = applyChoice(NO_CHOICE, { usage: false, errors: false });
     expect(needsSharingChoice(chosen, all, true)).toBe(false);
   });
 
   it('the card can only turn on what the build can send', () => {
-    expect(cardChoice({ usage: true, errors: true }, { usage: false, errors: true })).toEqual({
+    expect(
+      cardChoice({ usage: true, errors: true }, { usage: false, errors: true }),
+    ).toEqual({
       usage: false,
       errors: true,
     });

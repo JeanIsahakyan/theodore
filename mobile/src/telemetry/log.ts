@@ -222,7 +222,12 @@ export class Telemetry {
     let remote: TelemetryRecord | null = null;
     const redacted = () =>
       (remote ??= redactRecord(local, { key: this.key, remote: true }));
-    if (local.kind === 'product' && local.event && choice.usage && this.posthog) {
+    if (
+      local.kind === 'product' &&
+      local.event &&
+      choice.usage &&
+      this.posthog
+    ) {
       const account = this.identity.usageAccount(choice);
       this.posthog.capture(
         local.event,
@@ -244,7 +249,9 @@ export class Telemetry {
   /** A product event from the catalog; unknown events and props are dropped. */
   track<E extends EventName>(event: E, props: EventProps<E> = {}): void {
     if (!isCatalogEvent(event)) {
-      this.log.warn('product event not in the catalog', { event: String(event) });
+      this.log.warn('product event not in the catalog', {
+        event: String(event),
+      });
       return;
     }
     const fields = allowedProps(event, props as Record<string, unknown>);
@@ -290,7 +297,10 @@ export class Telemetry {
   }
 
   /** Settings, the card: records the switches named. */
-  async setChoice(next: { usage?: boolean; errors?: boolean }): Promise<Choice> {
+  async setChoice(next: {
+    usage?: boolean;
+    errors?: boolean;
+  }): Promise<Choice> {
     await this.whenReady();
     if (!this.consent) return NO_CHOICE;
     return this.consent.set(next);
@@ -372,7 +382,8 @@ function fallbackUUID(): string {
   const c = globalThis.crypto as { randomUUID?: () => string } | undefined;
   if (c?.randomUUID) return c.randomUUID();
   let out = '';
-  for (let i = 0; i < 32; i++) out += Math.floor(Math.random() * 16).toString(16);
+  for (let i = 0; i < 32; i++)
+    out += Math.floor(Math.random() * 16).toString(16);
   return out;
 }
 

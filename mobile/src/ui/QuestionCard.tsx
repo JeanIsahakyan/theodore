@@ -93,11 +93,10 @@ export function QuestionCard({
       over: 'socket',
       questions: question.questions.length,
     };
-    (answer
-      ? answer(wire)
-      : fleet.answer(question.space, question.askId, wire)
-    )
-      .then(() => track('question_answered', { ...facts, outcome: 'ok', code: null }))
+    (answer ? answer(wire) : fleet.answer(question.space, question.askId, wire))
+      .then(() =>
+        track('question_answered', { ...facts, outcome: 'ok', code: null }),
+      )
       .catch((e: unknown) => {
         track('question_answered', {
           ...facts,

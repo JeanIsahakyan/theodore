@@ -53,7 +53,16 @@ export const CATALOG = {
   },
   space_started: {
     answers: 'Where do spaces start, in which mode, how fast, why refused?',
-    props: ['computer_kind', 'mode', 'agent', 'model', 'effort', 'ms', 'outcome', 'code'],
+    props: [
+      'computer_kind',
+      'mode',
+      'agent',
+      'model',
+      'effort',
+      'ms',
+      'outcome',
+      'code',
+    ],
   },
   message_sent: {
     answers: 'Do sends land, queued or not, how fast, after how many retries?',

@@ -156,6 +156,10 @@ export function retrySend(p: PendingSend, at: number): PendingSend {
   };
 }
 
+/** Telemetry: how long a send took, from when it (last) went out. */
+export const sentMs = (p: PendingSend | undefined): number =>
+  p ? Math.max(0, Date.now() - p.at) : 0;
+
 /** A row of the chat an optimistic bubble may stand for. */
 export interface ChatRow {
   id: string | null;

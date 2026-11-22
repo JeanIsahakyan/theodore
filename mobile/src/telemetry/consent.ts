@@ -90,7 +90,8 @@ export function parseChoice(text: string | null): Choice {
   }
   if (!v || typeof v !== 'object') return NO_CHOICE;
   const o = v as Record<string, unknown>;
-  const bool = (x: unknown): boolean | null => (typeof x === 'boolean' ? x : null);
+  const bool = (x: unknown): boolean | null =>
+    typeof x === 'boolean' ? x : null;
   const ver = (x: unknown): number | null =>
     typeof x === 'number' && Number.isFinite(x) ? x : null;
   const usage = bool(o.usage);
