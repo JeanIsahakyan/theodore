@@ -11,16 +11,20 @@ export function spaceIdFromPath(path: string): string | null {
 
 /**
  * A route's name for telemetry: the path with every dynamic segment
- * dropped (`/space/rs_1` ─▶ `space`, `/sub-space/a/b` ─▶ `sub-space`,
- * `/settings/about` ─▶ `settings/about`, `/` ─▶ `home`).
+ * dropped (`/space/rs_1` ─▶ `space`, `/s/abc` ─▶ `s`, `/sub-space/a/b` ─▶
+ * `sub-space`, `/file/rs_1` ─▶ `file`, `/settings/about` ─▶
+ * `settings/about`, `/` ─▶ `home`).
  */
 export function screenOfPath(path: string): string {
   const clean = path.replace(/[?#].*$/, '').replace(/^\/+|\/+$/g, '');
   if (!clean) return 'home';
   const parts = clean.split('/');
-  if (parts[0] === 'space' || parts[0] === 'sub-space') return parts[0];
+  if (ID_ROUTES.has(parts[0] ?? '')) return parts[0] ?? '';
   return parts.slice(0, 2).join('/');
 }
+
+/** Routes whose next segment is an id, never reported. */
+const ID_ROUTES = new Set(['space', 's', 'sub-space', 'file']);
 
 /**
  * The sheets as routes (iOS presents them as form sheets over the stack,

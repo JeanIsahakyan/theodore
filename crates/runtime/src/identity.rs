@@ -123,6 +123,21 @@ pub fn app_redirect_uri(env: BuildEnv) -> Option<String> {
     url_scheme(env).map(|s| format!("{s}://{CALLBACK}"))
 }
 
+/// The website a build links to (docs/website.md): production's own,
+/// `https://staging.theodore.cloud` for every other build, so a staging
+/// desktop's space links open in the staging site (which tries the
+/// `theodore-staging://` scheme) and a space link never names a page the
+/// build's own channel hasn't deployed.
+pub fn site_url(env: BuildEnv) -> &'static str {
+    match env {
+        BuildEnv::Production => PRODUCTION_SITE,
+        BuildEnv::Staging | BuildEnv::Nightly | BuildEnv::Dev => STAGING_SITE,
+    }
+}
+
+const PRODUCTION_SITE: &str = "https://theodore.cloud";
+const STAGING_SITE: &str = "https://staging.theodore.cloud";
+
 /// `base` for production, `base<sep><env>` for the others.
 fn suffixed(base: &str, sep: char, env: BuildEnv) -> String {
     match env.suffix() {
@@ -228,6 +243,14 @@ mod tests {
         assert_eq!(all(bundle_identifier), 4);
         assert_eq!(all(data_dir_name), 4);
         assert_eq!(all(keychain_service), 4);
+    }
+
+    #[test]
+    fn only_production_links_to_the_production_site() {
+        assert_eq!(site_url(Production), "https://theodore.cloud");
+        for env in [Staging, Nightly, Dev] {
+            assert_eq!(site_url(env), "https://staging.theodore.cloud", "{env:?}");
+        }
     }
 
     #[test]

@@ -56,7 +56,7 @@
  * Glass, iOS < 26: chrome blur, Android: Material 3 surface, web: a card);
  * the list is inset by its height and rides on the keyboard with it.
  */
-import { router, useLocalSearchParams } from 'expo-router';
+import { Redirect, router, useLocalSearchParams } from 'expo-router';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { StyleSheet, Text, View, type TextInputInstance } from 'react-native';
 import {
@@ -93,6 +93,7 @@ import type {
 import { useServices } from '../../../src/services';
 import { useGlassHeaderInset } from '../../../src/shell/glassHeader';
 import { backHome, spaceHref } from '../../../src/shell/navigate';
+import { resolveSpaceLink } from '../../../src/shell/spaceLink';
 import { useFleetState } from '../../../src/state/fleet';
 import { setSpaceMode, useCompose } from '../../../src/state/compose';
 import {
@@ -396,9 +397,11 @@ function StartingScreen({ id }: { id: string }) {
 function LiveSpaceScreen({ id }: { id: string }) {
   const { fleet } = useServices();
   const p = usePalette();
-  const space = useFleetState((s) => s.spaces.find((x) => x.space === id));
+  const spaces = useFleetState((s) => s.spaces);
+  const space = spaces.find((x) => x.space === id);
   const stored = useFleetState((s) => s.lines[id] ?? EMPTY_LINES);
-  const mirror = useFleetState((s) => s.mirrors[id]);
+  const mirrors = useFleetState((s) => s.mirrors);
+  const mirror = mirrors[id];
   const routed = useFleetState((s) => s.questions);
   const host = useFleetState((s) =>
     s.devices.find((d) => d.deviceId === space?.hostDevice),
@@ -495,12 +498,17 @@ function LiveSpaceScreen({ id }: { id: string }) {
   const activity = useActivityStrip(stripProps);
 
   if (!space) {
+    // The web app's /space/<id> from a space link carries the space's id
+    // on its host (docs/mobile.md "Space links"): its fleet id, if the
+    // space is followed here.
+    const link = resolveSpaceLink(id, spaces, mirrors);
+    if (link.kind === 'found') return <Redirect href={spaceHref(link.space)} />;
     return (
       <View style={{ paddingTop: top }}>
         <MainHeader title="Space" />
         <Empty
-          title="This space isn't in your fleet any more"
-          hint="It was removed, or you no longer follow it."
+          title="This space isn't on your devices"
+          hint="It was removed, you no longer follow it, or it runs on a computer you don't follow from here."
         />
       </View>
     );
