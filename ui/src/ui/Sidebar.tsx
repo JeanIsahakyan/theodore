@@ -430,7 +430,7 @@ export const Sidebar = observer(function Sidebar() {
           {
             id: 'spaces',
             title: 'Spaces',
-            // Always in reach: the "New space" row ends a list that can be long.
+            // Always in reach, however long the list.
             action: {
               label: 'New space',
               icon: <Plus />,
@@ -528,12 +528,18 @@ export const Sidebar = observer(function Sidebar() {
                 };
                 return [item, ...remoteRows];
               }),
-              {
-                key: 'new-space',
-                icon: <Plus />,
-                label: 'New space',
-                onPress: () => ui.openModal('new-space'),
-              },
+              // No spaces yet: a row, since a lone "+" in the title is easy
+              // to miss. After that the title's "+" is the way in.
+              ...(spaces.length === 0
+                ? [
+                    {
+                      key: 'new-space',
+                      icon: <Plus />,
+                      label: 'New space',
+                      onPress: () => ui.openModal('new-space'),
+                    },
+                  ]
+                : []),
             ],
           },
         ]
