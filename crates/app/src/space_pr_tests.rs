@@ -174,6 +174,8 @@ fn base_moved(f: &Fixtures, tip: &str) {
         .unwrap()
         .remote
         .insert("main".into(), Sha::new(tip));
+    // The cache's copy of main follows the fetch.
+    f.git.set_resolve("main", Sha::new(tip));
     f.git.set_resolve(tip, Sha::new(tip));
 }
 
@@ -757,7 +759,12 @@ async fn the_pr_after_a_continue_is_titled_by_its_net_change() {
         assert!(!body.contains(chat), "{chat}: {body}");
     }
     let ship = f.git.ship.lock().unwrap();
-    assert_eq!(ship.commits.last().unwrap().1.message, "Update notes/t3.md");
+    let squash = &ship.commits.last().unwrap().1;
+    assert_eq!(squash.message, "Update notes/t3.md");
+    // The round's base is main's tip from the Continue: one parent, as is.
+    assert_eq!(squash.parent, Sha::new("main222"));
+    assert_eq!(squash.merge_parent, None);
+    assert_eq!(space(&f, &c.id).base_sha, Sha::new("main222"));
 }
 
 /// The chat agent's proposal from the round's diff stat and replies: its

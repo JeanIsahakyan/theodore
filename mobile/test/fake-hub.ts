@@ -35,6 +35,7 @@ export const TIMING = {
   replyWaitMs: 150,
   startWaitMs: 100,
   pendingTtlMs: 2_000,
+  readFileWaitMs: 300,
 };
 
 export async function waitFor(

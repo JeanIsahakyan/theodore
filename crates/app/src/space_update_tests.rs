@@ -431,6 +431,61 @@ async fn an_ask_space_resolves_in_edit_mode() {
     assert_eq!(f.agents.last_request().unwrap().mode, AgentMode::Edit);
 }
 
+// ── The agent merged the base in itself ───────────────────────────────────
+
+/// No Update: the agent ran `git merge main` in its turn. Its end moves the
+/// space onto the new base (so "Base moved" and the diff follow), like an
+/// update would, and Undo of that turn brings the old base back.
+#[tokio::test]
+async fn a_turn_that_merged_the_base_in_moves_the_space_onto_it() {
+    let f = fixtures();
+    let (core, _recv, project) = host_project(&f).await;
+    let s = one_turn(&f, &core, &project).await;
+    base_moves(&f);
+    assert_eq!(core.space_base_status(&s.id).await.unwrap().behind, 3);
+
+    let s = next_turn(&f, &core, &s, "turn222").await;
+
+    assert_eq!(s.base_sha, Sha::new("base222"));
+    assert_eq!(s.head_sha, Sha::new("turn222"));
+    assert_eq!(merge_calls(&f), vec![], "no Update ran");
+    let last = s.turn_log.last().unwrap();
+    assert_eq!(last.base_before, Some(Sha::new("base000")));
+    assert_eq!(core.space_base_status(&s.id).await.unwrap().behind, 0);
+    // The review after the turn (in the background) is vs the new base.
+    wait_until(|| {
+        f.git
+            .ship
+            .lock()
+            .unwrap()
+            .diff_calls
+            .contains(&(Sha::new("base222"), Sha::new("turn222")))
+    })
+    .await;
+
+    let s = core.undo_space_turn(&s.id).await.unwrap();
+    assert_eq!(s.head_sha, Sha::new("turn111"));
+    assert_eq!(s.base_sha, Sha::new("base000"), "the old base is back");
+}
+
+/// A turn while the base moved on, without merging it: the space stays on
+/// its base, and the count keeps saying how far behind it is.
+#[tokio::test]
+async fn a_turn_that_did_not_merge_the_base_leaves_it_behind() {
+    let f = fixtures();
+    let (core, _recv, project) = host_project(&f).await;
+    let s = one_turn(&f, &core, &project).await;
+    base_moves(&f);
+    f.git
+        .set_merge_base("base222", "turn222", Sha::new("base000"));
+
+    let s = next_turn(&f, &core, &s, "turn222").await;
+
+    assert_eq!(s.base_sha, Sha::new("base000"));
+    assert_eq!(s.turn_log.last().unwrap().base_before, None);
+    assert_eq!(core.space_base_status(&s.id).await.unwrap().behind, 3);
+}
+
 // ── Shipping after an update ──────────────────────────────────────────────
 
 #[tokio::test]

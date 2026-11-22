@@ -146,6 +146,7 @@ export function PromptInput({
   stopping,
   queue,
   canSubmit,
+  above,
   leading,
   trailing,
   error,
@@ -184,6 +185,7 @@ export function PromptInput({
     <View testID={testID}>
       {error ? <PromptInputError message={error} /> : null}
       <Surface>
+        {above}
         <TextInput
           ref={inputRef}
           nativeID="composer"

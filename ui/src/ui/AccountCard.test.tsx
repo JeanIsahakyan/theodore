@@ -6,7 +6,11 @@ import { click, mount, settle, type Mounted } from '../test/dom';
 import { setTransport } from '../core/transport';
 import { initialFlow, type AccountFlow } from '../core/accountFlow';
 import type { AccountSignIn } from '../core/accountSignIn';
-import type { AccountOrganization, AccountStatus } from '../gen/contract';
+import type {
+  AccountEntry,
+  AccountOrganization,
+  AccountStatus,
+} from '../gen/contract';
 import { RootStore } from '../stores/RootStore';
 import { RootStoreProvider } from '../stores/context';
 import { FakeTransport } from '../test/fakeTransport';
@@ -90,6 +94,7 @@ describe('Settings → Account organization', () => {
     available: true,
     required: true,
     session_ended: false,
+    accounts: [],
     user: ada,
     organization,
   });
@@ -237,6 +242,152 @@ describe('Settings → Account organization', () => {
     // Still signed in, the switcher still there.
     expect(store.ephemeral.account?.user).not.toBeNull();
     expect(m!.host.querySelector('.account-organization-switch')).toBeTruthy();
+  });
+});
+
+describe('Settings → Account, several accounts', () => {
+  const jean: AccountEntry = {
+    user: {
+      id: 'user_01',
+      email: 'ada@example.com',
+      name: 'Ada Lovelace',
+      avatar_url: null,
+    },
+    organization: { id: 'org_me', role: 'admin' },
+    organizations: [
+      { id: 'org_me', name: "Ada's workspace", role: 'admin', personal: true },
+    ],
+    active: true,
+    sign_in_required: false,
+  };
+  const work: AccountEntry = {
+    user: {
+      id: 'user_02',
+      email: 'ada@acme.com',
+      name: null,
+      avatar_url: null,
+    },
+    organization: { id: 'org_acme', role: 'member' },
+    organizations: [
+      { id: 'org_acme', name: 'Acme', role: 'member', personal: false },
+    ],
+    active: false,
+    sign_in_required: false,
+  };
+  const several = (accounts: AccountEntry[]): AccountStatus => {
+    const active = accounts.find((a) => a.active) ?? null;
+    return {
+      available: true,
+      required: true,
+      session_ended: false,
+      user: active?.user ?? null,
+      organization: active?.organization ?? null,
+      accounts,
+    };
+  };
+
+  let transport: FakeTransport;
+  let store: RootStore;
+
+  beforeEach(() => {
+    transport = new FakeTransport();
+    setTransport(transport);
+    store = new RootStore();
+    transport.onCall('account_organizations', () => jean.organizations);
+  });
+
+  async function render(s: AccountStatus) {
+    store.ephemeral.setAccount(s);
+    transport.onCall('account_status', () => store.ephemeral.account);
+    m = await mount(
+      <RootStoreProvider store={store}>
+        <AccountCard />
+      </RootStoreProvider>,
+    );
+    await settle();
+  }
+
+  const called = (cmd: string) => transport.calls.filter((c) => c.cmd === cmd);
+  const rows = () => [...m!.host.querySelectorAll<HTMLElement>('.account-row')];
+  const rowOf = (user: string) =>
+    m!.host.querySelector<HTMLElement>(`.account-row[data-user="${user}"]`);
+
+  it('lists every account, the active one marked, the others with Switch', async () => {
+    await render(several([jean, work]));
+    expect(m!.host.textContent).toContain('Theodore accounts');
+    expect(rows()).toHaveLength(2);
+    expect(rowOf('user_01')?.textContent).toContain('Active');
+    expect(rowOf('user_01')?.textContent).toContain('Personal');
+    expect(rowOf('user_01')?.querySelector('.account-switch')).toBeNull();
+    expect(rowOf('user_02')?.textContent).toContain('ada@acme.com');
+    expect(rowOf('user_02')?.textContent).toContain('Acme');
+    expect(rowOf('user_02')?.textContent).toContain('Member');
+    expect(rowOf('user_02')?.querySelector('.account-switch')).toBeTruthy();
+    expect(m!.host.querySelector('.account-add')).toBeTruthy();
+    // The active account's organization switcher stays below the rows.
+    expect(m!.host.querySelector('.account-organization')).toBeTruthy();
+  });
+
+  it('Switch makes that account active', async () => {
+    await render(several([jean, work]));
+    transport.onCall('account_switch', () =>
+      several([
+        { ...jean, active: false },
+        { ...work, active: true },
+      ]),
+    );
+    await click(rowOf('user_02')?.querySelector('.account-switch'));
+    await settle();
+    expect(called('account_switch')[0]?.args).toEqual({
+      req: { user_id: 'user_02', organization_id: null },
+    });
+    expect(rowOf('user_02')?.textContent).toContain('Active');
+    expect(rowOf('user_01')?.querySelector('.account-switch')).toBeTruthy();
+  });
+
+  it('signs one account out', async () => {
+    await render(several([jean, work]));
+    transport.onCall('account_sign_out_of', () => several([jean]));
+    await click(rowOf('user_02')?.querySelector('.account-sign-out'));
+    await settle();
+    expect(called('account_sign_out_of')[0]?.args).toEqual({
+      userId: 'user_02',
+    });
+    expect(rows()).toHaveLength(1);
+  });
+
+  it('offers Sign in again for an ended session, with the email', async () => {
+    await render(several([jean, { ...work, sign_in_required: true }]));
+    const row = rowOf('user_02');
+    expect(row?.textContent).toContain('sign in again');
+    expect(row?.querySelector('.account-switch')).toBeNull();
+    await click(row?.querySelector('.account-sign-in-again'));
+    expect(store.ui.modal).toBe('sign-in');
+    expect(store.ui.modalTargets).toEqual(['ada@acme.com']);
+  });
+
+  it('Add another account opens the sign-in dialog', async () => {
+    await render(several([jean]));
+    expect(m!.host.textContent).toContain('Theodore account');
+    expect(m!.host.textContent).not.toContain('Theodore accounts');
+    await click(m!.host.querySelector('.account-add'));
+    expect(store.ui.modal).toBe('sign-in');
+  });
+
+  it('a failed switch is said under the rows', async () => {
+    await render(several([jean, work]));
+    transport.onCall('account_switch', () => {
+      throw Object.assign(new Error('x'), {
+        code: 'account',
+        message: 'account: network: timed out',
+      });
+    });
+    await click(rowOf('user_02')?.querySelector('.account-switch'));
+    await settle();
+    expect(m!.host.textContent).toContain(
+      "Couldn't switch organization: no connection. Try again.",
+    );
+    expect(rowOf('user_01')?.textContent).toContain('Active');
   });
 });
 

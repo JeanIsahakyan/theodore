@@ -9,6 +9,7 @@ import {
   Envelope,
   Person,
   Persons,
+  Plus,
 } from '@gravity-ui/icons';
 import {
   Button,
@@ -23,11 +24,18 @@ import {
 } from '@heroui/react';
 import { observer } from 'mobx-react-lite';
 import type {
+  AccountEntry,
   AccountOrganization,
   AccountStatus,
   AccountUser,
 } from '../gen/contract';
 import { api } from '../core/api';
+import {
+  currentOrgLabel,
+  runningByAccount,
+  runningLabel,
+  shortName,
+} from '../core/accounts';
 import {
   accountLabel,
   looksLikeEmail,
@@ -123,6 +131,7 @@ export function SignInView({
   user,
   logo = true,
   ended = false,
+  initialEmail = '',
 }: {
   signIn: AccountSignIn;
   user: AccountUser | null;
@@ -131,9 +140,11 @@ export function SignInView({
   logo?: boolean;
   /** The provider ended the last session: say so on the first stage. */
   ended?: boolean;
+  /** Pre-filled email: "Sign in again" on an account whose session ended. */
+  initialEmail?: string;
 }) {
   const { flow, start, cancel, chooseOrganization, reopen } = signIn;
-  const [email, setEmail] = useState('');
+  const [email, setEmail] = useState(initialEmail);
   const [copied, setCopied] = useState(false);
 
   if (user) {
@@ -396,13 +407,18 @@ export function SignInView({
 
 /** The sign-in dialog (`ui.openModal('sign-in')`): no title bar, just the
  *  stages. Closing it drops a sign-in in progress; it closes itself a
- *  moment after "You're in". */
+ *  moment after "You're in". Also "Add another account" and "Sign in
+ *  again" while someone is signed in: the form shows until this sign-in
+ *  itself is done, whoever is active meanwhile. A modal target is the
+ *  email to pre-fill. */
 export const SignInModal = observer(function SignInModal() {
   const store = useRootStore();
   const ui = useUi();
-  const status = useAccountStatus();
+  useAccountStatus();
   const signIn = useAccountSignIn((s) => store.ephemeral.setAccount(s));
-  const user = status?.user ?? null;
+  const [initialEmail] = useState(ui.modalTargets[0] ?? '');
+  const user =
+    signIn.flow.phase === 'done' ? (signIn.flow.status?.user ?? null) : null;
   const waiting = signIn.flow.phase !== 'idle' && signIn.flow.phase !== 'done';
 
   useEffect(() => {
@@ -424,7 +440,7 @@ export const SignInModal = observer(function SignInModal() {
           className="modal sign-in w-[380px] max-w-[92vw] px-8 pb-8 pt-10"
         >
           <Modal.CloseTrigger aria-label="Close" />
-          <SignInView signIn={signIn} user={user} />
+          <SignInView signIn={signIn} user={user} initialEmail={initialEmail} />
         </Modal.Dialog>
       </Modal.Container>
     </Modal.Backdrop>
@@ -567,67 +583,161 @@ const OrganizationRow = observer(function OrganizationRow({
   );
 });
 
-/** Settings → Account: one row for the Theodore account, above the host
- *  cards — who you are and Sign out (which brings back the sign-in
- *  screen), or a Sign in button that opens the dialog. Hidden while the
- *  feature isn't configured (no client id). */
-export const AccountCard = observer(function AccountCard() {
+/** One account's row in Settings → Account: who, the organization its
+ *  session is in, and the actions the sidebar's popover has — Switch (or
+ *  "Active"), Sign in again when its session ended, Sign out. */
+const AccountRow = observer(function AccountRow({
+  entry,
+  running,
+  onError,
+}: {
+  entry: AccountEntry;
+  running: number | undefined;
+  onError: (message: string | null) => void;
+}) {
   const store = useRootStore();
   const ui = useUi();
-  const status = useAccountStatus();
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const user = entry.user;
+  const org = currentOrgLabel(entry);
+  const sub = entry.sign_in_required
+    ? 'Session ended — sign in again'
+    : [
+        user.name ? user.email : null,
+        org,
+        entry.organization?.role && roleLabel(entry.organization.role),
+        runningLabel(running),
+      ]
+        .filter(Boolean)
+        .join(' · ') || 'Signed in';
 
-  if (!status?.available) return null;
-  const user = status.user;
-
-  const signOut = () => {
+  const run = (p: Promise<AccountStatus>) => {
     setBusy(true);
-    setError(null);
-    void api
-      .accountSignOut()
+    onError(null);
+    void p
       .then((s) => store.ephemeral.setAccount(s))
-      .catch((e) => setError(switchErrorText(String(e?.message ?? e))))
+      .catch((e) => onError(switchErrorText(String(e?.message ?? e))))
       .finally(() => setBusy(false));
   };
 
   return (
-    <section className="account-card flex flex-col gap-2">
-      <Typography.Heading level={6}>Theodore account</Typography.Heading>
-      <Card
-        variant="secondary"
-        className="flex-row items-center gap-3 px-4 py-3"
+    <Card
+      variant="secondary"
+      className={`account-row flex-row items-center gap-3 px-4 py-3 ${
+        entry.active ? 'account-row-active' : ''
+      }`}
+      data-user={user.id}
+    >
+      <AccountAvatar user={user} size={28} />
+      <div className="flex min-w-0 flex-1 flex-col">
+        <span className="truncate text-sm font-medium">
+          {accountLabel(user)}
+        </span>
+        <span className="truncate text-xs text-muted">{sub}</span>
+      </div>
+      {busy && <Spinner />}
+      {entry.active ? (
+        <span className="account-active shrink-0 rounded-full bg-default px-2 py-0.5 text-xs text-muted">
+          Active
+        </span>
+      ) : entry.sign_in_required ? (
+        <Button
+          size="sm"
+          variant="secondary"
+          className="account-sign-in-again"
+          isDisabled={busy}
+          onPress={() => ui.openModal('sign-in', [user.email])}
+        >
+          Sign in again
+        </Button>
+      ) : (
+        <Button
+          size="sm"
+          variant="secondary"
+          className="account-switch"
+          isDisabled={busy}
+          onPress={() =>
+            run(
+              api.accountSwitch({
+                user_id: user.id,
+                organization_id: null,
+              }),
+            )
+          }
+        >
+          Switch
+        </Button>
+      )}
+      <Button
+        size="sm"
+        variant="ghost"
+        className="account-sign-out text-danger"
+        aria-label={`Sign out of ${shortName(user)}`}
+        isDisabled={busy}
+        onPress={() => run(api.accountSignOutOf(user.id))}
       >
-        {user ? (
-          <AccountAvatar user={user} size={28} />
-        ) : (
+        <ArrowRightFromSquare className="size-4" /> Sign out
+      </Button>
+    </Card>
+  );
+});
+
+/** Settings → Account: the Theodore accounts signed in here, above the
+ *  host cards — each with Switch / Sign out, the active one's
+ *  organization switcher under them, and Add another account (the sign-in
+ *  dialog). Signed out of every account: a Sign in button. Hidden while
+ *  the feature isn't configured (no client id). */
+export const AccountCard = observer(function AccountCard() {
+  const store = useRootStore();
+  const ui = useUi();
+  const status = useAccountStatus();
+  const [error, setError] = useState<string | null>(null);
+
+  if (!status?.available) return null;
+  const user = status.user;
+  // A status without the list (an older core) still shows its one user.
+  const rows: AccountEntry[] = status.accounts.length
+    ? status.accounts
+    : user
+      ? [
+          {
+            user,
+            organization: status.organization,
+            organizations: [],
+            active: true,
+            sign_in_required: false,
+          },
+        ]
+      : [];
+  const running = runningByAccount(store.models.spaces.all());
+
+  return (
+    <section className="account-card flex flex-col gap-2">
+      <Typography.Heading level={6}>
+        {rows.length > 1 ? 'Theodore accounts' : 'Theodore account'}
+      </Typography.Heading>
+      {rows.map((entry) => (
+        <AccountRow
+          key={entry.user.id}
+          entry={entry}
+          running={running.get(entry.user.id)}
+          onError={setError}
+        />
+      ))}
+      {!rows.length && (
+        <Card
+          variant="secondary"
+          className="flex-row items-center gap-3 px-4 py-3"
+        >
           <span className="grid size-7 shrink-0 place-items-center rounded-full bg-default">
             <Person className="size-4 text-muted" />
           </span>
-        )}
-        <div className="flex min-w-0 flex-1 flex-col">
-          <span className="truncate text-sm font-medium">
-            {user ? accountLabel(user) : 'Not signed in'}
-          </span>
-          <span className="truncate text-xs text-muted">
-            {user
-              ? user.name
-                ? user.email
-                : 'Signed in'
-              : 'Sign in to keep using Theodore'}
-          </span>
-        </div>
-        {user ? (
-          <Button
-            size="sm"
-            variant="ghost"
-            className="account-sign-out text-danger"
-            isDisabled={busy}
-            onPress={signOut}
-          >
-            <ArrowRightFromSquare className="size-4" /> Sign out
-          </Button>
-        ) : (
+          <div className="flex min-w-0 flex-1 flex-col">
+            <span className="truncate text-sm font-medium">Not signed in</span>
+            <span className="truncate text-xs text-muted">
+              Sign in to keep using Theodore
+            </span>
+          </div>
           <Button
             size="sm"
             variant="primary"
@@ -636,10 +746,20 @@ export const AccountCard = observer(function AccountCard() {
           >
             Sign in
           </Button>
-        )}
-      </Card>
+        </Card>
+      )}
       {error && <span className="text-xs text-danger">{error}</span>}
       {user && <OrganizationRow status={status} />}
+      {rows.length > 0 && (
+        <Button
+          size="sm"
+          variant="ghost"
+          className="account-add self-start"
+          onPress={() => ui.openModal('sign-in')}
+        >
+          <Plus className="size-4" /> Add another account
+        </Button>
+      )}
     </section>
   );
 });
