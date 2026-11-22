@@ -9,6 +9,7 @@ import {
   type ModalBottomSheetRef,
 } from '@expo/ui/jetpack-compose';
 import { useRef, useState } from 'react';
+import { track } from '../../telemetry/log';
 import { ActivitySheet } from '../../ui/ActivitySheet';
 import { useHostTheme } from '../../ui/native/host.android';
 import { AccountsSheet } from '../accounts/accounts-sheet.android';
@@ -62,7 +63,10 @@ export function useSheet(kind: SheetKind, space?: string | null): SheetHandle {
   const theme = useHostTheme();
   const { open, setOpen, sheet } = useSheetState();
   return {
-    open: () => setOpen(true),
+    open: () => {
+      track('sheet_opened', { kind });
+      setOpen(true);
+    },
     isOpen: open,
     element: open ? (
       <Host {...theme} matchContents>

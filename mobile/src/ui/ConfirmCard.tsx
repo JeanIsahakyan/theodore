@@ -18,7 +18,9 @@ import { useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import type { ConfirmView } from '../fleet/types';
 import { useServices } from '../services';
+import { track } from '../telemetry/log';
 import { confirmDeadline, confirmTitle } from './confirmView';
+import { refusalCode } from './logic';
 import { Button, Glass, liquidGlass } from './native';
 import { usePalette } from './theme';
 
@@ -41,7 +43,23 @@ export function ConfirmCard({
     setBusy(allow ? 'allow' : 'deny');
     fleet
       .confirm(confirm.hostDevice, confirm.confirmId, allow)
-      .catch(onError)
+      .then(() =>
+        track('confirm_answered', {
+          allow,
+          over: 'socket',
+          outcome: 'ok',
+          code: null,
+        }),
+      )
+      .catch((e: unknown) => {
+        track('confirm_answered', {
+          allow,
+          over: 'socket',
+          outcome: 'failed',
+          code: refusalCode(e),
+        });
+        onError(e);
+      })
       .finally(() => setBusy(null));
   };
 

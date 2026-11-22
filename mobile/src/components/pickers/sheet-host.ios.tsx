@@ -5,6 +5,7 @@
  */
 import { router, type Href } from 'expo-router';
 import { useRef } from 'react';
+import { track } from '../../telemetry/log';
 import type { SheetHandle, SheetKind } from './types';
 
 const PATHS: Record<SheetKind, string> = {
@@ -28,6 +29,7 @@ export function useSheet(kind: SheetKind, space?: string | null): SheetHandle {
       const now = Date.now();
       if (now - last.current < 600) return;
       last.current = now;
+      track('sheet_opened', { kind });
       router.push(sheetHref(kind, space));
     },
     isOpen: false,

@@ -25,6 +25,10 @@ name: Release
 # baked into the build (unset: no account), and THEODORE_CLOUD_URL, the
 # production cloud (unset: https://api.theodore.cloud, docs/cloud.md
 # "Environments"). Secrets and the telemetry variables: build.yml.
+# The ios job writes THEODORE_POSTHOG_KEY / _HOST into the EAS production
+# profile's env (EXPO_PUBLIC_THEODORE_POSTHOG_*), so the store build has the
+# same usage sink as the desktop (docs/telemetry.md "Mobile"); unset: none.
+# The commit goes along as EXPO_PUBLIC_THEODORE_GIT_SHA.
 
 on:
   push:
@@ -140,6 +144,8 @@ jobs:
           APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          THEODORE_POSTHOG_KEY: ${{ vars.THEODORE_POSTHOG_KEY }}
+          THEODORE_POSTHOG_HOST: ${{ vars.THEODORE_POSTHOG_HOST }}
         run: |
           creds="$RUNNER_TEMP/ios"
           mkdir -p "$creds"
@@ -152,9 +158,16 @@ jobs:
             > mobile/credentials.json
           # eas submit takes a local API key only from the submit profile
           # (in --non-interactive mode, env vars are not enough).
-          jq --arg key "$creds/AuthKey.p8" --arg id "$APPLE_API_KEY" --arg iss "$APPLE_API_ISSUER" '
+          # Telemetry: the build-time env EAS bakes in (eas.json can't read
+          # secrets or variables itself); an unset variable adds nothing.
+          jq --arg key "$creds/AuthKey.p8" --arg id "$APPLE_API_KEY" --arg iss "$APPLE_API_ISSUER" \
+             --arg ph_key "$THEODORE_POSTHOG_KEY" --arg ph_host "$THEODORE_POSTHOG_HOST" \
+             --arg sha "$GITHUB_SHA" '
             .build.production.credentialsSource = "local"
-            | .submit.production.ios += {ascApiKeyPath: $key, ascApiKeyId: $id, ascApiKeyIssuerId: $iss}' \
+            | .submit.production.ios += {ascApiKeyPath: $key, ascApiKeyId: $id, ascApiKeyIssuerId: $iss}
+            | .build.production.env += ({EXPO_PUBLIC_THEODORE_BUILD_ENV: "production", EXPO_PUBLIC_THEODORE_GIT_SHA: $sha}
+                + (if $ph_key == "" then {} else {EXPO_PUBLIC_THEODORE_POSTHOG_KEY: $ph_key} end)
+                + (if $ph_host == "" then {} else {EXPO_PUBLIC_THEODORE_POSTHOG_HOST: $ph_host} end))' \
             mobile/eas.json > "$creds/eas.json"
           mv "$creds/eas.json" mobile/eas.json
 

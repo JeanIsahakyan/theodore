@@ -21,7 +21,9 @@ import {
   Bell,
   Bot,
   Brain,
+  Bug,
   Building,
+  ChartColumn,
   Check,
   ChevronDown,
   ChevronRight,
@@ -46,6 +48,7 @@ import {
   Pencil,
   Plus,
   Puzzle,
+  ScrollText,
   Search,
   Server,
   Settings,
@@ -135,6 +138,10 @@ export const SYMBOLS = {
   fingerprint: { sf: 'touchid', md: 'fingerprint', web: FingerprintPattern },
   trusted: { sf: 'checkmark.seal.fill', md: 'verified', web: BadgeCheck },
   offline: { sf: 'icloud.slash', md: 'cloud_off', web: CloudOff },
+  // Privacy and diagnostics (docs/telemetry.md "Mobile").
+  chart: { sf: 'chart.bar', md: 'bar_chart', web: ChartColumn },
+  warning: { sf: 'ladybug', md: 'bug_report', web: Bug },
+  list: { sf: 'list.bullet.rectangle', md: 'list_alt', web: ScrollText },
   // A space's steps, by kind of tool (src/ui/Timeline.tsx).
   'step.read': { sf: 'doc.text', md: 'description', web: FileText },
   'step.edit': { sf: 'pencil', md: 'edit', web: Pencil },

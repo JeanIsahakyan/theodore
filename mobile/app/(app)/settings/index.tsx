@@ -13,6 +13,11 @@
  * Appearance     System ⌃⌄     native menu ─▶ applied app-wide, kept
  * Notifications  (  ●)         haptic tick
  * ──────────
+ * Privacy
+ * Share usage data   (  ●)     each switch its own sink (docs/telemetry.md)
+ * Send error reports (  ●)
+ * What's collected            › ─▶ settings/collected (the event catalog)
+ * ──────────
  * About          1.0.0       › ─▶ settings/about (version, server)
  * ──────────
  * ⇥ Sign out (red)  ─▶ system confirm ─▶ signed out
@@ -24,6 +29,7 @@ import { useEffect, useMemo, useState } from 'react';
 import type { Href } from 'expo-router';
 import {
   AccountCard,
+  PrivacyRows,
   SectionDivider,
   SectionNote,
   SettingsMenuRow,
@@ -180,6 +186,10 @@ export default function SettingsScreen() {
         testID="settings-notifications"
       />
       {notifyError ? <SectionNote danger>{notifyError}</SectionNote> : null}
+
+      <SectionDivider />
+
+      <PrivacyRows />
 
       <SectionDivider />
 

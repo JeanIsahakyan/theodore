@@ -267,6 +267,15 @@ const FLEET_HINTS: Record<string, string> = {
     'That computer doesn’t offer this agent, model or effort any more. Pick another.',
 };
 
+/** The refusal code in a thrown value (`fleet.offline`), else `null`:
+ *  what telemetry records of a failure, never its text. */
+export function refusalCode(e: unknown): string | null {
+  const own = (e as { code?: unknown } | null)?.code;
+  if (typeof own === 'string' && own) return own;
+  const raw = e instanceof Error ? e.message : typeof e === 'string' ? e : '';
+  return /\bfleet\.[a-z_]+/.exec(raw)?.[0] ?? null;
+}
+
 /** Any thrown value as a sentence; a fleet refusal by what to do about it. */
 export function errorText(e: unknown): string {
   const raw = e instanceof Error ? e.message : typeof e === 'string' ? e : null;

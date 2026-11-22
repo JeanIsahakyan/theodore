@@ -16,6 +16,11 @@
  * account / org       ─▶ Home's last picks read back (src/state/compose.ts)
  * "Try the demo"      ─▶ the demo services (src/dev/demo.ts) stand in for
  *                        all clients until sign-out; no push, no server
+ * telemetry           ─▶ startTelemetry(auth) first; the account id follows
+ *                        the session (src/telemetry/log.ts setAccount);
+ *                        app_started, signed_in / out, org_switched; the
+ *                        ring and the queues flush when the app leaves the
+ *                        foreground
  * ```
  */
 import {
@@ -44,6 +49,9 @@ import { clearFileCache } from '../fleet/file-cache';
 import { createDemo } from '../dev/demo';
 import { resetFleetState } from '../dev/mock';
 import type { FleetClient } from '../fleet/types';
+import { log, telemetry, track } from '../telemetry/log';
+import { startTelemetry } from '../telemetry/setup';
+import { AppState } from 'react-native';
 import { accountHooks } from './accountHooks';
 
 export type AuthStatus = 'loading' | 'signed_out' | 'signed_in';
@@ -86,7 +94,10 @@ interface Clients {
  * each other forever. Editing the fleet or auth client in dev therefore
  * needs a full reload to take effect.
  */
-const runtime = globalThis as { __theodoreClients?: Clients };
+const runtime = globalThis as {
+  __theodoreClients?: Clients;
+  __theodoreStarted?: boolean;
+};
 
 function getClients(): Clients {
   if (!runtime.__theodoreClients) {
@@ -132,15 +143,50 @@ export function AppProviders({ children }: { children: ReactNode }) {
   const [choices, setChoices] = useState<OrganizationChoice[] | null>(null);
 
   useEffect(() => {
+    // Before anything else logs with a sink in mind. `cold`: the first
+    // start of this JS runtime (a warm start reuses the clients).
+    const cold = !runtime.__theodoreStarted;
+    runtime.__theodoreStarted = true;
+    void startTelemetry(real.auth).then(() => {
+      track('app_started', { cold });
+      log.info('app started', { cold, uptime_ms: telemetry.uptime() });
+    });
+    const sub = AppState.addEventListener('change', (s) => {
+      if (s !== 'active') void telemetry.flush();
+    });
+    return () => sub.remove();
+  }, [real]);
+
+  useEffect(() => {
     void setupNotifications({ activeSpaceId: () => activeSpace }).catch(
-      (e: unknown) => console.warn('[shell] notifications setup failed', e),
+      (e: unknown) => {
+        console.warn('[shell] notifications setup failed', e);
+        log.warn('notifications setup failed', {
+          'error.code': 'push.setup_failed',
+          error: e instanceof Error ? e.message : String(e),
+        });
+      },
     );
   }, []);
 
   useEffect(() => {
     let live = true;
+    let last: Session | null | undefined;
     const apply = (s: Session | null) => {
       if (!live) return;
+      // The account id (never the email) follows the session; the demo's
+      // neutral account isn't a real one and stays anonymous.
+      void telemetry.setAccount(
+        auth === real.auth ? (s?.userId ?? null) : null,
+      );
+      if (last !== undefined) {
+        if (s && !last)
+          track('signed_in', { how: auth === real.auth ? 'account' : 'demo' });
+        else if (!s && last) track('signed_out');
+        else if (s && last && s.organizationId !== last.organizationId)
+          track('org_switched', { ok: true });
+      }
+      last = s;
       // A token rotation alone (every few minutes) re-renders nothing.
       setSession((prev) => (sameAccount(prev, s) ? prev : s));
       setStatus(s ? 'signed_in' : 'signed_out');
@@ -154,7 +200,13 @@ export function AppProviders({ children }: { children: ReactNode }) {
       }
     };
     const off = auth.onChange(apply);
-    auth.current().then(apply, () => apply(null));
+    auth.current().then(apply, (e: unknown) => {
+      log.warn('the stored session could not be read', {
+        'error.code': 'account.load_failed',
+        error: e instanceof Error ? e.message : String(e),
+      });
+      apply(null);
+    });
     return () => {
       live = false;
       off();
@@ -177,7 +229,13 @@ export function AppProviders({ children }: { children: ReactNode }) {
     if (!want) return;
     want
       .start()
-      .catch((e: unknown) => console.warn('[shell] fleet start failed', e))
+      .catch((e: unknown) => {
+        console.warn('[shell] fleet start failed', e);
+        log.warn('fleet start failed', {
+          'error.code': 'fleet.start_failed',
+          error: e instanceof Error ? e.message : String(e),
+        });
+      })
       .then(async () => {
         if (want !== real.fleet) return;
         await registerForPush(want);
@@ -223,9 +281,13 @@ export function AppProviders({ children }: { children: ReactNode }) {
       void picksStore()
         .clear(prev)
         .catch(() => {});
-    void restorePicks(picksStore(), scope).catch((e: unknown) =>
-      console.warn('[shell] last picks not read', e),
-    );
+    void restorePicks(picksStore(), scope).catch((e: unknown) => {
+      console.warn('[shell] last picks not read', e);
+      log.warn('last picks not read', {
+        'error.code': 'picks.load_failed',
+        error: e instanceof Error ? e.message : String(e),
+      });
+    });
   }, [scope, status]);
 
   const startDemo = useCallback(() => setDemo(createDemo()), []);

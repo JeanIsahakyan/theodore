@@ -59,11 +59,16 @@ import {
   sendSettled,
   usePending,
 } from '../../../../src/state/pending';
+import { log, track } from '../../../../src/telemetry/log';
 import { canSendWith } from '../../../../src/ui/attachments';
 import { Empty, Notice } from '../../../../src/ui/kit';
-import { errorText, spaceTitle } from '../../../../src/ui/logic';
+import { errorText, refusalCode, spaceTitle } from '../../../../src/ui/logic';
 import { Glass } from '../../../../src/ui/native';
-import { rowOfSubSpaceMessage, unmatched } from '../../../../src/ui/pending';
+import {
+  rowOfSubSpaceMessage,
+  sentMs,
+  unmatched,
+} from '../../../../src/ui/pending';
 import { QuestionCard } from '../../../../src/ui/QuestionCard';
 import { PendingRow } from '../../../../src/ui/SpaceChat';
 import { Spinner } from '../../../../src/ui/Spinner';
@@ -172,7 +177,9 @@ export default function SubSpaceScreen() {
   }, [child, pending, shown]);
 
   // Read now and every 3 s while in front; a read under way isn't doubled.
+  // A failing poll is counted once per failing streak, not per tick.
   const busy = useRef(false);
+  const failing = useRef(false);
   const poll = useCallback(async () => {
     if (!hostDevice || busy.current) return;
     busy.current = true;
@@ -180,7 +187,17 @@ export default function SubSpaceScreen() {
       const r = await fleet.readSpace(hostDevice, child);
       setRead(r);
       setError(null);
+      failing.current = false;
     } catch (e: unknown) {
+      if (!failing.current) {
+        failing.current = true;
+        const code = refusalCode(e);
+        track('sub_space_read_failed', { code });
+        log.warn('sub-space read failed', {
+          host_device: hostDevice,
+          'error.code': code ?? 'fleet.read_failed',
+        });
+      }
       setError(readErrorText(hostName, errorText(e)));
     } finally {
       busy.current = false;
@@ -188,6 +205,7 @@ export default function SubSpaceScreen() {
   }, [fleet, hostDevice, hostName, child]);
   useFocusEffect(
     useCallback(() => {
+      track('sub_space_opened', { from: 'screen' });
       void poll();
       const timer = setInterval(() => void poll(), SUB_SPACE_POLL_MS);
       return () => clearInterval(timer);
@@ -218,13 +236,34 @@ export default function SubSpaceScreen() {
   /** The request behind a bubble: its answer settles or fails the bubble. */
   const dispatch = (key: string, t: string, attachments: BlobRef[] = []) => {
     if (!hostDevice) return;
+    const row = () => pending.find((x) => x.key === key);
     fleet
       .sendTo(hostDevice, child, t, attachments)
       .then((r) => {
+        track('message_sent', {
+          surface: 'sub_space',
+          kind: 'send',
+          queued: r.queued,
+          ms: sentMs(row()),
+          retries: row()?.retries ?? 0,
+          outcome: 'ok',
+          code: null,
+        });
         sendSettled(child, key, r);
         void poll();
       })
-      .catch((e: unknown) => sendFailed(child, key, errorText(e)));
+      .catch((e: unknown) => {
+        track('message_sent', {
+          surface: 'sub_space',
+          kind: 'send',
+          queued: false,
+          ms: sentMs(row()),
+          retries: row()?.retries ?? 0,
+          outcome: 'failed',
+          code: refusalCode(e),
+        });
+        sendFailed(child, key, errorText(e));
+      });
   };
   const send = () => {
     const t = text.trim();
@@ -292,6 +331,7 @@ export default function SubSpaceScreen() {
           key={question.askId}
           question={question}
           from={`${hostName} · ${title}`}
+          surface="sub_space"
           answer={(answers) =>
             fleet
               .answerSpace(hostDevice, child, question.askId, answers)

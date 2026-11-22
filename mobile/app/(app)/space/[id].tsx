@@ -105,6 +105,7 @@ import {
   sendSettled,
   usePending,
 } from '../../../src/state/pending';
+import { log, track } from '../../../src/telemetry/log';
 import { NO_PICK, sendPicks, spaceOwn } from '../../../src/ui/agents';
 import { canSendWith } from '../../../src/ui/attachments';
 import {
@@ -124,6 +125,7 @@ import {
   errorText,
   mergeLines,
   questionFor,
+  refusalCode,
   spaceTitle,
 } from '../../../src/ui/logic';
 import {
@@ -131,6 +133,7 @@ import {
   isPendingId,
   queuedCount,
   rowOfMessage,
+  sentMs,
   startTitle,
   startingLabel,
   unmatched,
@@ -523,11 +526,41 @@ function LiveSpaceScreen({ id }: { id: string }) {
     mode: FleetMode | null,
     with_: AgentPicks,
     attachments: BlobRef[] = [],
+    kind: 'send' | 'approve' = 'send',
   ) => {
+    const row = () => pending.find((x) => x.key === key);
     fleet
       .send(id, t, mode, with_, attachments)
-      .then((r) => sendSettled(id, key, r))
-      .catch((e: unknown) => sendFailed(id, key, errorText(e)));
+      .then((r) => {
+        track('message_sent', {
+          surface: 'space',
+          kind,
+          queued: r.queued,
+          ms: sentMs(row()),
+          retries: row()?.retries ?? 0,
+          outcome: 'ok',
+          code: null,
+        });
+        sendSettled(id, key, r);
+      })
+      .catch((e: unknown) => {
+        const code = refusalCode(e);
+        track('message_sent', {
+          surface: 'space',
+          kind,
+          queued: false,
+          ms: sentMs(row()),
+          retries: row()?.retries ?? 0,
+          outcome: 'failed',
+          code,
+        });
+        log.warn('send failed', {
+          op_id: key,
+          space: id,
+          'error.code': code ?? 'fleet.send_failed',
+        });
+        sendFailed(id, key, errorText(e));
+      });
   };
 
   // Send waits for every attached file to be in the cloud.
@@ -583,7 +616,11 @@ function LiveSpaceScreen({ id }: { id: string }) {
     setError(null);
     fleet
       .stopSpace(id)
-      .catch((e: unknown) => setError(errorText(e)))
+      .then(() => track('space_stopped', { outcome: 'ok', code: null }))
+      .catch((e: unknown) => {
+        track('space_stopped', { outcome: 'failed', code: refusalCode(e) });
+        setError(errorText(e));
+      })
       .finally(() => setStopping(false));
   };
 
@@ -602,9 +639,11 @@ function LiveSpaceScreen({ id }: { id: string }) {
         afterSeq: lines.at(-1)?.seq ?? 0,
       });
       toEnd();
-      dispatch(key, APPROVED_TEXT, build, picks);
+      track('plan_decided', { decision: 'approve' });
+      dispatch(key, APPROVED_TEXT, build, picks, [], 'approve');
     },
     onRevise: () => {
+      track('plan_decided', { decision: 'revise' });
       setSpaceMode(id, 'plan');
       setRevising(true);
       input.current?.focus();

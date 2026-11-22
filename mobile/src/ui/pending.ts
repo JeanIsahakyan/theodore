@@ -56,6 +56,8 @@ export interface PendingSend {
   /** The newest history line when it was sent: only a later "Turn" line
    *  shows it was received (a host that mirrors no rows). */
   afterSeq: number;
+  /** How many times Retry sent it again (telemetry). */
+  retries: number;
   /** The files it carries, for the bubble (thumbnails from the local copy). */
   files: SentFile[];
   /** Their blobs, sent again by Retry. */
@@ -130,6 +132,7 @@ export function newSend(input: NewSend): PendingSend {
     mode: input.mode ?? null,
     picks: input.picks ?? {},
     afterSeq: input.afterSeq ?? 0,
+    retries: 0,
     files: input.files ?? [],
     attachments: input.attachments ?? [],
   };
@@ -156,12 +159,17 @@ export function retrySend(p: PendingSend, at: number): PendingSend {
   return {
     ...p,
     at,
+    retries: p.retries + 1,
     state: 'sending',
     position: null,
     messageId: null,
     error: null,
   };
 }
+
+/** Telemetry: how long a send took, from when it (last) went out. */
+export const sentMs = (p: PendingSend | undefined): number =>
+  p ? Math.max(0, Date.now() - p.at) : 0;
 
 /** A row of the chat an optimistic bubble may stand for. */
 export interface ChatRow {

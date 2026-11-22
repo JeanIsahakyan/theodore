@@ -29,6 +29,7 @@ import {
   type CachedFile,
 } from '../../../src/fleet/file-cache';
 import { useServices } from '../../../src/services';
+import { track } from '../../../src/telemetry/log';
 import { useGlassHeaderInset } from '../../../src/shell/glassHeader';
 import { formatBytes } from '../../../src/ui/attachments';
 import {
@@ -94,6 +95,7 @@ export default function FileScreen() {
     async (cap: number) => {
       const mine = ++run.current;
       const alive = () => run.current === mine;
+      const started = viewerClock();
       try {
         if (!(await fleet.canOpenBlobs())) {
           throw Object.assign(
@@ -106,6 +108,10 @@ export default function FileScreen() {
         const ref = await fleet.readFile(host, space, path, cap);
         if (!alive()) return;
         dispatch({ type: 'blob', size: ref.size });
+        const viewed = {
+          media: fileKind(ref.name || name, ref.mime),
+          bytes: ref.size,
+        };
         const bytes = await fleet.fetchBlob(ref, (f) => {
           if (alive()) dispatch({ type: 'progress', fraction: f });
         });
@@ -120,8 +126,21 @@ export default function FileScreen() {
           name: cached.name,
           uri: cached.uri,
         });
+        track('file_viewed', {
+          ...viewed,
+          ms: viewerClock() - started,
+          outcome: 'ok',
+          code: null,
+        });
       } catch (e: unknown) {
         if (!alive()) return;
+        track('file_viewed', {
+          media: fileKind(name, null),
+          bytes: null,
+          ms: viewerClock() - started,
+          outcome: 'failed',
+          code: refusalCode(e),
+        });
         dispatch({
           type: 'refused',
           code: refusalCode(e),
@@ -297,3 +316,6 @@ const styles = StyleSheet.create({
   small: { fontSize: 13, textAlign: 'center' },
   bar: { width: 200 },
 });
+
+/** The clock for the viewer's timing (outside render: the React compiler's rule). */
+const viewerClock = (): number => Date.now();

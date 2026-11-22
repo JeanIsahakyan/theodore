@@ -19,6 +19,7 @@ import {
 import { useServices } from '../../../src/services';
 import { useAuthState } from '../../../src/shell/AppProviders';
 import { setSwitching as setSwitchingTo } from '../../../src/state/accounts';
+import { log, track } from '../../../src/telemetry/log';
 import { errorText, roleLabel, switchErrorText } from '../../../src/ui/logic';
 import { organizationNote } from '../../../src/ui/settingsView';
 
@@ -41,6 +42,11 @@ export default function OrganizationScreen() {
       .switchOrganization(id)
       .catch((e: unknown) => {
         setSwitchingTo(null);
+        track('org_switched', { ok: false });
+        log.warn('organization switch failed', {
+          'error.code': 'account.switch_failed',
+          error: e instanceof Error ? e.message : String(e),
+        });
         setError(switchErrorText(errorText(e)));
       })
       .finally(() => setSwitching(null));
