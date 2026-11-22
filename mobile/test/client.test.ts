@@ -356,6 +356,56 @@ describe('connect', () => {
     expect(s.of('hello')[0]!.device_id).toBeNull();
   });
 
+  it('switches account: new link as it, the old one’s set kept, requests in flight dropped', async () => {
+    const t = await runningSpace();
+    const { hub, account, sock, client, space } = t;
+    // Going to the background saves now.
+    hub.setActive(false);
+    hub.setActive(true);
+    const end = Date.now() + 1500;
+    while (
+      (await hub.data.get('theodore.fleet.spaces.user_1.org_test')) === null
+    ) {
+      if (Date.now() > end) throw new Error('timed out waiting for the save');
+      await sleep(2);
+    }
+    // A send waits for the host's word when the account changes.
+    const sending = client.send(space, 'hello');
+    await waitFor(() => sock.of('request').length === 2, 'send request');
+    account.emit({ ...session('tok-b', 'org_test'), userId: 'user_2' });
+    expect(sock.closed).not.toBeNull();
+    await expect(sending).rejects.toThrow(/didn't answer in time/);
+    // Nothing of user_1's fleet stays shown; the new link dials with user_2's token.
+    expect(state().spaces).toEqual([]);
+    expect(state().welcomed).toBe(false);
+    await waitFor(() => hub.sockets.length === 2, 'new link');
+    expect(hub.last().token).toBe('tok-b');
+    // user_1's saved set is still there for when it is back.
+    expect(
+      await hub.data.get('theodore.fleet.spaces.user_1.org_test'),
+    ).not.toBeNull();
+    // Until the account itself leaves this device.
+    await client.forgetSaved(['user_1.org_test']);
+    expect(
+      await hub.data.get('theodore.fleet.spaces.user_1.org_test'),
+    ).toBeNull();
+  });
+
+  it('drops the push token in the connected org without forgetting it', async () => {
+    const { hub, account, sock, client } = await connectedWithHost();
+    await client.registerPush('ExponentPushToken[x]');
+    expect(sock.of('register_push').at(-1)?.token).toBe('ExponentPushToken[x]');
+    await client.dropPushHere();
+    expect(sock.of('register_push').at(-1)?.token).toBe('');
+    // The next account's link registers the same token again at its welcome.
+    account.emit({ ...session('tok-b', 'org_test'), userId: 'user_2' });
+    const s2 = await handshake(hub, [], 2);
+    await waitFor(() => s2.of('register_push').length === 1, 'push again');
+    expect(s2.of('register_push').map((m) => m.token)).toEqual([
+      'ExponentPushToken[x]',
+    ]);
+  });
+
   it('refuses to dial without an organization', async () => {
     const { hub, client } = setup({ auth: fakeAuth(session('t', null)) });
     await client.start();
@@ -1686,6 +1736,37 @@ describe('answer over HTTP', () => {
       target_device: HOST,
       target_key: hostKey.publicKey,
       op: { op: 'answer', space: 'rs_1', ask_id: 'ask_1', answers: [['A']] },
+    });
+  });
+
+  it('answers as another signed-in account with its token and that org’s device id', async () => {
+    const calls: { url: string; init: RequestInit }[] = [];
+    const fetchFn = (async (url: string, init: RequestInit) => {
+      calls.push({ url, init });
+      return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+    }) as unknown as typeof fetch;
+    const { client, hub } = setup({ fetch: fetchFn });
+    const OTHER_ME = 'dev_00000000-0000-4000-8000-0000000000e5';
+    await hub.storage.set('theodore.fleet.device_id.org_work', OTHER_ME);
+    await client.start();
+    await handshake(hub, [device(HOST, hostKey)]);
+    await waitFor(() => state().devices.length === 1, 'devices');
+    await client.trust(HOST, hostKey.publicKey);
+    await client.answerOverHttp('rs_9', 'ask_9', [['B']], HOST, {
+      accessToken: 'tok-work',
+      organizationId: 'org_work',
+    });
+    expect(
+      (calls[0]!.init.headers as Record<string, string>).authorization,
+    ).toBe('Bearer tok-work');
+    const sent = JSON.parse(calls[0]!.init.body as string) as {
+      device_id: string;
+      envelope: SignedEnvelope;
+    };
+    expect(sent.device_id).toBe(OTHER_ME);
+    expect(open(sent.envelope, myKey.publicKey, 'request')).toMatchObject({
+      origin_device: OTHER_ME,
+      op: { op: 'answer', space: 'rs_9' },
     });
   });
 

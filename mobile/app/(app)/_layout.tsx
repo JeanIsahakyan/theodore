@@ -16,6 +16,7 @@
  * composer chip / where row (iOS) ─▶ model- | computer- | project-picker
  *                                   as a formSheet
  * space's activity strip (iOS) ─▶ activity-sheet as a formSheet
+ * drawer's account row, Settings › Accounts (iOS) ─▶ accounts-sheet as a formSheet
  * a sub-space row ─▶ push sub-space/[space]/[child] (Back)
  * ```
  *
@@ -45,7 +46,7 @@ const web = process.env.EXPO_OS === 'web';
 
 export default function AppLayout() {
   const p = usePalette();
-  const { fleet } = useServices();
+  const services = useServices();
   const path = usePathname();
 
   useEffect(() => {
@@ -53,8 +54,9 @@ export default function AppLayout() {
   }, [path]);
 
   useEffect(
-    () => handleNotificationResponses(fleet, (to) => router.push(to as Href)),
-    [fleet],
+    () =>
+      handleNotificationResponses(services, (to) => router.push(to as Href)),
+    [services],
   );
 
   const pushed = (title: string) =>
@@ -137,6 +139,7 @@ export default function AppLayout() {
           <Stack.Screen name="computer-picker" options={sheet('Computer')} />
           <Stack.Screen name="project-picker" options={sheet('Project')} />
           <Stack.Screen name="activity-sheet" options={sheet('Activity')} />
+          <Stack.Screen name="accounts-sheet" options={sheet('Accounts')} />
         </Stack>
       </AppShell>
     </DrawerProvider>

@@ -27,8 +27,16 @@ export function connectionBanner(
   connection: ConnectionState,
   error: string | null,
   late: boolean,
+  switching: string | null = null,
 ): BannerView | null {
   if (connection === 'connecting') {
+    // An account or org switch says where it is going, at once.
+    if (switching)
+      return {
+        tone: 'neutral',
+        text: `Switching to ${switching}…`,
+        busy: true,
+      };
     return late
       ? { tone: 'neutral', text: 'Connecting to your devices…', busy: true }
       : null;
