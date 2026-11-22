@@ -1687,7 +1687,14 @@ of the last one.
   Theodore can't answer a passphrase prompt. Message: the title (editable
   in the confirm popover, default the goal's first line; after a Continue,
   the round's net-change summary, §3 "Continue"), then the goal when it
-  says more.
+  says more, then the trailer `Co-authored-by: Theodore
+  <noreply@theodore.cloud>` after a blank line (joining a trailer block the
+  message already ends with). Every commit Theodore writes carries it,
+  once (`crates/git/src/trailer.rs`): the squash of Open PR and Push, the
+  merge commit of Merge locally and the shipped commit under it, a
+  committed suggestion or an applied fix on a PR, a config file committed
+  or proposed. A space's own checkpoints don't: they never leave the cache
+  as they are.
 - *Open PR*: the commit's parent is the base. If the branch name is
   already taken on the host, nothing is pushed. After the push the outbox
   item `create_space_pr` asks the host for an open PR from that branch
@@ -1698,9 +1705,11 @@ of the last one.
   after a failure — never opens a second PR, and a retry with no new turns
   pushes nothing.
 - *PR body*: the repo's PR template when the change has one, else the
-  summary lines in English (above; the goal when no proposal holds); then a
-  link back to the space. Branch names, titles and filled-in templates are
-  asked for in English too, whatever language the goal is in.
+  summary lines in English (above; the goal when no proposal holds);
+  "Closes #n" for the issue the space came from; then one line "Made with
+  Theodore" and a link back to the space. Branch names, titles and
+  filled-in templates are asked for in English too, whatever language the
+  goal is in.
 
   ```
   template? first of .github/pull_request_template.md · .github/PULL_REQUEST_TEMPLATE.md
@@ -1709,17 +1718,37 @@ of the last one.
     │      from the goal + changed files) ─▶ kept only if every heading survived
     │      └─ failed / timed out / dropped headings ─▶ goal + the template as is
     no  ─▶ the summary lines (the goal when no proposal holds)
-  then  ─▶ <!-- theodore-space:<id> -->
-           <sub>From a Theodore space: theodore://space/<id></sub>
+  then  ─▶ Closes #<n>                                   (a space from an issue)
+  then  ─▶ Made with [Theodore](https://theodore.cloud)
+           <!-- theodore-space:<id> -->
+           <sub>From a Theodore space: https://theodore.cloud/s/<id></sub>
   ```
 
-  The footer is added once: an existing one (from the marker on) is
-  replaced, never repeated. The link uses the build's own scheme
-  (`theodore-staging://…`); opening it brings the window forward and
-  opens the space (`apps/desktop/src/deep_link.rs`), also when it launched
-  the app: the shell keeps it until the UI listens (`take_pending_space`).
-  It's plain text, not a markdown link: hosts don't make custom schemes
-  clickable.
+  The footer is added once: an existing one (from the marker on, and the
+  Made-with line above it) is replaced, never repeated; a PR opened by an
+  older build keeps its `theodore://space/<id>` footer and still opens.
+
+  **Space links** (owner, 2026-11-22): `https://theodore.cloud/s/<id>` is
+  a page of the website (docs/website.md "Space links") that opens the
+  space on whatever the link is opened on, and shows nothing of it: the id
+  alone reveals nothing, and only a device signed in to the organization
+  and trusted by the computer that runs the space can open it. The base is
+  the build's site (`identity::site_url`, `Core::set_space_link_base`):
+  production's `https://theodore.cloud`, every other build's
+  `https://staging.theodore.cloud`, whose page tries `theodore-staging://`.
+
+  ```
+  https://theodore.cloud/s/<id>
+    macOS / Linux browser ─▶ theodore://space/<id> tried at once ─▶ the desktop: window to the front,
+    │                        the space opens (apps/desktop/src/deep_link.rs; a link that launched the
+    │                        app waits until the UI listens, `take_pending_space`); a space that isn't
+    │                        on this computer ─▶ toast "This space isn't on this computer…"
+    │                        ~1.5 s later, the page still there ─▶ Open in Theodore · Open in the web
+    │                        app (https://app.theodore.cloud/space/<id>) · Download Theodore
+    iPhone / Android      ─▶ Universal Link / App Link: Theodore Code opens /s/<id> itself
+    │                        (docs/mobile.md "Space links"); not installed ─▶ the page's buttons
+    other                 ─▶ Open in the web app · Download Theodore
+  ```
 - *Continue* (§7): the new round's branch is the old one plus `-2` (a
   continued branch counts on: `-3`, `-4`), skipping a name another space,
   an earlier round or the host already has. Its base is the base branch's
@@ -2056,7 +2085,7 @@ no row, or `true`, means on. The flag forces them on and locks the switch.
 
 | Phase | Scope |
 | --- | --- |
-| **Built** | `space` model; create / send / stop / review / archive; transcript in chat rows; checkpoint per turn; live diff during a turn; sidebar section with the `⎇ #n` glyph; space page with chat + diff; Review opens the grouped review; crash → failed. Start from a goal, an issue (yours first, or a pasted URL / `#n`), a branch or a PR. Shipping: squash into one commit by you; Open PR / Open as draft (`HostAdapter::create_pr` + `find_open_pr` on GitHub, GitLab, Bitbucket, sandbox and fixtures, through the outbox, idempotent by head branch), filled from the repo's PR template and linking back (`theodore://space/<id>`), and Push (never forced); branch `<login>/<slug>`; Merge locally and Keep as branch for local folders; modes Ask / Plan / Edit / Run; Archive button and `spaces.auto_archive_days`; Unarchive; Undo last turn (`turn_log`). In review on the space page: Changes · Threads · Checks tabs, Merge (`merge_space`: host default method, auto-merge, merge queue), Continue after merge (`continue_space`, `rounds`). "Send to agent" on a space PR's / own review's threads, drafts and findings, and the "Send N to agent" footer, both marking what was sent (`sent_feedback`). One agent session per space (Claude Code `--resume`, Codex `exec resume`); sends while running are queued (held after Stop / a failure / a restart; Send · Edit · Cancel) and Send now steers a running Claude Code turn. Background notifications and the dock badge (`spaces.notify`). Names transliterated from Cyrillic and accented goals, `-2` for repeats; a chat-agent-proposed name and title in the background, never delaying turn 1 (`space_naming`); a cached, once-generated handoff summary for a space that outgrows the replayed window (`space_handoff`). `setup` / `run` / `check` / `archive` from the project config (`docs/config.md`) with logs and Open app; `copy` and `ports` default to `.env*` and 2 with zero config; "Set up with agent" for setup and "Fix with agent" on the Checks tab, sending a failing check's log (GitHub Actions) or link as one turn. Update from base (merge, never rebase): "Base moved: N commits behind", conflicts resolved by an agent turn, Complete merge / Abort. The agent's `space-tools` for the change: `ship`, `get_space_diff`, `get_review_comments`, `add_review_comment`, `set_base`, `update_progress` (the tracker above the composer), `read_terminal` over `space_terminal_tail`. Interactive terminal tabs (§3 "Terminal") over a real PTY, surviving navigation, closed on archive / app quit; `@terminal` in the composer attaching a terminal's tail as a text attachment. Mirroring into a local folder's own working tree — on / Sync now / off with Discard, at most one per folder, paused (not auto-written) across a restart (§6 "Mirror into a local folder") |
+| **Built** | `space` model; create / send / stop / review / archive; transcript in chat rows; checkpoint per turn; live diff during a turn; sidebar section with the `⎇ #n` glyph; space page with chat + diff; Review opens the grouped review; crash → failed. Start from a goal, an issue (yours first, or a pasted URL / `#n`), a branch or a PR. Shipping: squash into one commit by you; Open PR / Open as draft (`HostAdapter::create_pr` + `find_open_pr` on GitHub, GitLab, Bitbucket, sandbox and fixtures, through the outbox, idempotent by head branch), filled from the repo's PR template, ending in "Made with Theodore" and a link back (`https://theodore.cloud/s/<id>`, a page that opens the space on any platform), every commit co-authored by Theodore (`Co-authored-by` trailer), and Push (never forced); branch `<login>/<slug>`; Merge locally and Keep as branch for local folders; modes Ask / Plan / Edit / Run; Archive button and `spaces.auto_archive_days`; Unarchive; Undo last turn (`turn_log`). In review on the space page: Changes · Threads · Checks tabs, Merge (`merge_space`: host default method, auto-merge, merge queue), Continue after merge (`continue_space`, `rounds`). "Send to agent" on a space PR's / own review's threads, drafts and findings, and the "Send N to agent" footer, both marking what was sent (`sent_feedback`). One agent session per space (Claude Code `--resume`, Codex `exec resume`); sends while running are queued (held after Stop / a failure / a restart; Send · Edit · Cancel) and Send now steers a running Claude Code turn. Background notifications and the dock badge (`spaces.notify`). Names transliterated from Cyrillic and accented goals, `-2` for repeats; a chat-agent-proposed name and title in the background, never delaying turn 1 (`space_naming`); a cached, once-generated handoff summary for a space that outgrows the replayed window (`space_handoff`). `setup` / `run` / `check` / `archive` from the project config (`docs/config.md`) with logs and Open app; `copy` and `ports` default to `.env*` and 2 with zero config; "Set up with agent" for setup and "Fix with agent" on the Checks tab, sending a failing check's log (GitHub Actions) or link as one turn. Update from base (merge, never rebase): "Base moved: N commits behind", conflicts resolved by an agent turn, Complete merge / Abort. The agent's `space-tools` for the change: `ship`, `get_space_diff`, `get_review_comments`, `add_review_comment`, `set_base`, `update_progress` (the tracker above the composer), `read_terminal` over `space_terminal_tail`. Interactive terminal tabs (§3 "Terminal") over a real PTY, surviving navigation, closed on archive / app quit; `@terminal` in the composer attaching a terminal's tail as a text attachment. Mirroring into a local folder's own working tree — on / Sync now / off with Discard, at most one per folder, paused (not auto-written) across a restart (§6 "Mirror into a local folder") |
 | **v2** | My PRs "Drafting" group; feedback tracked as tasks; `space_run` rows and per-turn diffs; Delete and ref GC; `max_parallel`; Continue for a space merged locally or kept as a branch |
 | **Later** | OS sandbox for agents; signed shipped commits; spaces started from a failing check; several agents racing one goal, pick the best diff |
 

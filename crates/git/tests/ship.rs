@@ -238,6 +238,39 @@ async fn checkpoints_squash_into_one_commit_by_the_user() {
         ),
         "Ada Lovelace <ada@example.com>|Ada Lovelace|Retry on 429s"
     );
+    // Theodore co-authors, as a trailer git itself reads.
+    assert_eq!(
+        git(
+            &h.cache,
+            &["log", "-1", "--format=%(trailers:only)", sha.as_str()]
+        )
+        .trim(),
+        theodore_git::trailer::CO_AUTHOR
+    );
+    assert_eq!(
+        git(&h.cache, &["log", "-1", "--format=%B", sha.as_str()]),
+        format!("Retry on 429s\n\n{}", theodore_git::trailer::CO_AUTHOR)
+    );
+}
+
+/// A message that already carries the trailer (a title typed with it, a
+/// replayed message) keeps exactly one.
+#[tokio::test]
+async fn the_co_author_trailer_is_never_doubled() {
+    let h = host().await;
+    let (_wt, head) = two_turns(&h, "s1").await;
+    let message = format!(
+        "Retry on 429s\n\nWith backoff.\n\n{}",
+        theodore_git::trailer::CO_AUTHOR
+    );
+    let sha = h
+        .git
+        .space_commit(&h.cache, "s1", &squash(&head, &h.base, &message))
+        .await
+        .unwrap();
+    let body = git(&h.cache, &["log", "-1", "--format=%B", sha.as_str()]);
+    assert_eq!(body, message);
+    assert_eq!(body.matches("Co-authored-by: Theodore").count(), 1);
 }
 
 #[tokio::test]
@@ -295,6 +328,15 @@ async fn push_never_forces_and_new_turns_go_on_top() {
         git(&h.bare, &["rev-parse", &format!("refs/heads/{branch}~1")]),
         first.as_str()
     );
+    // Every pushed commit carries the co-author trailer, once.
+    for sha in [&first, &second] {
+        let body = git(&h.bare, &["log", "-1", "--format=%B", sha.as_str()]);
+        assert_eq!(
+            body.matches(theodore_git::trailer::CO_AUTHOR).count(),
+            1,
+            "{body}"
+        );
+    }
 
     // A commit that doesn't descend from the remote tip is refused.
     let stray = h
@@ -478,6 +520,24 @@ async fn merge_locally_merges_into_the_checked_out_branch() {
     assert_eq!(
         git(&f.folder, &["log", "-1", "--format=%s"]),
         "Merge space add-c"
+    );
+    // The merge commit and the shipped commit under it are Theodore's.
+    assert_eq!(
+        git(&f.folder, &["log", "-1", "--format=%(trailers:only)"]).trim(),
+        theodore_git::trailer::CO_AUTHOR
+    );
+    assert_eq!(
+        git(
+            &f.folder,
+            &["log", "-1", "--format=%(trailers:only)", "HEAD^2"]
+        )
+        .trim(),
+        theodore_git::trailer::CO_AUTHOR
+    );
+    assert_eq!(
+        git(&f.folder, &["log", "-1", "--format=%an", "HEAD^2"]),
+        "Ada Lovelace",
+        "the user stays the author"
     );
     assert_eq!(git(&f.folder, &["symbolic-ref", "--short", "HEAD"]), "main");
     assert_eq!(

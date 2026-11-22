@@ -6,7 +6,7 @@ import { setTransport } from '../../core/transport';
 import type { RootStore } from '../../stores/RootStore';
 import { UiStore } from '../../stores/UiStore';
 import { FakeTransport } from '../../test/fakeTransport';
-import { openSpaceOnClick, watchSpaceTurns } from './mode';
+import { SPACE_NOT_HERE, openSpaceOnClick, watchSpaceTurns } from './mode';
 import { BUILD_MODE_KEY } from './spaces';
 
 vi.mock('../../core/native', () => ({
@@ -69,10 +69,11 @@ describe('a click on a space notification', () => {
     expect(store.ui.route).toEqual({ name: 'space', id: 'sp1' });
     expect(opened).toHaveBeenCalledOnce();
 
-    // A space that is gone opens nothing.
+    // A space that isn't on this computer opens nothing and says so.
     store.ui.go({ name: 'inbox' });
     transport.emit('open-space', 'gone');
     expect(store.ui.route).toEqual({ name: 'inbox' });
+    expect(store.ephemeral.toast).toHaveBeenCalledWith(SPACE_NOT_HERE, 'warn');
     off();
   });
 

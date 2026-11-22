@@ -273,7 +273,9 @@ async fn open_pr_fills_the_repos_template_and_links_back_to_the_space() {
         body,
         format!(
             "## Summary\nRetries 429s with backoff.\n\n## Testing\n- [x] tests\n\n\
-             <!-- theodore-space:{id} -->\n<sub>From a Theodore space: theodore://space/{id}</sub>",
+             Made with [Theodore](https://theodore.cloud)\n\n\
+             <!-- theodore-space:{id} -->\n\
+             <sub>From a Theodore space: https://theodore.cloud/s/{id}</sub>",
             id = s.id
         )
     );
@@ -283,7 +285,7 @@ async fn open_pr_fills_the_repos_template_and_links_back_to_the_space() {
 async fn a_fill_that_drops_the_template_keeps_the_template_and_the_goal() {
     let f = fixtures();
     let (core, _recv, project) = host_project(&f).await;
-    core.set_space_link_scheme(Some("theodore-staging"));
+    core.set_space_link_base(Some("https://staging.theodore.cloud"));
     // Lower in the order: only used because none above it exists.
     f.git.put_file(
         &Sha::new("turn111"),
@@ -306,10 +308,11 @@ async fn a_fill_that_drops_the_template_keeps_the_template_and_the_goal() {
     );
     assert!(!body.contains("Root template"), "docs/ comes first");
     assert!(body.ends_with(&format!(
-        "<sub>From a Theodore space: theodore-staging://space/{}</sub>",
+        "<sub>From a Theodore space: https://staging.theodore.cloud/s/{}</sub>",
         s.id
     )));
     assert_eq!(body.matches("<!-- theodore-space:").count(), 1);
+    assert_eq!(body.matches("Made with [Theodore]").count(), 1);
 }
 
 #[tokio::test]
@@ -321,8 +324,10 @@ async fn without_a_template_the_body_is_the_goal_and_the_footer() {
     assert_eq!(
         body,
         format!(
-            "Add CSV export\nQuote commas too.\n\n<!-- theodore-space:{id} -->\n\
-             <sub>From a Theodore space: theodore://space/{id}</sub>",
+            "Add CSV export\nQuote commas too.\n\n\
+             Made with [Theodore](https://theodore.cloud)\n\n\
+             <!-- theodore-space:{id} -->\n\
+             <sub>From a Theodore space: https://theodore.cloud/s/{id}</sub>",
             id = s.id
         )
     );
@@ -846,6 +851,12 @@ async fn closes_is_not_repeated_after_a_continue() {
     wait_until(|| space(&f, &s.id).pr.is_some()).await;
     assert!(
         pr_bodies(&f)[0].contains("Closes #12"),
+        "{:?}",
+        pr_bodies(&f)
+    );
+    // Above the Made-with line and the footer, so they stay last.
+    assert!(
+        pr_bodies(&f)[0].contains("Closes #12\n\nMade with [Theodore]"),
         "{:?}",
         pr_bodies(&f)
     );
