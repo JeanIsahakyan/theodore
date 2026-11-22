@@ -21,8 +21,8 @@ export function Terms() {
         <Prose>
           <p>
             These terms cover the Theodore apps and the hosted Theodore cloud,
-            operated by the Theodore team ("we"). By using them you agree to these
-            terms. If you don't, don't use them.
+            operated by the Theodore team ("we"). By using them you agree to
+            these terms. If you don't, don't use them.
           </p>
 
           <h2>The software</h2>
