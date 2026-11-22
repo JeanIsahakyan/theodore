@@ -1687,26 +1687,24 @@ of the last one.
   Theodore can't answer a passphrase prompt. Message: the title (editable
   in the confirm popover, default the goal's first line; after a Continue,
   the round's net-change summary, §3 "Continue"), then the goal when it
-  says more, then two trailers after a blank line (joining a trailer block
-  the message already ends with), in this order:
+  says more, then one trailer after a blank line (joining a trailer block
+  the message already ends with):
 
   ```
   Co-authored-by: Theodore <359906112+theodore-cloud[bot]@users.noreply.github.com>
-  Co-authored-by: Theodore <noreply@theodore.cloud>
   ```
 
-  GitHub links co-authors by email: the first is the GitHub App
-  `theodore-cloud[bot]`'s noreply address (App ID 5875809, bot user id
-  359906112), so the commit shows the app's avatar beside yours; the second
-  is Theodore's own address, shown by its plain name (owner, 2026-11-22;
-  names and addresses in one list, `trailer::THEODORE_CO_AUTHORS`). Every
-  commit Theodore writes carries both, each once
-  (`crates/git/src/trailer.rs`: a line the message already has isn't added
-  again, a missing one is): the squash of Open PR and Push, the merge
-  commit of Merge locally and the shipped commit under it, a committed
-  suggestion or an applied fix on a PR, a config file committed or
-  proposed. A space's own checkpoints don't: they never leave the cache as
-  they are.
+  GitHub links co-authors by email: the address is the GitHub App
+  `theodore-cloud[bot]`'s noreply one (App ID 5875809, bot user id
+  359906112), so the commit shows the app's avatar beside yours (owner,
+  2026-11-22; name and address in one place,
+  `trailer::THEODORE_CO_AUTHOR`). Every commit Theodore writes carries it,
+  once (`crates/git/src/trailer.rs`; a commit that already has it, or the
+  earlier `Theodore <noreply@theodore.cloud>` line, gets no second one):
+  the squash of Open PR and Push, the merge commit of Merge locally and the
+  shipped commit under it, a committed suggestion or an applied fix on a
+  PR, a config file committed or proposed. A space's own checkpoints don't:
+  they never leave the cache as they are.
 - *Open PR*: the commit's parent is the base. If the branch name is
   already taken on the host, nothing is pushed. After the push the outbox
   item `create_space_pr` asks the host for an open PR from that branch

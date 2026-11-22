@@ -253,8 +253,8 @@ async fn checkpoints_squash_into_one_commit_by_the_user() {
     );
 }
 
-/// A message that already carries the trailers (a title typed with them, a
-/// replayed message) keeps exactly one of each.
+/// A message that already carries the trailer (a title typed with it, a
+/// replayed message) keeps exactly one.
 #[tokio::test]
 async fn the_co_author_trailer_is_never_doubled() {
     let h = host().await;
@@ -270,9 +270,7 @@ async fn the_co_author_trailer_is_never_doubled() {
         .unwrap();
     let body = git(&h.cache, &["log", "-1", "--format=%B", sha.as_str()]);
     assert_eq!(body, message);
-    assert_eq!(body.matches("Co-authored-by: Theodore").count(), 2);
-    assert_eq!(body.matches("theodore-cloud[bot]").count(), 1);
-    assert_eq!(body.matches("<noreply@theodore.cloud>").count(), 1);
+    assert_eq!(body.matches("Co-authored-by: Theodore").count(), 1);
 }
 
 #[tokio::test]

@@ -1,72 +1,56 @@
-//! The trailers every commit Theodore writes carries (docs/spaces.md §6
-//! "Author"): the user stays the author and committer, and two
-//! `Co-authored-by: Theodore <…>` lines say who typed it out — first the
-//! GitHub App `theodore-cloud[bot]`'s noreply address, which GitHub links
-//! to the app and shows with its avatar, then `noreply@theodore.cloud`,
-//! Theodore's own address, shown by name. Applied where the commits are
-//! made — the shipped squash (`ship.rs`), a local folder's merge commit, a
-//! committed suggestion or applied fix (`worktree.rs`), a config file
-//! committed or proposed (`config_file.rs`) — never to a space's own
-//! checkpoints, which are Theodore's internal snapshots and never leave
-//! the cache as they are.
+//! The one trailer every commit Theodore writes carries (docs/spaces.md
+//! §6 "Author"): the user stays the author and committer, and
+//! `Co-authored-by: Theodore <…theodore-cloud[bot]@users.noreply.github.com>`
+//! says who typed it out — the GitHub App's own noreply address, so GitHub
+//! links the co-author to `theodore-cloud[bot]` and shows its avatar.
+//! Applied where the commits are made — the shipped squash (`ship.rs`), a
+//! local folder's merge commit, a committed suggestion or applied fix
+//! (`worktree.rs`), a config file committed or proposed (`config_file.rs`)
+//! — never to a space's own checkpoints, which are Theodore's internal
+//! snapshots and never leave the cache as they are.
 
-/// Who co-authors, in the order the lines are written: name and address,
-/// in one place. The first is the GitHub App's bot user (id 359906112).
-pub const THEODORE_CO_AUTHORS: [&str; 2] = [
-    "Theodore <359906112+theodore-cloud[bot]@users.noreply.github.com>",
-    "Theodore <noreply@theodore.cloud>",
-];
+/// Who co-authors: the name and the GitHub App `theodore-cloud[bot]`'s
+/// noreply address (bot user id 359906112), in one place.
+pub const THEODORE_CO_AUTHOR: &str =
+    "Theodore <359906112+theodore-cloud[bot]@users.noreply.github.com>";
+/// The trailer line, exactly as git shows it.
+pub const CO_AUTHOR: &str =
+    "Co-authored-by: Theodore <359906112+theodore-cloud[bot]@users.noreply.github.com>";
+/// The address an earlier build wrote: a commit that has it already names
+/// Theodore and isn't given a second line.
+const OLD_CO_AUTHOR: &str = "Theodore <noreply@theodore.cloud>";
 
-/// The trailer key, as git spells it.
-const KEY: &str = "Co-authored-by";
-
-/// Both trailer lines, exactly as git shows them (`%(trailers:only)`).
-pub const CO_AUTHOR: &str = "Co-authored-by: Theodore <359906112+theodore-cloud[bot]@users.noreply.github.com>\n\
-                             Co-authored-by: Theodore <noreply@theodore.cloud>";
-
-/// `message` with every line of `THEODORE_CO_AUTHORS` among its trailers,
-/// each once: a line the message already has (any case, any spacing) isn't
-/// added again, the missing ones are. They join a trailer block the message
-/// already ends with, else make a block of their own after a blank line,
-/// as `git interpret-trailers` would place them.
+/// `message` with `CO_AUTHOR` as its last trailer, once: a message that
+/// already has it, or the old `noreply@theodore.cloud` form (any case, any
+/// spacing), is returned trimmed and unchanged; one whose last paragraph is
+/// already a trailer block gets the line appended to it, else the trailer
+/// makes a block of its own after a blank line, as `git
+/// interpret-trailers` would place it.
 pub fn with_co_author(message: &str) -> String {
-    let mut out = message.trim_end().to_string();
-    let missing: Vec<&str> = THEODORE_CO_AUTHORS
-        .iter()
-        .copied()
-        .filter(|who| !out.lines().any(|l| is_co_author(l, who)))
-        .collect();
-    if missing.is_empty() {
-        return out;
+    let message = message.trim_end();
+    if message.lines().any(is_the_trailer) {
+        return message.to_string();
     }
-    let mut sep = if out.is_empty() {
-        ""
-    } else if ends_in_trailer_block(&out) {
+    if message.is_empty() {
+        return CO_AUTHOR.to_string();
+    }
+    let sep = if ends_in_trailer_block(message) {
         "\n"
     } else {
         "\n\n"
     };
-    for who in missing {
-        out.push_str(sep);
-        out.push_str(KEY);
-        out.push_str(": ");
-        out.push_str(who);
-        sep = "\n";
-    }
-    out
+    format!("{message}{sep}{CO_AUTHOR}")
 }
 
-/// `line` is `Co-authored-by: <who>`, whatever the case and spacing.
-fn is_co_author(line: &str, who: &str) -> bool {
+fn is_the_trailer(line: &str) -> bool {
     let Some((key, value)) = line.split_once(':') else {
         return false;
     };
-    key.trim().eq_ignore_ascii_case(KEY)
-        && value
-            .split_whitespace()
-            .collect::<Vec<_>>()
-            .join(" ")
-            .eq_ignore_ascii_case(who)
+    if !key.trim().eq_ignore_ascii_case("co-authored-by") {
+        return false;
+    }
+    let who = value.split_whitespace().collect::<Vec<_>>().join(" ");
+    who.eq_ignore_ascii_case(THEODORE_CO_AUTHOR) || who.eq_ignore_ascii_case(OLD_CO_AUTHOR)
 }
 
 /// A `Key: value` line, as git's trailer parser sees one (a token of
@@ -90,16 +74,12 @@ fn ends_in_trailer_block(message: &str) -> bool {
 mod tests {
     use super::*;
 
-    const BOT: &str =
-        "Co-authored-by: Theodore <359906112+theodore-cloud[bot]@users.noreply.github.com>";
-    const PLAIN: &str = "Co-authored-by: Theodore <noreply@theodore.cloud>";
-
     #[test]
-    fn both_trailers_are_added_after_a_blank_line_in_order() {
-        assert_eq!(CO_AUTHOR, format!("{BOT}\n{PLAIN}"));
+    fn the_trailer_is_added_after_a_blank_line() {
+        assert_eq!(CO_AUTHOR, format!("Co-authored-by: {THEODORE_CO_AUTHOR}"));
         assert_eq!(
             with_co_author("Retry on 429s"),
-            format!("Retry on 429s\n\n{BOT}\n{PLAIN}")
+            format!("Retry on 429s\n\n{CO_AUTHOR}")
         );
         assert_eq!(
             with_co_author("Retry on 429s\n\nWith backoff.\n"),
@@ -109,7 +89,7 @@ mod tests {
     }
 
     #[test]
-    fn the_trailers_join_an_existing_trailer_block() {
+    fn the_trailer_joins_an_existing_trailer_block() {
         assert_eq!(
             with_co_author("Fix it\n\nBody.\n\nSigned-off-by: Ada <ada@example.com>"),
             format!("Fix it\n\nBody.\n\nSigned-off-by: Ada <ada@example.com>\n{CO_AUTHOR}")
@@ -122,15 +102,14 @@ mod tests {
     }
 
     #[test]
-    fn each_line_is_added_at_most_once() {
+    fn the_trailer_is_never_doubled() {
         let once = with_co_author("Fix it");
         assert_eq!(with_co_author(&once), once);
-        // Only the bot line present (any case, any spacing): the plain one joins.
         let spaced = "Fix it\n\nco-authored-by:  Theodore   <359906112+THEODORE-cloud[bot]@users.noreply.github.com>";
-        assert_eq!(with_co_author(spaced), format!("{spaced}\n{PLAIN}"));
-        // Only the plain line (an earlier build's commit): the bot one joins.
-        let old = format!("Fix it\n\n{PLAIN}");
-        assert_eq!(with_co_author(&old), format!("{old}\n{BOT}"));
+        assert_eq!(with_co_author(spaced), spaced);
+        // The address an earlier build wrote counts as Theodore's too.
+        let old = "Fix it\n\nCo-authored-by: Theodore <noreply@theodore.cloud>";
+        assert_eq!(with_co_author(old), old);
         // Another co-author is kept, and Theodore joins.
         let other = "Fix it\n\nCo-authored-by: Ada <ada@example.com>";
         assert_eq!(with_co_author(other), format!("{other}\n{CO_AUTHOR}"));
