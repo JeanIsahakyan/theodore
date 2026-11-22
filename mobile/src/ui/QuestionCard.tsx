@@ -15,12 +15,17 @@
  * │ ( Other…                              )  │
  * │ (              Send answer             ) │
  * ╰──────────────────────────────────────────╯
+ *
+ * Send answer ─▶ at once:  ╭ ◌ Answered: SQLite ╮   (src/state/pending.ts)
+ *   the host's row drops the question ─▶ the card is gone
+ *   refused / no answer in time ─▶ the card is back, the error under it
  * ```
  */
 import { useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { useServices } from '../services';
 import { useFleetState } from '../state/fleet';
+import { addAnswer, dropAnswer, usePending } from '../state/pending';
 import type { QuestionView } from '../fleet/types';
 import { ChatField } from './ChatField';
 import { Notice } from './kit';
@@ -36,6 +41,8 @@ import {
 } from './logic';
 import { Button, Glass, liquidGlass } from './native';
 import { OptionChip } from './OptionChip';
+import { answeredLabel } from './pending';
+import { Spinner } from './Spinner';
 import { usePalette } from './theme';
 
 export function QuestionCard({
@@ -59,27 +66,43 @@ export function QuestionCard({
   const { fleet } = useServices();
   const p = usePalette();
   const spaces = useFleetState((s) => s.spaces);
+  const given = usePending((s) => s.answers[question.askId]);
   const from = fromOverride ?? questionFrom(question, spaces);
   const [drafts, setDrafts] = useState<Draft[]>(() =>
     question.questions.map(emptyDraft),
   );
-  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const set = (i: number, d: Draft) =>
     setDrafts((all) => all.map((x, j) => (j === i ? d : x)));
 
   const send = () => {
-    if (!isAnswered(drafts) || busy) return;
-    setBusy(true);
+    if (!isAnswered(drafts) || given) return;
     setError(null);
     const wire = toWireAnswers(drafts);
-    (answer ? answer(wire) : fleet.answer(question.space, question.askId, wire))
-      .catch((e: unknown) => setError(errorText(e)))
-      .finally(() => setBusy(false));
+    // Shown as answered at once; the host's word only brings it back.
+    addAnswer(question.askId, question.space, answeredLabel(drafts));
+    (answer
+      ? answer(wire)
+      : fleet.answer(question.space, question.askId, wire)
+    ).catch((e: unknown) => {
+      dropAnswer(question.askId);
+      setError(errorText(e));
+    });
   };
 
-  const content = (
+  const content = given ? (
+    <View style={styles.head} accessibilityLabel={given.label}>
+      <Spinner color={p.muted} />
+      <Text
+        numberOfLines={2}
+        selectable
+        style={[styles.answered, { color: p.muted }]}
+      >
+        {given.label}
+      </Text>
+    </View>
+  ) : (
     <>
       <View style={styles.head}>
         <View style={[styles.dot, { backgroundColor: p.warning }]} />
@@ -100,7 +123,6 @@ export function QuestionCard({
                   key={o}
                   label={o}
                   selected={d.selected.includes(o)}
-                  disabled={busy}
                   onPress={() => set(i, pickOption(q, d, o))}
                 />
               ))}
@@ -109,7 +131,6 @@ export function QuestionCard({
               accessibilityLabel={`Other answer to: ${q.question}`}
               placeholder="Other…"
               value={d.other}
-              disabled={busy}
               onChangeText={(t) => set(i, typeOther(q, d, t))}
               onFocus={onFocusAnswer}
               onSubmit={send}
@@ -130,7 +151,6 @@ export function QuestionCard({
         pill
         fullWidth
         disabled={!isAnswered(drafts)}
-        loading={busy}
         onPress={send}
       />
     </>
@@ -154,6 +174,7 @@ const styles = StyleSheet.create({
   head: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   dot: { width: 8, height: 8, borderRadius: 4 },
   from: { fontSize: 13, fontWeight: '600', flexShrink: 1 },
+  answered: { fontSize: 14, flexShrink: 1 },
   item: { gap: 10 },
   question: { fontSize: 16, fontWeight: '600', lineHeight: 22 },
   options: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },

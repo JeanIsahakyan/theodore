@@ -80,8 +80,14 @@ describe('mock services drive the store', () => {
     expect(s.spaces.find((x) => x.space === 'sp-idle')?.status).toBe('running');
     expect(s.lines['sp-idle']?.at(-1)).toMatchObject({
       kind: 'turn',
-      text: 'next',
+      text: 'Turn 1: next',
     });
+    // A mirrored space gets the row the host would mirror, under the id
+    // the send's answer names.
+    const row = Object.values(s.mirrors['sp-idle']!.messages).find(
+      (m) => m.text === 'next',
+    );
+    expect(row).toMatchObject({ author: { kind: 'me' }, queued: null });
   });
 
   it('a failed org switch rejects and keeps the session', async () => {

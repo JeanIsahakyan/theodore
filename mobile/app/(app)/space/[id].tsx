@@ -17,6 +17,7 @@
  * │  The agent's reply, markdown                                     │
  * │  (Approve) (Revise)                           plan reply         │
  * │  Working · 12s                                live turn, shimmer │
+ * │                      Sending…  ╭ and the tests ╮  your send, at once│
  * │  ╭ question card ╮                            footer             │
  * │                                        ( ⌄ )  scroll to the end  │
  * │ ╭ ⟳ 2 of 5 · Edit auth · 1 queued   1m 12s ╮  ActivityStrip on   │
@@ -26,27 +27,35 @@
  * │ │ (Opus 4.1 · High ⌄)                 (↑) │   floating dock      │
  * └─╰───────────────────────────────────────╯───────────────────────┘
  *
- * mirror for this space ─▶ chatView(mirror) ─▶ messages ─ live ─ queued ─ question
- * none                  ─▶ lines (started, turn, tool, reply, …)
+ * mirror for this space ─▶ chatView(mirror) ─▶ messages ─ live ─ queued ─ pending ─ question
+ * none                  ─▶ lines (started, turn, tool, reply, …) ─ pending ─ question
  * the next message's mode ─▶ the model sheet's Mode step (compose store,
  *     spaceModes: sticky per space, the next turn starts in the space's last mode)
- * (↑) Send ─▶ fleet.send(mode only when not the space's own, picks)
- *     while it runs ─▶ the host queues it: a queued bubble (mirrored), and
- *     "· 1 queued" on the strip's first line
+ * (↑) Send ─▶ the field cleared, your bubble "Sending…" at once (src/state/pending.ts)
+ *     ─▶ fleet.send(mode only when not the space's own, picks)
+ *     ok {message}          ─▶ kept until the host's row (by id, else text + time)
+ *                              arrives; no rows mirrored ─▶ until a "Turn n" line
+ *     ok {queued, position} ─▶ "Queued" until the mirrored queued row replaces it;
+ *                              "· 1 queued" on the strip's first line meanwhile
+ *     refused / silent      ─▶ "Not sent · why" with Retry and Edit (text back)
  * (■) Stop while running, beside Send ─▶ confirm() ─▶ fleet.stopSpace
  * running ─▶ the strip's first line: the plan's active step, else the newest
  *     live step, else (not mirrored) the newest log line, and a timer;
  *     waiting on a question ─▶ "Waiting for your answer ↓" scrolls to the card
  * subagents / sub-spaces ─▶ the strip's second line ─▶ the activity sheet
  *     (src/ui/ActivitySheet) ─▶ a sub-space row ─▶ /sub-space/[space]/[child]
- * Revise ─▶ mode Plan, the field focused; Approve ─▶ send APPROVED_TEXT in the build mode
+ * Revise ─▶ mode Plan, the field focused; Approve ─▶ APPROVED_TEXT as your
+ *     bubble at once, sent in the build mode (the same rules as a send)
+ * /space/pending_… (a start from Home, the host not answered yet)
+ *     ─▶ the goal as your bubble, "Starting on mac-A…"; the host's ok ─▶ the
+ *        route replaced with the real space's; refused ─▶ Home, the goal back
  * ```
  *
  * The composer floats over the list on every platform (iOS 26+: Liquid
  * Glass, iOS < 26: chrome blur, Android: Material 3 surface, web: a card);
  * the list is inset by its height and rides on the keyboard with it.
  */
-import { useLocalSearchParams } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { StyleSheet, Text, View, type TextInputInstance } from 'react-native';
 import {
@@ -55,6 +64,7 @@ import {
   ConversationScrollButton,
   Message,
   PromptInput,
+  Shimmer,
   type ConversationHandle,
 } from '../../../src/components/chat';
 import { ChatMarkdown } from '../../../src/components/markdown';
@@ -64,12 +74,28 @@ import { MainHeader } from '../../../src/components/main-header';
 import { SpaceHeader } from '../../../src/components/space-header';
 import type { ChatMessage, TurnStep } from '../../../src/fleet/contract';
 import { mirrored } from '../../../src/fleet/mirror';
-import type { SpaceLine, SpaceView } from '../../../src/fleet/types';
-import type { MirroredSubSpace } from '../../../src/gen/fleet';
+import type {
+  AgentPicks,
+  SpaceLine,
+  SpaceView,
+} from '../../../src/fleet/types';
+import type { FleetMode, MirroredSubSpace } from '../../../src/gen/fleet';
 import { useServices } from '../../../src/services';
 import { useGlassHeaderInset } from '../../../src/shell/glassHeader';
+import { backHome, spaceHref } from '../../../src/shell/navigate';
 import { useFleetState } from '../../../src/state/fleet';
 import { setSpaceMode, useCompose } from '../../../src/state/compose';
+import {
+  addSend,
+  dropSend,
+  dropSends,
+  restoreHome,
+  selectSends,
+  sendFailed,
+  sendRetried,
+  sendSettled,
+  usePending,
+} from '../../../src/state/pending';
 import { NO_PICK, sendPicks, spaceOwn } from '../../../src/ui/agents';
 import {
   APPROVED_TEXT,
@@ -90,6 +116,16 @@ import {
   questionFor,
   spaceTitle,
 } from '../../../src/ui/logic';
+import {
+  approving,
+  isPendingId,
+  queuedCount,
+  rowOfMessage,
+  startTitle,
+  startingLabel,
+  unmatched,
+  unmatchedByLines,
+} from '../../../src/ui/pending';
 import { ActivityStrip, useActivityStrip } from '../../../src/ui/ActivityStrip';
 import { Glass, confirm } from '../../../src/ui/native';
 import { QuestionCard } from '../../../src/ui/QuestionCard';
@@ -97,6 +133,7 @@ import { SubSpaces } from '../../../src/ui/SubSpaces';
 import {
   LiveReply,
   MessageRow,
+  PendingRow,
   QueuedRow,
   type PlanProps,
 } from '../../../src/ui/SpaceChat';
@@ -244,9 +281,104 @@ function placeholderFor(
 
 const messageKey = (m: ChatMessage) => m.id;
 const lineKey = (l: SpaceLine) => String(l.seq);
+const nothing = () => null;
 
 export default function SpaceScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
+  return isPendingId(id) ? (
+    <StartingScreen id={id} />
+  ) : (
+    <LiveSpaceScreen id={id} />
+  );
+}
+
+/**
+ * A space started from Home, before the host answered: its goal as your
+ * first bubble, "Starting on mac-A…". The host's ok names the space: the
+ * route becomes its own. Refused: back on Home, the goal in the field.
+ */
+function StartingScreen({ id }: { id: string }) {
+  const p = usePalette();
+  const top = useGlassHeaderInset();
+  const start = usePending((s) => s.starts[id]);
+  const [dock, setDock] = useState(DOCK_GUESS);
+  const moved = useRef(false);
+
+  useEffect(() => {
+    if (!start || moved.current) return;
+    if (start.space) {
+      moved.current = true;
+      router.replace(spaceHref(start.space));
+    } else if (start.state === 'failed') {
+      moved.current = true;
+      restoreHome(start.goal, start.error ?? 'The space was not started.');
+      backHome();
+    }
+  }, [start]);
+
+  if (!start) {
+    return (
+      <View style={{ paddingTop: top }}>
+        <MainHeader title="Space" />
+        <Empty
+          title="This space isn't here any more"
+          hint="It was started, or it was not."
+        />
+      </View>
+    );
+  }
+  const where = [start.projectName, MODE_LABEL[start.mode]].filter(Boolean);
+  const footer = (
+    <View style={styles.tail}>
+      <View style={styles.userRow}>
+        <Message from="user">{start.goal}</Message>
+      </View>
+      <Message
+        from="assistant"
+        accessibilityLabel={startingLabel(start.hostName)}
+      >
+        <View style={styles.status}>
+          <Shimmer>{startingLabel(start.hostName)}</Shimmer>
+        </View>
+      </Message>
+    </View>
+  );
+  return (
+    <View className="flex-1 bg-background">
+      <SpaceHeader
+        title={startTitle(start.goal)}
+        subtitle={`on ${start.hostName} · ${STATUS_LABEL.starting} · ${MODE_LABEL[start.mode]}`}
+      />
+      <Conversation
+        data={EMPTY_LINES}
+        keyExtractor={lineKey}
+        renderItem={nothing}
+        header={
+          <View style={styles.details}>
+            <Text style={[styles.small, styles.center, { color: p.muted }]}>
+              {where.join(' · ')}
+            </Text>
+          </View>
+        }
+        footer={footer}
+        composerHeight={dock}
+        topInset={top}
+      />
+      <ComposerDock floating onHeight={setDock}>
+        <PromptInput
+          value=""
+          onChangeText={() => {}}
+          onSubmit={() => {}}
+          placeholder="Starting on the other device…"
+          disabled
+          testID="space-composer"
+        />
+      </ComposerDock>
+    </View>
+  );
+}
+
+function LiveSpaceScreen({ id }: { id: string }) {
   const { fleet } = useServices();
   const p = usePalette();
   const space = useFleetState((s) => s.spaces.find((x) => x.space === id));
@@ -256,17 +388,13 @@ export default function SpaceScreen() {
   const host = useFleetState((s) =>
     s.devices.find((d) => d.deviceId === space?.hostDevice),
   );
+  // Your messages the host hasn't shown yet (src/state/pending.ts).
+  const pending = usePending(selectSends(id));
   const [loaded, setLoaded] = useState<SpaceLine[]>(EMPTY_LINES);
   const [text, setText] = useState('');
-  const [sending, setSending] = useState(false);
-  const [approving, setApproving] = useState(false);
   const [reviseAsked, setRevising] = useState(false);
   const [stopping, setStopping] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // A host that doesn't mirror its rows shows no queued bubble: say where
-  // the message went, until the turn ends.
-  const [queuedAt, setQueuedAt] = useState<number | null>(null);
-  if (queuedAt !== null && space?.status !== 'running') setQueuedAt(null);
   // The next message's mode (the model sheet's Mode step, Revise): sticky
   // per space, the space's own once a turn ran in another one.
   const picked = useSpaceMode(id)?.picked ?? 'edit';
@@ -300,10 +428,30 @@ export default function SpaceScreen() {
     () => chat?.turns.flatMap((t) => t.messages) ?? [],
     [chat],
   );
+  // The optimistic bubbles the host hasn't shown yet: a mirrored row (by
+  // id, else text and time) or, without rows, a "Turn n" line stands for
+  // one and drops it.
+  const shown = useMemo(() => {
+    if (!pending.length) return pending;
+    if (chat) {
+      const rows = [...messages, ...chat.queued].map(rowOfMessage);
+      return unmatched(pending, rows);
+    }
+    return unmatchedByLines(pending, lines);
+  }, [pending, chat, messages, lines]);
+  useEffect(() => {
+    if (shown.length === pending.length) return;
+    dropSends(
+      id,
+      pending.filter((x) => !shown.includes(x)).map((x) => x.key),
+    );
+  }, [id, pending, shown]);
+
   // Revising lasts while there is a plan to revise.
   const revising = reviseAsked && chat?.planHere != null;
   const toEnd = useCallback(() => list.current?.scrollToEnd(), []);
   const routedHere = routed.some((q) => q.space === id);
+  const running = space ? canStop(space.status) : false;
   // The strip above the composer: what the space is doing (src/ui/activity.ts).
   const stripProps = {
     space: id,
@@ -312,7 +460,7 @@ export default function SpaceScreen() {
     progress: chat?.progress ?? null,
     liveSteps: chat?.live?.steps ?? EMPTY_STEPS,
     lastLog: chat ? null : (lines.at(-1)?.text ?? null),
-    queued: chat ? chat.queued.length : queuedAt !== null ? 1 : 0,
+    queued: (chat ? chat.queued.length : 0) + queuedCount(shown, running),
   };
   const activity = useActivityStrip(stripProps);
 
@@ -332,7 +480,6 @@ export default function SpaceScreen() {
   // A failed turn takes the next message; a space that failed to start
   // isn't on the host.
   const hosted = !!mirror?.space;
-  const running = canStop(space.status);
   // While a turn runs the host queues what you send (docs/fleet.md
   // "Sends queue"); Stop stays beside Send.
   const sendable =
@@ -343,21 +490,50 @@ export default function SpaceScreen() {
   const ownAgent = spaceOwn(mirror?.space);
   const picks = sendPicks(hostAgents, agentPick, ownAgent);
 
+  /** The request behind a bubble: its answer settles or fails the bubble. */
+  const dispatch = (
+    key: string,
+    t: string,
+    mode: FleetMode | null,
+    with_: AgentPicks,
+  ) => {
+    fleet
+      .send(id, t, mode, with_)
+      .then((r) => sendSettled(id, key, r))
+      .catch((e: unknown) => sendFailed(id, key, errorText(e)));
+  };
+
   const send = () => {
     const t = text.trim();
-    if (!t || sending || !sendable) return;
-    setSending(true);
+    if (!t || !sendable) return;
+    setText('');
+    setRevising(false);
     setError(null);
+    const mode = sendMode(picked, space.mode);
+    const key = addSend({
+      space: id,
+      text: t,
+      at: Date.now(),
+      mode,
+      picks,
+      afterSeq: lines.at(-1)?.seq ?? 0,
+    });
     toEnd();
-    fleet
-      .send(id, t, sendMode(picked, space.mode), picks)
-      .then((r) => {
-        setText('');
-        setRevising(false);
-        if (r.queued && !chat) setQueuedAt(r.position ?? 1);
-      })
-      .catch((e: unknown) => setError(errorText(e)))
-      .finally(() => setSending(false));
+    dispatch(key, t, mode, picks);
+  };
+
+  const retry = (key: string) => {
+    const again = sendRetried(id, key);
+    if (again) dispatch(key, again.text, again.mode, again.picks);
+  };
+
+  const edit = (key: string) => {
+    const back = pending.find((x) => x.key === key);
+    dropSend(id, key);
+    if (back && back.kind === 'send') {
+      setText(back.text);
+      input.current?.focus();
+    }
   };
 
   const stop = async () => {
@@ -379,15 +555,20 @@ export default function SpaceScreen() {
 
   const plan: PlanProps = {
     build,
-    busy: approving,
+    busy: approving(shown),
     onApprove: () => {
-      setApproving(true);
       setError(null);
+      const key = addSend({
+        space: id,
+        text: APPROVED_TEXT,
+        kind: 'approve',
+        at: Date.now(),
+        mode: build,
+        picks,
+        afterSeq: lines.at(-1)?.seq ?? 0,
+      });
       toEnd();
-      fleet
-        .send(id, APPROVED_TEXT, build, picks)
-        .catch((e: unknown) => setError(errorText(e)))
-        .finally(() => setApproving(false));
+      dispatch(key, APPROVED_TEXT, build, picks);
     },
     onRevise: () => {
       setSpaceMode(id, 'plan');
@@ -409,12 +590,20 @@ export default function SpaceScreen() {
       {chat?.queued.map((m) => (
         <QueuedRow key={m.id} m={m} />
       ))}
+      {shown.map((x) => (
+        <PendingRow
+          key={x.key}
+          p={x}
+          onRetry={() => retry(x.key)}
+          onEdit={() => edit(x.key)}
+        />
+      ))}
       {card}
     </View>
   );
 
   const empty =
-    chat?.live || question ? null : (
+    chat?.live || question || shown.length ? null : (
       <Text style={[styles.small, styles.center, { color: p.muted }]}>
         {space.lastReply ??
           (space.status === 'starting'
@@ -451,7 +640,7 @@ export default function SpaceScreen() {
 
   const details = <Details space={space} subs={mirror?.subSpaces} />;
 
-  const chips = <ModelChip space={id} disabled={sending} />;
+  const chips = <ModelChip space={id} />;
 
   return (
     <View className="flex-1 bg-background">
@@ -510,8 +699,7 @@ export default function SpaceScreen() {
           onSubmit={send}
           placeholder={placeholderFor(space, revising, hosted)}
           disabled={!running && !sendable}
-          editable={sendable && !sending}
-          sending={sending}
+          editable={sendable}
           running={running}
           onStop={() => void stop()}
           stopping={stopping}
@@ -530,6 +718,8 @@ export default function SpaceScreen() {
 const styles = StyleSheet.create({
   row: { paddingBottom: 18 },
   tail: { gap: 18, paddingBottom: 4 },
+  userRow: { alignItems: 'flex-end' },
+  status: { flexDirection: 'row', alignItems: 'center', minHeight: 22 },
   details: { gap: 8, paddingBottom: 18, alignItems: 'center' },
   continuous: { borderCurve: 'continuous' },
   body: { fontSize: 16, lineHeight: 22 },
