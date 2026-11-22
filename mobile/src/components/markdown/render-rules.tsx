@@ -18,6 +18,10 @@ import { CodeBlock } from './code-block';
 import { linkNote, plainText } from './parse';
 import type { RenderRules, StyleMap } from './types';
 
+/** Text selects as DOM text on the web; on the phone a long press on the
+ *  message opens Copy / Select text instead (`chat/long-press.tsx`). */
+const selectable = process.env.EXPO_OS === 'web';
+
 const view = (styles: StyleMap, key: string) =>
   styles[`_VIEW_SAFE_${key}`] as ViewStyle | undefined;
 const text = (styles: StyleMap, key: string) =>
@@ -33,7 +37,7 @@ const renderRules: RenderRules = {
   paragraph: ({ node, styles, children }) => (
     <Text
       key={keyOf(node)}
-      selectable
+      selectable={selectable}
       style={[text(styles, 'text'), text(styles, 'paragraph')]}
     >
       {children}
@@ -42,7 +46,7 @@ const renderRules: RenderRules = {
   heading: ({ node, styles, children }) => (
     <Text
       key={keyOf(node)}
-      selectable
+      selectable={selectable}
       accessibilityRole="header"
       style={[text(styles, 'text'), text(styles, `heading${node.depth}`)]}
     >
@@ -115,7 +119,11 @@ const renderRules: RenderRules = {
     </Text>
   ),
   html: ({ node, styles }) => (
-    <Text key={keyOf(node)} selectable style={text(styles, 'text')}>
+    <Text
+      key={keyOf(node)}
+      selectable={selectable}
+      style={text(styles, 'text')}
+    >
       {node.value}
     </Text>
   ),
@@ -163,7 +171,7 @@ const renderRules: RenderRules = {
       ]}
     >
       <Text
-        selectable
+        selectable={selectable}
         style={[
           text(styles, 'text'),
           text(styles, 'tableCellText'),
@@ -178,7 +186,11 @@ const renderRules: RenderRules = {
   unknown: ({ node, styles }) => {
     const words = plainText(node);
     return words ? (
-      <Text key={keyOf(node)} selectable style={text(styles, 'text')}>
+      <Text
+        key={keyOf(node)}
+        selectable={selectable}
+        style={text(styles, 'text')}
+      >
         {words}
       </Text>
     ) : null;

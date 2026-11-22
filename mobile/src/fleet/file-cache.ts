@@ -5,6 +5,7 @@
  * in the app's cache directory; a blob URL on web). Cleared on sign-out.
  */
 import { Directory, File, Paths } from 'expo-file-system';
+import { clearLocalCopies } from './local-copies';
 
 export interface CachedFile {
   bytes: Uint8Array;
@@ -58,8 +59,10 @@ export async function cacheFile(
   return entry;
 }
 
-/** Sign-out: nothing of the files stays. */
+/** Sign-out: nothing of the files stays (the local copies of sent files
+ *  either, `local-copies.ts`). */
 export function clearFileCache(): void {
+  clearLocalCopies();
   for (const f of cache.values()) {
     if (web && f.uri) URL.revokeObjectURL(f.uri);
     else if (f.uri) {

@@ -131,6 +131,7 @@ export default function FileScreen() {
           ms: viewerClock() - started,
           outcome: 'ok',
           code: null,
+          surface: 'viewer',
         });
       } catch (e: unknown) {
         if (!alive()) return;
@@ -140,6 +141,7 @@ export default function FileScreen() {
           ms: viewerClock() - started,
           outcome: 'failed',
           code: refusalCode(e),
+          surface: 'viewer',
         });
         dispatch({
           type: 'refused',

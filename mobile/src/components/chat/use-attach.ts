@@ -13,8 +13,10 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { BlobRef } from '../../gen/fleet';
+import { rememberLocalCopy } from '../../fleet/local-copies';
 import { useServices } from '../../services';
 import {
+  HOME_COMPOSER,
   addAttachment,
   attachmentErrored,
   attachmentProgressed,
@@ -205,6 +207,11 @@ export function useAttach(composer: string, hostDevice: string | null): Attach {
   const take = useCallback(() => {
     const now = useAttachments.getState().lists[composer] ?? [];
     const out = { refs: refsOf(now), files: sentFilesOf(now) };
+    // The host keeps them as `.context/<name>`: a step that reads one draws
+    // this phone's copy without asking (a space's composer is its id).
+    if (composer !== HOME_COMPOSER)
+      for (const f of out.files)
+        if (f.image && f.uri) rememberLocalCopy(composer, f.name, f.uri);
     clearAttachments(composer);
     bytes.current.clear();
     return out;

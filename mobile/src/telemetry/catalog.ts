@@ -125,8 +125,9 @@ export const CATALOG = {
     props: ['bytes', 'chunks', 'ms', 'outcome', 'code', 'retries'],
   },
   file_viewed: {
-    answers: 'Are received files opened, and does the download work?',
-    props: ['media', 'bytes', 'ms', 'outcome', 'code'],
+    answers:
+      'Are received files opened (the viewer, a step thumbnail), and does the download work?',
+    props: ['media', 'bytes', 'ms', 'outcome', 'code', 'surface'],
   },
   diagnostics_exported: {
     answers: 'Is the local log exported for a report?',

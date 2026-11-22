@@ -27,7 +27,7 @@ const AnimatedText = withUniwind(Animated.Text);
 export function StreamingMessage({ text }: { text: string }) {
   return (
     <Text
-      selectable
+      selectable={web}
       className={
         web
           ? 'text-[15px] leading-[1.6] text-foreground'

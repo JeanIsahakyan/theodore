@@ -12,7 +12,7 @@ const screens = (dir: string) =>
     .sort();
 
 describe('signed-in routes', () => {
-  it('has Home, a space, its sub-spaces, its files, Devices, Settings, the sheets and the /start redirect', () => {
+  it('has Home, a space, its sub-spaces, its files, Devices, Settings, the sheets (Select text too) and the /start redirect', () => {
     expect(screens(app)).toEqual([
       'accounts-sheet.tsx',
       'activity-sheet.tsx',
@@ -22,6 +22,7 @@ describe('signed-in routes', () => {
       'index.tsx',
       'model-picker.tsx',
       'project-picker.tsx',
+      'select-text.tsx',
       'settings/',
       'space/',
       'start.tsx',
@@ -65,6 +66,7 @@ describe('signed-in routes', () => {
       'project-picker',
       'activity-sheet',
       'accounts-sheet',
+      'select-text',
       'sub-space/[space]/[child]',
       'file/[space]',
     ])
