@@ -435,6 +435,132 @@ async fn an_adopted_branch_ships_onto_its_own_fork_point_not_base() {
     assert_eq!(ship.pushes.len(), 1);
 }
 
+/// `main` moved on to `base222` after the space started (the sha resolves
+/// too, as the live diff names it).
+fn base_moves(f: &Fixtures) {
+    f.git.set_resolve("main", Sha::new("base222"));
+    f.git.set_resolve("base222", Sha::new("base222"));
+}
+
+// ── the agent merged the base in itself (docs/spaces.md §6) ───────────────
+
+/// The agent ran `git merge origin/main` in the worktree (no Update, no
+/// checkpoint yet): Open PR squashes onto the merge-base with main's tip,
+/// not onto the stale `base_sha`, so the PR's diff is the space's change
+/// alone and nothing of main's shows as this change's.
+#[tokio::test]
+async fn open_pr_after_the_agent_merged_the_base_sits_on_the_new_merge_base() {
+    let f = fixtures();
+    let (core, _recv, project) = host_project(&f).await;
+    let s = one_turn(&f, &core, &project, "Retry on 429").await;
+    assert_eq!(s.base_sha, Sha::new("base000"));
+    base_moves(&f);
+    // The fake's merge-base of main's tip and the checkpoint is the tip:
+    // the checkpoint has it in its history.
+
+    let s = core.ship_space(ship(&s, ShipAction::OpenPr)).await.unwrap();
+
+    assert_eq!(s.base_sha, Sha::new("base222"), "the space moved onto it");
+    {
+        let ship = f.git.ship.lock().unwrap();
+        let c = &ship.commits[0].1;
+        assert_eq!(c.parent, Sha::new("base222"), "one commit on the new base");
+        assert_eq!(c.merge_parent, None);
+        assert_eq!(c.head, Sha::new("turn111"));
+        assert_eq!(ship.pushes, vec![(s.branch.clone(), Sha::new("squash1"))]);
+        // The space's diff follows: vs the new base.
+        assert_eq!(
+            ship.diff_calls.last().map(|(b, _)| b.clone()),
+            Some(Sha::new("base222"))
+        );
+    }
+    with_pr(&f, &s.id).await;
+}
+
+/// The exact shape of #219 / #226: a PR is open, the base moves on, the
+/// agent merges it into the worktree and pushes. The new commit has two
+/// parents — the last push (a fast-forward, never a force) and the new
+/// merge-base (so the host's merge-base moves with it) — and the space
+/// is on the new base.
+#[tokio::test]
+async fn push_after_the_agent_merged_the_base_moves_the_merge_base_forward() {
+    let f = fixtures();
+    let (core, _recv, project) = host_project(&f).await;
+    let s = one_turn(&f, &core, &project, "Retry on 429").await;
+    core.ship_space(ship(&s, ShipAction::OpenPr)).await.unwrap();
+    let s = with_pr(&f, &s.id).await;
+    let s = turn(&f, &core, &s, "merge main in, then more", "turn222").await;
+    base_moves(&f);
+
+    let s = core.ship_space(ship(&s, ShipAction::Push)).await.unwrap();
+
+    assert_eq!(s.base_sha, Sha::new("base222"));
+    assert_eq!(s.shipped.as_ref().unwrap().pushes, 2);
+    let ship = f.git.ship.lock().unwrap();
+    let c = &ship.commits[1].1;
+    assert_eq!(c.parent, Sha::new("squash1"), "on top of the last push");
+    assert_eq!(c.replay_from, None);
+    assert_eq!(
+        c.merge_parent,
+        Some(Sha::new("base222")),
+        "the new merge-base as the second parent"
+    );
+    assert_eq!(c.head, Sha::new("turn222"));
+    assert_eq!(ship.pushes[1], (s.branch.clone(), Sha::new("squash2")));
+}
+
+/// The base moved on but the worktree never merged it: nothing changes —
+/// one parent, the recorded base, as before.
+#[tokio::test]
+async fn a_base_that_moved_without_being_merged_in_changes_nothing() {
+    let f = fixtures();
+    let (core, _recv, project) = host_project(&f).await;
+    let s = one_turn(&f, &core, &project, "Retry on 429").await;
+    base_moves(&f);
+    f.git
+        .set_merge_base("base222", "turn111", Sha::new("base000"));
+
+    let s = core.ship_space(ship(&s, ShipAction::OpenPr)).await.unwrap();
+    let s = with_pr(&f, &s.id).await;
+    assert_eq!(s.base_sha, Sha::new("base000"));
+    f.git
+        .set_merge_base("base222", "turn222", Sha::new("base000"));
+    let s = turn(&f, &core, &s, "more", "turn222").await;
+    assert_eq!(s.base_sha, Sha::new("base000"), "the turn didn't merge it");
+    let s = core.ship_space(ship(&s, ShipAction::Push)).await.unwrap();
+
+    assert_eq!(s.base_sha, Sha::new("base000"));
+    let ship = f.git.ship.lock().unwrap();
+    assert_eq!(ship.commits[0].1.parent, Sha::new("base000"));
+    assert_eq!(ship.commits[0].1.merge_parent, None);
+    let c = &ship.commits[1].1;
+    assert_eq!(c.parent, Sha::new("squash1"));
+    // The recorded base, which the git port drops: the last push has it.
+    assert_eq!(c.merge_parent, Some(Sha::new("base000")));
+}
+
+/// A base that went backwards (reset, force-pushed) never pulls the space
+/// back: the merge-base isn't ahead of the recorded base.
+#[tokio::test]
+async fn a_base_reset_behind_the_space_does_not_move_it() {
+    let f = fixtures();
+    let (core, _recv, project) = host_project(&f).await;
+    let s = one_turn(&f, &core, &project, "Retry on 429").await;
+    f.git.set_resolve("main", Sha::new("older00"));
+    f.git
+        .set_merge_base("older00", "turn111", Sha::new("older00"));
+    f.git
+        .set_merge_base("base000", "older00", Sha::new("older00"));
+
+    core.ship_space(ship(&s, ShipAction::OpenPr)).await.unwrap();
+    let s = with_pr(&f, &s.id).await;
+    assert_eq!(s.base_sha, Sha::new("base000"));
+    assert_eq!(
+        f.git.ship.lock().unwrap().commits[0].1.parent,
+        Sha::new("base000")
+    );
+}
+
 #[tokio::test]
 async fn nothing_to_ship_without_changes() {
     let f = fixtures();

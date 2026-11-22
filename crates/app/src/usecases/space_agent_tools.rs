@@ -10,7 +10,7 @@
 //! get_space_diff ───▶ snapshot(worktree) ─▶ diff base_sha...snapshot
 //! get_review_comments ▶ drafts · findings · threads of review_pr and pr
 //! add_review_comment ─▶ add_finding on review_pr (Review, "Send to agent")
-//! set_base ─────────▶ fetch ─▶ merge-base ─▶ base, base_sha ─▶ live diff
+//! set_base ─────────▶ fetch ─▶ merge-base with the worktree now ─▶ base, base_sha ─▶ live diff
 //! update_progress ──▶ space.progress (cleared when the turn ends)
 //! ```
 
@@ -397,7 +397,10 @@ impl Core {
     }
 
     /// `set_base`: the space diffs against the merge-base with `branch`
-    /// from now on. The worktree, the turns and any PR stay as they are.
+    /// from now on — the merge-base with the worktree as it is now, so a
+    /// merge the agent made this turn counts (docs/spaces.md §6 "The agent
+    /// merged the base in"); the same branch again re-reads it. The
+    /// worktree, the turns and any PR stay as they are.
     pub async fn space_tool_set_base(
         &self,
         space: &str,
@@ -426,17 +429,50 @@ impl Core {
                 row.base
             )
         });
-        if branch == row.base {
-            return Ok(BaseChange {
-                base: row.base.clone(),
-                base_sha: row.base_sha.0.clone(),
-                previous: row.base.clone(),
-                note: Some(format!("{branch} already is the base")),
-            });
-        }
         let project = self.space_project(&row).await.map_err(refusal)?;
         let repo = self.ensure_project_cache(&project).await.map_err(refusal)?;
         let git = &self.0.deps.git;
+        // The worktree as it is now, not the last checkpoint: the agent's
+        // merge of the base this turn is in it.
+        let now = self.space_state_now(&row).await.map_err(refusal)?;
+        if branch == row.base {
+            // The base's tip merged in since: the fork point moves to it.
+            let Some(base_sha) = self.base_merged_in(&row, &repo, &now).await else {
+                return Ok(BaseChange {
+                    base: row.base.clone(),
+                    base_sha: row.base_sha.0.clone(),
+                    previous: row.base.clone(),
+                    note: Some(format!("{branch} already is the base")),
+                });
+            };
+            self.apply(vec![NewAction {
+                model: models::SPACE.into(),
+                model_id: row.id.clone(),
+                action: SyncActionCode::C,
+                data: Some(serde_json::json!({
+                    "base_sha": base_sha,
+                    "updated_at": self.0.deps.clock.now(),
+                })),
+            }])
+            .await
+            .map_err(|e| unavailable(e.to_string()))?;
+            drop(guard);
+            self.space_review(SpaceReviewRequest {
+                space: row.id.clone(),
+                group: false,
+            })
+            .await
+            .map_err(refusal)?;
+            return Ok(BaseChange {
+                base: row.base.clone(),
+                base_sha: base_sha.0,
+                previous: row.base.clone(),
+                note: Some(format!(
+                    "{branch} already is the base; the worktree has its newer commits, so the \
+                     diff is against them from now on"
+                )),
+            });
+        }
         let tip = git
             .resolve_ref(&repo, &format!("refs/heads/{branch}"))
             .await
@@ -451,7 +487,7 @@ impl Core {
                 ))
             })?;
         let base_sha = git
-            .merge_base(&repo, &tip, &row.head_sha)
+            .merge_base(&repo, &tip, &now)
             .await
             .map_err(|_| unavailable(format!("the space and {branch} share no history")))?;
         self.apply(vec![NewAction {

@@ -16,7 +16,8 @@
  */
 import { memo, useEffect, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
-import { Message, Shimmer } from '../components/chat';
+import { Message, SentFiles, Shimmer } from '../components/chat';
+import { AttachmentChips } from '../components/chat/file-link';
 import { ChatMarkdown } from '../components/markdown';
 import type { ChatMessage, SpaceProgress } from '../fleet/contract';
 import { Button } from './native';
@@ -67,20 +68,7 @@ function UserBubble({
         <Text style={[styles.small, { color: p.muted }]}>Queued</Text>
       ) : null}
       {m.attachments?.length ? (
-        <View style={[styles.chips, styles.end]}>
-          {m.attachments.map((a) => (
-            <Text
-              key={a.id || a.name}
-              numberOfLines={1}
-              style={[
-                styles.fileChip,
-                { borderColor: p.border, color: p.muted },
-              ]}
-            >
-              {a.name}
-            </Text>
-          ))}
-        </View>
+        <AttachmentChips attachments={m.attachments} />
       ) : null}
       {m.text || !m.attachments?.length ? (
         <Message from="user">{m.text}</Message>
@@ -296,6 +284,7 @@ export function PendingRow({
       >
         {failed && p.error ? `${label} · ${p.error}` : label}
       </Text>
+      {p.files.length ? <SentFiles files={p.files} /> : null}
       <Message from="user">{p.text}</Message>
       {failed ? (
         <View style={styles.planActions}>

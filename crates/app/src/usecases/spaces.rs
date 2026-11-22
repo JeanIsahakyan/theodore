@@ -237,6 +237,7 @@ impl Core {
             agent_session: None,
             sent_feedback: Vec::new(),
             parent,
+            account: self.account_active_user_id(),
             created_at: now,
             updated_at: now,
             attention_at: None,
@@ -1934,6 +1935,27 @@ async fn drive_turn(core: &Core, turn: Turn) {
         }
     };
 
+    // The agent merged the base in itself (no Update): the space moves onto
+    // that merge-base now, as an update would have, so the diff and the
+    // "Base moved" count follow; Undo of the turn brings the old base back
+    // (`base_before`). Not while an update resolves: its completion owns
+    // the base.
+    let base_moved = match &checkpoint {
+        Some(cp) if saved.patch.is_none() && space.updating.is_none() => {
+            core.base_merged_in_offline(&space, &cp.sha).await
+        }
+        _ => None,
+    };
+    if let Some(base) = &base_moved {
+        tracing::info!(
+            space = %space.id,
+            base = %space.base,
+            from = %space.base_sha,
+            to = %base,
+            "the turn merged the base in: the space is on its new tip"
+        );
+    }
+
     // A merge's turn holds the base's changes too: not what the agent did.
     let changed_files = match &checkpoint {
         Some(cp) if cp.sha != space.head_sha && saved.base_before.is_none() => {
@@ -2027,6 +2049,9 @@ async fn drive_turn(core: &Core, turn: Turn) {
     if let Some(extra) = saved.patch {
         crate::usecases::space_update::merge_fields(&mut patch, extra);
     }
+    if let Some(base) = &base_moved {
+        patch["base_sha"] = serde_json::json!(base);
+    }
     if let Some(cp) = &checkpoint {
         patch["head_sha"] = serde_json::json!(cp.sha);
         patch["worktree_head"] = serde_json::json!(cp.head);
@@ -2053,7 +2078,10 @@ async fn drive_turn(core: &Core, turn: Turn) {
                 started_at: core.0.deps.clock.now(),
                 finished_at: None,
             }),
-            base_before: saved.base_before.clone(),
+            base_before: saved
+                .base_before
+                .clone()
+                .or_else(|| base_moved.as_ref().map(|_| space.base_sha.clone())),
             plan,
             before_head: space.worktree_head.clone(),
             after_head: Some(cp.head.clone()),
