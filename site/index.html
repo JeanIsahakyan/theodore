@@ -1,0 +1,353 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Theodore — your coding agents keep working after you leave the desk</title>
+<meta name="description" content="Theodore runs Claude Code, Codex and Gemini on your computer, each change in its own space. When an agent needs you, your phone buzzes. Answer, and it carries on. Open source.">
+<meta name="theme-color" content="#18213F">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Familjen+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --night: #18213F;
+  --night-2: #202B52;
+  --night-3: #2A3766;
+  --paper: #ECEAE3;
+  --muted: #8A93B8;
+  --signal: #F2C14E;
+  --ok: #6FCF97;
+  --line: rgba(236, 234, 227, .14);
+  --bg: var(--night);
+  --fg: var(--paper);
+  --panel: var(--night-2);
+  --panel-2: var(--night-3);
+  --ink-on-signal: #1A1A12;
+  --radius-window: 14px;
+  --radius-phone: 34px;
+  --radius-chip: 999px;
+  color-scheme: dark;
+}
+html[data-theme="light"] {
+  --bg: #F3F1EA;
+  --fg: #18213F;
+  --panel: #FFFFFF;
+  --panel-2: #E7E6EE;
+  --muted: #5B6488;
+  --line: rgba(24, 33, 63, .14);
+  color-scheme: light;
+}
+@media (prefers-color-scheme: light) {
+  html:not([data-theme]) {
+    --bg: #F3F1EA; --fg: #18213F; --panel: #FFFFFF; --panel-2: #E7E6EE;
+    --muted: #5B6488; --line: rgba(24, 33, 63, .14); color-scheme: light;
+  }
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: 400 18px/1.55 "Familjen Grotesk", system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+a { color: inherit; }
+:focus-visible { outline: 3px solid var(--signal); outline-offset: 3px; border-radius: 6px; }
+.wrap { width: min(1120px, 100% - 40px); margin-inline: auto; }
+
+/* nav */
+.nav { display: flex; align-items: center; gap: 28px; padding: 22px 0; }
+.mark { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 20px; text-decoration: none; letter-spacing: -.01em; }
+.mark svg { width: 26px; height: 26px; }
+.nav .links { margin-left: auto; display: flex; gap: 22px; align-items: center; font-size: 16px; }
+.nav .links a { text-decoration: none; color: var(--muted); }
+.nav .links a:hover { color: var(--fg); }
+.theme { background: none; border: 1px solid var(--line); color: var(--muted); border-radius: var(--radius-chip); width: 36px; height: 36px; cursor: pointer; font: inherit; }
+
+/* buttons */
+.btn { display: inline-flex; align-items: center; gap: 10px; padding: 14px 22px; border-radius: 12px; font-weight: 600; font-size: 17px; text-decoration: none; transition: transform .15s ease; }
+.btn:active { transform: translateY(1px); }
+.btn.primary { background: var(--fg); color: var(--bg); }
+.btn.ghost { border: 1px solid var(--line); }
+.btn.small { padding: 9px 16px; font-size: 15px; border-radius: 10px; }
+
+/* hero */
+.hero { padding: 56px 0 24px; }
+.hero h1 {
+  font-weight: 700; letter-spacing: -.035em; line-height: .98;
+  font-size: clamp(44px, 7.4vw, 96px); margin: 0 0 24px; max-width: 13ch;
+}
+.hero p.lede { font-size: clamp(19px, 2vw, 22px); color: var(--muted); max-width: 46ch; margin: 0 0 32px; }
+.hero p.lede strong { color: var(--fg); font-weight: 500; }
+.ctas { display: flex; flex-wrap: wrap; gap: 12px; }
+.fine { margin-top: 14px; font-size: 14px; color: var(--muted); }
+
+/* stage */
+.stage { position: relative; margin: 56px 0 24px; display: grid; grid-template-columns: 1fr 260px; gap: 40px; align-items: end; }
+.window { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius-window); overflow: hidden; min-height: 400px; display: flex; flex-direction: column; }
+.titlebar { display: flex; align-items: center; gap: 8px; padding: 12px 16px; border-bottom: 1px solid var(--line); font-size: 14px; color: var(--muted); }
+.dots { display: flex; gap: 6px; margin-right: 8px; }
+.dots i { width: 11px; height: 11px; border-radius: 50%; background: var(--panel-2); display: block; }
+.titlebar b { color: var(--fg); font-weight: 600; }
+.log { padding: 18px 20px; display: flex; flex-direction: column; gap: 10px; font-size: 15px; flex: 1; }
+.you { align-self: flex-end; background: var(--panel-2); padding: 10px 14px; border-radius: 14px 14px 4px 14px; max-width: 72%; }
+.step { display: flex; gap: 10px; align-items: baseline; color: var(--muted); opacity: 0; transform: translateY(4px); transition: opacity .35s ease, transform .35s ease; }
+.step.on { opacity: 1; transform: none; }
+.step .k { color: var(--fg); font-weight: 500; }
+.step .add { color: var(--ok); }
+.step .del { color: #E58A8A; }
+.ask { border: 1.5px solid var(--signal); border-radius: 12px; padding: 14px 16px; opacity: 0; transition: opacity .35s ease, border-color .4s ease; }
+.ask.on { opacity: 1; }
+.ask p { margin: 0 0 10px; }
+.ask .opts { display: flex; flex-wrap: wrap; gap: 8px; }
+.opt { border: 1px solid var(--line); border-radius: var(--radius-chip); padding: 6px 12px; font-size: 14px; }
+.ask.answered { border-color: var(--line); }
+.ask.answered .opts { display: none; }
+.answered-note { display: none; color: var(--muted); font-size: 14px; }
+.ask.answered .answered-note { display: block; }
+.answered-note b { color: var(--fg); font-weight: 500; }
+.status { display: flex; align-items: center; gap: 8px; padding: 12px 20px; border-top: 1px solid var(--line); font-size: 14px; color: var(--muted); }
+.pulse { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+.status.waiting .pulse { background: var(--signal); }
+.status.working .pulse { background: var(--ok); animation: blink 1.2s infinite; }
+@keyframes blink { 50% { opacity: .3; } }
+.pr { color: var(--fg); font-weight: 600; }
+
+/* phone */
+.phone { width: 260px; height: 520px; border-radius: var(--radius-phone); border: 1px solid var(--line); background: var(--bg); position: relative; overflow: hidden; padding: 52px 12px 12px; box-shadow: 0 30px 60px -30px rgba(0,0,0,.6); }
+.phone::before { content: ""; position: absolute; top: 12px; left: 50%; width: 90px; height: 26px; border-radius: 20px; background: var(--panel-2); transform: translateX(-50%); }
+.clock { text-align: center; font-weight: 600; font-size: 54px; letter-spacing: -.03em; margin: 12px 0 2px; }
+.date { text-align: center; color: var(--muted); font-size: 14px; margin-bottom: 28px; }
+.notif { background: var(--panel); border: 1px solid var(--line); border-radius: 18px; padding: 12px 14px; font-size: 13px; transform: translateY(-140%); opacity: 0; transition: transform .5s cubic-bezier(.2,.9,.3,1.2), opacity .3s ease; }
+.notif.on { transform: none; opacity: 1; }
+.notif .from { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; margin-bottom: 4px; }
+.notif .from svg { width: 16px; height: 16px; }
+.notif .q { margin: 0 0 10px; }
+.notif .acts { display: grid; gap: 6px; }
+.act { background: var(--panel-2); border-radius: 10px; padding: 8px 10px; text-align: center; font-weight: 500; transition: background .2s ease, color .2s ease; }
+.act.tap { background: var(--signal); color: var(--ink-on-signal); }
+.notif.gone { transform: translateY(-140%); opacity: 0; }
+.phone .sent { text-align: center; color: var(--ok); font-size: 13px; margin-top: 14px; opacity: 0; transition: opacity .3s ease; }
+.phone .sent.on { opacity: 1; }
+
+/* sections */
+section { padding: 88px 0; border-top: 1px solid var(--line); }
+h2 { font-weight: 700; letter-spacing: -.025em; line-height: 1.05; font-size: clamp(32px, 4.2vw, 52px); margin: 0 0 20px; max-width: 18ch; }
+.intro { color: var(--muted); max-width: 58ch; margin: 0 0 40px; font-size: 19px; }
+
+/* branch diagram */
+.branch { width: 100%; height: auto; display: block; }
+.branch text { font: 500 15px "Familjen Grotesk", sans-serif; fill: var(--fg); }
+.branch .soft { fill: var(--muted); }
+.branch .trunk { stroke: var(--muted); }
+.branch .space { stroke: var(--fg); }
+.branch .dot { fill: var(--bg); stroke: var(--fg); }
+.branch .ask-dot { fill: var(--signal); }
+
+/* facts */
+.facts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 48px; }
+.facts h3 { font-size: 22px; letter-spacing: -.01em; margin: 0 0 10px; }
+.facts p { margin: 0; color: var(--muted); }
+
+/* steps */
+.ship { list-style: none; padding: 0; margin: 0; counter-reset: s; display: grid; gap: 0; }
+.ship li { counter-increment: s; display: grid; grid-template-columns: 72px 1fr; gap: 20px; padding: 26px 0; border-top: 1px solid var(--line); }
+.ship li::before { content: counter(s); font-size: 44px; font-weight: 700; line-height: 1; letter-spacing: -.03em; color: var(--muted); }
+.ship h3 { margin: 0 0 6px; font-size: 22px; }
+.ship p { margin: 0; color: var(--muted); max-width: 60ch; }
+.ship li.you-step::before { color: var(--signal); }
+
+/* closing */
+.closing { text-align: left; }
+.closing h2 { max-width: 20ch; }
+footer { padding: 36px 0 48px; color: var(--muted); font-size: 15px; display: flex; flex-wrap: wrap; gap: 20px; border-top: 1px solid var(--line); }
+footer nav { display: flex; gap: 20px; margin-left: auto; }
+footer a { text-decoration: none; }
+footer a:hover { color: var(--fg); }
+
+@media (max-width: 880px) {
+  .stage { grid-template-columns: 1fr; }
+  .phone { margin-inline: auto; }
+  .facts { grid-template-columns: 1fr; gap: 32px; }
+  .nav .links a.hide-sm { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; animation: none !important; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="nav">
+    <a class="mark" href="/" aria-label="Theodore home">
+      <svg viewBox="0 0 26 26" aria-hidden="true"><circle cx="7" cy="19" r="3.2" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="19" cy="7" r="3.2" fill="currentColor"/><path d="M7 15.8V12a5 5 0 0 1 5-5h3.8" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+      Theodore
+    </a>
+    <nav class="links" aria-label="Main">
+      <a class="hide-sm" href="https://github.com/JeanIsahakyan/theodore#readme">Docs</a>
+      <a class="hide-sm" href="https://github.com/JeanIsahakyan/theodore">GitHub</a>
+      <button class="theme" type="button" aria-label="Switch light or dark theme" id="theme">◐</button>
+      <a class="btn primary small" href="https://github.com/JeanIsahakyan/theodore/releases/latest">Download</a>
+    </nav>
+  </header>
+
+  <main>
+    <div class="hero">
+      <h1>Your coding agents keep working after you leave the desk.</h1>
+      <p class="lede">Theodore runs <strong>Claude Code, Codex and Gemini</strong> on your computer, each change in its own space. When an agent needs you, your phone buzzes. Answer, and it carries on.</p>
+      <div class="ctas">
+        <a class="btn primary" href="https://github.com/JeanIsahakyan/theodore/releases/latest">Download for macOS</a>
+        <a class="btn ghost" href="https://app.theodore.cloud">Open the web app</a>
+      </div>
+      <p class="fine">Free and open source. Uses the agent subscriptions you already have.</p>
+
+      <div class="stage" aria-label="Demo: an agent asks a question on the computer and it is answered from the phone">
+        <div class="window">
+          <div class="titlebar"><span class="dots"><i></i><i></i><i></i></span><b>Fix the login redirect</b>&nbsp;on mac-studio</div>
+          <div class="log" id="log">
+            <div class="you">After signing in, people land on the wrong page. Fix it.</div>
+            <div class="step" data-at="1"><span class="k">Read</span> src/auth/session.ts</div>
+            <div class="step" data-at="2"><span class="k">Read</span> src/routes/login.tsx</div>
+            <div class="step" data-at="3"><span class="k">Edit</span> src/auth/redirect.ts <span class="add">+12</span> <span class="del">−3</span></div>
+            <div class="ask" id="ask">
+              <p>Should people go back to the page they came from, or always to Home?</p>
+              <div class="opts"><span class="opt">The page they came from</span><span class="opt">Always Home</span></div>
+              <div class="answered-note">Answered from iPhone: <b>The page they came from</b></div>
+            </div>
+            <div class="step" data-at="6"><span class="k">Edit</span> src/routes/login.tsx <span class="add">+5</span></div>
+            <div class="step" data-at="7"><span class="k">Run</span> pnpm test &nbsp;<span class="add">214 passed</span></div>
+            <div class="step" data-at="8"><span class="k">Opened</span>&nbsp;<span class="pr">pull request #482</span></div>
+          </div>
+          <div class="status working" id="status"><span class="pulse"></span><span id="status-text">Working · 0:42</span></div>
+        </div>
+
+        <div class="phone" aria-hidden="true">
+          <div class="clock">9:41</div>
+          <div class="date">Saturday, on the train</div>
+          <div class="notif" id="notif">
+            <div class="from"><svg viewBox="0 0 26 26"><circle cx="7" cy="19" r="3.2" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="19" cy="7" r="3.2" fill="currentColor"/><path d="M7 15.8V12a5 5 0 0 1 5-5h3.8" fill="none" stroke="currentColor" stroke-width="2"/></svg>mac-studio · Fix the login redirect</div>
+            <p class="q">Should people go back to the page they came from, or always to Home?</p>
+            <div class="acts"><div class="act" id="act1">The page they came from</div><div class="act">Always Home</div></div>
+          </div>
+          <div class="sent" id="sent">Sent to mac-studio</div>
+        </div>
+      </div>
+    </div>
+
+    <section aria-labelledby="space-h">
+      <h2 id="space-h">One change, one space.</h2>
+      <p class="intro">A space is a fresh copy of your repository on its own branch. The agent works there, so your checkout stays untouched and several changes can run at once. When it's done, the space becomes a pull request.</p>
+      <svg class="branch" viewBox="0 0 1000 200" role="img" aria-label="Branch diagram: main, a space branches off, the agent asks once, the space becomes a pull request and merges back">
+        <line class="trunk" x1="20" y1="150" x2="980" y2="150" stroke-width="2"/>
+        <text x="20" y="182" class="soft">main</text>
+        <path class="space" d="M140 150 C 200 150, 200 60, 260 60 L 760 60 C 820 60, 820 150, 880 150" fill="none" stroke-width="2.5"/>
+        <circle class="dot" cx="140" cy="150" r="7" stroke-width="2.5"/>
+        <circle class="dot" cx="360" cy="60" r="7" stroke-width="2.5"/>
+        <circle class="ask-dot" cx="500" cy="60" r="9"/>
+        <circle class="dot" cx="640" cy="60" r="7" stroke-width="2.5"/>
+        <circle class="dot" cx="880" cy="150" r="7" stroke-width="2.5"/>
+        <text x="270" y="40">space: fix-login-redirect</text>
+        <text x="460" y="96" class="soft">asks you once</text>
+        <text x="610" y="96" class="soft">tests pass</text>
+        <text x="830" y="182">merged</text>
+      </svg>
+    </section>
+
+    <section aria-labelledby="facts-h">
+      <h2 id="facts-h">Built around the agents you already pay for.</h2>
+      <div class="facts">
+        <div>
+          <h3>Your agents, your machine</h3>
+          <p>Claude Code, Codex and Gemini run on your computer with your own accounts. Theodore never sees your code or your keys.</p>
+        </div>
+        <div>
+          <h3>Your phone is the remote</h3>
+          <p>Follow every space, answer questions from a notification, start new work and send photos or files. Everything between devices is end-to-end encrypted.</p>
+        </div>
+        <div>
+          <h3>Open source</h3>
+          <p>The desktop app, the phone app and the cloud are on GitHub. Read it, build it, or run the cloud yourself.</p>
+        </div>
+      </div>
+    </section>
+
+    <section aria-labelledby="ship-h">
+      <h2 id="ship-h">How a change ships.</h2>
+      <ol class="ship">
+        <li><div><h3>Describe the change</h3><p>Pick a project and say what you want, from the desktop or your phone. Theodore opens a space for it.</p></div></li>
+        <li><div><h3>The agent works</h3><p>It reads, edits and runs your tests in the space. Split big work into sub-spaces that run in parallel.</p></div></li>
+        <li class="you-step"><div><h3>You answer when asked</h3><p>Questions and plans wait for you as a notification. One tap, and the agent continues.</p></div></li>
+        <li><div><h3>Review and ship</h3><p>Read the diff, leave comments for the agent, then open the pull request and merge it, all from Theodore.</p></div></li>
+      </ol>
+    </section>
+
+    <section class="closing" aria-labelledby="go-h">
+      <h2 id="go-h">Start a space, then go for a walk.</h2>
+      <div class="ctas">
+        <a class="btn primary" href="https://github.com/JeanIsahakyan/theodore/releases/latest">Download for macOS</a>
+        <a class="btn ghost" href="https://github.com/JeanIsahakyan/theodore">View on GitHub</a>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <span>Theodore</span>
+    <nav aria-label="Footer">
+      <a href="https://github.com/JeanIsahakyan/theodore">GitHub</a>
+      <a href="https://github.com/JeanIsahakyan/theodore/releases">Releases</a>
+      <a href="https://app.theodore.cloud/privacy">Privacy</a>
+    </nav>
+  </footer>
+</div>
+
+<script>
+(() => {
+  const root = document.documentElement;
+  const saved = localStorage.getItem('theme');
+  if (saved) root.dataset.theme = saved;
+  document.getElementById('theme').addEventListener('click', () => {
+    const dark = root.dataset.theme ? root.dataset.theme === 'dark'
+      : !matchMedia('(prefers-color-scheme: light)').matches;
+    root.dataset.theme = dark ? 'light' : 'dark';
+    localStorage.setItem('theme', root.dataset.theme);
+  });
+
+  const steps = [...document.querySelectorAll('.step')];
+  const ask = document.getElementById('ask');
+  const notif = document.getElementById('notif');
+  const act1 = document.getElementById('act1');
+  const sent = document.getElementById('sent');
+  const status = document.getElementById('status');
+  const statusText = document.getElementById('status-text');
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  const show = (at) => steps.forEach(s => s.classList.toggle('on', +s.dataset.at <= at));
+  const finalState = () => {
+    show(99); ask.classList.add('on', 'answered');
+    status.className = 'status'; statusText.textContent = 'Done · pull request #482 opened';
+  };
+  if (reduce) { finalState(); return; }
+
+  const timeline = [
+    [0,    () => { show(0); ask.className = 'ask'; notif.className = 'notif'; act1.className = 'act'; sent.className = 'sent'; status.className = 'status working'; statusText.textContent = 'Working · 0:42'; }],
+    [900,  () => show(1)],
+    [1700, () => show(2)],
+    [2600, () => show(3)],
+    [3600, () => { ask.classList.add('on'); status.className = 'status waiting'; statusText.textContent = 'Waiting for your answer'; }],
+    [4300, () => notif.classList.add('on')],
+    [6200, () => act1.classList.add('tap')],
+    [6900, () => { notif.classList.add('gone'); sent.classList.add('on'); }],
+    [7500, () => { ask.classList.add('answered'); status.className = 'status working'; statusText.textContent = 'Working · 3:10'; }],
+    [8400, () => show(6)],
+    [9400, () => show(7)],
+    [10400, () => { show(8); status.className = 'status'; statusText.textContent = 'Done · pull request #482 opened'; }],
+  ];
+  const LOOP = 14500;
+  const run = () => timeline.forEach(([t, f]) => setTimeout(f, t));
+  run(); setInterval(run, LOOP);
+})();
+</script>
+</body>
+</html>
