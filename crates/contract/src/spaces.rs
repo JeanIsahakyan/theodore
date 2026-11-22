@@ -202,6 +202,12 @@ pub struct Space {
     /// (docs/spaces.md "Sub-spaces"): shown under that space.
     #[serde(default)]
     pub parent: Option<SpaceParent>,
+    /// The Theodore account that was active when the space was made (its
+    /// user id): the account switcher counts the running spaces of the
+    /// other accounts. `None` without an account, or from before it was
+    /// recorded.
+    #[serde(default)]
+    pub account: Option<String>,
     pub created_at: Millis,
     pub updated_at: Millis,
     /// When the space last had something for you: a turn ended or failed

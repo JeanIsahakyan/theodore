@@ -237,6 +237,7 @@ impl Core {
             agent_session: None,
             sent_feedback: Vec::new(),
             parent,
+            account: self.account_active_user_id(),
             created_at: now,
             updated_at: now,
             attention_at: None,

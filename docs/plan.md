@@ -683,15 +683,22 @@ Settings → Account / Onboarding
   stops after 10 minutes, on cancel, or once it completes. The code and
   tokens are never logged.
 - **Session.**
-  - The session lives in one keychain entry, `theodore.account`: a JSON object
-    with the access token, refresh token, `exp`, `sid` and profile.
-  - A refresher wakes 60 s before `exp`, which defaults to 5 minutes, and
-    rotates the tokens. On a network error it retries every ~30 s.
+  - Each signed-in account's session lives in its own keychain entry,
+    `theodore.account.<user id>`: a JSON object with the access token,
+    refresh token, `exp`, `sid` and profile. The store's `account.accounts`
+    index says which exist and which is active (docs/cloud.md "Several
+    accounts"); a build before several accounts kept one entry,
+    `theodore.account`, moved into the list on upgrade.
+  - A refresher per account wakes 60 s before `exp`, which defaults to 5
+    minutes, and rotates the tokens. On a network error it retries every
+    ~30 s.
   - A rejected refresh means the session ended (revoked, or the maximum
-    session length was reached): Theodore signs out and emits `account_status`.
-  - Sign-out deletes the keychain entry, then calls
+    session length was reached): that account's row says "Sign in again";
+    was it the active one, the next account takes over, else Theodore is
+    signed out, and `account_status` is emitted.
+  - Sign-out (of one account) deletes its keychain entry, then calls
     `/user_management/sessions/logout?session_id=<sid>` in the background,
-    best effort.
+    best effort; the next account with a session becomes active.
 - **Validation.**
   - The access token's signature is checked against the JWKS. The JWKS is
     cached and refetched when the token names an unknown `kid`.
@@ -731,6 +738,8 @@ sign-in ─▶ 4xx organization_selection_required (user in 2+ orgs)
 
 switch  ─▶ account_switch_organization(id) ─▶ refresh(Some(id))
              ─▶ keychain ─▶ event;  error: returned, session untouched
+        ─▶ account_switch(user, org?): another signed-in account, then its org
+           (docs/cloud.md "Several accounts")
 list    ─▶ account_organizations ─▶ cloud GET /v1/orgs (current token)
 background refresher: refresh(.., None) ─▶ the session's org is kept
 ```
@@ -739,8 +748,11 @@ background refresher: refresh(.., None) ─▶ the session's org is kept
   refresh ends a session. Only the background refresher (which never asks
   for an org) signs out, on the provider's rejection.
 - **Races.** The org step and a switch refresh under the same lock as the
-  refresher (refresh tokens are single-use) and drop their result when a
-  sign-in or sign-out happened meanwhile (the `generation` counter).
+  refresher (refresh tokens are single-use) and drop their result when that
+  account was signed in again or signed out meanwhile (the slot's
+  `generation`). Locks and generations are per account: one account's
+  refresh never waits on, or is dropped by, another's; a sign-out of one
+  account leaves another's refresh in flight alone.
 - **Allowed signed out:** `account_sign_in_choose_organization` (no session
   yet). `account_switch_organization` and `account_organizations` are gated.
 
@@ -791,7 +803,7 @@ sign in ─▶ open: the app comes back where it was; held work starts
 - **Allowed while signed out**: `bootstrap`, `catch_up`, `app_info`,
   `check_update`, `install_update`, `account_status`,
   `account_sign_in_start` / `_poll` / `_cancel` / `_choose_organization`,
-  `account_sign_out`, `focus_window`. Every other command is gated, new ones included (deny by
+  `account_sign_out`, `account_sign_out_of`, `focus_window`. Every other command is gated, new ones included (deny by
   default; the list and its test live in `apps/desktop/src/gate.rs`).
 - **Offline.** A stored session keeps the app usable with no network: a
   refresh that fails on the network, a timeout, a 5xx or a 4xx without the
@@ -799,9 +811,10 @@ sign in ─▶ open: the app comes back where it was; held work starts
   30 s, doubling up to 10 min. Only a definitive rejection (the provider's
   error: the refresh token revoked or no longer valid) signs out. The gate then closes
   and says "Your session ended — sign in again".
-- **Signing out** (Settings → Account) closes the gate too. Only the
-  session goes: the store, projects, drafts and worktrees stay for the next
-  sign-in, and nothing is deleted.
+- **Signing out** (Settings → Account, the sidebar's popover) of the last
+  account closes the gate too; with another account signed in, that one
+  becomes active instead. Only the session goes: the store, projects,
+  drafts and worktrees stay for the next sign-in, and nothing is deleted.
 - **Dev builds.** With no client id, there's no gate: `cargo run` and
   `cargo tauri dev` work as before. Setting `THEODORE_WORKOS_CLIENT_ID`
   (env) or `account.workos.client_id` (setting) turns the gate on in a dev
@@ -811,12 +824,14 @@ sign in ─▶ open: the app comes back where it was; held work starts
 
 ```
 ui  SignInGate (whole window, signed out) · AccountStep (Onboarding, first)
-    AccountCard (Settings → Account, top) · accountGate.ts (routing, pure)
+    AccountCard (Settings → Account: the accounts list, top) · accountGate.ts (routing, pure)
+    AccountSwitcher (the sidebar's bottom row and popover) · accounts.ts (rows, pure)
      └─ useAccountSignIn ─▶ reduceFlow (pure, vitest)
 commands  account_status · account_sign_in_start · account_sign_in_poll ·
           account_sign_in_cancel · account_sign_in_choose_organization ·
           account_sign_out · account_switch_organization ·
-          account_organizations · focus_window (shell)
+          account_organizations · account_accounts · account_switch ·
+          account_sign_out_of · focus_window (shell)
 desktop  gate.rs             allow-list; every other command asks the gate
 app  usecases/account.rs   config, gate, state check, keychain, refresher, events
 ports  AccountPort          LocalAccount = no provider (fixtures, sandbox, CLI)

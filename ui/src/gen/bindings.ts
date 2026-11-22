@@ -262,6 +262,9 @@ export const commands = {
 	accountSignInChooseOrganization: (organizationId: string) => typedError<AccountSignInState, CommandError>(__TAURI_INVOKE("account_sign_in_choose_organization", { organizationId })),
 	accountSwitchOrganization: (organizationId: string) => typedError<AccountStatus, CommandError>(__TAURI_INVOKE("account_switch_organization", { organizationId })),
 	accountOrganizations: () => typedError<AccountOrganization[], CommandError>(__TAURI_INVOKE("account_organizations")),
+	accountAccounts: () => typedError<AccountStatus, CommandError>(__TAURI_INVOKE("account_accounts")),
+	accountSwitch: (req: AccountSwitchRequest) => typedError<AccountStatus, CommandError>(__TAURI_INVOKE("account_switch", { req })),
+	accountSignOutOf: (userId: string) => typedError<AccountStatus, CommandError>(__TAURI_INVOKE("account_sign_out_of", { userId })),
 	fleetStatus: () => typedError<FleetStatus, CommandError>(__TAURI_INVOKE("fleet_status")),
 	fleetSetSettings: (req: FleetSettingsRequest) => typedError<FleetStatus, CommandError>(__TAURI_INVOKE("fleet_set_settings", { req })),
 	fleetTrustDevice: (req: FleetTrustRequest) => typedError<FleetStatus, CommandError>(__TAURI_INVOKE("fleet_trust_device", { req })),
@@ -335,6 +338,31 @@ export const commands = {
 };
 
 /* Types */
+/**  One account signed in on this computer (`AccountStatus::accounts`). */
+export type AccountEntry = {
+	user: AccountUser,
+	/**
+	 *  The organization its session is in (the last one, while it needs
+	 *  a sign-in again).
+	 */
+	organization: AccountOrganizationRef | null,
+	/**
+	 *  Its organizations as the cloud last listed them (`account_accounts`
+	 *  refreshes the list); empty until then, or without a cloud.
+	 */
+	organizations: AccountOrganization[],
+	/**
+	 *  The one `AccountStatus::user` is: whose organization the fleet
+	 *  joins, and whose views show.
+	 */
+	active: boolean,
+	/**
+	 *  The provider ended its session (a rejected refresh): its row says
+	 *  "Sign in again"; signing in as that user replaces it.
+	 */
+	sign_in_required: boolean,
+};
+
 /**
  *  `account_organizations`: one of the signed-in user's organizations,
  *  the personal one first.
@@ -421,6 +449,20 @@ export type AccountStatus = {
 	 *  personal one is set up (right after a first sign-in).
 	 */
 	organization: AccountOrganizationRef | null,
+	/**
+	 *  Every account signed in on this computer, in sign-in order; the
+	 *  active one is `user`. Empty while signed out of every account.
+	 */
+	accounts: AccountEntry[],
+};
+
+/**
+ *  `account_switch`: make `user_id` the active account, in
+ *  `organization_id` when given (else the organization its session is in).
+ */
+export type AccountSwitchRequest = {
+	user_id: string,
+	organization_id?: string | null,
 };
 
 export type AccountUser = {
@@ -2472,6 +2514,13 @@ export type Space = {
 	 *  (docs/spaces.md "Sub-spaces"): shown under that space.
 	 */
 	parent?: SpaceParent | null,
+	/**
+	 *  The Theodore account that was active when the space was made (its
+	 *  user id): the account switcher counts the running spaces of the
+	 *  other accounts. `None` without an account, or from before it was
+	 *  recorded.
+	 */
+	account?: string | null,
 	created_at: number,
 	updated_at: number,
 	/**

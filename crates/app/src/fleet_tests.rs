@@ -1379,6 +1379,79 @@ async fn the_link_follows_the_account() {
     .await;
 }
 
+/// Another account signs in (device code), its session in `org`.
+async fn sign_in_as(core: &Core, f: &Fixtures, user: &str, refresh: &str, org: &str) {
+    core.account_sign_in_start(theodore_contract::AccountSignInRequest {
+        method: theodore_contract::AccountSignInMethod::DeviceCode,
+        email: None,
+    })
+    .await
+    .unwrap();
+    let mut s = session(f, refresh, org);
+    s.user.id = user.into();
+    s.user.email = format!("{user}@example.com");
+    f.account
+        .push_device_poll(Ok(theodore_ports::DeviceSignInPoll::Done(Box::new(s))));
+    assert!(matches!(
+        core.account_sign_in_poll().await.unwrap(),
+        theodore_contract::AccountSignInState::Done { .. }
+    ));
+}
+
+#[tokio::test]
+async fn the_link_follows_the_active_account() {
+    let f = fixtures();
+    let (core, _recv) = start(&f);
+    core.fleet_set_settings(settings(false)).await.unwrap();
+    wait_until("a link", || f.fleet.starts() == 1).await;
+    assert_eq!(f.fleet.connect(0).access_token, "at-rt_1");
+
+    // A second account signs in: it is the active one, so the link is
+    // its organization's, with its token, as a new device of that hub.
+    sign_in_as(&core, &f, "user_02", "rt_b", "org_b").await;
+    wait_until("a second link", || f.fleet.starts() == 2).await;
+    assert!(commands(&f, 0).contains(&FakeFleetCommand::Close));
+    assert_eq!(f.fleet.connect(1).access_token, "at-rt_b");
+
+    // Back to the first account: its organization's link again, with its
+    // own token; nothing of the other account's is sent on it.
+    core.account_switch(theodore_contract::AccountSwitchRequest {
+        user_id: "user_01".into(),
+        organization_id: None,
+    })
+    .await
+    .unwrap();
+    wait_until("a third link", || f.fleet.starts() == 3).await;
+    assert!(commands(&f, 1).contains(&FakeFleetCommand::Close));
+    assert_eq!(f.fleet.connect(2).access_token, "at-rt_1");
+    assert!(
+        !commands(&f, 1)
+            .iter()
+            .any(|c| matches!(c, FakeFleetCommand::Reauth(t) if t == "at-rt_1")),
+        "another account's token is never a reauth on the old link"
+    );
+
+    // Same organization, another user: a new link, not a reauth.
+    sign_in_as(&core, &f, "user_03", "rt_c", "org_a").await;
+    wait_until("a fourth link", || f.fleet.starts() == 4).await;
+    assert!(commands(&f, 2).contains(&FakeFleetCommand::Close));
+    assert_eq!(f.fleet.connect(3).access_token, "at-rt_c");
+    assert!(
+        !commands(&f, 2)
+            .iter()
+            .any(|c| matches!(c, FakeFleetCommand::Reauth(_))),
+        "{:?}",
+        commands(&f, 2)
+    );
+
+    // Signing the active account out: the next one's link (the first
+    // signed in, in its own organization).
+    core.account_sign_out().await.unwrap();
+    wait_until("a fifth link", || f.fleet.starts() == 5).await;
+    assert!(commands(&f, 3).contains(&FakeFleetCommand::Close));
+    assert_eq!(f.fleet.connect(4).access_token, "at-rt_1");
+}
+
 #[tokio::test]
 async fn a_fatal_refusal_stops_redialing_until_the_settings_change() {
     let f = fixtures();
