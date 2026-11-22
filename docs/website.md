@@ -8,21 +8,24 @@ prerendered to static HTML and served by Cloudflare Pages.
 site/
   index.html            the template: theme script, favicon, <!--app-head-->, <!--app-html-->
   src/app/              App, the tiny router, routes + meta, head tags, theme (as the desktop's)
-  src/pages/            Home, Download, Privacy, Terms, Space (/s/<id>), NotFound
+  src/pages/            Home, Download, Releases, Privacy, Terms, Space (/s/<id>), NotFound
   src/demo/             the hero story: an agent asks, the phone answers, a PR opens
-  src/mocks/            product UI built from the app's pieces (chat, review, spaces, fleet)
+  src/mocks/            product UI built from the app's pieces (chat, review, spaces, phone)
+  src/releases/         the changelog's entries: which releases count, a markdown renderer
   src/shared/           LogoArt and Ring, copied from ui/src (no store); colours from @desktop
   src/download/         platform detection, the latest GitHub release
   src/space/            the space link page's logic: id, channel, which buttons (tested)
-  scripts/prerender.mjs one HTML per route, 404.html, sitemap.xml, fonts preloaded, release baked in
+  scripts/prerender.mjs one HTML per route, 404.html, sitemap.xml, releases.json, fonts
+                        preloaded; the latest release, the stars and the changelog baked in
   public/               favicon, og.png, robots.txt, _headers, _redirects, .well-known/
   deploy/pages.yml      the GitHub Actions workflow, to move into .github/workflows/
 ```
 
 | Page | Path | Content |
 | --- | --- | --- |
-| Home | `/` | hero + live demo, overview, Review, Spaces, Cloud spaces, open source, CTA |
+| Home | `/` | the night band: hero + live demo, trust strip; Spaces, Review, Your phone (each with a live mock), the rest as a list, open source, CTA |
 | Download | `/download` | the visitor's platform first; every asset of the latest release; iOS / Android / web status |
+| Changelog | `/releases` | every app release (`v*` tags, no drafts or pre-releases), newest first, notes rendered from markdown; the newest ten open, older ones folded |
 | Privacy | `/privacy` | the privacy policy for the desktop, the phone app and the cloud (the App Store listing links it) |
 | Terms | `/terms` | terms for the open-source apps and the hosted cloud |
 | Space link | `/s/<id>` | "Opening this space in Theodore…": opens the space in the app for the visitor's platform ("Space links" below); `noindex`, not in the sitemap |
@@ -41,11 +44,16 @@ buttons each platform gets, the staging channel, what counts as a space
 id); pages are not rendered in tests.
 
 `build` renders every route with `react-dom/server` into its own
-`index.html`, writes `404.html` (Pages serves it for unknown paths) and
-`sitemap.xml`, and fetches the latest release from GitHub's API so
-`/download` carries the version and links without JavaScript; offline it
-links to the release page and the browser asks again on load. Routes
-inside the page then navigate in place.
+`index.html`, writes `404.html` (Pages serves it for unknown paths),
+`sitemap.xml` and `releases.json`, and asks GitHub's API for the latest
+release (so `/download` and the hero's "What's new" carry the version and
+links without JavaScript), the stargazer count (the trust strip; hidden
+when unknown) and every release (`/releases`; paginated). Offline, the
+download links fall back to the release page, the changelog says the notes
+are on GitHub, and the browser asks GitHub again on load. `GITHUB_TOKEN` in
+the environment lifts the anonymous rate limit (CI sets it). Routes inside
+the page then navigate in place; `/releases` reached that way loads
+`releases.json`.
 
 - `@desktop/*` is `ui/src/*`: only pure modules (today `ui/logoColors.ts`).
   Presentational pieces with store or Tauri imports are copied into
@@ -53,8 +61,22 @@ inside the page then navigate in place.
 - The theme is the desktop's rule: `theodore-theme` in localStorage, else
   the system; the `.dark` class HeroUI reads, applied by an inline script
   before the first paint.
-- Reduced motion keeps the demo's final frame; every row is laid out from
-  the start, so nothing shifts while it plays.
+- The look is the desktop's: HeroUI's tokens (background, surfaces,
+  separators, greys, the accent and its buttons), light or dark. The site
+  adds only `--ink-2` (body text, darker than `--muted`), soft layered
+  shadows instead of borders, and the app's `--warning` as the attention
+  dot where the agent waits for you.
+- Scenes (`src/demo/useScene.ts`): the hero and the three mocks play when
+  scrolled into view and again when they come back, pause off screen and in
+  a hidden tab, and keep their final frame for the server, no JavaScript
+  and reduced motion. The hero loops (~13 s) from its key frame (the
+  question on the computer, the push on the phone). Motion is transform and
+  opacity (plus one progress ring), ease-out entrances, one short overshoot
+  on things that land.
+- Release notes are rendered by `src/releases/markdown.ts`, which escapes
+  every string and emits only its own tags; a release whose notes are empty
+  or only GitHub's generated "What's Changed" list shows as "Maintenance
+  release".
 
 ## Space links
 

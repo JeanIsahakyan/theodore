@@ -1,8 +1,9 @@
 // Prerenders every route to its own HTML file in dist/, after the client and
 // SSR builds (package.json `build`): /download becomes dist/download/index.html,
 // so each page is served as static HTML and works without JavaScript. Also
-// writes 404.html, sitemap.xml, and bakes the latest release into the page.
-import { cp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+// writes 404.html, sitemap.xml and releases.json, and bakes the latest
+// release, the GitHub stars and (into /releases) every release into the page.
+import { mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -10,44 +11,62 @@ const root = fileURLToPath(new URL('..', import.meta.url));
 const dist = join(root, 'dist');
 const ssr = join(root, 'dist-ssr');
 const SITE_URL = 'https://theodore.cloud';
+const API = 'https://api.github.com/repos/JeanIsahakyan/theodore';
 
 const template = await readFile(join(dist, 'index.html'), 'utf8');
-const { render, ROUTES, NOT_FOUND } = await import(
-  join(ssr, 'entry-server.js')
-);
+const { render, ROUTES, NOT_FOUND, parseRelease, toReleaseNote, sortReleases } =
+  await import(join(ssr, 'entry-server.js'));
+
+/** GitHub's API; a token (CI's GITHUB_TOKEN) lifts the anonymous rate limit. */
+async function github(path) {
+  const headers = { Accept: 'application/vnd.github+json' };
+  const token = process.env.GITHUB_TOKEN;
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const res = await fetch(`${API}${path}`, { headers });
+  if (!res.ok) throw new Error(`${path}: ${res.status}`);
+  return res;
+}
 
 /** The latest release, so the download page has its version and links in
  *  the HTML itself. Offline or rate-limited: null, the page links to the
  *  release page and the browser asks again. */
 async function latestRelease() {
   try {
-    const res = await fetch(
-      'https://api.github.com/repos/JeanIsahakyan/theodore/releases/latest',
-      { headers: { Accept: 'application/vnd.github+json' } },
-    );
-    if (!res.ok) return null;
-    const r = await res.json();
-    const patterns = {
-      'mac-arm64-dmg': /^Theodore_.+_aarch64\.dmg$/,
-      'linux-x64-appimage': /^Theodore_.+_x86_64\.AppImage$/,
-      'linux-x64-deb': /^Theodore_.+_amd64\.deb$/,
-      'linux-arm64-appimage': /^Theodore_.+_aarch64\.AppImage$/,
-      'linux-arm64-deb': /^Theodore_.+_arm64\.deb$/,
-    };
-    const assets = {};
-    for (const a of r.assets ?? []) {
-      for (const [key, re] of Object.entries(patterns)) {
-        if (re.test(a.name))
-          assets[key] = { url: a.browser_download_url, size: a.size };
+    return parseRelease(await (await github('/releases/latest')).json());
+  } catch (e) {
+    console.warn('latest release not fetched:', e.message);
+    return null;
+  }
+}
+
+/** Every release, newest first, following the API's pages. Offline: an
+ *  empty list, and the page says so. */
+async function allReleases() {
+  const out = [];
+  try {
+    for (let page = 1; page < 50; page++) {
+      const res = await github(`/releases?per_page=100&page=${page}`);
+      const list = await res.json();
+      for (const r of list) {
+        const note = toReleaseNote(r);
+        if (note) out.push(note);
       }
+      if (!/rel="next"/.test(res.headers.get('link') ?? '')) break;
     }
-    return {
-      version: String(r.tag_name).replace(/^v/, ''),
-      publishedAt: r.published_at,
-      url: r.html_url,
-      assets,
-    };
-  } catch {
+  } catch (e) {
+    console.warn('releases not fetched:', e.message);
+  }
+  return sortReleases(out);
+}
+
+async function stars() {
+  try {
+    const repo = await (await github('')).json();
+    return typeof repo.stargazers_count === 'number'
+      ? repo.stargazers_count
+      : null;
+  } catch (e) {
+    console.warn('stars not fetched:', e.message);
     return null;
   }
 }
@@ -67,16 +86,26 @@ async function fontPreloads() {
     .join('\n    ');
 }
 
-const data = { release: await latestRelease(), year: new Date().getFullYear() };
+const [release, releases, starCount] = await Promise.all([
+  latestRelease(),
+  allReleases(),
+  stars(),
+]);
+const common = { release, stars: starCount, year: new Date().getFullYear() };
 const preloads = await fontPreloads();
-const dataTag = `<script>window.__THEODORE_DATA__=${JSON.stringify(data).replace(/</g, '\\u003c')}</script>`;
+
+const json = (v) => JSON.stringify(v).replace(/</g, '\\u003c');
 
 function page(path) {
+  const data = path === '/releases' ? { ...common, releases } : common;
   const { html, head } = render(path, data);
   return template
     .replace('<!--app-head-->', `${head}\n    ${preloads}`)
     .replace('<!--app-html-->', html)
-    .replace('<!--app-data-->', dataTag);
+    .replace(
+      '<!--app-data-->',
+      `<script>window.__THEODORE_DATA__=${json(data)}</script>`,
+    );
 }
 
 for (const r of ROUTES) {
@@ -90,6 +119,8 @@ for (const r of ROUTES) {
 }
 // Cloudflare Pages serves 404.html for any path that has no file.
 await writeFile(join(dist, '404.html'), page(NOT_FOUND.path));
+// The changelog, for a visit that navigates to /releases from another page.
+await writeFile(join(dist, 'releases.json'), JSON.stringify(releases));
 
 const today = new Date().toISOString().slice(0, 10);
 const sitemap = `<?xml version="1.0" encoding="UTF-8"?>
@@ -106,9 +137,8 @@ await writeFile(join(dist, 'sitemap.xml'), sitemap);
 
 // The SSR bundle isn't deployed.
 await rm(ssr, { recursive: true, force: true });
-void cp;
 console.log(
-  data.release
-    ? `release ${data.release.version} baked in`
-    : 'no release baked in',
+  release ? `release ${release.version} baked in` : 'no release baked in',
+  `· ${releases.length} releases`,
+  `· ${starCount ?? 'no'} stars`,
 );

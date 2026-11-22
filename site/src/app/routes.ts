@@ -27,6 +27,12 @@ export const ROUTES: RouteMeta[] = [
       'Theodore for macOS (Apple Silicon) and Linux (x86_64, arm64; AppImage or .deb). The phone app for iPhone and Android, and the web app.',
   },
   {
+    path: '/releases',
+    title: 'Changelog — Theodore',
+    description:
+      'Every Theodore release, newest first: what got faster, what got fixed, what to know.',
+  },
+  {
     path: '/privacy',
     title: 'Privacy policy — Theodore',
     description:
