@@ -557,6 +557,7 @@ export function mockSnapshot(over: Partial<FleetSnapshot> = {}): FleetSnapshot {
   return {
     connection: 'connected',
     error: null,
+    welcomed: true,
     deviceId: 'dev-me',
     fingerprint: FINGERPRINT_ME,
     devices: mockDevices.map((d) => ({ ...d })),

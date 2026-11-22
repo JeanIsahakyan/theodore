@@ -8,6 +8,7 @@ import type { FleetSnapshot } from '../fleet/types';
 export const initialFleet: FleetSnapshot = {
   connection: 'off',
   error: null,
+  welcomed: false,
   deviceId: null,
   fingerprint: '',
   devices: [],
