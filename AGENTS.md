@@ -175,6 +175,7 @@ Read the doc before changing its area; keep it true when the change lands.
 | Grouping quality and speed evals | `docs/grouping-eval.md`, `docs/eval/` | `crates/grouping`, `apps/cli` (`theodore eval`) |
 | Code intelligence: symbols, LSP, grammars (design) | `docs/code-intel.md` | `crates/code-intel` (planned) |
 | Cloud (account server, later fleet) | `docs/cloud.md` | `cloud/` |
+| Website (theodore.cloud: pages, build, Pages deploy, domains) | `docs/website.md` | `site/` |
 
 Code layout:
 

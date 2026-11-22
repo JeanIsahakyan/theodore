@@ -5,7 +5,8 @@
 <h1 align="center">Theodore</h1>
 
 <p align="center">
-  <b>Review pull requests by meaning, not by file order.</b>
+  <b>Your coding agents keep working after you leave the desk.</b><br>
+  <a href="https://theodore.cloud">theodore.cloud</a> · <a href="https://theodore.cloud/download">Download</a>
 </p>
 
 <p align="center">
@@ -15,11 +16,14 @@
   macOS · Linux · local-first · keyboard-first
 </p>
 
-Theodore is a desktop app for code review. It pulls your pull requests into one
-inbox, checks each PR out into its own git worktree, and has the agent CLI you
-already use regroup the diff into the steps the change actually takes. You read
-it group by group, ask the agent about any line, run review skills, and turn
-what you agree with into comments. The agents help; you decide what goes out.
+Theodore is a desktop app that runs your coding agents and reviews their work.
+A *space* gives an agent its own worktree for one change; your phone follows it
+and answers its questions; your other computers can run spaces too. For review
+it pulls your pull requests into one inbox, checks each PR out into its own git
+worktree, and has the agent CLI you already use regroup the diff into the steps
+the change actually takes. You read it group by group, ask the agent about any
+line, run review skills, and turn what you agree with into comments. The agents
+help; you decide what goes out.
 
 ## Install
 
