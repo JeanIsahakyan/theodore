@@ -14,6 +14,13 @@
 # `workers_dev` stays on: installed apps built before the domain keep
 # calling the `*.prd-instance.workers.dev` URL, and everything is built
 # from the request's host, so both answer.
+#
+# Telemetry (docs/telemetry.md "Cloud"): THEODORE_OTLP_ENDPOINT (var, per
+# environment) and the secret THEODORE_OTLP_HEADERS ("api-key=<license key>"):
+#   wrangler secret put THEODORE_OTLP_HEADERS --env staging|production
+# (or the deploy steps pending in docs/cloud.md). Without both, nothing
+# leaves the Worker and the relay drops what it gets.
+# THEODORE_ENV names deployment.environment.name.
 name = "theodore-cloud"
 main = "src/index.ts"
 compatibility_date = "2026-11-01"
@@ -26,8 +33,17 @@ workers_dev = true
 name = "ORG_HUB"
 class_name = "OrgHub"
 
+# File transfer between devices (docs/cloud.md "Blobs"): encrypted chunks
+# in R2 under blobs/, dropped after 24 h by a lifecycle rule. The buckets and
+# the rule are made once by hand (docs/cloud.md "One-time setup"); a deploy
+# fails until the environment's bucket exists.
+[[r2_buckets]]
+binding = "BLOBS"
+bucket_name = "theodore-blobs"
+
 # Rate limits (src/index.ts): per client IP for the routes without a session,
-# per user for the org routes. Each environment has its own counters.
+# per user for the org routes, per client IP (tight) for the telemetry relay
+# without a token. Each environment has its own counters.
 [[ratelimits]]
 name = "RL_PUBLIC"
 namespace_id = "1001"
@@ -37,6 +53,11 @@ simple = { limit = 30, period = 60 }
 name = "RL_USER"
 namespace_id = "1002"
 simple = { limit = 120, period = 60 }
+
+[[ratelimits]]
+name = "RL_TELEMETRY"
+namespace_id = "1003"
+simple = { limit = 10, period = 60 }
 
 [[migrations]]
 tag = "v1"
@@ -49,12 +70,14 @@ routes = [
   { pattern = "api-staging.theodore.cloud", custom_domain = true },
   { pattern = "mcp-staging.theodore.cloud", custom_domain = true },
 ]
-vars = { WORKOS_CLIENT_ID = "client_01M5RM1W36AHHEGBE37QD3PS6K", WORKOS_API_BASE = "https://api.workos.com", WEB_ORIGINS = "https://app-staging.theodore.cloud,https://theodore-web-staging.prd-instance.workers.dev" }
+vars = { WORKOS_CLIENT_ID = "client_01M5RM1W36AHHEGBE37QD3PS6K", WORKOS_API_BASE = "https://api.workos.com", WEB_ORIGINS = "https://app-staging.theodore.cloud,https://theodore-web-staging.prd-instance.workers.dev", THEODORE_ENV = "staging", THEODORE_OTLP_ENDPOINT = "https://otlp.nr-data.net" }
 durable_objects.bindings = [{ name = "ORG_HUB", class_name = "OrgHub" }]
 kv_namespaces = [{ binding = "OAUTH_KV", id = "942fd282ce274706bee69d7054122a5e" }]
+r2_buckets = [{ binding = "BLOBS", bucket_name = "theodore-blobs-staging" }]
 ratelimits = [
   { name = "RL_PUBLIC", namespace_id = "1101", simple = { limit = 30, period = 60 } },
   { name = "RL_USER", namespace_id = "1102", simple = { limit = 120, period = 60 } },
+  { name = "RL_TELEMETRY", namespace_id = "1103", simple = { limit = 10, period = 60 } },
 ]
 
 [env.production]
@@ -64,12 +87,14 @@ routes = [
   { pattern = "api.theodore.cloud", custom_domain = true },
   { pattern = "mcp.theodore.cloud", custom_domain = true },
 ]
-vars = { WORKOS_CLIENT_ID = "client_01M5RMBK860S2JJZNWJDDSH0BM", WORKOS_API_BASE = "https://api.workos.com", WEB_ORIGINS = "https://app.theodore.cloud,https://theodore-web.prd-instance.workers.dev" }
+vars = { WORKOS_CLIENT_ID = "client_01M5RMBK860S2JJZNWJDDSH0BM", WORKOS_API_BASE = "https://api.workos.com", WEB_ORIGINS = "https://app.theodore.cloud,https://theodore-web.prd-instance.workers.dev", THEODORE_ENV = "production", THEODORE_OTLP_ENDPOINT = "https://otlp.nr-data.net" }
 durable_objects.bindings = [{ name = "ORG_HUB", class_name = "OrgHub" }]
 kv_namespaces = [{ binding = "OAUTH_KV", id = "e6b260ade48b4b3283ddd207f2a534ca" }]
+r2_buckets = [{ binding = "BLOBS", bucket_name = "theodore-blobs" }]
 ratelimits = [
   { name = "RL_PUBLIC", namespace_id = "1201", simple = { limit = 30, period = 60 } },
   { name = "RL_USER", namespace_id = "1202", simple = { limit = 120, period = 60 } },
+  { name = "RL_TELEMETRY", namespace_id = "1203", simple = { limit = 10, period = 60 } },
 ]
 
 # Local only, never deployed: `pnpm dev:mcp` (wrangler dev --env local) runs
@@ -79,10 +104,12 @@ ratelimits = [
 # MCP_KEY_WRAP secret (docs/cloud.md "MCP").
 [env.local]
 name = "theodore-cloud-local"
-vars = { WORKOS_CLIENT_ID = "client_01M5RM1W36AHHEGBE37QD3PS6K", WORKOS_API_BASE = "https://api.workos.com" }
+vars = { WORKOS_CLIENT_ID = "client_01M5RM1W36AHHEGBE37QD3PS6K", WORKOS_API_BASE = "https://api.workos.com", THEODORE_ENV = "local" }
 durable_objects.bindings = [{ name = "ORG_HUB", class_name = "OrgHub" }]
 kv_namespaces = [{ binding = "OAUTH_KV", id = "local-oauth-kv" }]
+r2_buckets = [{ binding = "BLOBS", bucket_name = "theodore-blobs-local" }]
 ratelimits = [
   { name = "RL_PUBLIC", namespace_id = "1901", simple = { limit = 30, period = 60 } },
   { name = "RL_USER", namespace_id = "1902", simple = { limit = 120, period = 60 } },
+  { name = "RL_TELEMETRY", namespace_id = "1903", simple = { limit = 10, period = 60 } },
 ]

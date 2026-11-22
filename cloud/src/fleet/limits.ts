@@ -119,6 +119,22 @@ export const MAX_ANY_SPACE_TEXT_CHARS = 20_000;
 /** `read_space.messages` (the target's default: 10). */
 export const MAX_READ_MESSAGES = 50;
 
+/**
+ * Blobs (`src/fleet/blobs.ts`): an end-to-end encrypted file goes through
+ * R2 in chunks of ≤ 4 MiB plaintext, each AEAD-sealed (+ 16 bytes tag); the
+ * cap leaves room for that and a little framing.
+ */
+export const BLOB_CHUNK_BYTES = 4 * 1024 * 1024 + 64;
+/** Chunks per blob (`x-theodore-chunks`), so a blob is ≤ 256 MiB. */
+export const BLOB_MAX_CHUNKS = 64;
+/** A blob id: 32 lowercase hex characters, drawn at random by the sender. */
+export const BLOB_ID = /^[0-9a-f]{32}$/;
+/** Per user per UTC day (one counter per org hub): uploaded bytes, chunks. */
+export const BLOB_DAY_BYTES = 1024 * 1024 * 1024;
+export const BLOB_DAY_CHUNKS = 2000;
+/** The R2 lifecycle rule drops an object this old (docs/cloud.md "Blobs"). */
+export const BLOB_TTL_HOURS = 24;
+
 export const codes = {
   BAD_SIGNATURE: 'fleet.bad_signature',
   UNKNOWN_SPACE: 'fleet.unknown_space',
@@ -150,6 +166,10 @@ export const codes = {
    * web app's, which a protocol-3 computer can't see, so can't trust; an op
    * its protocol doesn't have). */
   UPGRADE_REQUIRED: 'fleet.upgrade_required',
+  /** No such blob chunk for this org (`GET /v1/fleet/blobs/…`). */
+  BLOB_NOT_FOUND: 'fleet.blob_not_found',
+  /** The user's blob upload quota for today is spent. */
+  QUOTA: 'fleet.quota',
 } as const;
 
 /**

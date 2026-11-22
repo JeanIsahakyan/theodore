@@ -61,6 +61,7 @@ fn vectors_json() -> String {
             agent: Some("claude".into()),
             model: Some("opus".into()),
             effort: Some("high".into()),
+            attachments: vec![],
         },
     };
     let env = SignedEnvelope::seal(&req, &key);
@@ -84,6 +85,93 @@ fn vectors_json() -> String {
             "delegate": String::from_utf8_lossy(Domain::Delegate.tag()),
             "confirm": String::from_utf8_lossy(Domain::Confirm.tag()),
         },
+        "blobs": blob_vectors(),
     });
     serde_json::to_string_pretty(&v).expect("vectors serialize") + "\n"
+}
+
+/// Blob crypto vectors (docs/fleet.md "Files (blobs)"): fixed recipient
+/// seed, ephemeral secret, nonce prefix and blob id; the plaintext is
+/// `generator` applied to `0..size` (`"i*31 mod 251"`: byte i is
+/// `(i * 31) % 251`), so 4 MiB isn't embedded. Expected: the recipient's
+/// X25519 key, the blob key, every chunk's nonce, AAD and ciphertext
+/// SHA-256, and the `BlobRef` as it goes on the wire.
+fn blob_vectors() -> serde_json::Value {
+    use sha2::{Digest, Sha256};
+    use theodore_fleet_protocol::blob::{
+        CHUNK_BYTES, INFO, SealParams, blob_key, chunk_aad, chunk_nonce, seal_blob_with,
+        x25519_public_from_ed25519, x25519_secret_from_ed25519_seed,
+    };
+    use theodore_fleet_protocol::{DeviceKey, b64, unb64};
+
+    let recipient_seed = [11u8; 32];
+    let recipient = DeviceKey::from_seed_for_vectors(&recipient_seed).expect("seed key");
+    let recipient_pk: [u8; 32] = unb64(&recipient.public_key())
+        .expect("b64")
+        .try_into()
+        .expect("32 bytes");
+    let recipient_x = x25519_public_from_ed25519(&recipient_pk).expect("a point");
+    let recipient_x_sk = x25519_secret_from_ed25519_seed(&recipient_seed);
+    let pattern = |size: usize| -> Vec<u8> { (0..size).map(|i| ((i * 31) % 251) as u8).collect() };
+
+    let cases = [
+        ("empty", 0usize, "empty.bin", "application/octet-stream"),
+        ("ten bytes", 10, "ten.txt", "text/plain"),
+        (
+            "4 MiB + 3: two chunks",
+            CHUNK_BYTES + 3,
+            "big.bin",
+            "application/octet-stream",
+        ),
+    ];
+    let list: Vec<serde_json::Value> = cases
+        .iter()
+        .enumerate()
+        .map(|(n, (title, size, name, mime))| {
+            let k = n as u8 + 1;
+            let params = SealParams {
+                blob_id: hex::encode([0x10 * k; 16]),
+                eph_sk: [0x20 + k; 32],
+                nonce_prefix: [0x30 + k; 16],
+            };
+            let (eph_pk, key) = blob_key(&params.eph_sk, &recipient_x);
+            let plain = pattern(*size);
+            let (r, chunks) =
+                seal_blob_with(&params, &recipient.public_key(), &plain, name, mime).expect("seal");
+            let chunk_rows: Vec<serde_json::Value> = chunks
+                .iter()
+                .enumerate()
+                .map(|(i, c)| {
+                    let i = i as u32;
+                    serde_json::json!({
+                        "index": i,
+                        "nonce_b64": b64(&chunk_nonce(&params.nonce_prefix, i)),
+                        "aad_hex": hex::encode(chunk_aad(&r.blob_id, i, r.chunks)),
+                        "ciphertext_len": c.len(),
+                        "ciphertext_sha256": hex::encode(Sha256::digest(c)),
+                    })
+                })
+                .collect();
+            serde_json::json!({
+                "title": title,
+                "plaintext": { "size": size, "generator": "i*31 mod 251" },
+                "eph_secret_b64": b64(&params.eph_sk),
+                "eph_public_key_b64": b64(&eph_pk),
+                "key_b64": b64(&key),
+                "ref": r,
+                "chunks": chunk_rows,
+            })
+        })
+        .collect();
+    serde_json::json!({
+        "info": String::from_utf8_lossy(INFO),
+        "chunk_bytes": CHUNK_BYTES,
+        "recipient": {
+            "seed_b64": b64(&recipient_seed),
+            "public_key": recipient.public_key(),
+            "x25519_public_key_b64": b64(&recipient_x),
+            "x25519_secret_b64": b64(&recipient_x_sk),
+        },
+        "cases": list,
+    })
 }

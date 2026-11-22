@@ -505,6 +505,14 @@ impl Core {
         };
         let unknown = || refuse(codes::UNKNOWN_SPACE, "no such space on this device");
         let req_id = req.req_id.clone();
+        // Protocol 8 (docs/fleet.md "Files (blobs)"): not on this host yet,
+        // and never dropped on the floor.
+        if !req.op.attachments().is_empty() {
+            return Err(refuse(
+                codes::INVALID,
+                "attachments aren't supported yet on this device",
+            ));
+        }
         match &mut req.op {
             RemoteOp::StartSpace {
                 space,
@@ -516,6 +524,7 @@ impl Core {
                 effort,
                 parent,
                 depth,
+                ..
             } => {
                 if *mode > s.max_mode {
                     return Err(above(*mode));
@@ -599,6 +608,7 @@ impl Core {
                 agent,
                 model,
                 effort,
+                ..
             } => {
                 let local = self.fleet_hosted_local(space).ok_or_else(unknown)?;
                 if text.trim().is_empty() {
@@ -694,7 +704,8 @@ impl Core {
             | RemoteOp::AskSpace { .. }
             | RemoteOp::SendTo { .. }
             | RemoteOp::AnswerSpace { .. }
-            | RemoteOp::MergeChild { .. } => Ok(()),
+            | RemoteOp::MergeChild { .. }
+            | RemoteOp::ReadFile { .. } => Ok(()),
         }
     }
 
@@ -843,6 +854,7 @@ impl Core {
                 agent,
                 model,
                 effort,
+                ..
             } => match self.fleet_hosted_local(&space) {
                 // The picks passed the gate: as a local send's, from
                 // this turn on; queued while the space runs.
@@ -914,7 +926,8 @@ impl Core {
             | RemoteOp::AskSpace { .. }
             | RemoteOp::SendTo { .. }
             | RemoteOp::AnswerSpace { .. }
-            | RemoteOp::MergeChild { .. } => Err(refuse(codes::INTERNAL, "not a space op")),
+            | RemoteOp::MergeChild { .. }
+            | RemoteOp::ReadFile { .. } => Err(refuse(codes::INTERNAL, "not a space op")),
         }
     }
 
@@ -945,6 +958,7 @@ impl Core {
             effort,
             parent,
             depth,
+            ..
         } = req.op.clone()
         else {
             return Err(refuse(codes::INTERNAL, "not a start"));
