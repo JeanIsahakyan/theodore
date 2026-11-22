@@ -32,6 +32,7 @@ mod space_apply;
 mod space_guard;
 mod space_update;
 mod spaces;
+pub mod trailer;
 mod worktree;
 
 use std::collections::HashMap;

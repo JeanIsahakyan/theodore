@@ -20,24 +20,15 @@ export function Container({
   );
 }
 
-export type ButtonTone =
-  | 'primary'
-  | 'secondary'
-  | 'ghost'
-  /** On the night band: paper on blue. */
-  | 'paper'
-  | 'paper-ghost';
+export type ButtonTone = 'primary' | 'secondary' | 'ghost';
 
+/** The app's `Btn` tones (ui/src/ui/bits.tsx): primary is the accent. */
 const TONES: Record<ButtonTone, string> = {
   primary:
-    'bg-brand text-brand-foreground hover:bg-brand-hover shadow-[inset_0_1px_0_rgba(255,255,255,0.08),0_1px_2px_rgba(16,20,40,0.2)]',
+    'bg-accent text-accent-foreground hover:bg-accent-hover shadow-[inset_0_1px_0_rgba(255,255,255,0.12)]',
   secondary: 'bg-default text-foreground hover:bg-default-hover',
   ghost:
     'text-foreground bg-transparent shadow-[inset_0_0_0_1px_var(--separator)] hover:bg-default/60',
-  paper:
-    'bg-paper text-night hover:bg-white shadow-[0_1px_2px_rgba(0,0,0,0.3),0_8px_24px_-8px_rgba(0,0,0,0.5)]',
-  'paper-ghost':
-    'text-paper bg-white/[0.06] shadow-[inset_0_0_0_1px_rgba(246,243,236,0.22)] hover:bg-white/[0.12]',
 };
 
 /** A link that looks like the app's buttons (`Btn` in ui/src/ui/bits.tsx)
@@ -150,7 +141,6 @@ export function Feature({
   mock,
   flip = false,
   points,
-  signal = false,
   wide = false,
 }: {
   id: string;
@@ -161,8 +151,6 @@ export function Feature({
   flip?: boolean;
   /** Three short facts under the copy. */
   points?: { title: string; text: ReactNode }[];
-  /** The eyebrow in signal yellow: this is where the agent waits for you. */
-  signal?: boolean;
   /** A wider mock (a window with a sidebar and a pane): 8 columns of 12. */
   wide?: boolean;
 }) {
@@ -177,15 +165,7 @@ export function Feature({
       <Container>
         <div className="grid grid-cols-1 items-center gap-10 lg:grid-cols-12 lg:gap-14">
           <div className={`${text} ${flip ? 'lg:order-2' : ''}`}>
-            <p className="mb-3 flex items-center gap-2 text-[15px] font-medium text-ink-2">
-              {signal && (
-                <span
-                  aria-hidden
-                  className="size-2 rounded-full bg-signal ring-2 ring-signal/30"
-                />
-              )}
-              {eyebrow}
-            </p>
+            <p className="mb-3 text-[15px] font-medium text-ink-2">{eyebrow}</p>
             <h2
               id={`${id}-h`}
               className="text-[1.9rem] font-semibold leading-[1.1] tracking-[-0.02em] text-balance md:text-[2.6rem]"

@@ -66,17 +66,24 @@ export function Window({
 export function WindowHeader({
   title,
   chip,
+  chipPop = false,
   right,
 }: {
   title: string;
   chip?: string;
+  /** The chip lands with a pop (a state that just changed). */
+  chipPop?: boolean;
   right?: ReactNode;
 }) {
   return (
     <header className="flex min-h-12 shrink-0 items-center gap-2 border-b border-separator px-4 py-2">
       <span className="min-w-0 truncate text-sm font-semibold">{title}</span>
       {chip && (
-        <span className="shrink-0 rounded-full bg-default px-2 py-0.5 text-xs">
+        <span
+          key={chip}
+          className={`shrink-0 rounded-full px-2 py-0.5 text-xs ${chipPop ? 'demo-pop bg-accent-soft text-accent-soft-foreground' : 'bg-default'}`}
+          data-on={chipPop}
+        >
           {chip}
         </span>
       )}

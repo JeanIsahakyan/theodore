@@ -125,10 +125,12 @@ await writeFile(join(dist, 'releases.json'), JSON.stringify(releases));
 const today = new Date().toISOString().slice(0, 10);
 const sitemap = `<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-${ROUTES.map(
-  (r) =>
-    `  <url><loc>${SITE_URL}${r.path === '/' ? '/' : r.path}</loc><lastmod>${today}</lastmod></url>`,
-).join('\n')}
+${ROUTES.filter((r) => !r.noindex)
+  .map(
+    (r) =>
+      `  <url><loc>${SITE_URL}${r.path === '/' ? '/' : r.path}</loc><lastmod>${today}</lastmod></url>`,
+  )
+  .join('\n')}
 </urlset>
 `;
 await writeFile(join(dist, 'sitemap.xml'), sitemap);

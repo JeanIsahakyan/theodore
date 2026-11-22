@@ -73,7 +73,7 @@ function Entry({ r, latest }: { r: ReleaseNote; latest: boolean }) {
             v{r.version}
           </a>
           {latest && (
-            <span className="rounded-full bg-signal px-2 py-0.5 text-[11px] font-medium text-signal-ink">
+            <span className="rounded-full bg-accent-soft px-2 py-0.5 text-[11px] font-medium text-accent-soft-foreground">
               Latest
             </span>
           )}

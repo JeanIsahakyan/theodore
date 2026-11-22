@@ -1,0 +1,4 @@
+# Every space link is served by the one prerendered shell (200, not a
+# redirect): the page reads the id from the address (docs/website.md
+# "Space links").
+/s/* /s/index.html 200

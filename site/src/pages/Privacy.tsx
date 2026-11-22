@@ -28,7 +28,7 @@ export function Privacy() {
             Theodore Code is its companion app for iPhone, Android and the web,
             and the Theodore cloud relays between your devices. This website,
             theodore.cloud, is part of the same service. This policy covers all
-            of them. They are operated by Zhan Isaakian ("we"). Contact:{' '}
+            of them. They are operated by the Theodore team ("we"). Contact:{' '}
             <a href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a>.
           </p>
           <p>

@@ -1,8 +1,11 @@
 /**
  * A space with sub-spaces: the sidebar's Spaces section with its tree
  * (Sidebar.tsx), the chat's sub-space tool rows (SpaceToolRow.tsx) and the
- * live diff of the space beside it (SpaceDiff.tsx).
+ * live diff of the space beside it (SpaceDiff.tsx). A scene: the agent
+ * starts three sub-spaces, which appear in the tree one by one; the first
+ * merges and its lines are written into the diff; the third asks for you.
  */
+import { useRef } from 'react';
 import { Spinner } from '@heroui/react';
 import {
   ArrowUturnCcwLeft,
@@ -19,6 +22,7 @@ import {
 } from '@gravity-ui/icons';
 import { MockBtn, Window, WindowHeader } from '../components/Window';
 import { Ring } from '../shared/Ring';
+import { useScene } from '../demo/useScene';
 import {
   AgentText,
   Composer,
@@ -66,7 +70,7 @@ function Glyph({
     case 'done':
       return <Ring color="var(--accent)" check title="Merged" size={12} />;
     case 'asking':
-      return <CircleQuestion className="size-3.5 text-signal-ink" />;
+      return <CircleQuestion className="size-3.5 text-warning" />;
     case 'pr':
       return <CodePullRequest className="size-3.5 text-success" />;
   }
@@ -99,7 +103,17 @@ function SpaceRow({
   );
 }
 
-function Sidebar() {
+/** The glyph of each sub-space per step (SUBS: appear at 1, 2, 3; the
+ *  first merges at 4; the third asks at 9). */
+function subGlyph(i: number, step: number): 'running' | 'done' | 'asking' {
+  if (i === 0 && step >= 4) return 'done';
+  if (i === 2 && step >= 9) return 'asking';
+  return 'running';
+}
+
+const SUBS = ['Move the types', 'Port the parser', 'Fix the flaky test'];
+
+function Sidebar({ step }: { step: number }) {
   return (
     <>
       <div className="flex items-center gap-2 px-3 pb-2 pt-3 text-[13px] font-medium">
@@ -125,11 +139,15 @@ function Sidebar() {
           glyph="running"
           label="migrate-billing-schema"
           current
-          right="3"
+          right={String(Math.min(step, 3))}
         />
-        <SpaceRow glyph="done" label="Move the types" depth={1} />
-        <SpaceRow glyph="running" label="Port the parser" depth={1} />
-        <SpaceRow glyph="asking" label="Fix the flaky test" depth={1} />
+        {SUBS.map((name, i) => (
+          <div key={name} className="demo-row" data-on={step >= i + 1}>
+            <div>
+              <SpaceRow glyph={subGlyph(i, step)} label={name} depth={1} />
+            </div>
+          </div>
+        ))}
         <SpaceRow glyph="new" label="add-csv-export" />
         <SpaceRow glyph="pr" label="#123 rate-limits" />
         <SpaceRow glyph="idle" label="tidy-config" />
@@ -162,11 +180,13 @@ function SubSpaceRow({
       <span className="min-w-0 truncate font-medium">{name}</span>
       {stage && (
         <span
-          className={`inline-flex shrink-0 items-center gap-1 rounded-full px-1.5 py-0.5 text-[11px] ${
+          key={stage}
+          className={`demo-pop inline-flex shrink-0 items-center gap-1 rounded-full px-1.5 py-0.5 text-[11px] ${
             stage === 'asking'
-              ? 'bg-signal text-signal-ink'
+              ? 'bg-warning-soft text-warning-soft-foreground'
               : 'bg-default text-muted'
           }`}
+          data-on={stage !== 'running'}
         >
           {stage === 'running' && (
             <Spinner size="sm" color="current" className="size-2.5" />
@@ -185,19 +205,25 @@ function SubSpaceRow({
   );
 }
 
-/** The live diff pane: the files of the change so far, one hunk open. */
-function LiveDiff() {
+/** The live diff pane: the files of the change so far, one hunk open. The
+ *  files land as the merge arrives (step 4), then the lines are written in
+ *  one by one (steps 5 to 8). */
+function LiveDiff({ step }: { step: number }) {
   const files: [string, number, number][] = [
     ['db/migrations/0042_accounts.sql', 38, 0],
     ['src/billing/types.ts', 61, 12],
     ['src/billing/parser.ts', 14, 9],
   ];
+  const merged = step >= 4;
   return (
     <>
       <div className="flex items-center gap-2 border-b border-separator px-3 py-2 text-xs">
         <span className="font-semibold">Changes</span>
-        <span className="text-muted">3 files</span>
-        <span className="ms-auto flex items-center gap-1 tabular-nums">
+        <span className="text-muted">{merged ? '3 files' : '0 files'}</span>
+        <span
+          className="demo-fade ms-auto flex items-center gap-1 tabular-nums"
+          data-on={merged}
+        >
           <LineCounts added={113} removed={21} />
         </span>
       </div>
@@ -205,7 +231,9 @@ function LiveDiff() {
         {files.map(([f, a, d], i) => (
           <div
             key={f}
-            className={`flex items-center gap-2 rounded-lg px-2 py-1 ${i === 1 ? 'bg-default' : ''}`}
+            className={`demo-line flex items-center gap-2 rounded-lg px-2 py-1 ${i === 1 ? 'bg-default' : ''}`}
+            data-on={merged}
+            style={{ transitionDelay: merged ? `${i * 70}ms` : '0ms' }}
           >
             <span className="min-w-0 flex-1 truncate font-mono text-[11.5px]">
               {f.split('/').pop()}
@@ -224,7 +252,11 @@ function LiveDiff() {
           ['add', '  account: Account;'],
           ['ctx', '}'],
         ].map(([t, s], i) => (
-          <div key={i} className={`ln compact t-${t === 'ctx' ? 'none' : t}`}>
+          <div
+            key={i}
+            className={`demo-line ln compact t-${t === 'ctx' ? 'none' : t}`}
+            data-on={step >= 5 + Math.max(0, i - 1)}
+          >
             <span className="mark">
               {t === 'add' ? '+' : t === 'del' ? '−' : ''}
             </span>
@@ -236,96 +268,112 @@ function LiveDiff() {
   );
 }
 
+/** Steps: 1–3 the sub-spaces start; 4 the first merges; 5–8 its diff is
+ *  written in; 9 the third asks for you; 10 the agent waits. */
+const AT = [500, 1000, 1500, 2600, 3000, 3200, 3400, 3600, 4700, 5200];
+
 export function SpacesMock() {
+  const ref = useRef<HTMLDivElement>(null);
+  const step = useScene(ref, AT);
+  const stage = (i: number) =>
+    subGlyph(i, step) === 'done'
+      ? ('merged' as const)
+      : subGlyph(i, step) === 'asking'
+        ? ('asking' as const)
+        : ('running' as const);
   return (
-    <Window
-      tab="migrate-billing-schema"
-      tabIcon={
-        <Spinner size="sm" color="current" className="size-3 text-muted" />
-      }
-      sidebar={<Sidebar />}
-      aside={<LiveDiff />}
-      label="A space whose agent split the work into three sub-spaces, one merged, one running, one waiting for an answer; the sidebar lists them under their parent and the live diff shows the change so far"
-      className="min-h-[460px]"
-    >
-      <WindowHeader
-        title="Migrate the billing schema"
-        chip="Drafting"
-        right={
-          <>
-            <MockBtn
-              tone="ghost"
-              icon={<ArrowUturnCcwLeft />}
-              className="hidden xl:inline-flex"
-            >
-              Undo
-            </MockBtn>
-            <MockBtn icon={<Eye />} className="hidden sm:inline-flex">
-              Review
-            </MockBtn>
-            <MockBtn tone="primary" icon={<CodePullRequest />}>
-              Open PR
-            </MockBtn>
-          </>
+    <div ref={ref}>
+      <Window
+        tab="migrate-billing-schema"
+        tabIcon={
+          <Spinner size="sm" color="current" className="size-3 text-muted" />
         }
-      />
-      <div className="flex flex-1 flex-col gap-4 px-4 py-4">
-        <UserBubble>
-          Split the billing table into accounts and invoices. Keep the old reads
-          working until the backfill is done.
-        </UserBubble>
-        <div className="flex flex-col gap-2">
-          <AgentText>
-            Three independent parts. Starting them as sub-spaces so they run
-            side by side; I'll merge each one back here.
-          </AgentText>
-          <SubSpaceRow
-            icon={CodeFork}
-            verb="Sub-space:"
-            name="Move the types"
-            stage="merged"
-          />
-          <SubSpaceRow
-            icon={CodeFork}
-            verb="Sub-space:"
-            name="Port the parser"
-            stage="running"
-          />
-          <SubSpaceRow
-            icon={CodeFork}
-            verb="Sub-space:"
-            name="Fix the flaky test"
-            stage="asking"
-          />
-          <SubSpaceRow
-            icon={CodeMerge}
-            verb="Merged"
-            name="Move the types"
-            rest={
-              <span className="flex shrink-0 items-center gap-1.5 text-xs text-muted">
-                4 files <LineCounts added={120} removed={8} />
-              </span>
-            }
-          />
-          <SubSpaceRow
-            icon={Hourglass}
-            verb="Waiting for"
-            name="2 sub-spaces"
-            rest={
-              <span className="shrink-0 text-xs text-muted">
-                1 running · 1 waiting
-              </span>
-            }
-            busy
-          />
+        sidebar={<Sidebar step={step} />}
+        aside={<LiveDiff step={step} />}
+        label="A space whose agent split the work into three sub-spaces, one merged, one running, one waiting for an answer; the sidebar lists them under their parent and the live diff shows the change so far"
+        className="min-h-[460px]"
+      >
+        <WindowHeader
+          title="Migrate the billing schema"
+          chip="Drafting"
+          right={
+            <>
+              <MockBtn
+                tone="ghost"
+                icon={<ArrowUturnCcwLeft />}
+                className="hidden xl:inline-flex"
+              >
+                Undo
+              </MockBtn>
+              <MockBtn icon={<Eye />} className="hidden sm:inline-flex">
+                Review
+              </MockBtn>
+              <MockBtn tone="primary" icon={<CodePullRequest />}>
+                Open PR
+              </MockBtn>
+            </>
+          }
+        />
+        <div className="flex flex-1 flex-col gap-4 px-4 py-4">
+          <UserBubble>
+            Split the billing table into accounts and invoices. Keep the old
+            reads working until the backfill is done.
+          </UserBubble>
+          <div className="flex flex-col gap-2">
+            <AgentText>
+              Three independent parts. Starting them as sub-spaces so they run
+              side by side; I'll merge each one back here.
+            </AgentText>
+            {SUBS.map((name, i) => (
+              <div key={name} className="demo-row" data-on={step >= i + 1}>
+                <div>
+                  <SubSpaceRow
+                    icon={CodeFork}
+                    verb="Sub-space:"
+                    name={name}
+                    stage={stage(i)}
+                  />
+                </div>
+              </div>
+            ))}
+            <div className="demo-row" data-on={step >= 4}>
+              <div>
+                <SubSpaceRow
+                  icon={CodeMerge}
+                  verb="Merged"
+                  name="Move the types"
+                  rest={
+                    <span className="flex shrink-0 items-center gap-1.5 text-xs text-muted">
+                      4 files <LineCounts added={120} removed={8} />
+                    </span>
+                  }
+                />
+              </div>
+            </div>
+            <div className="demo-row" data-on={step >= 10}>
+              <div>
+                <SubSpaceRow
+                  icon={Hourglass}
+                  verb="Waiting for"
+                  name="2 sub-spaces"
+                  rest={
+                    <span className="shrink-0 text-xs text-muted">
+                      1 running · 1 waiting
+                    </span>
+                  }
+                  busy
+                />
+              </div>
+            </div>
+          </div>
+          <div className="mt-auto">
+            <Composer
+              placeholder="Add to the queue…"
+              chips={['Edit', 'Claude · Opus · High']}
+            />
+          </div>
         </div>
-        <div className="mt-auto">
-          <Composer
-            placeholder="Add to the queue…"
-            chips={['Edit', 'Claude · Opus · High']}
-          />
-        </div>
-      </div>
-    </Window>
+      </Window>
+    </div>
   );
 }
