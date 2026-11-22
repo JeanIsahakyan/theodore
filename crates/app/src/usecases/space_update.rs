@@ -47,16 +47,8 @@ impl Core {
     /// copy on this Mac: no network (the project's refresh fetches).
     pub async fn space_base_status(&self, space: &str) -> AppResult<SpaceBaseStatus> {
         let space = self.space_row(space).await?;
-        let project = self.space_project(&space).await?;
+        let repo = self.space_repo_offline(&space).await?;
         let git = &self.0.deps.git;
-        let repo = match project.path {
-            // A local folder's mirror fetches from disk.
-            Some(_) => self.ensure_project_cache(&project).await?,
-            None => git
-                .cached_repo(&project.repo)
-                .await?
-                .ok_or_else(|| AppError::NotFound(format!("a copy of {}", project.repo.slug())))?,
-        };
         let base_tip = git.resolve_ref(&repo, &space.base).await?;
         let behind = if base_tip == space.base_sha {
             0
@@ -66,6 +58,83 @@ impl Core {
                 .len() as u32
         };
         Ok(SpaceBaseStatus { base_tip, behind })
+    }
+
+    /// The space's project's copy on this Mac, without the network: a local
+    /// folder's mirror (fetched from disk), a host repo's clone as it is.
+    async fn space_repo_offline(&self, space: &Space) -> AppResult<std::path::PathBuf> {
+        let project = self.space_project(space).await?;
+        match project.path {
+            Some(_) => self.ensure_project_cache(&project).await,
+            None => self
+                .0
+                .deps
+                .git
+                .cached_repo(&project.repo)
+                .await?
+                .ok_or_else(|| AppError::NotFound(format!("a copy of {}", project.repo.slug()))),
+        }
+    }
+
+    /// The base the space's work really sits on when the worktree brought
+    /// the base's newer commits in by itself — the agent ran `git merge
+    /// origin/<base>`, or you did — which no Update told Theodore about
+    /// (docs/spaces.md §6 "The agent merged the base in"): the merge-base
+    /// of `head` and the base's tip as the copy in `repo` has it, when
+    /// that is ahead of `space.base_sha`.
+    ///
+    /// ```text
+    /// base    A ── B ── C                      base_sha = A
+    /// space   A ── work ── M (merge of C)      head = M's checkpoint
+    ///         merge-base(C, head) = C  ─▶ Some(C)
+    /// no merge:          merge-base(C, head) = A        ─▶ None
+    /// adopted branch behind its base: merge-base = fork ─▶ None (not ahead of A)
+    /// ```
+    ///
+    /// `None` when the tip is `base_sha`, when `head` has none of its newer
+    /// commits, when the merge-base isn't ahead of `base_sha` (a base
+    /// reset behind it), or when git can't tell: the ship, the diff and the
+    /// banner then go on with `base_sha` as before.
+    pub(crate) async fn base_merged_in(
+        &self,
+        space: &Space,
+        repo: &Path,
+        head: &Sha,
+    ) -> Option<Sha> {
+        let git = &self.0.deps.git;
+        let tip = git.resolve_ref(repo, &space.base).await.ok()?;
+        if tip == space.base_sha {
+            return None;
+        }
+        let merged = git.merge_base(repo, &tip, head).await.ok()?;
+        if merged == space.base_sha {
+            return None;
+        }
+        // Forward only: `base_sha` must be in the new base's history.
+        let behind = git.merge_base(repo, &space.base_sha, &merged).await.ok()?;
+        (behind == space.base_sha).then_some(merged)
+    }
+
+    /// `base_merged_in` from the copy on this Mac (no network), for the end
+    /// of a turn. `None` without a copy.
+    pub(crate) async fn base_merged_in_offline(&self, space: &Space, head: &Sha) -> Option<Sha> {
+        let repo = self.space_repo_offline(space).await.ok()?;
+        self.base_merged_in(space, &repo, head).await
+    }
+
+    /// The space's worktree as it is now (`space_snapshot`, uncommitted
+    /// edits and the agent's own commits included), else the last
+    /// checkpoint: archived, or its `.git` gone.
+    pub(crate) async fn space_state_now(&self, space: &Space) -> AppResult<Sha> {
+        let wt = Path::new(&space.worktree);
+        if !wt.exists() {
+            return Ok(space.head_sha.clone());
+        }
+        match self.0.deps.git.space_snapshot(wt).await {
+            Ok(sha) => Ok(sha),
+            Err(GitError::NotAWorktree(_)) => Ok(space.head_sha.clone()),
+            Err(e) => Err(e.into()),
+        }
     }
 
     /// Update from base: merges the base's tip into the space. Clean, the
