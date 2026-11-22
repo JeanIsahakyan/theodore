@@ -1,6 +1,12 @@
 import { Link } from '../app/router';
 import { Container, Prose } from '../components/ui';
-import { CONTACT_EMAIL, GITHUB, ISSUES, LICENSE } from '../content/links';
+import {
+  CONTACT_EMAIL,
+  GITHUB,
+  ISSUES,
+  CLOUD_LICENSE,
+  LICENSE,
+} from '../content/links';
 
 export const TERMS_EFFECTIVE = 'November 21, 2026';
 
@@ -21,11 +27,15 @@ export function Terms() {
 
           <h2>The software</h2>
           <p>
-            Theodore (desktop), Theodore Code (phone and web) and the cloud's
-            source code are open source under the{' '}
-            <a href={LICENSE}>MIT License</a>. The license governs the code: you
-            may use, copy, change and redistribute it, and it comes without
-            warranty. These terms add nothing to it and take nothing from it.
+            Theodore (desktop) and Theodore Code (phone and web) are open source
+            under the <a href={LICENSE}>MIT License</a>. The cloud's source code
+            (<code>cloud/</code>) is under the{' '}
+            <a href={CLOUD_LICENSE}>Functional Source License 1.1</a>{' '}
+            (FSL-1.1-ALv2): you may read, change and run it, including for your
+            own team, but not offer it as a competing commercial service; each
+            version becomes Apache 2.0 two years after its release. The licenses
+            govern the code and come without warranty. These terms add nothing
+            to them and take nothing from them.
           </p>
 
           <h2>The hosted cloud</h2>
