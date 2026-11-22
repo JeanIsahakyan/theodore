@@ -258,8 +258,10 @@ impl GitCli {
         };
         let name = format!("user.name={}", c.author.name);
         let email = format!("user.email={}", c.author.email);
-        // Author and committer are the user. Unsigned: Theodore can't
-        // answer a passphrase prompt (docs/spaces.md §6).
+        // Author and committer are the user; Theodore is a co-author.
+        // Unsigned: Theodore can't answer a passphrase prompt
+        // (docs/spaces.md §6).
+        let message = crate::trailer::with_co_author(&c.message);
         let mut args = vec![
             "-c",
             &name,
@@ -275,7 +277,7 @@ impl GitCli {
         if let Some(base) = merge_parent {
             args.extend(["-p", base]);
         }
-        args.extend(["-m", &c.message]);
+        args.extend(["-m", &message]);
         let sha = proc(repo, &askpass, &args)
             .run_text()
             .await?
@@ -444,10 +446,13 @@ impl GitCli {
                 });
             }
         }
+        // The merge commit is Theodore's too: the user's identity and
+        // hooks apply as for any commit in their folder, with the trailer.
+        let message = crate::trailer::with_co_author(message);
         let merged = proc(
             folder,
             &askpass,
-            &["merge", "--no-edit", "-m", message, END_OF_OPTIONS, &sha],
+            &["merge", "--no-edit", "-m", &message, END_OF_OPTIONS, &sha],
         )
         .run_raw()
         .await?;

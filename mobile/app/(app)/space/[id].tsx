@@ -39,7 +39,7 @@
  *                              "· 1 queued" on the strip's first line meanwhile
  *     refused / silent      ─▶ "Not sent · why" with Retry and Edit (text back)
  * (■) Stop while running, beside Send ─▶ confirm() ─▶ fleet.stopSpace
- * [⌸] Archive in the header (canArchive) ─▶ useArchive ─▶ Home, toast with Undo
+ * Archive: the drawer row's long-press menu (docs/mobile.md "Archive"), not here
  * running ─▶ the strip's first line: the plan's active step, else the newest
  *     live step, else (not mirrored) the newest log line, and a timer;
  *     waiting on a question ─▶ "Waiting for your answer ↓" scrolls to the card
@@ -56,7 +56,7 @@
  * Glass, iOS < 26: chrome blur, Android: Material 3 surface, web: a card);
  * the list is inset by its height and rides on the keyboard with it.
  */
-import { router, useLocalSearchParams } from 'expo-router';
+import { Redirect, router, useLocalSearchParams } from 'expo-router';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { StyleSheet, Text, View, type TextInputInstance } from 'react-native';
 import {
@@ -94,6 +94,7 @@ import type {
 import { useServices } from '../../../src/services';
 import { useGlassHeaderInset } from '../../../src/shell/glassHeader';
 import { backHome, spaceHref } from '../../../src/shell/navigate';
+import { resolveSpaceLink } from '../../../src/shell/spaceLink';
 import { useFleetState } from '../../../src/state/fleet';
 import { setSpaceMode, useCompose } from '../../../src/state/compose';
 import {
@@ -142,9 +143,7 @@ import {
   unmatchedByLines,
 } from '../../../src/ui/pending';
 import { ActivityStrip, useActivityStrip } from '../../../src/ui/ActivityStrip';
-import { canArchive } from '../../../src/ui/archive';
 import { Glass, confirm } from '../../../src/ui/native';
-import { useArchive } from '../../../src/ui/useArchive';
 import { QuestionCard } from '../../../src/ui/QuestionCard';
 import { SubSpaces } from '../../../src/ui/SubSpaces';
 import {
@@ -406,15 +405,15 @@ function StartingScreen({ id }: { id: string }) {
 function LiveSpaceScreen({ id }: { id: string }) {
   const { fleet } = useServices();
   const p = usePalette();
-  const space = useFleetState((s) => s.spaces.find((x) => x.space === id));
+  const spaces = useFleetState((s) => s.spaces);
+  const space = spaces.find((x) => x.space === id);
   const stored = useFleetState((s) => s.lines[id] ?? EMPTY_LINES);
-  const mirror = useFleetState((s) => s.mirrors[id]);
+  const mirrors = useFleetState((s) => s.mirrors);
+  const mirror = mirrors[id];
   const routed = useFleetState((s) => s.questions);
   const host = useFleetState((s) =>
     s.devices.find((d) => d.deviceId === space?.hostDevice),
   );
-  const devices = useFleetState((s) => s.devices);
-  const archive = useArchive('header');
   // Your messages the host hasn't shown yet (src/state/pending.ts).
   const pending = usePending(selectSends(id));
   const [loaded, setLoaded] = useState<SpaceLine[]>(EMPTY_LINES);
@@ -507,12 +506,17 @@ function LiveSpaceScreen({ id }: { id: string }) {
   const activity = useActivityStrip(stripProps);
 
   if (!space) {
+    // The web app's /space/<id> from a space link carries the space's id
+    // on its host (docs/mobile.md "Space links"): its fleet id, if the
+    // space is followed here.
+    const link = resolveSpaceLink(id, spaces, mirrors);
+    if (link.kind === 'found') return <Redirect href={spaceHref(link.space)} />;
     return (
       <View style={{ paddingTop: top }}>
         <MainHeader title="Space" />
         <Empty
-          title="This space isn't in your fleet any more"
-          hint="It was removed, or you no longer follow it."
+          title="This space isn't on your devices"
+          hint="It was removed, you no longer follow it, or it runs on a computer you don't follow from here."
         />
       </View>
     );
@@ -738,29 +742,12 @@ function LiveSpaceScreen({ id }: { id: string }) {
     </>
   );
 
-  // The header's Archive button, when this phone may ask the host for it.
-  const actions = canArchive(space, devices)
-    ? [
-        {
-          icon: 'archive' as const,
-          label: 'Archive space',
-          destructive: true,
-          onPress: () => {
-            void archive(space).then((done) => {
-              if (done) backHome();
-            });
-          },
-        },
-      ]
-    : undefined;
-
   return (
     <FileLinkProvider target={fileTarget}>
       <View className="flex-1 bg-background">
         <SpaceHeader
           title={spaceTitle(space)}
           subtitle={`on ${space.hostName} · ${STATUS_LABEL[space.status]} · ${MODE_LABEL[picked]}`}
-          actions={actions}
         />
         {chat ? (
           <Conversation

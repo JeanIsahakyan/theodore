@@ -280,7 +280,9 @@ async fn open_as_draft_and_an_edited_title() {
         calls[0]
             .1
             .body
-            .starts_with("Add CSV export\nQuote commas too.\n\n<!-- theodore-space:"),
+            .starts_with(
+                "Add CSV export\nQuote commas too.\n\nMade with [Theodore](https://theodore.cloud)\n\n<!-- theodore-space:"
+            ),
         "the goal, then the link back"
     );
     assert_eq!(
@@ -313,7 +315,9 @@ async fn the_first_pr_says_what_changed_in_english_not_the_goal() {
     assert_eq!(calls[0].1.title, "Export orders as CSV");
     let body = &calls[0].1.body;
     assert!(
-        body.starts_with("- Quote commas in exported fields.\n\n<!-- theodore-space:"),
+        body.starts_with(
+            "- Quote commas in exported fields.\n\nMade with [Theodore](https://theodore.cloud)\n\n<!-- theodore-space:"
+        ),
         "{body}"
     );
     assert!(!body.contains("экспорт"), "{body}");

@@ -10,7 +10,7 @@
  * ```
  */
 import type { SpaceView } from '../fleet/types';
-import { spaceIdFromPath } from '../shell/paths';
+import { isSheetPath, spaceIdFromPath } from '../shell/paths';
 import { spaceTitle } from './logic';
 
 /**
@@ -21,6 +21,24 @@ import { spaceTitle } from './logic';
  */
 export function swipeOpensOn(path: string): boolean {
   return path === '/' || spaceIdFromPath(path) !== null;
+}
+
+/**
+ * Whether a route change `from` ─▶ `to` closes an open drawer. A pick in the
+ * drawer (a space, Devices, Settings) opens a page: the drawer closes. A
+ * sheet opened from it (the Accounts sheet; iOS: a formSheet route) shows
+ * over the open drawer, and coming back from one leaves it as it was: only
+ * a pick that switches account closes it then (`useAccountsSheet`), or a
+ * tap outside / a swipe.
+ *
+ * ```text
+ * /  ─▶ /space/rs_1      closes       /  ─▶ /accounts-sheet   stays open
+ * /accounts-sheet ─▶ /   stays open   /  ─▶ /                 nothing
+ * ```
+ */
+export function drawerClosesOn(from: string, to: string): boolean {
+  if (from === to) return false;
+  return !isSheetPath(to) && !isSheetPath(from);
 }
 
 export type DayGroup = 'Today' | 'Yesterday' | 'Previous 7 days' | 'Older';

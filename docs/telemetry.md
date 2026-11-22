@@ -627,8 +627,9 @@ no choice recorded ─▶ nothing sent, nothing queued; a switch off ─▶ its 
   refusal code), sends (queued or not, latency, retries, surface), answers, plan
   approvals, picks, sheets, the activity strip, sub-space opens and read
   failures, saved-spaces restore (count, ms), trust changes, archive from the
-  phone (`space_archived`: `action` archive / unarchive, `surface` drawer /
-  header, whether the space was stopped first, outcome, code), diagnostics exports,
+  phone (`space_archived`: `action` archive / unarchive, `surface` `row_menu`:
+  the drawer row's long-press menu, whether the space was stopped first,
+  outcome, code), diagnostics exports,
   JS errors (`ui.uncaught`, `ui.unhandled_rejection`, `ui.render_crash`). The
   file flows (protocol v8) have their events in the catalog (`file_attached`,
   `file_uploaded`, `file_viewed`: kind, size, chunks, latency, outcome, and for
