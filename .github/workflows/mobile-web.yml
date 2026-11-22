@@ -19,6 +19,11 @@ name: Mobile web
 # and THEODORE_CLOUD_URL[_STAGING]. Staging falls back to the app's own
 # staging defaults when they are unset; production refuses to build without
 # them. Manual run: pick the environment; production deploys only from main.
+# Telemetry (docs/telemetry.md "Mobile"): THEODORE_POSTHOG_KEY / _HOST, the
+# same repository variables build.yml compiles into the desktop, become
+# EXPO_PUBLIC_THEODORE_POSTHOG_KEY / _HOST; unset: the web build has no
+# usage sink (error reports still go through the cloud). Nothing is sent
+# before the user chooses.
 
 on:
   push:
@@ -61,7 +66,14 @@ jobs:
           PROD_CLOUD_URL: ${{ vars.THEODORE_CLOUD_URL }}
           STAGING_CLIENT_ID: ${{ vars.THEODORE_WORKOS_CLIENT_ID_STAGING }}
           STAGING_CLOUD_URL: ${{ vars.THEODORE_CLOUD_URL_STAGING }}
+          POSTHOG_KEY: ${{ vars.THEODORE_POSTHOG_KEY }}
+          POSTHOG_HOST: ${{ vars.THEODORE_POSTHOG_HOST }}
         run: |
+          {
+            echo "POSTHOG_KEY=$POSTHOG_KEY"
+            echo "POSTHOG_HOST=$POSTHOG_HOST"
+            echo "BUILD_ENV=$TARGET"
+          } >> "$GITHUB_ENV"
           if [ "$TARGET" = production ]; then
             if [ -z "$PROD_CLIENT_ID" ] || [ -z "$PROD_CLOUD_URL" ]; then
               echo "::error::set the THEODORE_WORKOS_CLIENT_ID and THEODORE_CLOUD_URL repo variables: a production web build must not fall back to the staging defaults"
@@ -113,6 +125,10 @@ jobs:
         run: |
           if [ -n "$WORKOS_CLIENT_ID" ]; then export EXPO_PUBLIC_WORKOS_CLIENT_ID="$WORKOS_CLIENT_ID"; fi
           if [ -n "$CLOUD_URL" ]; then export EXPO_PUBLIC_CLOUD_URL="$CLOUD_URL"; fi
+          if [ -n "$POSTHOG_KEY" ]; then export EXPO_PUBLIC_THEODORE_POSTHOG_KEY="$POSTHOG_KEY"; fi
+          if [ -n "$POSTHOG_HOST" ]; then export EXPO_PUBLIC_THEODORE_POSTHOG_HOST="$POSTHOG_HOST"; fi
+          export EXPO_PUBLIC_THEODORE_BUILD_ENV="$BUILD_ENV"
+          export EXPO_PUBLIC_THEODORE_GIT_SHA="$GITHUB_SHA"
           pnpm -C mobile build:web
 
       # `/callback` and deep routes serve index.html through the Worker's

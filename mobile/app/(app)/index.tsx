@@ -62,9 +62,11 @@ import {
   takeHomeRestore,
   usePending,
 } from '../../src/state/pending';
+import { log, track } from '../../src/telemetry/log';
 import { startPicks } from '../../src/ui/agents';
+import { SharingCard } from '../../src/ui/SharingCard';
 import { ConnectionBanner } from '../../src/ui/ConnectionBanner';
-import { RUN_WARNING, errorText } from '../../src/ui/logic';
+import { RUN_WARNING, errorText, refusalCode } from '../../src/ui/logic';
 import { Button, Glass } from '../../src/ui/native';
 import { QuestionsBanner } from '../../src/ui/QuestionsBanner';
 import { usePalette } from '../../src/ui/theme';
@@ -132,6 +134,19 @@ export default function NewSpaceScreen() {
       picks,
     });
     router.push(spaceHref(id));
+    const startedAt = Date.now();
+    const facts = {
+      computer_kind: device.kind,
+      mode,
+      agent: picks.agent ?? null,
+      model: picks.model ?? null,
+      effort: picks.effort ?? null,
+    };
+    log.info('space start requested', {
+      op_id: id,
+      host_device: device.deviceId,
+      ...facts,
+    });
     fleet
       .startSpace({
         deviceId: device.deviceId,
@@ -145,10 +160,29 @@ export default function NewSpaceScreen() {
           void Haptics.notificationAsync(
             Haptics.NotificationFeedbackType.Success,
           );
+        track('space_started', {
+          ...facts,
+          ms: Date.now() - startedAt,
+          outcome: space.status === 'starting' ? 'timeout' : 'ok',
+          code: null,
+        });
         noteStarted(device.deviceId, project.id);
         startSettled(id, space.space);
       })
-      .catch((e: unknown) => startFailed(id, errorText(e)));
+      .catch((e: unknown) => {
+        const code = refusalCode(e);
+        track('space_started', {
+          ...facts,
+          ms: Date.now() - startedAt,
+          outcome: 'refused',
+          code,
+        });
+        log.warn('space start refused', {
+          op_id: id,
+          'error.code': code ?? 'fleet.refused',
+        });
+        startFailed(id, errorText(e));
+      });
   };
 
   const chips = device && project ? <ModelChip /> : null;
@@ -156,6 +190,7 @@ export default function NewSpaceScreen() {
   return (
     <View className="flex-1 bg-background" style={{ paddingTop: top }}>
       <MainHeader title={TITLE} onNewSpace={requestNewSpace} />
+      <SharingCard />
       <QuestionsBanner glass />
       <ConnectionBanner style={{ alignSelf: 'center', marginTop: 8 }} />
 

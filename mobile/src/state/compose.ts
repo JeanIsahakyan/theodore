@@ -31,8 +31,16 @@ import {
 } from '../ui/homeDraft';
 import { startableDevices } from '../ui/logic';
 import { chooseModel, closesAfter } from '../ui/modelPicker';
+import { track } from '../telemetry/log';
 import { useFleetState } from './fleet';
 import { lastPicksStore, type LastPicksStore } from './lastPicks';
+
+/** Telemetry: a pick, by what and where (never the project or device). */
+const picked = (
+  what: 'model' | 'effort' | 'mode' | 'computer' | 'project' | 'reset',
+  space: string | null,
+  extra: { agent?: string | null; model?: string | null; effort?: string | null; mode?: FleetMode } = {},
+) => track('pick_made', { what, surface: space === null ? 'home' : 'space', ...extra });
 
 export interface ComposeState {
   /** `<user>.<org>` the picks belong to; `null`: none (signed out). */
@@ -137,17 +145,20 @@ export function applyModel(
   const { agents, pick, current } = context(space);
   const next = chooseModel(agents, pick, current, agent, model);
   setPick(space, next);
+  picked('model', space, { agent: next.agent, model: next.model });
   return closesAfter(agents, next, current);
 }
 
 /** An effort picked; `null`: back to the default. */
 export function applyEffort(space: string | null, effort: string | null): void {
   setPick(space, { ...context(space).pick, effort });
+  picked('effort', space, { effort });
 }
 
 /** Reset to defaults: nothing picked. */
 export function resetPick(space: string | null): void {
   setPick(space, NO_PICK);
+  picked('reset', space);
 }
 
 /** Home: another computer; its project the last started in there, else
@@ -170,6 +181,7 @@ export function applyDevice(deviceId: string): void {
     if (!projectId) return {};
     return { home: chooseWhere(c.home, device, projectId) };
   });
+  picked('computer', null);
 }
 
 /** Home: where the next space runs. */
@@ -181,10 +193,12 @@ export function applyWhere(deviceId: string, projectId: string): void {
   useCompose.setState((c) => ({
     home: chooseWhere(c.home, device, projectId),
   }));
+  picked('project', null);
 }
 
 export function setHomeMode(mode: FleetMode): void {
   useCompose.setState((c) => ({ home: { ...c.home, mode } }));
+  picked('mode', null, { mode });
 }
 
 /**
@@ -207,6 +221,7 @@ export function setSpaceMode(space: string, mode: FleetMode): void {
   useCompose.setState((c) => ({
     spaceModes: { ...c.spaceModes, [space]: { mode, of: own } },
   }));
+  picked('mode', space, { mode });
 }
 
 /** A space was started there: first of the recent projects. */

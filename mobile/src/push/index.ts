@@ -10,6 +10,7 @@ import { AndroidImportance } from 'expo-notifications';
 import * as SecureStore from 'expo-secure-store';
 import { Platform } from 'react-native';
 import type { FleetClient } from '../fleet/types';
+import { log, track } from '../telemetry/log';
 import {
   ACTION_ALLOW,
   ACTION_DENY,
@@ -140,22 +141,33 @@ export async function registerForPush(fleet: FleetClient): Promise<void> {
     if (!perm.granted && perm.canAskAgain) {
       perm = await Notifications.requestPermissionsAsync();
     }
-    if (!perm.granted) return;
+    if (!perm.granted) {
+      track('push_registered', { outcome: 'skipped', reason: 'denied' });
+      return;
+    }
     const projectId: string | undefined =
       Constants.expoConfig?.extra?.eas?.projectId ??
       Constants.easConfig?.projectId;
     if (!projectId) {
       console.warn('push: no EAS projectId in app config; not registering');
+      track('push_registered', { outcome: 'skipped', reason: 'no_project' });
       return;
     }
     const token = await Notifications.getExpoPushTokenAsync({ projectId });
     await fleet.registerPush(token.data);
+    track('push_registered', { outcome: 'ok' });
+    log.info('push token registered');
     // The native token rotating means the Expo token may change: register again.
     tokenSub ??= Notifications.addPushTokenListener(() => {
       void registerForPush(fleet);
     });
   } catch (e) {
     console.warn('push: registration failed', e);
+    track('push_registered', { outcome: 'failed', reason: 'error' });
+    log.warn('push registration failed', {
+      'error.code': 'push.register_failed',
+      error: e instanceof Error ? e.message : String(e),
+    });
   }
 }
 
@@ -190,12 +202,18 @@ async function handle(
 
   const data = notification.request.content.data;
   const action = classifyResponse({ actionIdentifier, userText, data });
-  if (action.type === 'ignore') return;
+  log.info('notification response', { action: action.type });
+  if (action.type === 'ignore') {
+    track('notification_opened', { action: 'ignore', outcome: 'ok' });
+    return;
+  }
   if (action.type === 'open') {
+    track('notification_opened', { action: 'open', outcome: 'ok' });
     navigate(spacePath(action.space));
     return;
   }
   if (action.type === 'home') {
+    track('notification_opened', { action: 'home', outcome: 'ok' });
     navigate(HOME_PATH);
     return;
   }
@@ -214,11 +232,18 @@ async function handle(
         action.hostDevice,
       );
     }
+    track('notification_opened', { action: action.type, outcome: 'ok' });
     await Notifications.dismissNotificationAsync(
       notification.request.identifier,
     );
   } catch (e) {
     console.warn('push: answering from the notification failed', e);
+    track('notification_opened', { action: action.type, outcome: 'failed' });
+    log.warn('answering from the notification failed', {
+      'error.code': 'push.action_failed',
+      action: action.type,
+      error: e instanceof Error ? e.message : String(e),
+    });
     // Never lose the question silently: a local notification that opens it
     // (a confirm's opens Home, where it waits).
     await Notifications.scheduleNotificationAsync({

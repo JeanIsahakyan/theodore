@@ -25,7 +25,7 @@ iPhone / Android / browser                     Theodore cloud            your co
 | Drawer | Fleet spaces you started from here or follow, newest activity first by day (Today, Yesterday, Previous 7 days, Older), a status dot, search; Devices, Settings, the account and organization. No "New space" row: that is the header's ✎ |
 | Home (new space) | The goal in the composer; under the hint a project chip and a computer chip ("theodore on mac-A", a sheet each; the computer's sheet holds the mode up to its cap), in the composer the model chip (top 4, All models, Effort); last picks remembered (below, "New space") |
 | Devices | This device's fingerprint (large, copy) to show on the computer; a card per device, computers first (kind, online, OS · mode cap · agents, fingerprint), trust / untrust with the fingerprint confirm; on a computer, its auto mode per Claude via cloud device (Off / Auto Edit / Full auto, for 1 hour, until end of day or until turned off) |
-| Settings | Account card; Organization (switch), Devices, This device (fingerprint, copy), Appearance (Light / Dark / System), Notifications, About (version, server); sign out |
+| Settings | Account card; Organization (switch), Devices, This device (fingerprint, copy), Appearance (Light / Dark / System), Notifications, Privacy (Share usage data, Send error reports, What's collected: docs/telemetry.md "Mobile"), About (version, server, Copy / Share diagnostics); sign out |
 | Space | Its chat (or history lines), send a message any time: your bubble shows at once, "Sending…" over it, and the field clears ("Optimistic sends" below); while a turn runs the host queues it (the bubble reads "Queued", "· 1 queued" on the strip), Stop beside Send; not sent ─▶ "Not sent · why", Retry / Edit; the composer's one chip is the model's, its sheet also holds the next message's mode (shown in the header: "on mac-A · Running · Edit"); the running turn's steps; above the composer the activity strip ("Activity strip" below): what runs now and a timer, the turn's subagents and the space's sub-spaces, a tap opens the activity sheet; Approve / Revise a plan (Approve shows as your message at once), answer its question (the card collapses to "Answered: …" at once); a space started from Home opens here before the host answers ("Starting on mac-A…") |
 | Sub-space | A sub-space of a followed space, read from its host by its local id every 3 s while in front: its last messages, running text, question (answered there), a composer that messages it in its own mode ("Sub-spaces" below) |
 
@@ -160,6 +160,8 @@ mobile/
   src/keys/            DeviceKey: secure-store (iOS/Android) | WebCrypto + IndexedDB (web)
   src/push/            expo-notifications: register, categories, background answer
   src/state/           stores (zustand) the screens read
+  src/telemetry/       the logger, product events, redaction, the choice, the sinks
+                       (docs/telemetry.md "Mobile"); SharingCard on Home asks once
   src/ui/native/       the native kit: SwiftUI (iOS) / Compose (Android) / RN (web) controls
   src/gen/fleet.ts     copied from cloud/src/gen (generated from Rust; never edited)
 ```
@@ -618,7 +620,13 @@ Settings (/settings)
   ◐ Appearance     System ⌃⌄    native menu (iOS SwiftUI Menu, Android M3 dropdown)
   🔔 Notifications       (  ●)   haptic tick on change
   ──────
-  ⓘ About          1.0.0      › ─▶ /settings/about          version, server
+  Privacy                        docs/telemetry.md "Mobile"; each switch its own sink
+  ▥ Share usage data     (  ●)   off until chosen; "Not configured in this build" without a key
+  ✖ Send error reports   (  ●)
+  ▤ What's collected          › ─▶ /settings/collected      the event catalog, what is never sent
+  ──────
+  ⓘ About          1.0.0      › ─▶ /settings/about          version, server, Copy / Share diagnostics
+                                                            (the local log, redacted, for a report)
   ──────
   ⇥ Sign out (red)              system confirm ─▶ signed out
 
@@ -753,6 +761,10 @@ eas build --profile preview    ─▶ internal build (staging cloud) ─▶ Play
   the splash, the sign-in logo and the favicon.
 - Before pushing: `pnpm -C mobile typecheck`, `lint`, `test` (lefthook runs
   them; `format:check` and `build:web` are CI's).
+- Telemetry in dev: every record also goes to the console; set
+  `EXPO_PUBLIC_THEODORE_POSTHOG_KEY` / `_HOST` to try the usage sink against
+  a scratch PostHog project. Nothing is sent before the sharing card is
+  answered (docs/telemetry.md "Mobile").
 
 ### Web
 
@@ -782,6 +794,13 @@ The web origin must be in the cloud's CORS list (above).
 | `preview` | testers | internal (ad hoc iOS, APK Android) | staging, literal |
 | `production` | stores | store (AAB, App Store) | production, literal |
 | `apk` | installing by link, no store | internal (APK Android) | production, literal |
+
+Every profile's `env` also names `EXPO_PUBLIC_THEODORE_BUILD_ENV`. The PostHog
+key and host (`EXPO_PUBLIC_THEODORE_POSTHOG_KEY` / `_HOST`) are not literal:
+`release.yml` writes them into the production profile from the repository
+variables; a build by hand gets them from `eas env:create` (or the shell for
+a local `expo run`). Without them the build has no usage sink
+(docs/telemetry.md "Mobile").
 
 - The EAS project is `@jean_i/theodore` (id in `app.json`). Production's
   client id and cloud URL are literal in `eas.json`: both are public (the

@@ -474,6 +474,86 @@ Open issue ─▶ the text, as today ─▶ "Add your N files" ─▶ Show files
 - Not in **Save logs only**'s zip, and not available signed out (`save_attachment` waits for
   sign-in like every local write).
 
+## Mobile
+
+The Expo app (`mobile/`, docs/mobile.md) does the same in TypeScript:
+`mobile/src/telemetry/`. One record (`log.ts`), one redaction step
+(`redact.ts`), three sinks, every remote one behind the user's choice.
+
+```text
+log.info / warn / error(msg, fields) ─┐
+track(event, props)   kind="product"  ─┼─▶ redact (local) ─▶ ring   always, on the device
+reportError(code, e)  kind="error"    ─┘       │             (files on native, IndexedDB on web)
+JS errors: ErrorUtils / window.onerror /       ├─▶ redact (remote: names and paths hashed)
+unhandledrejection / ErrorBoundary             │     ├─▶ PostHog  product, "Share usage data"
+                                               │     └─▶ cloud relay ─▶ New Relic
+                                               │          warn + error, "Send error reports"
+no choice recorded ─▶ nothing sent, nothing queued; a switch off ─▶ its queue dropped
+```
+
+| | Local log (`ring.ts`) | Error reports (`relay.ts`) | Usage data (`posthog.ts`) |
+|---|---|---|---|
+| Levels | info+ (debug in dev builds) | warn, error, JS errors | product events |
+| Where | the last 2000 records, ≤ 1 MB, in the app's data storage; leaves the device only through Settings → About → Copy / Share diagnostics | `POST <cloud>/v1/telemetry/logs`, the cloud adds the New Relic key (docs/cloud.md) | `POST <host>/batch/`, plain HTTPS, no SDK |
+| Names (project, computer, branch, paths) | kept | `h:<hash>` / `<path:hash>` (hashed with the install id) | never present (the catalog has no such property) |
+| Identifier | none | `service.instance.id` = install id; `enduser.id` = `user_…` only with error-report consent 2 | `distinct_id` = `user_…` with usage consent 2, else an anonymous id |
+| Batches | written 2 s after a change, at once in the background | ≤ 25 records or 10 s, ≤ 64 KB a request, `Authorization: Bearer <session JWT>` when signed in | 50 or 30 s |
+| Retries | — | backoff on 5xx / 429 / network, 4 attempts; dropped on another 4xx, over 300 queued or after 30 min offline | the same, 500 queued |
+
+- **Catalog**: `mobile/src/telemetry/catalog.ts` lists every product event with
+  the properties it may carry; `track()` drops anything else at runtime and a
+  test checks every call names a listed event. Values are counts, durations,
+  flags, codes or values from a fixed set; no property may carry text. The list
+  is what Settings → Privacy → What's collected shows. Every event also carries
+  `app_version`, `channel` (`store`, `web`, `dev`), `platform`, `os`, `os_version`,
+  `build` (the commit, when CI passed `EXPO_PUBLIC_THEODORE_GIT_SHA`), `build_env`
+  and `$geoip_disable: true`.
+- **What is instrumented**: app start (cold / warm), sign-in and out, org switch,
+  the fleet link (connect with the welcome latency and attempts, disconnect with
+  its reason, protocol), every fleet request (op, target kind, latency, outcome
+  `ok` / `refused` / `timeout` + code, over the socket or HTTP; never the text),
+  push registration and notification actions, screen views (route names only),
+  the Home start flow (computer kind, mode, agent, model, effort, latency,
+  refusal code), sends (queued or not, latency, retries, surface), answers, plan
+  approvals, picks, sheets, the activity strip, sub-space opens and read
+  failures, saved-spaces restore (count, ms), trust changes, diagnostics exports,
+  JS errors (`ui.uncaught`, `ui.unhandled_rejection`, `ui.render_crash`).
+- **Redaction** (`redact.ts`, tested): the desktop's rules in TypeScript. Secrets
+  in any text (GitHub, GitLab, Atlassian, WorkOS, model-provider, AWS, Slack,
+  Google, npm and PostHog keys, Expo push tokens, JWTs, private keys, `Bearer`,
+  header and query-parameter values, `token=`-style pairs, `*_KEY=` assignments),
+  emails → `<email:hash>`, credential fields → `[redacted]`, content fields
+  (`text`, `goal`, `message`, `title`, `name`, `email`, `reply`, …) →
+  `[omitted: N bytes]`, long values cut. Remote only: fields naming a project,
+  space, device, host, branch, path, URL, login, user or account → `h:<hash>`;
+  our own ids (`dev_…`, `rs_…`, `req_…`, `user_…`) stay.
+- **Operation ids**: a fleet request's `req_…` is its `op_id` from "fleet request
+  sent" to "fleet request done / failed"; a start from Home uses its pending
+  route id.
+- **The choice**: the same words as the desktop ("Help improve Theodore", "Share
+  usage data", "Send error reports", "What's collected"), asked once after
+  sign-in as a card on Home while a sink can send and no choice is recorded;
+  changeable under Settings → Privacy, each switch independent; stored per
+  install (`theodore.telemetry.choice`), kept across sign-out. Turning a switch
+  on is consent 2; the app never had older words, so there is no "ask again"
+  prompt. The demo account is never linked.
+- **Identity**: `theodore.telemetry.install_id` (never changes: the hashing key,
+  `service.instance.id`), `theodore.telemetry.anon_id` (absent, so the install
+  id, until linking starts or the first sign-out; sign-out makes a new one),
+  the account's `user_…` from the session (`set_account` refuses anything else).
+  Sign-in with usage consent 2 ─▶ `$identify {distinct_id: user_…,
+  $anon_distinct_id, $set: build facts}`, once per account and run.
+- **Config**: `EXPO_PUBLIC_THEODORE_POSTHOG_KEY` / `_HOST` at build time (empty
+  key: no usage sink, the switch reads "Not configured in this build"); the relay
+  is `EXPO_PUBLIC_CLOUD_URL`, so error reports are always available;
+  `EXPO_PUBLIC_THEODORE_BUILD_ENV`. CI passes the repository's
+  `THEODORE_POSTHOG_KEY` / `_HOST` to the web build (`mobile-web.yml`) and into
+  the EAS production profile's env (`release.yml` `ios`); by hand,
+  `eas env:create` or the same env on `eas build` (docs/releasing.md "Mobile and
+  web"). No key is committed; the New Relic key never reaches the app.
+- **Export**: Settings → About → Copy diagnostics / Share diagnostics: an
+  app-info header and the ring as JSONL, redacted again with the remote rules.
+
 ## UI errors
 
 `window.onerror`, `unhandledrejection` and the top-level error boundary forward to `log_client`

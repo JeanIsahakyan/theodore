@@ -2,7 +2,8 @@
  * The signed-in shell: the drawer (web: the sidebar) around a stack with
  * Home (`/`, a new space) at its root. Groups don't change URLs: `/`,
  * `/space/<id>`, `/devices`, `/settings` (its pages `/settings/organization`,
- * `/settings/device`, `/settings/about`); `/start` redirects to `/`.
+ * `/settings/device`, `/settings/about`, `/settings/collected`); `/start`
+ * redirects to `/`.
  *
  * ```text
  * drawer ─ spaces by day, search, Devices, account / Settings
@@ -34,8 +35,9 @@ import { handleNotificationResponses } from '../../src/push';
 import { useServices } from '../../src/services';
 import { setActiveSpace } from '../../src/shell/AppProviders';
 import { glassHeader } from '../../src/shell/glassHeader';
-import { spaceIdFromPath } from '../../src/shell/paths';
+import { screenOfPath, spaceIdFromPath } from '../../src/shell/paths';
 import { PushedHeader } from '../../src/shell/PushedHeader';
+import { track } from '../../src/telemetry/log';
 import { liquidGlass } from '../../src/ui/native';
 import { usePalette } from '../../src/ui/theme';
 
@@ -50,6 +52,8 @@ export default function AppLayout() {
 
   useEffect(() => {
     setActiveSpace(spaceIdFromPath(path));
+    // The screen's name only (`space`, `settings/about`), never an id.
+    track('screen_viewed', { screen: screenOfPath(path) });
   }, [path]);
 
   useEffect(
@@ -132,6 +136,10 @@ export default function AppLayout() {
             options={pushed('This device')}
           />
           <Stack.Screen name="settings/about" options={pushed('About')} />
+          <Stack.Screen
+            name="settings/collected"
+            options={pushed("What's collected")}
+          />
           <Stack.Screen name="start" options={{ headerShown: false }} />
           <Stack.Screen name="model-picker" options={sheet('Model')} />
           <Stack.Screen name="computer-picker" options={sheet('Computer')} />

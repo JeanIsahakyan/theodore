@@ -96,6 +96,7 @@ import {
   sendSettled,
   usePending,
 } from '../../../src/state/pending';
+import { log, track } from '../../../src/telemetry/log';
 import { NO_PICK, sendPicks, spaceOwn } from '../../../src/ui/agents';
 import {
   APPROVED_TEXT,
@@ -114,6 +115,7 @@ import {
   errorText,
   mergeLines,
   questionFor,
+  refusalCode,
   spaceTitle,
 } from '../../../src/ui/logic';
 import {
@@ -496,11 +498,42 @@ function LiveSpaceScreen({ id }: { id: string }) {
     t: string,
     mode: FleetMode | null,
     with_: AgentPicks,
+    kind: 'send' | 'approve' = 'send',
   ) => {
+    const at = Date.now();
+    const retries = pending.find((x) => x.key === key)?.retries ?? 0;
     fleet
       .send(id, t, mode, with_)
-      .then((r) => sendSettled(id, key, r))
-      .catch((e: unknown) => sendFailed(id, key, errorText(e)));
+      .then((r) => {
+        track('message_sent', {
+          surface: 'space',
+          kind,
+          queued: r.queued,
+          ms: Date.now() - at,
+          retries,
+          outcome: 'ok',
+          code: null,
+        });
+        sendSettled(id, key, r);
+      })
+      .catch((e: unknown) => {
+        const code = refusalCode(e);
+        track('message_sent', {
+          surface: 'space',
+          kind,
+          queued: false,
+          ms: Date.now() - at,
+          retries,
+          outcome: 'failed',
+          code,
+        });
+        log.warn('send failed', {
+          op_id: key,
+          space: id,
+          'error.code': code ?? 'fleet.send_failed',
+        });
+        sendFailed(id, key, errorText(e));
+      });
   };
 
   const send = () => {
@@ -549,7 +582,11 @@ function LiveSpaceScreen({ id }: { id: string }) {
     setError(null);
     fleet
       .stopSpace(id)
-      .catch((e: unknown) => setError(errorText(e)))
+      .then(() => track('space_stopped', { outcome: 'ok', code: null }))
+      .catch((e: unknown) => {
+        track('space_stopped', { outcome: 'failed', code: refusalCode(e) });
+        setError(errorText(e));
+      })
       .finally(() => setStopping(false));
   };
 
@@ -568,9 +605,11 @@ function LiveSpaceScreen({ id }: { id: string }) {
         afterSeq: lines.at(-1)?.seq ?? 0,
       });
       toEnd();
-      dispatch(key, APPROVED_TEXT, build, picks);
+      track('plan_decided', { decision: 'approve' });
+      dispatch(key, APPROVED_TEXT, build, picks, 'approve');
     },
     onRevise: () => {
+      track('plan_decided', { decision: 'revise' });
       setSpaceMode(id, 'plan');
       setRevising(true);
       input.current?.focus();

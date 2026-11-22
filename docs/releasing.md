@@ -66,6 +66,16 @@ and `THEODORE_CLOUD_URL[_STAGING]` variables as the desktop builds. The web
 origins and `theodore-mobile://callback` also need registering in WorkOS (table
 below); one-time steps: `docs/mobile.md` "Build and release".
 
+Telemetry (docs/telemetry.md "Mobile"): CI must pass the repository's
+`THEODORE_POSTHOG_KEY` / `THEODORE_POSTHOG_HOST` (the variables `build.yml`
+compiles into the desktop) to the mobile builds as
+`EXPO_PUBLIC_THEODORE_POSTHOG_KEY` / `_HOST`: `mobile-web.yml` exports them
+for `expo export`, `release.yml`'s `ios` job writes them into the EAS
+production profile's `env` (eas.json can't read variables itself). Unset,
+the build has no usage sink; error reports go through the cloud relay
+(`POST /v1/telemetry/logs`) and never carry a New Relic key. An EAS build
+started by hand takes them from `eas env:create`.
+
 ## One-time: updater signing key (required before any release works)
 
 Done on 2026-10-25: the public key is in `tauri.conf.json`, both secrets are

@@ -35,6 +35,7 @@ describe('signed-in routes', () => {
     // Settings at /settings, its drill-down pages under it.
     expect(readdirSync(join(app, 'settings')).sort()).toEqual([
       'about.tsx',
+      'collected.tsx',
       'device.tsx',
       'index.tsx',
       'organization.tsx',

@@ -70,6 +70,7 @@ import { createKeyStore } from '../keys/store';
 import { storageKey, type SecretStorage } from '../keys/storage-types';
 import type { DeviceKey, KeyStore } from '../keys/types';
 import { initialFleet, useFleetState } from '../state/fleet';
+import { log, track } from '../telemetry/log';
 import { open, peek, seal, signHello } from './crypto';
 import type { DataStorage } from './data';
 import {
@@ -232,6 +233,13 @@ interface Pending {
   targetKey: string;
   settle: (a: Answer) => void;
   expiry: ReturnType<typeof setTimeout>;
+  /** Telemetry: the request id (its op id), the op, when it went out, the
+   *  target's kind; never the text. */
+  reqId: string;
+  op: string;
+  at: number;
+  targetKind: string;
+  done: boolean;
 }
 
 interface Tracked {
@@ -332,6 +340,45 @@ export function createFleetClient(
   let saveTimer: ReturnType<typeof setTimeout> | null = null;
   /** Storage writes, one at a time and in order (a clear after a write). */
   let ops: Promise<void> = Promise.resolve();
+  /** Telemetry: when the current dial started, when it was welcomed. */
+  let dialedAt = 0;
+  let welcomedAt = 0;
+  let dialAttempt = 0;
+
+  const kindOf = (deviceId: string): string =>
+    String(devices.find((d) => d.device_id === deviceId)?.info?.kind ?? '');
+
+  /** One `fleet_request` per request, whatever settles it first. */
+  const settledRequest = (p: Pending, a: Answer, over: 'socket' | 'http') => {
+    if (p.done) return;
+    p.done = true;
+    const ms = Math.max(0, deps.now() - p.at);
+    const outcome =
+      a.kind === 'ok' ? 'ok' : a.kind === 'timeout' ? 'timeout' : 'refused';
+    const code = a.kind === 'err' || a.kind === 'refused' ? a.code : null;
+    track('fleet_request', {
+      op: p.op,
+      target_kind: p.targetKind,
+      ms,
+      outcome,
+      code,
+      over,
+    });
+    const fields = {
+      op_id: p.reqId,
+      op: p.op,
+      target_device: p.target,
+      ms,
+      outcome,
+      code,
+    };
+    if (outcome === 'ok') log.info('fleet request done', fields);
+    else
+      log.warn('fleet request failed', {
+        ...fields,
+        'error.code': code ?? `fleet.${outcome}`,
+      });
+  };
 
   // ── publishing ──────────────────────────────────────────────────────────
   const publishSpaces = () =>
@@ -522,7 +569,12 @@ export function createFleetClient(
       leaveScope(false);
       forgetFleet();
     }
+    const restoreStart = deps.now();
     const list = await saved.load(next, device);
+    track('saved_spaces_restored', {
+      count: list.length,
+      ms: Math.max(0, deps.now() - restoreStart),
+    });
     scope = next;
     savedFor = device;
     const lines: Record<string, SpaceLine[]> = {};
@@ -601,9 +653,26 @@ export function createFleetClient(
     }
   };
 
-  const lost = (l: Link) => {
+  const disconnected = (
+    reason: 'lost' | 'replaced' | 'fatal' | 'background' | 'stopped' | 'account',
+    code: string | number | null = null,
+  ) => {
+    if (!welcomedAt) return;
+    const connectedMs = Math.max(0, deps.now() - welcomedAt);
+    welcomedAt = 0;
+    const fields = {
+      reason,
+      code: code === null ? null : String(code),
+      connected_ms: connectedMs,
+    };
+    track('fleet_disconnected', fields);
+    log.info('fleet disconnected', fields);
+  };
+
+  const lost = (l: Link, code: number | null = null) => {
     if (link !== l) return;
     closeLink();
+    disconnected('lost', code);
     setConnection('connecting');
     scheduleRedial();
   };
@@ -611,6 +680,8 @@ export function createFleetClient(
   const toFatal = async (l: Link, code: string) => {
     if (link !== l) return;
     closeLink();
+    disconnected('fatal', code);
+    log.warn('the cloud refused this device', { 'error.code': code });
     fatal = { token: l.token };
     if (code === 'fleet.removed') {
       // Gone from the cloud: the next link joins as a new device.
@@ -623,6 +694,7 @@ export function createFleetClient(
   const replaced = (l: Link) => {
     if (link !== l) return;
     closeLink();
+    disconnected('replaced', REPLACED_CLOSE);
     const probe = liveProbe;
     const twin = [...liveLinks].some((p) => p !== probe && p() === l.org);
     if (twin) {
@@ -691,6 +763,9 @@ export function createFleetClient(
       if (mine !== epoch || !wanted || fatal || heldOff || link) return;
       if (background && platform.closeInBackground) return;
       setConnection('connecting');
+      dialedAt = deps.now();
+      dialAttempt = attempt;
+      log.debug('fleet dialing', { attempt });
       const socket = platform.openSocket(wsUrl(deps.cloudUrl), token);
       const l: Link = {
         id: ++linkSeq,
@@ -730,7 +805,7 @@ export function createFleetClient(
               : 'fleet.unauthorized',
           );
         } else {
-          lost(l);
+          lost(l, code);
         }
       };
       socket.onmessage = (ev) => {
@@ -754,6 +829,10 @@ export function createFleetClient(
         }
       };
     } catch (e) {
+      log.warn('the fleet failed to start', {
+        'error.code': 'fleet.start_failed',
+        error: e instanceof Error ? e.message : String(e),
+      });
       setConnection(
         'error',
         e instanceof Error ? e.message : 'the fleet failed to start',
@@ -817,6 +896,23 @@ export function createFleetClient(
       l.handshake = null;
       attempt = 0;
       me = msg.device_id;
+      welcomedAt = deps.now();
+      {
+        const welcomeMs = Math.max(0, welcomedAt - dialedAt);
+        track('fleet_connected', {
+          welcome_ms: welcomeMs,
+          attempts: dialAttempt + 1,
+          protocol: PROTOCOL_VERSION,
+          resumed: tracked.size > 0,
+        });
+        log.info('fleet connected', {
+          welcome_ms: welcomeMs,
+          attempts: dialAttempt + 1,
+          protocol: PROTOCOL_VERSION,
+          device_id: me,
+          spaces: tracked.size,
+        });
+      }
       if (savedFor !== me) {
         // What was kept belongs to another device id: the cloud won't
         // let this one follow it.
@@ -921,6 +1017,7 @@ export function createFleetClient(
     if (!p) return;
     pending.delete(reqId);
     clearTimeout(p.expiry);
+    settledRequest(p, a, 'socket');
     const x = p.start ? tracked.get(p.space) : undefined;
     if (x) {
       if (a.kind === 'ok') {
@@ -1234,7 +1331,7 @@ export function createFleetClient(
     target: string,
     op: RemoteOp,
     start: boolean,
-  ): Promise<{ answer: Promise<Answer> }> => {
+  ): Promise<{ answer: Promise<Answer>; reqId: string }> => {
     const origin = ready();
     const pin = await pins.get(target);
     if (!pin) {
@@ -1257,27 +1354,57 @@ export function createFleetClient(
     );
     let settle!: (a: Answer) => void;
     const answer = new Promise<Answer>((r) => (settle = r));
-    pending.set(reqId, {
+    const p: Pending = {
       space: 'space' in op ? op.space : '',
       start,
       target,
       targetKey: pin.publicKey,
       settle,
-      expiry: setTimeout(() => pending.delete(reqId), t.pendingTtlMs),
+      expiry: setTimeout(() => {
+        pending.delete(reqId);
+        settledRequest(p, { kind: 'timeout' }, 'socket');
+      }, t.pendingTtlMs),
+      reqId,
+      op: op.op,
+      at: deps.now(),
+      targetKind: kindOf(target),
+      done: false,
+    };
+    pending.set(reqId, p);
+    log.debug('fleet request sent', {
+      op_id: reqId,
+      op: op.op,
+      target_device: target,
     });
     if (!sendMsg({ type: 'request', envelope })) {
-      clearTimeout(pending.get(reqId)!.expiry);
+      clearTimeout(p.expiry);
       pending.delete(reqId);
+      p.done = true;
+      log.warn('fleet request not sent', {
+        op_id: reqId,
+        op: op.op,
+        'error.code': 'fleet.not_connected',
+      });
       throw new FleetError(
         'not connected to the fleet, or the request is too large',
       );
     }
-    return { answer };
+    return { answer, reqId };
   };
 
-  const within = (answer: Promise<Answer>, ms: number): Promise<Answer> =>
+  /** `answer` within `ms`, else a timeout (the request stays pending for
+   *  its TTL: a late reply still lands, and counts once). */
+  const within = (
+    answer: Promise<Answer>,
+    ms: number,
+    reqId?: string,
+  ): Promise<Answer> =>
     new Promise((resolve) => {
-      const timer = setTimeout(() => resolve({ kind: 'timeout' }), ms);
+      const timer = setTimeout(() => {
+        const p = reqId ? pending.get(reqId) : undefined;
+        if (p) settledRequest(p, { kind: 'timeout' }, 'socket');
+        resolve({ kind: 'timeout' });
+      }, ms);
       void answer.then((a) => {
         clearTimeout(timer);
         resolve(a);
@@ -1294,8 +1421,8 @@ export function createFleetClient(
 
   /** A request to `host`: its verified ok value within the wait, or throws. */
   const steerOn = async (host: string, op: RemoteOp): Promise<unknown> => {
-    const { answer } = await request(host, op, false);
-    const a = await within(answer, t.replyWaitMs);
+    const { answer, reqId } = await request(host, op, false);
+    const a = await within(answer, t.replyWaitMs, reqId);
     const err = answerError(a);
     if (err) throw err;
     return a.kind === 'ok' ? a.value : null;
@@ -1336,28 +1463,57 @@ export function createFleetClient(
     if (!pin)
       throw new FleetError(`device ${hostDevice} isn't trusted on this device`);
     const key = await keys.deviceKey();
+    const reqId = `req_${platform.randomUUID()}`;
+    const at = deps.now();
     const envelope = await seal(
       {
-        req_id: `req_${platform.randomUUID()}`,
+        req_id: reqId,
         origin_device: origin,
         target_device: hostDevice,
         target_key: pin.publicKey,
-        issued_at_ms: deps.now(),
+        issued_at_ms: at,
         op,
       },
       key,
     );
-    const res = await deps.fetch(
-      `${deps.cloudUrl.replace(/\/+$/, '')}/v1/fleet/request`,
-      {
-        method: 'POST',
-        headers: {
-          authorization: `Bearer ${token}`,
-          'content-type': 'application/json',
+    log.debug('fleet request posted', {
+      op_id: reqId,
+      op: op.op,
+      target_device: hostDevice,
+    });
+    const httpDone = (outcome: 'ok' | 'refused', code: string | null) => {
+      track('fleet_request', {
+        op: op.op,
+        target_kind: kindOf(hostDevice),
+        ms: Math.max(0, deps.now() - at),
+        outcome,
+        code,
+        over: 'http',
+      });
+      if (outcome !== 'ok')
+        log.warn('fleet request over HTTP refused', {
+          op_id: reqId,
+          op: op.op,
+          'error.code': code ?? 'fleet.refused',
+        });
+    };
+    let res: Response;
+    try {
+      res = await deps.fetch(
+        `${deps.cloudUrl.replace(/\/+$/, '')}/v1/fleet/request`,
+        {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${token}`,
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify({ device_id: origin, envelope }),
         },
-        body: JSON.stringify({ device_id: origin, envelope }),
-      },
-    );
+      );
+    } catch (e) {
+      httpDone('refused', 'fleet.network');
+      throw e;
+    }
     const json: unknown = await res.json().catch(() => null);
     const body = isObj(json) ? json : {};
     const refusal = isObj(body.refused)
@@ -1367,8 +1523,10 @@ export function createFleetClient(
         : null;
     if (!res.ok || refusal || body.accepted === false) {
       const code = safeCode(refusal?.code ?? body.code);
+      httpDone('refused', code);
       throw new FleetError(`refused by the cloud: ${code}`, code);
     }
+    httpDone('ok', null);
   };
 
   const client: FleetClient = {
@@ -1385,6 +1543,7 @@ export function createFleetClient(
       wanted = false;
       heldOff = false;
       closeLink();
+      disconnected('stopped');
       if (superseded) return;
       setConnection('off');
       void flush();
@@ -1442,8 +1601,9 @@ export function createFleetClient(
       tracked.set(space, x);
       publishSpaces();
       let answer: Promise<Answer>;
+      let reqId: string;
       try {
-        ({ answer } = await request(
+        ({ answer, reqId } = await request(
           target.device_id,
           {
             op: 'start_space',
@@ -1464,7 +1624,7 @@ export function createFleetClient(
         publishSpaces();
         throw e;
       }
-      const a = await within(answer, t.startWaitMs);
+      const a = await within(answer, t.startWaitMs, reqId);
       // A start the host is slow to answer stays `starting`; its reply
       // still lands while the request is pending.
       if (a.kind !== 'ok' && a.kind !== 'timeout') throw answerError(a)!;
@@ -1528,12 +1688,16 @@ export function createFleetClient(
         publicKey,
         name: pinName(String(listed.info?.name ?? '')),
       });
+      track('device_trusted', { trusted: true, kind: kindOf(deviceId) });
+      log.info('device trusted', { device_id: deviceId });
       await verifyDelegations();
       await publishDevices();
     },
 
     async untrust(deviceId) {
       await pins.remove(deviceId);
+      track('device_trusted', { trusted: false, kind: kindOf(deviceId) });
+      log.info('device untrusted', { device_id: deviceId });
       await verifyDelegations();
       await publishDevices();
     },
@@ -1558,14 +1722,14 @@ export function createFleetClient(
     },
 
     async confirm(hostDevice, confirmId, allow) {
-      const { answer } = await request(
+      const { answer, reqId } = await request(
         hostDevice,
         { op: 'confirm', confirm_id: confirmId, allow },
         false,
       );
       // Sent: the card goes, whatever the host says.
       dropConfirm(confirmId);
-      const a = await within(answer, t.replyWaitMs);
+      const a = await within(answer, t.replyWaitMs, reqId);
       // Answered elsewhere first, or too late: nothing to tell.
       if (a.kind === 'err' && a.code === LATE_CONFIRM) return;
       const err = answerError(a);
@@ -1588,12 +1752,12 @@ export function createFleetClient(
         auto === 'off' || untilMs === null || !Number.isFinite(untilMs)
           ? null
           : Math.floor(untilMs);
-      const { answer } = await request(
+      const { answer, reqId } = await request(
         hostDevice,
         { op: 'set_mcp_auto', mcp_device: mcpDevice, auto, until_ms: until },
         false,
       );
-      const err = answerError(await within(answer, t.replyWaitMs));
+      const err = answerError(await within(answer, t.replyWaitMs, reqId));
       if (err) throw err;
     },
 
@@ -1648,6 +1812,7 @@ export function createFleetClient(
       push = null;
       epoch++;
       closeLink();
+      disconnected('account');
       leaveScope(true);
       forgetFleet();
       return;
@@ -1656,6 +1821,7 @@ export function createFleetClient(
     if (before && before.organizationId !== s.organizationId) {
       epoch++;
       closeLink();
+      disconnected('account');
       leaveScope(false);
       forgetFleet();
       fatal = null;
@@ -1692,6 +1858,7 @@ export function createFleetClient(
       void flush();
       if (platform.closeInBackground && link) {
         closeLink();
+        disconnected('background');
         setConnection('off');
       }
       return;

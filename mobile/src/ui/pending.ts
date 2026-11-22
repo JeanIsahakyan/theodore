@@ -55,6 +55,8 @@ export interface PendingSend {
   /** The newest history line when it was sent: only a later "Turn" line
    *  shows it was received (a host that mirrors no rows). */
   afterSeq: number;
+  /** How many times Retry sent it again (telemetry). */
+  retries: number;
 }
 
 /** A space being started from Home, before the host said which it is. */
@@ -121,6 +123,7 @@ export function newSend(input: NewSend): PendingSend {
     mode: input.mode ?? null,
     picks: input.picks ?? {},
     afterSeq: input.afterSeq ?? 0,
+    retries: 0,
   };
 }
 
@@ -145,6 +148,7 @@ export function retrySend(p: PendingSend, at: number): PendingSend {
   return {
     ...p,
     at,
+    retries: p.retries + 1,
     state: 'sending',
     position: null,
     messageId: null,
