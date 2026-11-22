@@ -24,8 +24,13 @@ Why it exists:
 | `/.well-known/oauth-protected-resource/mcp`, `/.well-known/oauth-authorization-server`, `/oauth/register`, `/oauth/authorize`, `/oauth/callback`, `/oauth/org`, `/oauth/token` | none (OAuth itself) | the authorization server for `/mcp` ("MCP" below) |
 | `GET /v1/fleet/ws` | bearer access JWT with `org_id`; from a browser, the subprotocol `bearer.<JWT>` (below) | WebSocket upgrade to the org's fleet hub (below, and `docs/fleet.md`) |
 | `POST /v1/fleet/request` | bearer access JWT with `org_id` | a one-shot signed fleet request, no socket (a phone's notification action): `{ device_id, envelope }` ─▶ `202 { accepted: true, req_id }` or `409 { accepted: false, req_id, refused: { code, message } }` (`400` for `fleet.bad_message`) |
+| `PUT /v1/fleet/blobs/{blob}/{i}` | bearer access JWT with `org_id` | one encrypted chunk of a file going to another device ("Blobs" below): body ≤ 4 MiB + 64, `x-theodore-chunks: N` ─▶ `204` |
+| `GET /v1/fleet/blobs/{blob}/{i}` | bearer access JWT with `org_id` | that chunk, `application/octet-stream`, the same org only ─▶ `200` or `404 fleet.blob_not_found` |
+| `DELETE /v1/fleet/blobs/{blob}` | bearer access JWT with `org_id` | every chunk of the blob, the same org only ─▶ `204` (already gone: `204`) |
 
-Body: JSON object, 64 KiB max. Errors: `{ "error": { "code", "message" } }`.
+Body: JSON object, 64 KiB max (a blob chunk: raw bytes, its own cap).
+Errors: `{ "error": { "code", "message" } }` (the blob routes also put
+`code` at the top: `{ "code", "error": { "code", "message" } }`).
 
 ### The web app (CORS, browser sockets)
 
@@ -43,6 +48,9 @@ OPTIONS /v1/orgs*, /v1/auth/select-organization, /v1/fleet/request, /v1/account
   Origin in WEB_ORIGINS ─▶ 204 + Allow-Origin <origin>, Allow-Methods GET, POST, DELETE, OPTIONS,
                                Allow-Headers Authorization, Content-Type, Max-Age 600
   any other Origin      ─▶ 204, no CORS headers (the browser stops)
+OPTIONS /v1/fleet/blobs/*
+  Origin in WEB_ORIGINS ─▶ 204 + Allow-Methods GET, PUT, DELETE, OPTIONS,
+                               Allow-Headers Authorization, Content-Type, x-theodore-chunks
 answers (and errors) on those routes ─▶ Allow-Origin <origin>, Vary: Origin
 ```
 
@@ -69,7 +77,9 @@ environment; over: `429 cloud.rate_limited`):
 | Bucket | Key | Limit | Routes |
 | --- | --- | --- | --- |
 | `RL_PUBLIC` | client IP (`cf-connecting-ip`) | 30 / min | `POST /v1/auth/select-organization`, `GET /v1/fleet/ws` |
-| `RL_USER` | user (`sub`, after the token checks out) | 120 / min | `GET /v1/orgs`, `POST /v1/orgs/personal`, `POST /v1/fleet/request`, `DELETE /v1/account` |
+| `RL_USER` | user (`sub`, after the token checks out) | 120 / min | `GET /v1/orgs`, `POST /v1/orgs/personal`, `POST /v1/fleet/request`, `/v1/fleet/blobs/*`, `DELETE /v1/account` |
+
+Blob uploads have a daily quota on top ("Blobs" below).
 
 ## Auth
 
@@ -227,6 +237,12 @@ Stable `area.kind` codes, same form as the app's `error.code`
 | `cloud.config` | 500 | `WORKOS_API_KEY` or `WORKOS_CLIENT_ID` missing |
 | `cloud.rate_limited` | 429 | over a rate limit (above) |
 | `cloud.internal` | 500 | anything unexpected, or a hub's purge failed (account deletion); the log names the error kind (and the deletion step), never the request |
+| `fleet.unauthorized` | 401 | a fleet route (`/v1/fleet/*`) without a valid bearer, or a deleted account |
+| `fleet.no_org` | 403 | a fleet route with a token that has no `org_id` |
+| `fleet.invalid` | 400 / 411 | a blob route: bad blob id, chunk index or `x-theodore-chunks`; a chunk count other than the blob's; a blob id another org owns; an empty chunk; `411` without `Content-Length` |
+| `fleet.too_large` | 413 | a blob chunk over 4 MiB + 64 |
+| `fleet.blob_not_found` | 404 | no such chunk for this org |
+| `fleet.quota` | 429 | the user's blob uploads today passed 1 GiB or 2000 chunks |
 
 ## Environments and secrets
 
@@ -237,6 +253,7 @@ Stable `area.kind` codes, same form as the app's `error.code`
 | WorkOS API key | Worker secret `WORKOS_API_KEY` | Worker secret `WORKOS_API_KEY` |
 | Web app origins (`WEB_ORIGINS` var) | `https://theodore-web-staging.prd-instance.workers.dev` | `https://theodore-web.prd-instance.workers.dev` |
 | Expo access token (optional) | Worker secret `EXPO_ACCESS_TOKEN` | Worker secret `EXPO_ACCESS_TOKEN` |
+| Blob bucket (`BLOBS` binding, R2) | `theodore-blobs-staging` | `theodore-blobs` |
 | Deployed by | push to `staging` | push to `main` |
 
 - The API key is set by the owner, never in git or CI:
@@ -283,7 +300,24 @@ Needed before the first deploy works; none of it is done yet.
 3. GitHub → Settings → Secrets and variables → Actions → **Secrets**:
    `CLOUDFLARE_API_TOKEN` (Workers edit permission) and
    `CLOUDFLARE_ACCOUNT_ID`.
-4. Later: a custom domain per Worker (`routes` in `wrangler.toml`). Until
+4. The blob buckets ("Blobs" below), one per environment, and the
+   lifecycle rule that drops a chunk after a day. **A deploy fails until
+   the environment's bucket exists** (`wrangler.toml` binds it), so this
+   comes before the first `cloud.yml` run that includes the blob routes:
+
+   ```
+   cd cloud
+   pnpm exec wrangler r2 bucket create theodore-blobs-staging
+   pnpm exec wrangler r2 bucket lifecycle add theodore-blobs-staging expire-blobs blobs/ --expire-days 1 -y
+   pnpm exec wrangler r2 bucket create theodore-blobs
+   pnpm exec wrangler r2 bucket lifecycle add theodore-blobs expire-blobs blobs/ --expire-days 1 -y
+   pnpm exec wrangler r2 bucket lifecycle list theodore-blobs          # check
+   ```
+
+   The `CLOUDFLARE_API_TOKEN` in CI needs no R2 permission: the deploy only
+   binds a bucket that exists. Local `wrangler dev` simulates
+   `theodore-blobs-local`; nothing to create.
+5. Later: a custom domain per Worker (`routes` in `wrangler.toml`). Until
    then the Workers answer on `workers.dev`.
 
 ## Fleet
@@ -531,6 +565,69 @@ give the same output):
 host-signed `started` event (else the space id); the question and options
 come from the host-signed ask the cloud verified.
 
+### Blobs: file transfer between devices
+
+A file from one device to another goes through R2, not through the hub's
+frames (256 KiB) nor its SQLite. The devices do the cryptography
+(`docs/fleet.md`): the file is cut into chunks of ≤ 4 MiB plaintext, each
+AEAD-sealed (+ 16 bytes tag) under a key the cloud never has, uploaded under
+a random blob id (32 lowercase hex), fetched once by the recipient, then
+deleted. The Worker moves ciphertext. Code: `src/fleet/blobs.ts`.
+
+```
+sender    ─PUT /v1/fleet/blobs/<blob>/<i>  x-theodore-chunks: N  Bearer JWT─▶ Worker
+  ─▶ verify (401 fleet.unauthorized, 403 fleet.no_org) ─▶ RL_USER (429 cloud.rate_limited)
+  ─▶ N in 1..=64, i < N, blob id 32 hex?                 no ─▶ 400 fleet.invalid
+  ─▶ Content-Length?  none ─▶ 411 fleet.invalid    over 4 MiB + 64 ─▶ 413 fleet.too_large
+  ─▶ blobs/_owner/<blob>  none ─▶ written {org_id, chunks}
+                          another org's, or another N ─▶ 400 fleet.invalid
+  ─▶ OrgHub(org) POST /v1/fleet/blob-quota {bytes}  over ─▶ 429 fleet.quota
+  ─▶ R2 put blobs/<org>/<blob>/<i> ◀─ request.body streamed (never buffered here)
+     custom metadata {uploader, org_id, chunks, uploaded_at}
+  ─▶ 204           a retry of the same <i> overwrites ─▶ 204
+recipient ─GET …/<blob>/<i>─▶ R2 get blobs/<org>/<blob>/<i> ─▶ 200 application/octet-stream,
+             Content-Length, streamed │ none for this org ─▶ 404 fleet.blob_not_found
+          ─DELETE …/<blob>─▶ list blobs/<org>/<blob>/ ─▶ delete them and the owner mark ─▶ 204
+             (nothing there, or another org's blob ─▶ 204, nothing deleted)
+R2 lifecycle rule, prefix blobs/, 1 day ─▶ whatever was never fetched or deleted
+```
+
+| | Value | Over it |
+| --- | --- | --- |
+| one chunk | 4 MiB + 64 bytes (`Content-Length`, required) | `413 fleet.too_large`; no length `411 fleet.invalid` |
+| chunks per blob (`x-theodore-chunks`) | 1 to 64, the same on every PUT of the blob | `400 fleet.invalid` |
+| per user per UTC day, per org | 1 GiB uploaded, 2000 chunks | `429 fleet.quota`; the chunk isn't stored |
+| a blob in R2 | 24 h (`BLOB_TTL_HOURS`, the lifecycle rule) | gone; the recipient deletes it sooner |
+
+- **Who may read.** Any member of the org: the chunk's key carries the
+  caller's `org_id`, so another org's GET is a `404`, its DELETE a no-op.
+  Within the org, the ciphertext is worthless without the key the devices
+  exchanged; the blob id is random and never listed.
+- **Owner mark.** `blobs/_owner/<blob>` (org ids never start with `_`)
+  pins a blob id to the first org and chunk count that used it, so a
+  second org can't add chunks under the same id and a sender can't change
+  `N` midway. `DELETE` removes it with the chunks; the lifecycle rule
+  covers it too.
+- **Quota.** Cloudflare's rate-limiting bindings count a minute at most,
+  so the day's bytes and chunks live in the org's `OrgHub`: table
+  `blob_quota (user_id, day, bytes, chunks)`, one row per user and UTC day,
+  yesterday's rows dropped on the next upload. One DO call per chunk; the
+  counter is taken before the R2 write, so a failed write still counts
+  (cheap over exact). A user in two orgs has a quota in each. A purge
+  (account deletion) drops the user's rows; a deleted account's upload is
+  `401 fleet.unauthorized` like its other calls.
+- **Streaming.** The chunk never sits in the Worker's memory: `request.body`
+  goes to `R2Bucket.put` as is (R2 takes its length from `Content-Length`,
+  which is why a chunked body is refused), and a GET answers with the R2
+  object's stream.
+- **No index of blobs.** The cloud doesn't list a user's blobs or tell the
+  recipient about one: the sender names the blob id, chunk count and key in
+  a signed fleet message (`docs/fleet.md`).
+
+Tests (`test/fleet-blobs.test.ts`): the routes against an in-memory R2
+(`FakeR2`) and a `BlobQuota` over node:sqlite behind the DO's own handler;
+the quota path through the real `OrgHub` shell.
+
 ### One-shot requests over HTTP
 
 `POST /v1/fleet/request` is a socket `request` without a socket (a
@@ -569,6 +666,7 @@ Storage (DO SQLite):
 | `push_tokens` | device ─ its Expo token, this minute's push count |
 | `delegations` | (origin, delegate) ─ the latest signed delegation, issued/expiry, revoked (tombstone) |
 | `gone_users` | a deleted account's user id, refused until `until_ms` (24 h) ("Account deletion") |
+| `blob_quota` | (user, UTC day) ─ bytes and chunks uploaded through `/v1/fleet/blobs` ("Blobs"); not part of a schema reset |
 | `meta` | `schema` = 7; on any other value every table but `devices`, `conns`, `push_tokens`, `delegations` and `gone_users` is dropped (older rows carry older signatures); a new table (`confirms`) needs no bump. `mcp_schema` = 2 for the MCP device's own tables ("MCP" below) |
 
 Limits:

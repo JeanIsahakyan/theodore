@@ -14,6 +14,7 @@
  * | DELETE /v1/account | deletes the caller's account and its data, 204 (src/account.ts) |
  * | GET  /v1/fleet/ws | WebSocket to the org's fleet hub (src/fleet/, docs/fleet.md) |
  * | POST /v1/fleet/request | a one-shot signed fleet request, no socket (a push action) |
+ * | PUT/GET /v1/fleet/blobs/{blob}/{i}, DELETE /v1/fleet/blobs/{blob} | encrypted file chunks through R2 (src/fleet/blobs.ts) |
  * | POST /mcp, /oauth/*, /.well-known/oauth-* | MCP for Claude, with OAuth (src/mcp/oauth.ts) |
  *
  * Rate limits (Cloudflare's rate-limiting bindings; 429 `cloud.rate_limited`):
@@ -22,8 +23,9 @@
  *
  * CORS: only for the web app's origins (`WEB_ORIGINS`), only on the routes
  * it calls (`/v1/orgs*`, `/v1/auth/select-organization`,
- * `/v1/fleet/request`, `/v1/account`); no credentials, `Authorization` and
- * `Content-Type`.
+ * `/v1/fleet/request`, `/v1/fleet/blobs/*`, `/v1/account`); no credentials,
+ * `Authorization` and `Content-Type` (the blob routes: `x-theodore-chunks`
+ * and `PUT` too).
  *
  * ```text
  * app sign-in ─▶ 403 organization_selection_required {pending_authentication_token, organizations}
@@ -36,6 +38,12 @@ import { deleteAccount } from './account';
 import { bearer, verifierFor, type Caller } from './auth';
 import { field, readJson } from './body';
 import { CloudError, errorResponse, json } from './errors';
+import {
+  BLOBS_PATH,
+  blobRoute,
+  CHUNKS_HEADER,
+  type BlobBucket,
+} from './fleet/blobs';
 import {
   fleetConnect,
   fleetRequest,
@@ -51,6 +59,8 @@ export interface Env extends McpBindings {
   WORKOS_CLIENT_ID: string;
   WORKOS_API_BASE?: string;
   ORG_HUB?: DurableObjectNamespace;
+  /** The R2 bucket for file transfer (`/v1/fleet/blobs/*`). */
+  BLOBS?: R2Bucket;
   /** Per client IP: routes without a session, and fleet upgrades. */
   RL_PUBLIC?: RateLimit;
   /** Per signed-in user: the org routes and one-shot fleet requests. */
@@ -71,6 +81,8 @@ export interface Deps {
   verify: (token: string) => Promise<Caller>;
   /** The org's fleet hub; absent: the fleet route answers cloud.config. */
   hub?: HubFor;
+  /** The blob bucket; absent: the blob routes answer cloud.config. */
+  blobs?: BlobBucket;
   /** `false`: over the limit for `key` in `bucket`. Absent: no limits. */
   limit?: (bucket: 'public' | 'user', key: string) => Promise<boolean>;
   /** Origins of the web app (set by `handle` from its argument). */
@@ -93,6 +105,7 @@ const corsPath = (path: string) =>
   path.startsWith('/v1/orgs/') ||
   path === '/v1/auth/select-organization' ||
   path === '/v1/fleet/request' ||
+  path.startsWith(BLOBS_PATH) ||
   path === '/v1/account';
 
 /** CORS headers for an allowed origin; none for any other. */
@@ -108,11 +121,19 @@ function corsHeaders(
   return { 'access-control-allow-origin': origin, vary: 'Origin' };
 }
 
-const PREFLIGHT = {
-  'access-control-allow-methods': 'GET, POST, DELETE, OPTIONS',
-  'access-control-allow-headers': 'Authorization, Content-Type',
-  'access-control-max-age': '600',
-};
+/** What a preflight may use on `path`: the blob routes PUT with their header. */
+const preflight = (path: string) =>
+  path.startsWith(BLOBS_PATH)
+    ? {
+        'access-control-allow-methods': 'GET, PUT, DELETE, OPTIONS',
+        'access-control-allow-headers': `Authorization, Content-Type, ${CHUNKS_HEADER}`,
+        'access-control-max-age': '600',
+      }
+    : {
+        'access-control-allow-methods': 'GET, POST, DELETE, OPTIONS',
+        'access-control-allow-headers': 'Authorization, Content-Type',
+        'access-control-max-age': '600',
+      };
 
 async function within(
   deps: Deps,
@@ -143,6 +164,7 @@ export function depsFor(env: Env): Deps {
     apiBase,
     verify: verifierFor(apiBase, env.WORKOS_CLIENT_ID),
     hub: ns ? (orgId) => ns.get(ns.idFromName(orgId)) : undefined,
+    blobs: env.BLOBS,
     oauthKv: env.OAUTH_KV,
     limit: async (bucket, key) => {
       const rl = bucket === 'public' ? env.RL_PUBLIC : env.RL_USER;
@@ -244,7 +266,7 @@ export async function handle(
     // A preflight from anywhere else gets no CORS headers: the browser stops.
     return new Response(null, {
       status: 204,
-      headers: cors ? { ...cors, ...PREFLIGHT } : {},
+      headers: cors ? { ...cors, ...preflight(path) } : {},
     });
   }
   return withCors(await dispatch(request, path, deps, webOrigins), cors);
@@ -257,6 +279,17 @@ async function dispatch(
   webOrigins: readonly string[],
 ): Promise<Response> {
   try {
+    if (path.startsWith(BLOBS_PATH)) {
+      // A chunk is far over MAX_BODY_BYTES and never read here: it streams
+      // to R2, capped by its own Content-Length check.
+      const d = deps();
+      return await blobRoute(request, path, {
+        verify: d.verify,
+        bucket: d.blobs,
+        hub: d.hub,
+        rateLimit: (userId) => within(d, 'user', userId),
+      });
+    }
     const methods = routes[path];
     if (!methods) throw new CloudError(404, 'cloud.not_found', 'no such route');
     const handler = methods[request.method];
