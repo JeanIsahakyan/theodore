@@ -11,7 +11,7 @@ import { usePathname, type Href } from 'expo-router';
 import type { ReactNode } from 'react';
 import { Pressable, View } from 'react-native';
 import { openFromDrawer } from '../shell/navigate';
-import { useDrawer } from './drawer-context';
+import { useDrawer, useDrawerFollowsRoute } from './drawer-context';
 import { DrawerContent } from './drawer-content';
 
 const EASE = '0.3s cubic-bezier(0.32, 0.72, 0, 1)';
@@ -19,6 +19,7 @@ const EASE = '0.3s cubic-bezier(0.32, 0.72, 0, 1)';
 export function AppShell({ children }: { children: ReactNode }) {
   const { isOpen, closeDrawer } = useDrawer();
   const path = usePathname();
+  useDrawerFollowsRoute();
   return (
     <View className="h-dvh w-full flex-row bg-sidebar">
       <Pressable

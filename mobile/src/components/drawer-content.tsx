@@ -50,7 +50,6 @@ import { spaceHref } from '../shell/navigate';
 import { useFleetState } from '../state/fleet';
 import { initials, spaceDot, spaceSections, type SpaceDot } from '../ui/drawer';
 import { useAccounts } from './accounts/use-accounts';
-import { useDrawer } from './drawer-context';
 import { useSheet } from './pickers/sheet-host';
 import { UNREACHABLE_TITLE } from '../ui/load';
 import { spaceTitle } from '../ui/logic';
@@ -321,7 +320,6 @@ export function DrawerContent({
   const p = usePalette();
   const path = usePathname();
   const { fleet } = useServices();
-  const { closeDrawer } = useDrawer();
   const accountsSheet = useSheet('accounts');
   const spaces = useFleetState((s) => s.spaces);
   const archive = useArchive('row_menu');
@@ -433,12 +431,10 @@ export function DrawerContent({
         />
         <View className="mx-2 flex-row items-center gap-1 pr-1">
           <AccountLine
-            onPress={() => {
-              // iOS: the sheet is a route over the stack; the drawer closes
-              // under it. Android and web draw it in place.
-              closeDrawer();
-              accountsSheet.open();
-            }}
+            // The sheet shows over the open drawer (iOS: a formSheet route,
+            // Android and web: in place); a switch closes the drawer, a
+            // dismissed sheet leaves it (docs/mobile.md "Several accounts").
+            onPress={accountsSheet.open}
           />
           {accountsSheet.element}
           <Pressable

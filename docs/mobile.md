@@ -225,10 +225,13 @@ over one `AuthKitClient` per account).
 ```text
 drawer bottom
  ▢ Devices
- (JI) Jean · Personal      ⇅  ⚙        tap the row: the Accounts sheet; ⚙: Settings
+ (JI) Jean · Personal      ⇅  ⚙        tap the row: the Accounts sheet over the drawer,
+                                        which stays open behind it; ⚙: Settings
 
 Accounts (the sheet: iOS formSheet route /accounts-sheet, Android Compose
-          ModalBottomSheet in place, web a modal; Settings › Accounts opens the same)
+          ModalBottomSheet in place, web a modal; Settings › Accounts opens the same;
+          dismissed ─▶ the drawer as it was; a switch (org, new account, sign out)
+          ─▶ the drawer closes as it happens)
   (JI) Jean
        Personal                         ✓   the account and its orgs; tap an org: switch to it
        Acme Studio
@@ -429,6 +432,8 @@ web            sidebar beside the stack (md+), over it with a scrim (narrow)
 
 drawer pick on Home ─▶ push [Home, pick]     elsewhere ─▶ replace [Home, pick]
 new space (✎, the header) ─▶ dismissTo Home  bell ─▶ the first waiting space
+route change ─▶ to a page: the drawer closes   to or from a sheet route: it stays
+   (drawerClosesOn, src/ui/drawer.ts; useDrawerFollowsRoute in the shell)
 ```
 
 | Piece | File |

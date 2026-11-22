@@ -5,16 +5,11 @@
  */
 import { router, type Href } from 'expo-router';
 import { useRef } from 'react';
+import { SHEET_PATHS } from '../../shell/paths';
 import { track } from '../../telemetry/log';
 import type { SheetHandle, SheetKind } from './types';
 
-const PATHS: Record<SheetKind, string> = {
-  model: '/model-picker',
-  computer: '/computer-picker',
-  project: '/project-picker',
-  activity: '/activity-sheet',
-  accounts: '/accounts-sheet',
-};
+const PATHS: Record<SheetKind, string> = SHEET_PATHS;
 
 export function sheetHref(kind: SheetKind, space?: string | null): Href {
   const path = PATHS[kind];
