@@ -73,7 +73,7 @@ jobs:
 
       - name: deploy production
         if: env.CAN_DEPLOY == 'true' && github.event_name != 'pull_request'
-        run: pnpm -C site dlx wrangler@4 pages deploy dist --project-name theodore-site --branch main --commit-dirty=true
+        run: pnpm -C site dlx wrangler@4 pages deploy site/dist --project-name theodore-site --branch main --commit-dirty=true
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -82,7 +82,7 @@ jobs:
         if: env.CAN_DEPLOY == 'true' && github.event_name == 'pull_request'
         id: preview
         run: |
-          out=$(pnpm -C site dlx wrangler@4 pages deploy dist --project-name theodore-site --branch "${{ github.head_ref }}" --commit-dirty=true)
+          out=$(pnpm -C site dlx wrangler@4 pages deploy site/dist --project-name theodore-site --branch "${{ github.head_ref }}" --commit-dirty=true)
           echo "$out"
           url=$(echo "$out" | grep -Eo 'https://[a-z0-9.-]+\.pages\.dev' | tail -1)
           echo "url=$url" >> "$GITHUB_OUTPUT"
