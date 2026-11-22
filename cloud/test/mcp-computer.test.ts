@@ -371,7 +371,12 @@ describe('space_send', () => {
       { device: 'mac', space: LOCAL, message: 'Go on' },
       { message: 'msg_1', extra: 'dropped' },
     );
-    expect(body.op).toEqual({ op: 'send_to', space: LOCAL, message: 'Go on' });
+    expect(body.op).toEqual({
+      op: 'send_to',
+      space: LOCAL,
+      message: 'Go on',
+      attachments: [],
+    });
     expect(out.v).toEqual({
       computer: { device: mac.id, name: 'mac' },
       space: LOCAL,
@@ -454,7 +459,12 @@ describe('space_send', () => {
       { device: mac.id, space: rs, message: 'x' },
       { message: 'm' },
     );
-    expect(body.op).toEqual({ op: 'send_to', space: rs, message: 'x' });
+    expect(body.op).toEqual({
+      op: 'send_to',
+      space: rs,
+      message: 'x',
+      attachments: [],
+    });
   });
 
   it('sends to a space it started as before, mode allowed', async () => {

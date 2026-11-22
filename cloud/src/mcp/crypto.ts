@@ -168,6 +168,7 @@ function opInOrder(op: RemoteOp): RemoteOp {
         effort: op.effort ?? null,
         parent: op.parent ?? null,
         depth: op.depth,
+        attachments: op.attachments ?? [],
       };
     case 'send':
       return {
@@ -178,6 +179,7 @@ function opInOrder(op: RemoteOp): RemoteOp {
         agent: op.agent ?? null,
         model: op.model ?? null,
         effort: op.effort ?? null,
+        attachments: op.attachments ?? [],
       };
     case 'stop':
       return { op: 'stop', space: op.space };
@@ -208,7 +210,12 @@ function opInOrder(op: RemoteOp): RemoteOp {
     case 'ask_space':
       return { op: 'ask_space', space: op.space, question: op.question };
     case 'send_to':
-      return { op: 'send_to', space: op.space, message: op.message };
+      return {
+        op: 'send_to',
+        space: op.space,
+        message: op.message,
+        attachments: op.attachments ?? [],
+      };
     case 'answer_space':
       return {
         op: 'answer_space',
@@ -218,6 +225,13 @@ function opInOrder(op: RemoteOp): RemoteOp {
       };
     case 'merge_child':
       return { op: 'merge_child', parent: op.parent, child: op.child };
+    case 'read_file':
+      return {
+        op: 'read_file',
+        space: op.space,
+        path: op.path,
+        max_bytes: op.max_bytes,
+      };
   }
 }
 

@@ -30,6 +30,7 @@ fn send(space: &str, text: &str) -> RemoteOp {
         agent: None,
         model: None,
         effort: None,
+        attachments: vec![],
     }
 }
 

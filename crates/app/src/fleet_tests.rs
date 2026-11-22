@@ -333,6 +333,7 @@ fn start_with(
         effort: None,
         parent: parent.map(str::to_string),
         depth,
+        attachments: vec![],
     }
 }
 
@@ -783,6 +784,7 @@ async fn send_and_stop_steer_a_hosted_space() {
             agent: None,
             model: None,
             effort: None,
+            attachments: vec![],
         },
         now(&f),
     );
@@ -800,6 +802,7 @@ async fn send_and_stop_steer_a_hosted_space() {
             agent: None,
             model: None,
             effort: None,
+            attachments: vec![],
         },
     )
     .await;
@@ -1092,6 +1095,7 @@ async fn a_space_started_from_here_is_signed_and_tracked() {
             effort: None,
             parent: None,
             depth: 0,
+            attachments: vec![],
         }
     );
     // Not subscribed yet: the cloud only knows the space once the host
@@ -2265,6 +2269,7 @@ async fn a_claimed_request_is_checked_again_right_before_it_runs() {
             agent: None,
             model: None,
             effort: None,
+            attachments: vec![],
         },
         now(&f),
     );
@@ -3974,6 +3979,7 @@ async fn remote_picks_are_checked_against_what_the_host_lists_then_applied() {
             effort: effort.map(str::to_string),
             parent: None,
             depth: 0,
+            attachments: vec![],
         }
     };
     for (agent, model, effort, why) in [
@@ -4027,6 +4033,7 @@ async fn remote_picks_are_checked_against_what_the_host_lists_then_applied() {
         agent: agent.map(str::to_string),
         model: model.map(str::to_string),
         effort: effort.map(str::to_string),
+        attachments: vec![],
     };
     // The space's agent keeps its model: codex's gpt-5.5 takes no "max".
     let (id, env) = sealed(&f, &origin, send(None, None, Some("max")), now(&f));
@@ -4094,6 +4101,7 @@ async fn a_signed_out_agent_is_not_offered_and_a_pick_naming_it_says_why() {
         effort: None,
         parent: None,
         depth: 0,
+        attachments: vec![],
     };
     let (id, env) = sealed(&f, &origin, op, now(&f));
     deliver(&f, env);
@@ -4180,6 +4188,7 @@ async fn a_run_that_fails_signed_out_takes_its_agent_off_the_list() {
         effort: None,
         parent: None,
         depth: 0,
+        attachments: vec![],
     };
     let ok = run(&f, &origin, op).await;
     assert!(matches!(ok, ReplyOutcome::Ok { .. }), "{ok:?}");
