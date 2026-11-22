@@ -2,7 +2,9 @@
 //! itself, separate from the host tokens; required wherever it's configured. `account_status`,
 //! `account_sign_in_start` / `_poll` / `_cancel` / `_choose_organization`,
 //! `account_sign_out`, `account_switch_organization`,
-//! `account_organizations`.
+//! `account_organizations`; several accounts at once: `account_accounts`,
+//! `account_switch`, `account_sign_out_of` (docs/cloud.md "Several
+//! accounts").
 
 use serde::{Deserialize, Serialize};
 use specta::Type;
@@ -35,6 +37,36 @@ pub struct AccountStatus {
     /// signed out, in a build without the Theodore cloud, or until the
     /// personal one is set up (right after a first sign-in).
     pub organization: Option<AccountOrganizationRef>,
+    /// Every account signed in on this computer, in sign-in order; the
+    /// active one is `user`. Empty while signed out of every account.
+    pub accounts: Vec<AccountEntry>,
+}
+
+/// One account signed in on this computer (`AccountStatus::accounts`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+pub struct AccountEntry {
+    pub user: AccountUser,
+    /// The organization its session is in (the last one, while it needs
+    /// a sign-in again).
+    pub organization: Option<AccountOrganizationRef>,
+    /// Its organizations as the cloud last listed them (`account_accounts`
+    /// refreshes the list); empty until then, or without a cloud.
+    pub organizations: Vec<AccountOrganization>,
+    /// The one `AccountStatus::user` is: whose organization the fleet
+    /// joins, and whose views show.
+    pub active: bool,
+    /// The provider ended its session (a rejected refresh): its row says
+    /// "Sign in again"; signing in as that user replaces it.
+    pub sign_in_required: bool,
+}
+
+/// `account_switch`: make `user_id` the active account, in
+/// `organization_id` when given (else the organization its session is in).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
+pub struct AccountSwitchRequest {
+    pub user_id: String,
+    #[serde(default)]
+    pub organization_id: Option<String>,
 }
 
 /// The session's organization, as its access token says.

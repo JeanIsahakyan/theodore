@@ -36,6 +36,7 @@ const signedOut: AccountStatus = {
   required: true,
   user: null,
   session_ended: false,
+  accounts: [],
   organization: null,
 };
 const signedIn: AccountStatus = {
@@ -218,6 +219,7 @@ describe('Onboarding behind the account gate', () => {
       required: false,
       user: null,
       session_ended: false,
+      accounts: [],
       organization: null,
     });
     await render();

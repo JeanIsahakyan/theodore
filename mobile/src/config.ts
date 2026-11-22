@@ -10,10 +10,6 @@ export const config = {
   workosApiBase: 'https://api.workos.com',
   cloudUrl:
     process.env.EXPO_PUBLIC_CLOUD_URL ?? 'https://api-staging.theodore.cloud',
-  /**
-   * The privacy policy (mobile/public/privacy.html on the production web
-   * app). Moves to https://theodore.cloud/privacy once the landing site
-   * serves it.
-   */
-  privacyPolicyUrl: 'https://app.theodore.cloud/privacy',
+  /** The privacy policy on the website (site/src/pages/Privacy.tsx, docs/website.md). */
+  privacyPolicyUrl: 'https://theodore.cloud/privacy',
 };

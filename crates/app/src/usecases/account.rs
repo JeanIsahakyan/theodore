@@ -10,7 +10,7 @@
 //! ```text
 //! gate   no provider (fixtures, sandbox, CLI) ─▶ Exempt        ─┐
 //!        no client id (plain dev build)       ─▶ NotConfigured ├─▶ open
-//!        session stored                       ─▶ SignedIn      ─┘
+//!        the active account has a session     ─▶ SignedIn      ─┘
 //!        none                                 ─▶ SignedOut     ─▶ closed
 //! ```
 //!
@@ -21,8 +21,24 @@
 //!          loopback listener, or the shell's `account_sign_in_callback`
 //!          (theodore[-<env>]://callback handed to the app by the OS)
 //! device   start ─▶ user_code ─▶ UI polls ─▶ exchange ─▶ keychain ─▶ emit
-//! session  refresher wakes 60 s before `exp` ─▶ rotate ─▶ keychain
-//!            └─ rejected ─▶ signed out ─▶ emit
+//! session  refresher (one per account) wakes 60 s before `exp` ─▶ rotate ─▶ keychain
+//!            └─ rejected ─▶ that account needs a sign-in again ─▶ emit
+//! ```
+//!
+//! Several accounts (docs/cloud.md "Several accounts"): every sign-in adds
+//! a session (or replaces that user's), one keychain entry each
+//! (`theodore.account.<user id>`), and the store's index (`account.accounts`)
+//! says which exist and which is active. Everything account-scoped — the
+//! gate, the access token, the fleet link, telemetry's identity — follows
+//! the active one; the others keep their sessions fresh in the background.
+//!
+//! ```text
+//! sign-in ─▶ slot (new, or the user's replaced) ─▶ active ─▶ emit
+//! switch(user, org?) ─▶ active = user ─▶ [refresh(Some(org))] ─▶ emit
+//! sign out of user ─▶ slot gone ─▶ active: the next with a session
+//! refresh rejected ─▶ slot kept, session gone ("Sign in again")
+//!                     ─▶ active: the next with a session, else the gate closes
+//! upgrade ─▶ the one `theodore.account` entry becomes the first slot
 //! ```
 //!
 //! Organizations (plan §6.12 "Organizations", docs/cloud.md "App side"),
@@ -40,18 +56,21 @@
 //! Only the background refresher (`refresh(.., None)`) ever ends a session.
 //! No cloud error and no org-scoped refresh does.
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::time::Duration;
 
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 use theodore_contract::{
-    AccountOrganization, AccountOrganizationChoice, AccountOrganizationRef, AccountSignInMethod,
-    AccountSignInRequest, AccountSignInStart, AccountSignInState, AccountStatus, AccountUser,
-    Ephemeral,
+    AccountEntry, AccountOrganization, AccountOrganizationChoice, AccountOrganizationRef,
+    AccountSignInMethod, AccountSignInRequest, AccountSignInStart, AccountSignInState,
+    AccountStatus, AccountSwitchRequest, AccountUser, Ephemeral,
 };
 use theodore_ports::{
-    AccountConfig, AccountError, AccountResult, AccountSession, BrowserSignIn, CallbackListener,
-    CallbackPage, CallbackParams, DeviceSignInPoll, IncomingCallback, OrganizationSelection,
+    AccountConfig, AccountError, AccountProfile, AccountResult, AccountSession, BrowserSignIn,
+    CallbackListener, CallbackPage, CallbackParams, DeviceSignInPoll, IncomingCallback,
+    OrganizationSelection,
 };
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
@@ -76,6 +95,9 @@ pub const DEFAULT_REDIRECT_URI: &str = "http://127.0.0.1:47823/callback";
 /// own (`Deps::account_cloud_url`). None anywhere: no organizations.
 pub const CLOUD_URL_ENV: &str = "THEODORE_CLOUD_URL";
 pub const CLOUD_URL_SETTING: &str = "account.cloud_url";
+/// The store's kv key of the accounts index: which users have a session in
+/// the keychain, their profiles for display, and the active one.
+pub const ACCOUNTS_INDEX_KEY: &str = "account.accounts";
 
 /// Refresh this long before the access token's `exp`.
 pub(crate) const REFRESH_SKEW_MS: i64 = 60_000;
@@ -214,6 +236,15 @@ pub(crate) fn organization_of(s: &AccountSession) -> Option<AccountOrganizationR
     })
 }
 
+fn to_contract_org(o: theodore_ports::AccountOrganization) -> AccountOrganization {
+    AccountOrganization {
+        id: o.id,
+        name: o.name,
+        role: o.role,
+        personal: o.personal,
+    }
+}
+
 /// One browser sign-in, as its flow task sees it.
 struct BrowserAttempt {
     id: u64,
@@ -226,7 +257,7 @@ struct BrowserAttempt {
 /// Whether the gate is open from the configuration alone, worked out
 /// without waiting at start-up: no provider, or no client id anywhere.
 /// Otherwise it starts closed until `Core::account_gate` has read the
-/// stored session, so no host call slips out before that.
+/// stored sessions, so no host call slips out before that.
 pub(crate) fn gate_open_at_start(deps: &crate::Deps) -> bool {
     if !deps.account.enabled() {
         return true;
@@ -246,20 +277,185 @@ pub(crate) fn gate_open_at_start(deps: &crate::Deps) -> bool {
     .is_none()
 }
 
+/// One account signed in on this computer.
+pub(crate) struct Slot {
+    /// `None`: the provider ended the session (a rejected refresh), so the
+    /// row says "Sign in again"; the profile stays for display.
+    pub session: Option<AccountSession>,
+    pub profile: AccountProfile,
+    /// The organization the session is (or last was) in.
+    pub organization_id: Option<String>,
+    /// Bumped whenever this slot's session is replaced wholesale (signed
+    /// in again) or dropped, so a refresh that raced that never writes a
+    /// stale session back (plan §6.12 "Races").
+    pub generation: u64,
+    /// Refresh tokens are single-use: one refresh of this session at a
+    /// time. Per account: one account's refresh never waits on another's.
+    pub refresh_lock: Arc<tokio::sync::Mutex<()>>,
+    pub refresher: Option<CancellationToken>,
+    /// Refreshes failed in a row without ending the session: paces the
+    /// refresher's retries, and only the first one is a warning.
+    pub refresh_failures: Arc<AtomicU32>,
+    /// Its organizations as the cloud last listed them.
+    pub organizations: Vec<AccountOrganization>,
+}
+
+impl Slot {
+    fn new(profile: AccountProfile, session: Option<AccountSession>, generation: u64) -> Self {
+        let organization_id = session.as_ref().and_then(|s| s.organization_id.clone());
+        Slot {
+            session,
+            profile,
+            organization_id,
+            generation,
+            refresh_lock: Arc::new(tokio::sync::Mutex::new(())),
+            refresher: None,
+            refresh_failures: Arc::new(AtomicU32::new(0)),
+            organizations: Vec::new(),
+        }
+    }
+
+    fn user(&self) -> AccountUser {
+        profile_user(&self.profile)
+    }
+
+    fn entry(&self, active: bool) -> AccountEntry {
+        AccountEntry {
+            user: self.user(),
+            organization: match &self.session {
+                Some(s) => organization_of(s),
+                None => self
+                    .organization_id
+                    .as_ref()
+                    .map(|id| AccountOrganizationRef {
+                        id: id.clone(),
+                        role: None,
+                    }),
+            },
+            organizations: self.organizations.clone(),
+            active,
+            sign_in_required: self.session.is_none(),
+        }
+    }
+
+    fn stop_refresher(&mut self) {
+        if let Some(t) = self.refresher.take() {
+            t.cancel();
+        }
+    }
+
+    fn view(&self) -> Option<SlotView> {
+        Some(SlotView {
+            session: self.session.clone()?,
+            generation: self.generation,
+            refresh_lock: self.refresh_lock.clone(),
+            refresh_failures: self.refresh_failures.clone(),
+        })
+    }
+}
+
+/// Every account, in sign-in order, and the active one.
+#[derive(Default)]
+pub(crate) struct Accounts {
+    pub slots: Vec<Slot>,
+    pub active: Option<String>,
+}
+
+impl Accounts {
+    fn slot(&self, user_id: &str) -> Option<&Slot> {
+        self.slots.iter().find(|s| s.profile.id == user_id)
+    }
+
+    fn slot_mut(&mut self, user_id: &str) -> Option<&mut Slot> {
+        self.slots.iter_mut().find(|s| s.profile.id == user_id)
+    }
+
+    fn active_slot(&self) -> Option<&Slot> {
+        self.active.as_deref().and_then(|id| self.slot(id))
+    }
+
+    /// The active account's session, if it has one.
+    fn active_session(&self) -> Option<&AccountSession> {
+        self.active_slot().and_then(|s| s.session.as_ref())
+    }
+
+    /// Makes the first account with a session active (sign-in order), when
+    /// the active one has none. `true` when that changed the active one.
+    fn settle_active(&mut self) -> bool {
+        if self.active_session().is_some() {
+            return false;
+        }
+        let next = self
+            .slots
+            .iter()
+            .find(|s| s.session.is_some())
+            .map(|s| s.profile.id.clone());
+        if next == self.active {
+            return false;
+        }
+        self.active = next;
+        true
+    }
+
+    fn index(&self) -> Index {
+        Index {
+            active: self.active.clone(),
+            accounts: self
+                .slots
+                .iter()
+                .map(|s| IndexEntry {
+                    user: s.profile.clone(),
+                    organization_id: s.organization_id.clone(),
+                    ended: s.session.is_none(),
+                })
+                .collect(),
+        }
+    }
+}
+
+/// The stored index (`ACCOUNTS_INDEX_KEY`): display data and bookkeeping
+/// only, never a token.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct Index {
+    #[serde(default)]
+    active: Option<String>,
+    #[serde(default)]
+    accounts: Vec<IndexEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct IndexEntry {
+    user: AccountProfile,
+    #[serde(default)]
+    organization_id: Option<String>,
+    /// The provider ended its session: no keychain entry, "Sign in again".
+    #[serde(default)]
+    ended: bool,
+}
+
+/// A snapshot of one slot for a refresh: what it needs outside the lock.
+#[derive(Clone)]
+struct SlotView {
+    session: AccountSession,
+    generation: u64,
+    refresh_lock: Arc<tokio::sync::Mutex<()>>,
+    refresh_failures: Arc<AtomicU32>,
+}
+
 /// In-memory account state, one per `Core`.
 #[derive(Default)]
 pub(crate) struct AccountState {
     loaded: tokio::sync::OnceCell<()>,
-    session: std::sync::Mutex<Option<AccountSession>>,
+    accounts: std::sync::Mutex<Accounts>,
     pending: std::sync::Mutex<Option<Pending>>,
-    refresher: std::sync::Mutex<Option<CancellationToken>>,
-    /// Refresh tokens are single-use: one refresh at a time.
-    refresh_lock: tokio::sync::Mutex<()>,
-    /// Bumped on every sign-in and sign-out, so a refresh that raced one
-    /// never writes a stale session back.
+    /// Bumped on every sign-in, sign-out and switch (account or
+    /// organization): the fleet keys its fatal mark by it.
     generation: AtomicU64,
-    /// Held around every "check `generation`, write keychain + memory":
-    /// a sign-out can't land between a refresh's check and its write.
+    /// Source of `Slot::generation`s, unique across slots.
+    slot_generations: AtomicU64,
+    /// Held around every "check a slot's generation, write keychain +
+    /// memory + index": a sign-out can't land between a refresh's check
+    /// and its write.
     write_lock: tokio::sync::Mutex<()>,
     /// The last invalid cloud URL warned about, so it's said once.
     cloud_url_warned: std::sync::Mutex<Option<String>>,
@@ -273,12 +469,13 @@ pub(crate) struct AccountState {
     open: std::sync::atomic::AtomicBool,
     /// Wakes held loops when the gate changes.
     gate_changed: tokio::sync::Notify,
-    /// The provider ended the last session (a rejected refresh); cleared by
-    /// the next sign-in or sign-out.
+    /// The provider ended the active session and no other account could
+    /// take over (a rejected refresh); cleared by the next sign-in or
+    /// sign-out.
     session_ended: std::sync::atomic::AtomicBool,
-    /// Refreshes failed in a row without ending the session: paces the
-    /// refresher's retries, and only the first one is a warning.
-    pub(crate) refresh_failures: std::sync::atomic::AtomicU32,
+    /// Every identity handed to telemetry, in order (tests).
+    #[cfg(test)]
+    pub(crate) identity_log: std::sync::Mutex<Vec<Option<String>>>,
 }
 
 impl AccountState {
@@ -298,6 +495,10 @@ impl AccountState {
         if self.open.swap(open, Ordering::SeqCst) != open {
             self.gate_changed.notify_waiters();
         }
+    }
+
+    fn next_slot_generation(&self) -> u64 {
+        self.slot_generations.fetch_add(1, Ordering::SeqCst) + 1
     }
 }
 
@@ -390,8 +591,8 @@ pub(crate) fn check_callback(p: &CallbackParams, expected_state: &str) -> Callba
     }
 }
 
-pub(crate) fn user_of(s: &AccountSession) -> AccountUser {
-    let name = [s.user.first_name.as_deref(), s.user.last_name.as_deref()]
+fn profile_user(p: &AccountProfile) -> AccountUser {
+    let name = [p.first_name.as_deref(), p.last_name.as_deref()]
         .into_iter()
         .flatten()
         .map(str::trim)
@@ -399,11 +600,15 @@ pub(crate) fn user_of(s: &AccountSession) -> AccountUser {
         .collect::<Vec<_>>()
         .join(" ");
     AccountUser {
-        id: s.user.id.clone(),
-        email: s.user.email.clone(),
+        id: p.id.clone(),
+        email: p.email.clone(),
         name: (!name.is_empty()).then_some(name),
-        avatar_url: s.user.avatar_url.clone(),
+        avatar_url: p.avatar_url.clone(),
     }
+}
+
+pub(crate) fn user_of(s: &AccountSession) -> AccountUser {
+    profile_user(&s.user)
 }
 
 fn unavailable() -> AccountStatus {
@@ -413,11 +618,104 @@ fn unavailable() -> AccountStatus {
         user: None,
         session_ended: false,
         organization: None,
+        accounts: Vec::new(),
     }
 }
 
 fn not_configured() -> AppError {
     AppError::Invalid("Theodore accounts aren't configured (no WorkOS client id)".into())
+}
+
+fn no_such_account() -> AppError {
+    AppError::Invalid("no such account is signed in here".into())
+}
+
+/// What `account_load` found in the keychain and the store.
+struct Loaded {
+    index: Index,
+    sessions: Vec<Option<AccountSession>>,
+}
+
+/// Reads the index and every session it names; with no index yet, moves
+/// the single pre-multi-account entry (`theodore.account`) into its own
+/// entry and writes the index: the existing session becomes the first
+/// account, silently.
+fn load_blocking(
+    store: &dyn theodore_ports::Store,
+    secrets: &dyn theodore_ports::Secrets,
+) -> Loaded {
+    let index = store
+        .kv_get(ACCOUNTS_INDEX_KEY)
+        .ok()
+        .flatten()
+        .and_then(|v| serde_json::from_value::<Index>(v).ok());
+    let parse =
+        |raw: Option<String>| raw.and_then(|s| serde_json::from_str::<AccountSession>(&s).ok());
+    match index {
+        Some(index) => {
+            let sessions = index
+                .accounts
+                .iter()
+                .map(|e| {
+                    if e.ended {
+                        None
+                    } else {
+                        parse(
+                            secrets
+                                .get(&theodore_secrets::account_key(&e.user.id))
+                                .ok()
+                                .flatten(),
+                        )
+                    }
+                })
+                .collect();
+            Loaded { index, sessions }
+        }
+        None => {
+            let legacy = parse(
+                secrets
+                    .get(theodore_secrets::THEODORE_ACCOUNT)
+                    .ok()
+                    .flatten(),
+            );
+            let Some(session) = legacy else {
+                return Loaded {
+                    index: Index::default(),
+                    sessions: Vec::new(),
+                };
+            };
+            let key = theodore_secrets::account_key(&session.user.id);
+            match serde_json::to_string(&session) {
+                Ok(json) => match secrets.set(&key, &json) {
+                    Ok(()) => {
+                        let _ = secrets.delete(theodore_secrets::THEODORE_ACCOUNT);
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, "couldn't move the account session to its own entry")
+                    }
+                },
+                Err(e) => tracing::warn!(error = %e, "couldn't encode the account session"),
+            }
+            let index = Index {
+                active: Some(session.user.id.clone()),
+                accounts: vec![IndexEntry {
+                    user: session.user.clone(),
+                    organization_id: session.organization_id.clone(),
+                    ended: false,
+                }],
+            };
+            if let Ok(v) = serde_json::to_value(&index)
+                && let Err(e) = store.kv_set(ACCOUNTS_INDEX_KEY, &v)
+            {
+                tracing::warn!(error = %e, "couldn't write the accounts index");
+            }
+            tracing::info!("the account session is now the first of the accounts list");
+            Loaded {
+                index,
+                sessions: vec![Some(session)],
+            }
+        }
+    }
 }
 
 impl Core {
@@ -508,14 +806,26 @@ impl Core {
     }
 
     fn account_status_now(&self) -> AccountStatus {
-        let session = self.account_session();
+        let a = self.accounts();
+        let session = a.active_session();
         AccountStatus {
             available: true,
             required: true,
-            user: session.as_ref().map(user_of),
+            user: session.map(user_of),
             session_ended: self.0.account.session_ended.load(Ordering::SeqCst),
-            organization: session.as_ref().and_then(organization_of),
+            organization: session.and_then(organization_of),
+            accounts: a
+                .slots
+                .iter()
+                .map(|s| s.entry(a.active.as_deref() == Some(s.profile.id.as_str())))
+                .collect(),
         }
+    }
+
+    fn emit_account_status(&self) {
+        self.emit(Ephemeral::AccountStatus {
+            status: self.account_status_now(),
+        });
     }
 
     /// Works out whether the app may do work now, and records it for the
@@ -569,54 +879,116 @@ impl Core {
         }
     }
 
-    pub(crate) fn account_session(&self) -> Option<AccountSession> {
-        self.0.account.session.lock().expect("account lock").clone()
+    fn accounts(&self) -> std::sync::MutexGuard<'_, Accounts> {
+        self.0.account.accounts.lock().expect("account lock")
     }
 
-    /// Bumped on every sign-in and sign-out (the fleet restarts its link on
-    /// a change).
+    /// The active account's session, if it has one.
+    pub(crate) fn account_session(&self) -> Option<AccountSession> {
+        self.accounts().active_session().cloned()
+    }
+
+    /// The active account's user id (`Space::account`). `None` signed
+    /// out, or without an account provider.
+    pub(crate) fn account_active_user_id(&self) -> Option<String> {
+        let a = self.accounts();
+        a.active_session().map(|s| s.user.id.clone())
+    }
+
+    fn slot_view(&self, user_id: &str) -> Option<SlotView> {
+        self.accounts().slot(user_id)?.view()
+    }
+
+    /// Bumped on every sign-in, sign-out and switch (the fleet restarts its
+    /// link on a change).
     pub(crate) fn account_generation(&self) -> u64 {
         self.0.account.generation.load(Ordering::SeqCst)
     }
 
-    /// Reads the stored session once per process.
+    /// Tells telemetry who is signed in (docs/telemetry.md "Who a record
+    /// is from"): the active account, or nobody.
+    fn account_identity(&self, user_id: Option<&str>) {
+        #[cfg(test)]
+        self.0
+            .account
+            .identity_log
+            .lock()
+            .expect("account lock")
+            .push(user_id.map(str::to_string));
+        theodore_telemetry::set_account(user_id);
+    }
+
+    /// Reads the stored sessions once per process.
     async fn account_load(&self) {
         self.0
             .account
             .loaded
             .get_or_init(|| async {
                 let secrets = self.0.deps.secrets.clone();
-                let raw = tokio::task::spawn_blocking(move || {
-                    secrets.get(theodore_secrets::THEODORE_ACCOUNT)
-                })
-                .await
-                .ok()
-                .and_then(Result::ok)
-                .flatten();
-                let session = raw.and_then(|s| serde_json::from_str::<AccountSession>(&s).ok());
-                theodore_telemetry::set_account(session.as_ref().map(|s| s.user.id.as_str()));
-                *self.0.account.session.lock().expect("account lock") = session;
+                let store = self.0.deps.store.clone();
+                let loaded = tokio::task::spawn_blocking(move || load_blocking(&*store, &*secrets))
+                    .await
+                    .ok();
+                let Some(loaded) = loaded else {
+                    return;
+                };
+                let active = {
+                    let mut a = self.accounts();
+                    for (entry, session) in loaded.index.accounts.into_iter().zip(loaded.sessions) {
+                        if a.slot(&entry.user.id).is_some() {
+                            continue;
+                        }
+                        let generation = self.0.account.next_slot_generation();
+                        let mut slot = Slot::new(entry.user, session, generation);
+                        if slot.organization_id.is_none() {
+                            slot.organization_id = entry.organization_id;
+                        }
+                        a.slots.push(slot);
+                    }
+                    a.active = loaded.index.active;
+                    a.settle_active();
+                    a.active_session().map(|s| s.user.id.clone())
+                };
+                self.account_identity(active.as_deref());
             })
             .await;
     }
 
-    async fn account_persist(&self, session: Option<&AccountSession>) -> AppResult<()> {
+    /// Writes one account's session to the keychain (or deletes it).
+    async fn account_persist(
+        &self,
+        user_id: &str,
+        session: Option<&AccountSession>,
+    ) -> AppResult<()> {
         let secrets = self.0.deps.secrets.clone();
+        let key = theodore_secrets::account_key(user_id);
         let json = session
             .map(serde_json::to_string)
             .transpose()
             .map_err(|e| AppError::Invalid(format!("encode account session: {e}")))?;
         tokio::task::spawn_blocking(move || match json {
-            Some(j) => secrets.set(theodore_secrets::THEODORE_ACCOUNT, &j),
-            None => secrets.delete(theodore_secrets::THEODORE_ACCOUNT),
+            Some(j) => secrets.set(&key, &j),
+            None => secrets.delete(&key),
         })
         .await
         .map_err(AppError::join)?
         .map_err(|e| AppError::Invalid(e.to_string()))
     }
 
-    /// Spawned by `Core::start`: loads the stored session and keeps it
-    /// fresh, so it doesn't lapse while the app runs. A session still
+    /// Writes the index as the accounts are now.
+    async fn account_persist_index(&self) -> AppResult<()> {
+        let index = self.accounts().index();
+        let value = serde_json::to_value(&index)
+            .map_err(|e| AppError::Invalid(format!("encode accounts index: {e}")))?;
+        let store = self.0.deps.store.clone();
+        tokio::task::spawn_blocking(move || store.kv_set(ACCOUNTS_INDEX_KEY, &value))
+            .await
+            .map_err(AppError::join)?
+            .map_err(|e| AppError::Invalid(e.to_string()))
+    }
+
+    /// Spawned by `Core::start`: loads the stored sessions and keeps every
+    /// one fresh, so none lapses while the app runs. A session still
     /// without an organization (the org step failed last time, or it's
     /// from before organizations) gets another go.
     pub(crate) async fn account_resume(&self) {
@@ -624,56 +996,75 @@ impl Core {
             return;
         }
         self.account_load().await;
-        // The fleet may have looked before the stored session was loaded
-        // and found nobody signed in: look again now that it is.
+        // The fleet may have looked before the stored sessions were loaded
+        // and found nobody signed in: look again now that they are.
         self.fleet_account_changed();
-        if self.account_session().is_some() {
-            self.account_schedule_refresh();
-            let since = self.0.account.generation.load(Ordering::SeqCst);
-            self.account_org_step(since).await;
+        let slots: Vec<(String, u64)> = self
+            .accounts()
+            .slots
+            .iter()
+            .filter(|s| s.session.is_some())
+            .map(|s| (s.profile.id.clone(), s.generation))
+            .collect();
+        for (user_id, generation) in slots {
+            self.account_schedule_refresh(&user_id);
+            let core = self.clone();
+            tokio::spawn(async move { core.account_org_step(&user_id, generation).await });
         }
     }
 
-    /// Best effort: puts a session without an organization into the user's
-    /// personal one (cloud `ensure`, then an org-scoped refresh). Needs a
-    /// cloud. Never signs out: any failure is a warning, the session stays
-    /// as it is, and the next start tries again. Dropped when a sign-in or
-    /// sign-out happened since `since`.
-    pub(crate) async fn account_org_step(&self, since: u64) {
+    /// Best effort: puts `user_id`'s session without an organization into
+    /// the user's personal one (cloud `ensure`, then an org-scoped
+    /// refresh), then lists its organizations. Needs a cloud. Never signs
+    /// out: any failure is a warning, the session stays as it is, and the
+    /// next start tries again. Dropped when the slot was signed in again
+    /// or removed since `since`.
+    pub(crate) async fn account_org_step(&self, user_id: &str, since: u64) {
         let Some(cfg) = self.account_config().await else {
             return;
         };
         if cfg.cloud_url.is_none() {
             return;
         }
-        match self.account_session() {
-            Some(s) if s.organization_id.is_none() => {}
-            _ => return,
-        }
-        match self.account_join_personal(&cfg, since).await {
-            Ok(Some(org)) => {
-                tracing::info!(organization = %org, "the account session is in its personal organization");
+        let Some(view) = self.slot_view(user_id) else {
+            return;
+        };
+        if view.session.organization_id.is_none() {
+            match self.account_join_personal(&cfg, user_id, since).await {
+                Ok(Some(org)) => {
+                    tracing::info!(organization = %org, "the account session is in its personal organization");
+                }
+                Ok(None) => return,
+                Err(e) => {
+                    tracing::warn!(
+                        error.code = e.code(),
+                        error = %e,
+                        "couldn't put the account in its personal organization; trying again at the next start"
+                    );
+                    return;
+                }
             }
-            Ok(None) => {}
-            Err(e) => tracing::warn!(
-                error.code = e.code(),
-                error = %e,
-                "couldn't put the account in its personal organization; trying again at the next start"
-            ),
+        }
+        if self.account_organizations_for(user_id).await.is_ok() {
+            self.emit_account_status();
         }
     }
 
     async fn account_join_personal(
         &self,
         cfg: &AccountConfig,
+        user_id: &str,
         since: u64,
     ) -> AppResult<Option<String>> {
         // A plain token read: refreshes (without an org) only when it's
         // about to expire, like any other caller.
-        let Some(token) = self.account_access_token().await? else {
+        let Some(token) = self.account_access_token_for(user_id).await? else {
             return Ok(None);
         };
-        if self.0.account.generation.load(Ordering::SeqCst) != since {
+        if self
+            .slot_view(user_id)
+            .is_none_or(|v| v.generation != since)
+        {
             return Ok(None);
         }
         let org = self
@@ -683,120 +1074,243 @@ impl Core {
             .ensure_personal_organization(cfg, &token)
             .await?;
         Ok(self
-            .account_refresh_in_org(cfg, &org, since)
+            .account_refresh_in_org(cfg, user_id, &org, since)
             .await?
             .map(|_| org))
     }
 
-    /// Refreshes the session into `organization_id` and stores it, under
-    /// the refresh lock (refresh tokens are single-use). An error leaves the
-    /// session exactly as it was: never signs out. `Ok(None)`: no session,
-    /// or a sign-in or sign-out since `since`; the result is dropped.
+    /// Refreshes `user_id`'s session into `organization_id` and stores it,
+    /// under that account's refresh lock (refresh tokens are single-use).
+    /// An error leaves the session exactly as it was: never signs out.
+    /// `Ok(None)`: no session, or the slot changed since `since`; the
+    /// result is dropped.
     async fn account_refresh_in_org(
         &self,
         cfg: &AccountConfig,
+        user_id: &str,
         organization_id: &str,
         since: u64,
     ) -> AppResult<Option<AccountSession>> {
-        let _one_at_a_time = self.0.account.refresh_lock.lock().await;
-        if self.0.account.generation.load(Ordering::SeqCst) != since {
-            return Ok(None);
-        }
-        // Read under the lock: a refresh just before may have rotated it.
-        let Some(current) = self.account_session() else {
+        let Some(view) = self.slot_view(user_id) else {
             return Ok(None);
         };
+        let _one_at_a_time = view.refresh_lock.lock().await;
+        // Read under the lock: a refresh just before may have rotated it.
+        let Some(current) = self.slot_view(user_id) else {
+            return Ok(None);
+        };
+        if current.generation != since {
+            return Ok(None);
+        }
         let next = self
             .0
             .deps
             .account
-            .refresh(cfg, &current.refresh_token, Some(organization_id))
+            .refresh(cfg, &current.session.refresh_token, Some(organization_id))
             .await?;
-        if !self.account_commit(since, &next).await? {
+        if !self.account_commit(user_id, since, &next).await? {
             return Ok(None);
         }
-        self.emit(Ephemeral::AccountStatus {
-            status: self.account_status_now(),
-        });
+        self.emit_account_status();
         Ok(Some(next))
     }
 
-    /// Stores `next` (keychain, then memory) unless a sign-in or sign-out
-    /// happened since `since`. `false`: dropped.
-    async fn account_commit(&self, since: u64, next: &AccountSession) -> AppResult<bool> {
+    /// Stores `next` as `user_id`'s session (keychain, then memory, then
+    /// the index) unless that slot was signed in again or removed since
+    /// `since`. `false`: dropped.
+    async fn account_commit(
+        &self,
+        user_id: &str,
+        since: u64,
+        next: &AccountSession,
+    ) -> AppResult<bool> {
         let _write = self.0.account.write_lock.lock().await;
-        if self.0.account.generation.load(Ordering::SeqCst) != since {
+        if self
+            .accounts()
+            .slot(user_id)
+            .is_none_or(|s| s.generation != since)
+        {
             return Ok(false);
         }
-        self.account_persist(Some(next)).await?;
-        theodore_telemetry::set_account(Some(&next.user.id));
-        let previous = self
-            .0
-            .account
-            .session
-            .lock()
-            .expect("account lock")
-            .replace(next.clone());
-        // A new access token: a fleet link that failed for good (a token
-        // the cloud refused, or a cloud that judged a JWKS outage fatal)
-        // gets one more try with it (docs/fleet.md "App side").
-        if previous.is_none_or(|p| p.access_token != next.access_token) {
-            self.fleet().fatal_at = None;
+        self.account_persist(user_id, Some(next)).await?;
+        let (active, token_changed, org_changed) = {
+            let mut a = self.accounts();
+            let active = a.active.as_deref() == Some(user_id);
+            let Some(slot) = a.slot_mut(user_id) else {
+                return Ok(false);
+            };
+            let previous = slot.session.replace(next.clone());
+            let token_changed = previous
+                .as_ref()
+                .is_none_or(|p| p.access_token != next.access_token);
+            let org_changed = slot.organization_id != next.organization_id;
+            slot.organization_id = next.organization_id.clone();
+            (active, token_changed, org_changed)
+        };
+        if org_changed {
+            self.account_persist_index().await?;
         }
-        // A fresh token (reauth) or another organization (a new link).
-        self.fleet_account_changed();
+        if active {
+            if org_changed {
+                self.0.account.generation.fetch_add(1, Ordering::SeqCst);
+            }
+            // A new access token: a fleet link that failed for good (a
+            // token the cloud refused, or a cloud that judged a JWKS
+            // outage fatal) gets one more try with it (docs/fleet.md "App
+            // side").
+            if token_changed {
+                self.fleet().fatal_at = None;
+            }
+            // A fresh token (reauth) or another organization (a new link).
+            self.fleet_account_changed();
+        }
         Ok(true)
     }
 
-    /// Moves the session to another of the user's organizations (an
-    /// org-scoped refresh). On any error the session is untouched and still
-    /// signed in; the error is returned.
+    /// Moves the active account's session to another of its organizations
+    /// (an org-scoped refresh). On any error the session is untouched and
+    /// still signed in; the error is returned.
     pub async fn account_switch_organization(
         &self,
         organization_id: &str,
     ) -> AppResult<AccountStatus> {
-        let cfg = self.account_config().await.ok_or_else(not_configured)?;
-        let organization_id = organization_id.trim();
-        if organization_id.is_empty() {
-            return Err(AppError::Invalid("no organization given".into()));
-        }
+        self.account_config().await.ok_or_else(not_configured)?;
         self.account_load().await;
-        let since = self.0.account.generation.load(Ordering::SeqCst);
-        if self.account_session().is_none() {
-            return Err(AppError::AccountRequired);
-        }
-        match self
-            .account_refresh_in_org(&cfg, organization_id, since)
-            .await
-        {
-            Ok(Some(_)) => Ok(self.account_status_now()),
-            Ok(None) => Err(AppError::Invalid(
-                "the account changed while switching organizations".into(),
-            )),
-            Err(e) => {
-                tracing::warn!(error.code = e.code(), error = %e, "couldn't switch organization");
-                Err(e)
-            }
-        }
+        let user_id = self
+            .account_active_user_id()
+            .ok_or(AppError::AccountRequired)?;
+        self.account_switch(AccountSwitchRequest {
+            user_id,
+            organization_id: Some(organization_id.to_string()),
+        })
+        .await
     }
 
-    /// The signed-in user's organizations, from the cloud.
+    /// Makes `user_id` the active account — the one the gate, the fleet,
+    /// the views and telemetry follow — and, with an `organization_id`,
+    /// moves its session there (an org-scoped refresh). A failed
+    /// organization switch returns its error with the account switched
+    /// and its session untouched. An account that needs a sign-in again
+    /// can't be switched to.
+    pub async fn account_switch(&self, req: AccountSwitchRequest) -> AppResult<AccountStatus> {
+        let cfg = self.account_config().await.ok_or_else(not_configured)?;
+        self.account_load().await;
+        let user_id = req.user_id.trim();
+        let view = {
+            let a = self.accounts();
+            let slot = a.slot(user_id).ok_or_else(no_such_account)?;
+            slot.view().ok_or_else(|| {
+                AppError::Invalid("that account's session ended: sign in to it again".into())
+            })?
+        };
+        let switched = {
+            let _write = self.0.account.write_lock.lock().await;
+            let mut a = self.accounts();
+            if a.active.as_deref() == Some(user_id) {
+                false
+            } else {
+                a.active = Some(user_id.to_string());
+                self.0.account.generation.fetch_add(1, Ordering::SeqCst);
+                true
+            }
+        };
+        if switched {
+            self.0.account.session_ended.store(false, Ordering::SeqCst);
+            self.account_persist_index().await?;
+            self.account_identity(Some(user_id));
+            self.fleet_account_changed();
+            self.account_gate().await;
+            tracing::info!("switched the active Theodore account");
+            self.emit_account_status();
+        }
+        let organization_id = req
+            .organization_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|o| !o.is_empty());
+        if let Some(org) = organization_id
+            && view.session.organization_id.as_deref() != Some(org)
+        {
+            match self
+                .account_refresh_in_org(&cfg, user_id, org, view.generation)
+                .await
+            {
+                Ok(Some(_)) => {}
+                Ok(None) => {
+                    return Err(AppError::Invalid(
+                        "the account changed while switching organizations".into(),
+                    ));
+                }
+                Err(e) => {
+                    tracing::warn!(error.code = e.code(), error = %e, "couldn't switch organization");
+                    return Err(e);
+                }
+            }
+        }
+        Ok(self.account_status_now())
+    }
+
+    /// The active account's organizations, from the cloud.
     pub async fn account_organizations(&self) -> AppResult<Vec<AccountOrganization>> {
+        self.account_config().await.ok_or_else(not_configured)?;
+        self.account_load().await;
+        let user_id = self
+            .account_active_user_id()
+            .ok_or(AppError::AccountRequired)?;
+        self.account_organizations_for(&user_id).await
+    }
+
+    /// `user_id`'s organizations from the cloud, with its own token; the
+    /// list is kept on its slot for `AccountStatus::accounts`.
+    async fn account_organizations_for(
+        &self,
+        user_id: &str,
+    ) -> AppResult<Vec<AccountOrganization>> {
         let cfg = self.account_config().await.ok_or_else(not_configured)?;
         let token = self
-            .account_access_token()
+            .account_access_token_for(user_id)
             .await?
             .ok_or(AppError::AccountRequired)?;
-        let orgs = self.0.deps.account.organizations(&cfg, &token).await?;
-        Ok(orgs
+        let orgs: Vec<AccountOrganization> = self
+            .0
+            .deps
+            .account
+            .organizations(&cfg, &token)
+            .await?
             .into_iter()
-            .map(|o| AccountOrganization {
-                id: o.id,
-                name: o.name,
-                role: o.role,
-                personal: o.personal,
-            })
-            .collect())
+            .map(to_contract_org)
+            .collect();
+        if let Some(slot) = self.accounts().slot_mut(user_id) {
+            slot.organizations = orgs.clone();
+        }
+        Ok(orgs)
+    }
+
+    /// Every account signed in here, with its organizations listed again
+    /// from the cloud (each with its own token; one that fails keeps its
+    /// last list). The status, as `account_status`.
+    pub async fn account_accounts(&self) -> AppResult<AccountStatus> {
+        if self.account_config().await.is_none() {
+            return Ok(unavailable());
+        }
+        self.account_load().await;
+        let users: Vec<String> = self
+            .accounts()
+            .slots
+            .iter()
+            .filter(|s| s.session.is_some())
+            .map(|s| s.profile.id.clone())
+            .collect();
+        // Each with its own token, side by side: one account's slow or
+        // hung refresh doesn't hold up another's list. One that fails
+        // keeps its last list.
+        let mut lists = tokio::task::JoinSet::new();
+        for user_id in users {
+            let core = self.clone();
+            lists.spawn(async move { core.account_organizations_for(&user_id).await });
+        }
+        while lists.join_next().await.is_some() {}
+        Ok(self.account_status_now())
     }
 
     pub async fn account_sign_in_start(
@@ -993,24 +1507,47 @@ impl Core {
         }
     }
 
-    /// Stores a fresh session, starts its refresher, tells the UI. Without
-    /// an organization, the org step follows in the background.
+    /// Stores a fresh session as its user's account (a new one, or that
+    /// user's signed in again), makes it the active one, starts its
+    /// refresher, tells the UI. Without an organization, the org step
+    /// follows in the background.
     async fn account_signed_in(&self, session: AccountSession) -> AppResult<AccountStatus> {
         self.account_load().await;
-        let since = {
+        let user_id = session.user.id.clone();
+        let generation = {
             let _write = self.0.account.write_lock.lock().await;
-            self.account_persist(Some(&session)).await?;
-            let since = self.0.account.generation.fetch_add(1, Ordering::SeqCst) + 1;
-            theodore_telemetry::set_account(Some(&session.user.id));
-            *self.0.account.session.lock().expect("account lock") = Some(session);
-            since
+            self.account_persist(&user_id, Some(&session)).await?;
+            let generation = self.0.account.next_slot_generation();
+            {
+                let mut a = self.accounts();
+                match a.slot_mut(&user_id) {
+                    Some(slot) => {
+                        slot.stop_refresher();
+                        slot.profile = session.user.clone();
+                        slot.organization_id = session.organization_id.clone();
+                        slot.session = Some(session);
+                        slot.generation = generation;
+                        slot.refresh_failures.store(0, Ordering::SeqCst);
+                    }
+                    None => {
+                        a.slots
+                            .push(Slot::new(session.user.clone(), Some(session), generation))
+                    }
+                }
+                a.active = Some(user_id.clone());
+            }
+            self.0.account.generation.fetch_add(1, Ordering::SeqCst);
+            self.account_persist_index().await?;
+            self.account_identity(Some(&user_id));
+            generation
         };
         self.fleet_account_changed();
         let core = self.clone();
-        tokio::spawn(async move { core.account_org_step(since).await });
+        let step_user = user_id.clone();
+        tokio::spawn(async move { core.account_org_step(&step_user, generation).await });
         self.0.account.session_ended.store(false, Ordering::SeqCst);
         self.account_gate().await;
-        self.account_schedule_refresh();
+        self.account_schedule_refresh(&user_id);
         let status = self.account_status_now();
         self.emit(Ephemeral::AccountStatus {
             status: status.clone(),
@@ -1193,14 +1730,40 @@ impl Core {
         }
     }
 
-    /// Forgets the session locally (keychain included) and ends it at the
-    /// provider in the background, best effort. Only the session goes: the
-    /// store, projects, drafts and worktrees stay, for the next sign-in.
+    /// Signs out of the active account (`account_sign_out_of`); the next
+    /// account with a session becomes active. Signed out of every account
+    /// already: nothing changes.
     pub async fn account_sign_out(&self) -> AppResult<AccountStatus> {
+        self.account_load().await;
+        let active = self.accounts().active.clone();
+        match active {
+            Some(user_id) => self.account_sign_out_of(&user_id).await,
+            None => {
+                self.account_sign_in_cancel();
+                self.0.account.session_ended.store(false, Ordering::SeqCst);
+                let status = if self.account_config().await.is_some() {
+                    self.account_status_now()
+                } else {
+                    unavailable()
+                };
+                self.emit(Ephemeral::AccountStatus {
+                    status: status.clone(),
+                });
+                Ok(status)
+            }
+        }
+    }
+
+    /// Forgets `user_id`'s account locally (keychain included) and ends
+    /// its session at the provider in the background, best effort. Was it
+    /// the active one, the next account with a session takes over; with
+    /// none left the gate closes. Only the session goes: the store,
+    /// projects, drafts and worktrees stay, for the next sign-in.
+    pub async fn account_sign_out_of(&self, user_id: &str) -> AppResult<AccountStatus> {
         self.account_sign_in_cancel();
         self.account_load().await;
         self.0.account.session_ended.store(false, Ordering::SeqCst);
-        let old = self.account_forget().await?;
+        let old = self.account_forget(user_id.trim()).await?;
         if let (Some(old), Some(cfg)) = (old, self.account_config().await) {
             let port = self.0.deps.account.clone();
             tokio::spawn(async move {
@@ -1218,61 +1781,130 @@ impl Core {
         Ok(status)
     }
 
-    /// Clears the session in memory and in the keychain; returns it.
-    async fn account_forget(&self) -> AppResult<Option<AccountSession>> {
-        if let Some(t) = self
-            .0
-            .account
-            .refresher
-            .lock()
-            .expect("account lock")
-            .take()
-        {
-            t.cancel();
-        }
-        let (old, persisted) = {
+    /// Removes `user_id`'s slot, in memory and in the keychain; returns its
+    /// session (if it still had one). An unknown user: nothing to do.
+    async fn account_forget(&self, user_id: &str) -> AppResult<Option<AccountSession>> {
+        let (old, was_active, next) = {
             let _write = self.0.account.write_lock.lock().await;
+            let (old, was_active, next) = {
+                let mut a = self.accounts();
+                let Some(at) = a.slots.iter().position(|s| s.profile.id == user_id) else {
+                    return Ok(None);
+                };
+                let mut slot = a.slots.remove(at);
+                slot.stop_refresher();
+                let was_active = a.active.as_deref() == Some(user_id);
+                if was_active {
+                    a.active = None;
+                    a.settle_active();
+                }
+                (slot.session.take(), was_active, a.active.clone())
+            };
             self.0.account.generation.fetch_add(1, Ordering::SeqCst);
-            let old = self.0.account.session.lock().expect("account lock").take();
-            (old, self.account_persist(None).await)
+            let persisted = self.account_persist(user_id, None).await;
+            let indexed = self.account_persist_index().await;
+            persisted?;
+            indexed?;
+            (old, was_active, next)
         };
-        theodore_telemetry::set_account(None);
-        self.fleet_account_changed();
-        if old.is_some() {
-            tracing::info!("signed out of the Theodore account");
+        if was_active {
+            self.account_identity(next.as_deref());
+            self.fleet_account_changed();
         }
+        tracing::info!(
+            switched = next.is_some(),
+            "signed out of a Theodore account"
+        );
         self.account_gate().await;
-        persisted?;
         Ok(old)
     }
 
-    /// A valid access token for Theodore's own services, refreshed first
-    /// when it's about to expire. `None` when signed out.
+    /// The provider ended `user_id`'s session (a rejected refresh): the
+    /// slot stays, without a session, so its row says "Sign in again".
+    /// Was it the active one, the next account with a session takes over;
+    /// with none, the gate closes and the sign-in screen says why.
+    async fn account_session_ended(&self, user_id: &str, since: u64) -> AppResult<()> {
+        let (was_active, next) = {
+            let _write = self.0.account.write_lock.lock().await;
+            let (was_active, next) = {
+                let mut a = self.accounts();
+                let Some(slot) = a.slot_mut(user_id) else {
+                    return Ok(());
+                };
+                if slot.generation != since {
+                    return Ok(());
+                }
+                slot.stop_refresher();
+                slot.session = None;
+                slot.generation = self.0.account.next_slot_generation();
+                let was_active = a.active.as_deref() == Some(user_id);
+                if was_active {
+                    a.settle_active();
+                }
+                (was_active, a.active_session().map(|s| s.user.id.clone()))
+            };
+            let persisted = self.account_persist(user_id, None).await;
+            let indexed = self.account_persist_index().await;
+            persisted?;
+            indexed?;
+            (was_active, next)
+        };
+        if was_active {
+            self.0.account.generation.fetch_add(1, Ordering::SeqCst);
+            if next.is_none() {
+                self.0.account.session_ended.store(true, Ordering::SeqCst);
+            }
+            self.account_identity(next.as_deref());
+            self.fleet_account_changed();
+            self.account_gate().await;
+        }
+        Ok(())
+    }
+
+    /// A valid access token for Theodore's own services, of the active
+    /// account, refreshed first when it's about to expire. `None` when
+    /// signed out.
     pub async fn account_access_token(&self) -> AppResult<Option<String>> {
         if self.account_config().await.is_none() {
             return Ok(None);
         }
         self.account_load().await;
-        let Some(session) = self.account_session() else {
+        let Some(user_id) = self.account_active_user_id() else {
             return Ok(None);
         };
-        if session.expires_at - REFRESH_SKEW_MS > self.0.deps.clock.now() {
-            return Ok(Some(session.access_token));
-        }
-        Ok(self.account_refresh_now().await?.map(|s| s.access_token))
+        self.account_access_token_for(&user_id).await
     }
 
-    /// Rotates the session unless another caller just did. A rejected
-    /// refresh token means the session is over: signed out, UI told, the
-    /// gate closes. Any other failure (offline, a 5xx) keeps the session:
-    /// the app stays usable and the refresher retries. `Ok(None)` when
-    /// there's no session (anymore).
-    pub(crate) async fn account_refresh_now(&self) -> AppResult<Option<AccountSession>> {
-        let _one_at_a_time = self.0.account.refresh_lock.lock().await;
-        let generation = self.0.account.generation.load(Ordering::SeqCst);
-        let Some(current) = self.account_session() else {
+    /// `account_access_token` for one account.
+    async fn account_access_token_for(&self, user_id: &str) -> AppResult<Option<String>> {
+        let Some(view) = self.slot_view(user_id) else {
             return Ok(None);
         };
+        if view.session.expires_at - REFRESH_SKEW_MS > self.0.deps.clock.now() {
+            return Ok(Some(view.session.access_token));
+        }
+        Ok(self
+            .account_refresh_slot(user_id)
+            .await?
+            .map(|s| s.access_token))
+    }
+
+    /// Rotates `user_id`'s session unless another caller just did. A
+    /// rejected refresh token means the session is over: that account
+    /// needs a sign-in again (`account_session_ended`), the UI is told.
+    /// Any other failure (offline, a 5xx) keeps the session: the app stays
+    /// usable and the refresher retries. `Ok(None)` when there's no
+    /// session (anymore).
+    async fn account_refresh_slot(&self, user_id: &str) -> AppResult<Option<AccountSession>> {
+        let Some(view) = self.slot_view(user_id) else {
+            return Ok(None);
+        };
+        let _one_at_a_time = view.refresh_lock.lock().await;
+        // Read under the lock: a refresh just before may have rotated it.
+        let Some(view) = self.slot_view(user_id) else {
+            return Ok(None);
+        };
+        let current = view.session;
         if current.expires_at - REFRESH_SKEW_MS > self.0.deps.clock.now() {
             return Ok(Some(current));
         }
@@ -1288,44 +1920,32 @@ impl Core {
             .await
         {
             Ok(next) => {
-                self.0.account.refresh_failures.store(0, Ordering::SeqCst);
-                if !self.account_commit(generation, &next).await? {
-                    return Ok(self.account_session());
+                view.refresh_failures.store(0, Ordering::SeqCst);
+                if !self.account_commit(user_id, view.generation, &next).await? {
+                    return Ok(self.slot_view(user_id).map(|v| v.session));
                 }
                 let changed = user_of(&next) != user_of(&current)
                     || organization_of(&next) != organization_of(&current);
                 if changed {
-                    self.emit(Ephemeral::AccountStatus {
-                        status: self.account_status_now(),
-                    });
+                    self.emit_account_status();
                 }
                 Ok(Some(next))
             }
             Err(e @ (AccountError::Rejected(_) | AccountError::InvalidToken(_))) => {
-                self.0.account.refresh_failures.store(0, Ordering::SeqCst);
+                view.refresh_failures.store(0, Ordering::SeqCst);
                 tracing::warn!(
                     error.code = "account.refresh_rejected",
                     error = %e,
-                    "the account session couldn't be refreshed; signed out"
+                    "the account session couldn't be refreshed; it needs a sign-in again"
                 );
-                if self.0.account.generation.load(Ordering::SeqCst) == generation {
-                    self.0.account.session_ended.store(true, Ordering::SeqCst);
-                    self.account_forget().await?;
-                    self.emit(Ephemeral::AccountStatus {
-                        status: self.account_status_now(),
-                    });
-                }
+                self.account_session_ended(user_id, view.generation).await?;
+                self.emit_account_status();
                 Err(e.into())
             }
             Err(e) => {
                 // Offline, this repeats until the network is back: one
                 // warning when it starts, then quiet.
-                let failures = self
-                    .0
-                    .account
-                    .refresh_failures
-                    .fetch_add(1, Ordering::SeqCst)
-                    + 1;
+                let failures = view.refresh_failures.fetch_add(1, Ordering::SeqCst) + 1;
                 if failures == 1 {
                     tracing::warn!(error.code = e.code(), error = %e, "account refresh failed");
                 } else {
@@ -1341,40 +1961,49 @@ impl Core {
         }
     }
 
-    /// One refresher per session: sleeps until shortly before `exp`,
-    /// refreshes, repeats; backs off on network errors; stops on sign-out.
-    fn account_schedule_refresh(&self) {
+    /// The active account's refreshes failed in a row (tests).
+    #[cfg(test)]
+    pub(crate) fn account_refresh_failures(&self) -> u32 {
+        self.accounts()
+            .active_slot()
+            .map_or(0, |s| s.refresh_failures.load(Ordering::SeqCst))
+    }
+
+    /// One refresher per account: sleeps until shortly before its `exp`,
+    /// refreshes, repeats; backs off on network errors; stops when the
+    /// account is signed out or its session ended.
+    fn account_schedule_refresh(&self, user_id: &str) {
         let token = CancellationToken::new();
-        if let Some(old) = self
-            .0
-            .account
-            .refresher
-            .lock()
-            .expect("account lock")
-            .replace(token.clone())
         {
-            old.cancel();
+            let mut a = self.accounts();
+            let Some(slot) = a.slot_mut(user_id) else {
+                return;
+            };
+            if let Some(old) = slot.refresher.replace(token.clone()) {
+                old.cancel();
+            }
         }
         let core = self.clone();
+        let user_id = user_id.to_string();
         tokio::spawn(async move {
             loop {
-                let Some(session) = core.account_session() else {
+                let Some(view) = core.slot_view(&user_id) else {
                     return;
                 };
-                let wait = (session.expires_at - REFRESH_SKEW_MS - core.0.deps.clock.now())
+                let wait = (view.session.expires_at - REFRESH_SKEW_MS - core.0.deps.clock.now())
                     .max(MIN_REFRESH_WAIT_MS);
                 tokio::select! {
                     _ = token.cancelled() => return,
                     _ = core.0.shutdown.cancelled() => return,
                     _ = tokio::time::sleep(Duration::from_millis(wait as u64)) => {}
                 }
-                match core.account_refresh_now().await {
+                match core.account_refresh_slot(&user_id).await {
                     Ok(Some(_)) => {}
                     Ok(None) => return,
                     Err(AppError::Account(AccountError::Rejected(_)))
                     | Err(AppError::Account(AccountError::InvalidToken(_))) => return,
                     Err(_) => {
-                        let failures = core.0.account.refresh_failures.load(Ordering::SeqCst);
+                        let failures = view.refresh_failures.load(Ordering::SeqCst);
                         tokio::select! {
                             _ = token.cancelled() => return,
                             _ = core.0.shutdown.cancelled() => return,

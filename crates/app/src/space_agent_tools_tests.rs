@@ -355,6 +355,77 @@ async fn set_base_moves_the_fork_point_and_refuses_what_it_cant() {
     assert!(note.contains("PR #12 still targets release"), "{note}");
 }
 
+/// The agent merged `release` into the worktree this turn, with no
+/// checkpoint yet: set_base reads the merge-base from the worktree as it is
+/// now, not from the last checkpoint. The same branch again re-reads it,
+/// and moves the fork point only when the worktree merged the tip in.
+#[tokio::test]
+async fn set_base_reads_the_merge_base_from_the_worktree_as_it_is_now() {
+    let e = start_env(false).await;
+    let s = e.create("").await;
+    e.f.git
+        .set_resolve("refs/heads/release", Sha::new("rel222"));
+    e.f.git.set_resolve("release", Sha::new("rel222"));
+    e.f.git.set_resolve("rel222", Sha::new("rel222"));
+    // Uncommitted merge: the snapshot has release's tip, the checkpoint
+    // only the older fork point.
+    e.f.git.ship.lock().unwrap().snapshot = Some(Sha::new("snap1"));
+    e.f.git
+        .set_merge_base("rel222", &s.head_sha.0, Sha::new("rel000"));
+    e.f.git
+        .set_merge_base("rel222", "snap1", Sha::new("rel222"));
+    running(&e, &s.id, "space:t:1").await;
+
+    let change = e
+        .core
+        .space_tool_set_base(&s.id, "space:t:1", "release")
+        .await
+        .unwrap();
+    assert_eq!(
+        change.base_sha, "rel222",
+        "from the worktree, not the checkpoint"
+    );
+    assert_eq!(e.space(&s.id).base_sha, Sha::new("rel222"));
+
+    // release moves on and the agent merges it again: the same branch
+    // re-reads the fork point.
+    e.f.git
+        .set_resolve("refs/heads/release", Sha::new("rel333"));
+    e.f.git.set_resolve("release", Sha::new("rel333"));
+    e.f.git.set_resolve("rel333", Sha::new("rel333"));
+    e.f.git.ship.lock().unwrap().snapshot = Some(Sha::new("snap2"));
+    let again = e
+        .core
+        .space_tool_set_base(&s.id, "space:t:1", "release")
+        .await
+        .unwrap();
+    assert_eq!(again.base_sha, "rel333");
+    assert!(
+        again
+            .note
+            .as_deref()
+            .unwrap()
+            .contains("already is the base"),
+        "{:?}",
+        again.note
+    );
+    assert_eq!(e.space(&s.id).base_sha, Sha::new("rel333"));
+
+    // It moves on once more, unmerged: the fork point stays.
+    e.f.git
+        .set_resolve("refs/heads/release", Sha::new("rel444"));
+    e.f.git.set_resolve("release", Sha::new("rel444"));
+    e.f.git
+        .set_merge_base("rel444", "snap2", Sha::new("rel333"));
+    let same = e
+        .core
+        .space_tool_set_base(&s.id, "space:t:1", "release")
+        .await
+        .unwrap();
+    assert_eq!(same.base_sha, "rel333");
+    assert_eq!(same.note.as_deref(), Some("release already is the base"));
+}
+
 #[tokio::test]
 async fn progress_is_replaced_cleared_and_gone_after_the_turn() {
     let e = start_env(false).await;

@@ -120,6 +120,7 @@ describe('loadViewer', () => {
       required: false,
       user: null,
       session_ended: false,
+      accounts: [],
     } as never);
     return store;
   };

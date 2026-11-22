@@ -29,14 +29,19 @@ import { Stack, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { StyleSheet, Text, View, type TextInputInstance } from 'react-native';
 import {
+  AttachButton,
+  AttachmentStrip,
   ComposerDock,
   Conversation,
   ConversationScrollButton,
   Message,
   PromptInput,
+  useAttach,
   type ConversationHandle,
 } from '../../../../src/components/chat';
+import { FileLinkProvider } from '../../../../src/components/chat/file-link';
 import { ChatMarkdown } from '../../../../src/components/markdown';
+import type { BlobRef } from '../../../../src/gen/fleet';
 import type {
   SubSpaceMessage,
   SubSpaceRead,
@@ -54,6 +59,7 @@ import {
   sendSettled,
   usePending,
 } from '../../../../src/state/pending';
+import { canSendWith } from '../../../../src/ui/attachments';
 import { Empty, Notice } from '../../../../src/ui/kit';
 import { errorText, spaceTitle } from '../../../../src/ui/logic';
 import { Glass } from '../../../../src/ui/native';
@@ -144,6 +150,8 @@ export default function SubSpaceScreen() {
   const top = useGlassHeaderInset();
   const hostDevice = host?.hostDevice ?? null;
   const hostName = host?.hostName ?? 'its computer';
+  // Files for its .context/, sealed for the host (docs/mobile.md "Files").
+  const attach = useAttach(child, hostDevice);
   // Your messages the host hasn't shown yet, under the child's id
   // (src/state/pending.ts); a read message of yours with the same text,
   // close in time, stands for one.
@@ -203,11 +211,15 @@ export default function SubSpaceScreen() {
   }
 
   const sendable = subSpaceSendable(status);
+  const canSubmit = sendable && !!hostDevice && canSendWith(text, attach.list);
+  const fileTarget = hostDevice
+    ? { space: child, hostDevice, hostName, spaceName: title }
+    : null;
   /** The request behind a bubble: its answer settles or fails the bubble. */
-  const dispatch = (key: string, t: string) => {
+  const dispatch = (key: string, t: string, attachments: BlobRef[] = []) => {
     if (!hostDevice) return;
     fleet
-      .sendTo(hostDevice, child, t)
+      .sendTo(hostDevice, child, t, attachments)
       .then((r) => {
         sendSettled(child, key, r);
         void poll();
@@ -216,15 +228,22 @@ export default function SubSpaceScreen() {
   };
   const send = () => {
     const t = text.trim();
-    if (!t || !sendable || !hostDevice) return;
+    if (!t || !canSubmit) return;
+    const { refs, files } = attach.take();
     setText('');
-    const key = addSend({ space: child, text: t, at: Date.now() });
+    const key = addSend({
+      space: child,
+      text: t,
+      at: Date.now(),
+      files,
+      attachments: refs,
+    });
     toEnd();
-    dispatch(key, t);
+    dispatch(key, t, refs);
   };
   const retry = (key: string) => {
     const again = sendRetried(child, key);
-    if (again) dispatch(key, again.text);
+    if (again) dispatch(key, again.text, again.attachments);
   };
   const edit = (key: string) => {
     const back = pending.find((x) => x.key === key);
@@ -306,44 +325,62 @@ export default function SubSpaceScreen() {
   ].filter((n) => n !== null);
 
   return (
-    <View className="flex-1 bg-background">
-      <Stack.Screen options={{ title }} />
-      <Conversation
-        ref={list}
-        data={read?.messages ?? []}
-        keyExtractor={(m) => messageKey(m, read?.messages.indexOf(m) ?? 0)}
-        renderItem={({ item }) => <Row m={item} />}
-        header={header}
-        footer={footer}
-        empty={empty}
-        composerHeight={dock}
-        topInset={top}
-      >
-        <ConversationScrollButton />
-      </Conversation>
-      <ComposerDock floating onHeight={setDock}>
-        {notes.length > 0 ? (
-          <Glass radius={20} style={styles.notes}>
-            {notes}
-          </Glass>
-        ) : null}
-        <PromptInput
-          value={text}
-          onChangeText={setText}
-          onSubmit={send}
-          placeholder={
-            status === 'running'
-              ? 'Add to its queue…'
-              : 'Message this sub-space…'
-          }
-          disabled={!sendable || !hostDevice}
-          editable={sendable}
-          canSubmit={sendable && text.trim() !== ''}
-          inputRef={input}
-          testID="sub-space-composer"
-        />
-      </ComposerDock>
-    </View>
+    <FileLinkProvider target={fileTarget}>
+      <View className="flex-1 bg-background">
+        <Stack.Screen options={{ title }} />
+        <Conversation
+          ref={list}
+          data={read?.messages ?? []}
+          keyExtractor={(m) => messageKey(m, read?.messages.indexOf(m) ?? 0)}
+          renderItem={({ item }) => <Row m={item} />}
+          header={header}
+          footer={footer}
+          empty={empty}
+          composerHeight={dock}
+          topInset={top}
+        >
+          <ConversationScrollButton />
+        </Conversation>
+        <ComposerDock floating onHeight={setDock}>
+          {notes.length > 0 ? (
+            <Glass radius={20} style={styles.notes}>
+              {notes}
+            </Glass>
+          ) : null}
+          <PromptInput
+            value={text}
+            onChangeText={setText}
+            onSubmit={send}
+            placeholder={
+              status === 'running'
+                ? 'Add to its queue…'
+                : 'Message this sub-space…'
+            }
+            disabled={!sendable || !hostDevice}
+            editable={sendable}
+            canSubmit={canSubmit}
+            above={
+              <AttachmentStrip
+                list={attach.list}
+                notice={attach.notice}
+                onRetry={attach.retry}
+                onRemove={attach.remove}
+              />
+            }
+            leading={
+              <AttachButton
+                onPick={(s) => void attach.pick(s)}
+                disabled={!sendable || !hostDevice}
+                busy={attach.picking}
+                testID="sub-space-attach"
+              />
+            }
+            inputRef={input}
+            testID="sub-space-composer"
+          />
+        </ComposerDock>
+      </View>
+    </FileLinkProvider>
   );
 }
 

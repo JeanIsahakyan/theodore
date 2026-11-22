@@ -56,6 +56,7 @@
  */
 import { config } from '../config';
 import type {
+  BlobRef,
   ClientMessage,
   DeviceSummary,
   RemoteOp,
@@ -63,6 +64,19 @@ import type {
   ServerMessage,
   SignedEnvelope,
 } from '../gen/fleet';
+import {
+  MAX_ATTACHMENTS,
+  MAX_ATTACHMENT_BYTES,
+  MAX_PATH_CHARS,
+  MAX_READ_FILE_BYTES,
+  isBlobRef,
+  openBlob,
+  randomBytes,
+  sealBlob,
+  validateBlobRef,
+} from './blob';
+import { createBlobStore, type BlobStore } from './blob-store';
+import { FleetError } from './errors';
 import type { AuthClient, Session } from '../auth/types';
 import { wellFormedKey } from '../keys/ed25519';
 import { fingerprint } from '../keys/fingerprint';
@@ -115,6 +129,8 @@ import type {
   SpaceView,
 } from './types';
 
+export { FleetError } from './errors';
+
 export const PROTOCOL_VERSION = 6;
 /** Most confirms kept at once (the oldest go first). */
 export const CONFIRMS_KEPT = 20;
@@ -161,6 +177,9 @@ export interface FleetTiming {
   startWaitMs: number;
   /** A request's reply is still taken this long after it went out. */
   pendingTtlMs: number;
+  /** `read_file` waits this long: the host seals and uploads up to 50 MiB
+   *  before it answers. */
+  readFileWaitMs?: number;
 }
 
 export const DEFAULT_TIMING: FleetTiming = {
@@ -171,6 +190,7 @@ export const DEFAULT_TIMING: FleetTiming = {
   replyWaitMs: 15_000,
   startWaitMs: 30_000,
   pendingTtlMs: 150_000,
+  readFileWaitMs: 120_000,
 };
 
 export interface FleetDeps {
@@ -187,17 +207,10 @@ export interface FleetDeps {
   now: () => number;
   /** In [0, 1): backoff jitter. */
   random: () => number;
-}
-
-/** A request that didn't succeed; `code` is a refusal code when there is one. */
-export class FleetError extends Error {
-  constructor(
-    message: string,
-    readonly code: string | null = null,
-  ) {
-    super(message);
-    this.name = 'FleetError';
-  }
+  /** Random bytes for blob ids, keys and nonces (defaults to `crypto`). */
+  randomBytes: (n: number) => Uint8Array;
+  /** The cloud's blob store (defaults to one over `fetch` and `cloudUrl`). */
+  blobs?: BlobStore;
 }
 
 type Answer =
@@ -286,11 +299,20 @@ export function createFleetClient(
     timing: overrides.timing ?? DEFAULT_TIMING,
     now: overrides.now ?? Date.now,
     random: overrides.random ?? Math.random,
+    randomBytes: overrides.randomBytes ?? randomBytes,
+    blobs: overrides.blobs,
   };
   const t = deps.timing;
   const pins: PinStore = pinStore(deps.storage);
   const saved = savedSpaces(deps.data);
   const set = useFleetState.setState;
+  const blobs: BlobStore =
+    deps.blobs ??
+    createBlobStore({
+      cloudUrl: deps.cloudUrl,
+      fetch: deps.fetch,
+      token: () => auth.accessToken(),
+    });
 
   // ── state ───────────────────────────────────────────────────────────────
   let wanted = false;
@@ -1319,6 +1341,43 @@ export function createFleetClient(
   };
 
   /**
+   * The attachments of a request as the host checks them (docs/fleet.md
+   * "Files (blobs)"): at most 10, each valid, each ≤ 20 MiB, no id twice.
+   */
+  const checkedAttachments = (list: readonly BlobRef[] = []): BlobRef[] => {
+    if (list.length > MAX_ATTACHMENTS)
+      throw new FleetError(`at most ${MAX_ATTACHMENTS} files per message`);
+    const ids = new Set<string>();
+    for (const r of list) {
+      const bad = validateBlobRef(r);
+      if (bad) throw new FleetError(`attachment ${r?.name ?? ''}: bad ${bad}`);
+      if (r.size > MAX_ATTACHMENT_BYTES)
+        throw new FleetError(`${r.name} is over 20 MiB`);
+      if (ids.has(r.blob_id))
+        throw new FleetError(`${r.name} is attached twice`);
+      ids.add(r.blob_id);
+    }
+    return [...list];
+  };
+
+  /** The pin of `hostDevice`, only while the cloud lists that same key. */
+  const pinnedHost = async (hostDevice: string): Promise<Pin> => {
+    const pin = await pins.get(hostDevice);
+    if (!pin) {
+      throw new FleetError(
+        `device ${hostDevice} isn't trusted on this device: trust it in Devices first`,
+      );
+    }
+    const listed = devices.find((d) => d.device_id === hostDevice);
+    if (listed && listed.public_key !== pin.publicKey) {
+      throw new FleetError(
+        `${pin.name}'s key changed since it was trusted: compare its fingerprint and trust it again`,
+      );
+    }
+    return pin;
+  };
+
+  /**
    * Signs `op` for a pinned `hostDevice` and posts it (`POST
    * /v1/fleet/request`): a notification action, maybe the first thing to
    * run after a cold start, so it loads the session and device id itself.
@@ -1460,6 +1519,7 @@ export function createFleetClient(
             model: req.model ?? null,
             effort: req.effort ?? null,
             depth: 0,
+            attachments: checkedAttachments(req.attachments),
           },
           true,
         ));
@@ -1475,8 +1535,9 @@ export function createFleetClient(
       return { ...(tracked.get(space)?.view ?? x.view) };
     },
 
-    async send(space, text, mode = null, picks = {}) {
+    async send(space, text, mode = null, picks = {}, attachments = []) {
       if (!text.trim()) throw new FleetError('empty message');
+      const files = checkedAttachments(attachments);
       const x = tracked.get(space);
       const before = x?.view.status;
       // Running from now: the last turn's idle must not linger.
@@ -1494,6 +1555,7 @@ export function createFleetClient(
           agent: picks.agent ?? null,
           model: picks.model ?? null,
           effort: picks.effort ?? null,
+          attachments: files,
         });
         return sendResult(value);
       } catch (e) {
@@ -1617,15 +1679,102 @@ export function createFleetClient(
       return read;
     },
 
-    async sendTo(hostDevice, space, text) {
+    async sendTo(hostDevice, space, text, attachments = []) {
       const message = text.trim();
       if (!message) throw new FleetError('empty message');
       const value = await steerOn(hostDevice, {
         op: 'send_to',
         space: localSpaceId(space),
         message,
+        attachments: checkedAttachments(attachments),
       });
       return sendResult(value);
+    },
+
+    async uploadAttachment(hostDevice, file, onProgress) {
+      if (file.bytes.length > MAX_ATTACHMENT_BYTES)
+        throw new FleetError(`${file.name} is over 20 MiB`);
+      // Sealed for the key pinned here: the host opens it with its seed.
+      const pin = await pinnedHost(hostDevice);
+      const { ref, chunks } = sealBlob(
+        pin.publicKey,
+        file.bytes,
+        file.name,
+        file.mime,
+        {
+          blobId: [...deps.randomBytes(16)]
+            .map((b) => b.toString(16).padStart(2, '0'))
+            .join(''),
+          ephSk: deps.randomBytes(32),
+          noncePrefix: deps.randomBytes(16),
+        },
+      );
+      await blobs.upload(ref, chunks, (done, total) =>
+        onProgress?.(total ? done / total : 1),
+      );
+      return ref;
+    },
+
+    async deleteBlob(blobId) {
+      if (!/^[0-9a-f]{32}$/.test(blobId)) throw new FleetError('not a blob id');
+      await blobs.remove(blobId);
+    },
+
+    async readFile(hostDevice, space, path, maxBytes = MAX_READ_FILE_BYTES) {
+      const id = localSpaceId(space);
+      if (
+        path === '' ||
+        [...path].length > MAX_PATH_CHARS ||
+        path.includes('\0')
+      )
+        throw new FleetError('not a file path');
+      const cap = Math.max(
+        1,
+        Math.min(MAX_READ_FILE_BYTES, Math.floor(maxBytes)),
+      );
+      const { answer } = await request(
+        hostDevice,
+        { op: 'read_file', space: id, path, max_bytes: cap },
+        false,
+      );
+      const a = await within(answer, t.readFileWaitMs ?? t.replyWaitMs);
+      const err = answerError(a);
+      if (err) throw err;
+      const v = a.kind === 'ok' && isObj(a.value) ? a.value : null;
+      const ref = v?.blob;
+      if (!isBlobRef(ref))
+        throw new FleetError("the host's answer wasn't a file");
+      if (ref.size > cap)
+        throw new FleetError(
+          'the file is larger than asked for',
+          'fleet.too_large',
+        );
+      return ref;
+    },
+
+    async canOpenBlobs() {
+      const key = await keys.deviceKey();
+      return !!key.blobOpener;
+    },
+
+    async fetchBlob(ref, onProgress) {
+      const bad = validateBlobRef(ref);
+      if (bad) throw new FleetError(`not a file reference: bad ${bad}`);
+      const key = await keys.deviceKey();
+      if (!key.blobOpener)
+        throw new FleetError(
+          "this device's key can't open files: use the app on a phone",
+        );
+      try {
+        const chunks = await blobs.download(ref, (done, total) =>
+          onProgress?.(total ? done / total : 1),
+        );
+        return openBlob(key.blobOpener, ref, chunks);
+      } finally {
+        // Read once: the cloud copy goes, opened or not (a retry asks the
+        // host for a fresh one).
+        await blobs.remove(ref.blob_id).catch(() => {});
+      }
     },
 
     async answerSpace(hostDevice, space, ask, answers) {

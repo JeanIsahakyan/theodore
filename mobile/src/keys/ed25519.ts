@@ -1,15 +1,39 @@
 /**
  * ed25519 with `@noble/ed25519` (pure JS, audited), synchronous SHA-512
- * from `@noble/hashes` so it runs where WebCrypto doesn't (Hermes).
+ * from `@noble/hashes` so it runs where WebCrypto doesn't (Hermes). The
+ * X25519 side of a seed key (opening blobs, docs/fleet.md "Files (blobs)")
+ * is `@noble/curves`, derived as libsodium does.
  */
 import * as ed from '@noble/ed25519';
+import { x25519 } from '@noble/curves/ed25519.js';
 import { sha512 } from '@noble/hashes/sha2.js';
 import { fromBase64, toBase64 } from './base64';
-import type { DeviceKey } from './types';
+import type { BlobOpener, DeviceKey } from './types';
 
 ed.hashes.sha512 = sha512;
 
 export const SEED_BYTES = 32;
+
+/** X25519 scalar clamping (RFC 7748). */
+function clamp(sk: Uint8Array): Uint8Array {
+  sk[0]! &= 248;
+  sk[31]! &= 127;
+  sk[31]! |= 64;
+  return sk;
+}
+
+/**
+ * The X25519 secret of an ed25519 seed (SHA-512(seed)[..32], clamped:
+ * libsodium's `crypto_sign_ed25519_sk_to_curve25519`), kept in this
+ * closure: callers get the public key and a shared-secret function only.
+ */
+function blobOpener(seed: Uint8Array): BlobOpener {
+  const sk = clamp(sha512(seed).slice(0, 32));
+  return {
+    x25519PublicKey: x25519.getPublicKey(sk),
+    sharedSecret: (peer) => x25519.getSharedSecret(sk, peer),
+  };
+}
 
 /** A device key from a 32-byte seed (the RFC 8032 secret key). */
 export function seedKey(seed: Uint8Array): DeviceKey {
@@ -21,6 +45,7 @@ export function seedKey(seed: Uint8Array): DeviceKey {
   return {
     publicKey,
     sign: async (message) => toBase64(ed.sign(message, secret)),
+    blobOpener: blobOpener(secret),
   };
 }
 
