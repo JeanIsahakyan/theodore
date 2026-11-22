@@ -260,7 +260,7 @@ describe('ops on any space', () => {
   });
 });
 
-// Protocol 8: archive_space / unarchive_space, on a space the target hosts
+// Protocol 9: archive_space / unarchive_space, on a space the target hosts
 // for the origin, routed like stop.
 describe('archive_space / unarchive_space', () => {
   const ARCHIVE: RemoteRequest['op'][] = [
@@ -268,11 +268,11 @@ describe('archive_space / unarchive_space', () => {
     { op: 'unarchive_space', space: 'rs_1' },
   ];
 
-  it('are read on their space and need protocol 8', () => {
+  it('are read on their space and need protocol 9', () => {
     for (const op of ARCHIVE) {
       const r = peekRequest(requestBody(op));
       expect(r).toMatchObject({ op: op.op, space: 'rs_1', ask_id: null });
-      expect(protocolFor(r.op)).toBe(8);
+      expect(protocolFor(r.op)).toBe(9);
     }
     expect(protocolFor('stop')).toBe(3);
     expect(code(() => peekRequest(requestBody({ op: 'archive_space' })))).toBe(
@@ -280,7 +280,7 @@ describe('archive_space / unarchive_space', () => {
     );
   });
 
-  it('route to a protocol-8 host, and refuse an older one in words', async () => {
+  it('route to a protocol-9 host, and refuse an older one in words', async () => {
     const h = new Harness();
     const mac1 = await h.device('user_1', 'mac1');
     const mac2 = await h.device('user_1', 'mac2');
@@ -296,7 +296,7 @@ describe('archive_space / unarchive_space', () => {
     ).toEqual(['archive_space', 'unarchive_space']);
 
     const old = await h.device('user_1', 'old-mac');
-    old.protocol = 7;
+    old.protocol = 8;
     await old.connect();
     await startSpace(mac1, old, 'rs_2');
     await mac1.request(old.id!, { op: 'archive_space', space: 'rs_2' });

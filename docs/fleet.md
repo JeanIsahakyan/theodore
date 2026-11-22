@@ -118,6 +118,8 @@ Two kinds of refusal, told apart on the wire:
 | `fleet.denied` | target | from an `mcp` device, an edit or run the person on the target (or on a device it delegates to) denied, or didn't allow before `issued_at` + 5 min; a daemon's at once, unless auto mode covers it |
 | `fleet.offline` | cloud | target not connected within 10 s grace |
 | `fleet.too_many_spaces` | cloud | the user's 200 spaces |
+| `fleet.attachment_failed` | target | an attachment couldn't be fetched, opened (a tag, the size or the sha256), or written into the space's `.context/`; nothing ran ("Files (blobs)") |
+| `fleet.too_large` | target, cloud | over 10 attachments or one over 20 MiB; a `read_file` over `max_bytes` or 50 MiB; a blob chunk the cloud refuses |
 
 ### Agent, model and effort
 
@@ -504,7 +506,7 @@ request ─▶ the gate above (pin, target_key, fresh, accept_remote, claim)
 
 #### Archive from another device
 
-Protocol 8. The origin of a space hosted here (a phone, the web app,
+Protocol 9. The origin of a space hosted here (a phone, the web app,
 another computer: whoever started it, or follows it and is trusted here)
 archives it as this computer's Archive does (docs/spaces.md §7), and
 brings it back. Named by its `rs_` id, routed like `stop`.
@@ -530,7 +532,7 @@ unarchive_space{rs_} ─▶ the same gate ─▶ unarchive_space: the worktree r
 - Nothing is archived on its own: no device, agent or timer archives a
   space for you except the auto-archive sweep of done spaces
   (docs/spaces.md §7).
-- A computer below protocol 8 can't read the ops: the cloud answers
+- A computer below protocol 9 can't read the ops: the cloud answers
   `refused{fleet.upgrade_required}` and the phone says "Update Theodore on
   <computer> to archive from here".
 
@@ -806,6 +808,128 @@ pins down what this doc leaves open:
   sockets per user), `fleet.too_many_spaces` (200 per user),
   `fleet.upgrade_required` (HTTP 426).
 
+## Files (blobs)
+
+Protocol 8. A file goes from one device to another through the cloud,
+which stores it only as ciphertext it can't read: chunks of at most 4 MiB
+plaintext, each encrypted for the recipient's device key and stored under
+a random blob id, fetched and deleted by the recipient. The reference to
+the blob (`BlobRef`) rides inside the signed request or reply, so its
+integrity is that signature's. Rust: `crates/fleet-protocol/src/blob.rs`;
+the TS side is checked against `fleet-vectors.json` (`blobs`).
+
+```
+phone ─▶ computer: attachments (start_space, send, send_to)
+  phone: seal_blob(host's pinned ed25519 pk, file) ─▶ BlobRef + chunks
+    ─▶ PUT /v1/fleet/blobs/{blob_id}/{i} ×chunks ─▶ request{op, attachments:[BlobRef]}, signed
+  host: the gate (pin, target_key, fresh, …) ─▶ BlobRef::validate, ≤ 10, each ≤ 20 MiB
+    ─▶ GET /v1/fleet/blobs/{blob_id}/{i} ×chunks ─▶ open_blob(own seed): every tag, size, sha256
+    ─▶ <worktree>/.context/<safe_attachment_name(name)> ─▶ DELETE /v1/fleet/blobs/{blob_id}
+    ─▶ the turn runs (the agent finds the files in .context/)
+
+computer ─▶ phone: read_file {space, path, max_bytes}
+  phone ─▶ request{op: read_file}, signed (permission as read_space: Ask)
+  host: path within the space's worktree, size ≤ min(max_bytes, 50 MiB) else fleet.too_large
+    ─▶ seal_blob(origin's pinned ed25519 pk, file) ─▶ PUT ×chunks ─▶ reply ok {blob: BlobRef}, signed
+  phone: open the reply with the host's pin ─▶ GET ×chunks ─▶ open_blob ─▶ DELETE ─▶ show / save
+```
+
+### Crypto (`theodore-blob-v1`)
+
+No new key, no new trust: the recipient's encryption key is derived from
+the ed25519 device key the sender already pinned.
+
+```
+recipient  x25519_pk = Edwards ─▶ Montgomery of the ed25519 pk   (u = (1 + y) / (1 − y);
+                       libsodium crypto_sign_ed25519_pk_to_curve25519)
+           x25519_sk = clamp(SHA-512(ed25519 seed)[0..32])       (crypto_sign_ed25519_sk_to_curve25519)
+sender     eph_sk random (per blob) ─▶ eph_pk
+           shared = X25519(eph_sk, x25519_pk)
+           key    = HKDF-SHA256(ikm = shared, salt = eph_pk ‖ x25519_pk, info = "theodore-blob-v1", 32 bytes)
+chunk i    XChaCha20-Poly1305(key)
+           nonce = nonce_prefix (16 random bytes, per blob) ‖ u64 BE i
+           aad   = blob_id (ASCII) ‖ u32 BE i ‖ u32 BE chunks
+           ciphertext = plaintext[i·4 MiB .. (i+1)·4 MiB] ‖ 16-byte tag
+sha256     hex SHA-256 of the whole plaintext; checked by the recipient after every tag opened
+```
+
+| `BlobRef` field | Bound |
+| --- | --- |
+| `blob_id` | 32 lowercase hex (16 random bytes) |
+| `name` | 1 to 200 characters, no `/`, `\` or NUL; written only through `safe_attachment_name` (last path component, control characters and leading dots dropped, extension kept, `file` if nothing is left) |
+| `mime` | ≤ 100 characters |
+| `size` | plaintext bytes; ≤ 20 MiB per attachment, ≤ min(`max_bytes`, 50 MiB) for `read_file` |
+| `chunks` | 1 to 64, `max(1, ceil(size / 4 MiB))`: an empty file is one empty chunk (a tag alone) |
+| `sha256` | 64 hex |
+| `eph_pk` | base64, 32 bytes |
+| `nonce_prefix` | base64, 16 bytes |
+
+`BlobRef::validate` checks every bound; `RemoteOp::validate_blobs` the
+list (≤ 10, no id twice, each ≤ 20 MiB) and a `read_file`'s `path` (≤ 1024
+characters, no NUL). `open_blob` returns nothing unless every chunk's tag
+opens, the count, size and sha256 match: a wrong recipient, a swapped,
+dropped or altered chunk, another blob id or nonce prefix all fail.
+
+| Wire | |
+| --- | --- |
+| `RemoteOp::StartSpace.attachments`, `Send.attachments`, `SendTo.attachments` | `BlobRef[]`, default `[]` (a protocol-7 body has none); encrypted for the target |
+| `RemoteOp::ReadFile {space, path, max_bytes}` | `space` as `read_space` takes it; an op on any space (`on_any_space`), counts as Ask; ok value `{blob: BlobRef}`, encrypted for the origin |
+| Cloud HTTP, Bearer = the account session JWT | `PUT /v1/fleet/blobs/{blob_id}/{i}` body = the chunk (≤ 4 MiB + 16), header `x-theodore-chunks: N` ─▶ 204; `GET …/{blob_id}/{i}` ─▶ 200 bytes; `DELETE …/{blob_id}` ─▶ 204 (all chunks). Same org only |
+| Errors (JSON `{code}`) | `fleet.blob_not_found` 404, `fleet.too_large` 413, `fleet.quota` 429, `fleet.unauthorized` 401 |
+| Older peers | a protocol-7 origin never sends attachments or `read_file`; a protocol-7 host refuses `read_file` as an unknown op, and a host on 8 that doesn't read files yet refuses attachments and `read_file` with `fleet.invalid` |
+
+### Host side
+
+The desktop as the target (`crates/app/src/usecases/fleet_files.rs`; the
+HTTP routes behind `FleetPort::put_chunk` / `get_chunk` / `delete_blob`,
+`crates/fleet/src/blobs.rs`, Bearer = the account's current access token,
+the cloud the link dialed).
+
+```
+start / send / send_to {attachments}
+  gate ─▶ validate_blobs (≤ 10, each ≤ 20 MiB, no id twice) ─▶ else fleet.too_large /
+          fleet.attachment_failed before the claim, nothing fetched
+  claim ─▶ run: GET every chunk of every blob ─▶ open_blob(own seed), all in memory
+       ─▶ one failure (404, a tag, the digest, a 5xx) ─▶ fleet.attachment_failed
+          (fleet.too_large for a size the cloud refuses); nothing written, no turn
+       ─▶ <worktree>/.context/<safe_attachment_name> (made; "name (2).ext" on a clash)
+          + "/.context/" in the cache's info/exclude, once ─▶ DELETE each blob
+       ─▶ the message's attachments ─▶ its turn:
+            prompt + "Attached files (in .context/): shot.png (image/png, 340 KB), log.txt (text/plain, 2 KB)"
+            images also as AgentRequest.attachments (Claude: --add-dir; Codex: -i); the rest by name
+  start: fetched before create_space; written right after the worktree exists,
+         before the goal's turn (after setup too); a failed write ─▶ fleet.attachment_failed,
+         no space
+  send while the space runs ("Sends queue"): fetched and written at accept time;
+         the queued row carries them; dropped (the gate again) or cancelled here
+         ─▶ its .context files removed
+read_file {space, path, max_bytes}
+  gate ─▶ as read_space (Ask): the space here, with a worktree (a mirror has none ─▶ fleet.invalid)
+  run  ─▶ path relative, no `..`, no `.git` component, resolved (symlinks followed) still
+          inside the worktree, a regular file ─▶ else fleet.invalid
+       ─▶ size ≤ min(max_bytes, 50 MiB) ─▶ else fleet.too_large
+       ─▶ seal_blob(the key the request verified against: the origin's pin) ─▶ PUT ×chunks
+          (a failed PUT ─▶ DELETE, fleet.quota / fleet.too_large / fleet.unauthorized / fleet.internal)
+       ─▶ ok {blob}; mime by extension (`guess_mime`, application/octet-stream otherwise)
+```
+
+- `.context/` is the space's and never Theodore's to commit: checkpoints,
+  snapshots and the shipped commit leave it out by pathspec whatever the
+  excludes say (docs/spaces.md "The `.context/` folder").
+- Every transfer logs `fleet file transfer` (`direction` in / out, `bytes`,
+  `chunks`, `ms`, `outcome`), a failure at warn with `error.code`; never a
+  file name or path (docs/telemetry.md).
+- The desktop UI shows the received files as the message's attachments
+  (chips by name; no preview: they aren't in the attachments store).
+
+Test vectors (`cloud/src/gen/fleet-vectors.json` → `blobs`, copied to
+`mobile/src/gen`): a fixed recipient seed with its ed25519 and X25519 keys,
+and three cases (0 bytes, 10 bytes, 4 MiB + 3 bytes as two chunks) with a
+fixed ephemeral secret, nonce prefix and blob id. The plaintext is
+generated, not embedded: byte `i` is `(i × 31) mod 251`. Each case lists
+the expected `eph_pk`, key, `BlobRef`, and every chunk's nonce, AAD and
+ciphertext SHA-256.
+
 ## MCP over the cloud
 
 Claude Code or a claude.ai connector adds Theodore as a remote MCP server
@@ -815,15 +939,17 @@ storage, deploy checklist): `docs/cloud.md` "MCP". Host side (the Allow
 prompt): "Requests from Claude via the cloud" above.
 
 ```
-Claude Code:  claude mcp add --transport http theodore https://<cloud>/mcp
+Claude Code:  claude mcp add --transport http theodore https://mcp.theodore.cloud/mcp
               /mcp ─▶ theodore ─▶ Authenticate ─▶ browser: Allow, Theodore sign-in
 claude.ai:    Settings ─▶ Connectors ─▶ Add custom connector
-              ─▶ URL https://<cloud>/mcp ─▶ Connect ─▶ the same sign-in
+              ─▶ URL https://mcp.theodore.cloud/mcp ─▶ Connect ─▶ the same sign-in
 then:         theodore_status ─▶ trust both ways (below) ─▶ space_start …
 ```
 
-`<cloud>` is the channel's Worker (`docs/cloud.md` "Environments"). MCP is
-off there until the checklist in `docs/cloud.md` "MCP" is done.
+Staging is `https://mcp-staging.theodore.cloud/mcp`; a connection added
+with a channel's old `workers.dev` URL keeps working (`docs/cloud.md`
+"Environments"). MCP is off there until the checklist in `docs/cloud.md`
+"MCP" is done.
 
 ### The MCP device
 
@@ -915,11 +1041,13 @@ events and replies a pinned computer signed, refusals as codes
   `DeviceInfo.mcp_auto`; 7 adds the ops on any space — `list_spaces`,
   `read_space`, `ask_space`, `send_to`, `answer_space`, `merge_child` —,
   the `sub_space` mirror, `ConfirmAction::Merge` and `fleet.timeout`; 8
-  adds `archive_space` / `unarchive_space`, "Archive from another device").
-  Hub: protocols 3 to 8; `mcp` hidden from connections below 5
+  adds files: `attachments` on `start_space` / `send` / `send_to`, the
+  `read_file` op and the blob HTTP routes, "Files (blobs)"; 9 adds
+  `archive_space` / `unarchive_space`, "Archive from another device").
+  Hub: protocols 3 to 9; `mcp` hidden from connections below 5
   (`devices`); the confirm frames never sent below 6; the confirm ops to a
   computer below 6, the ops on any space to one below 7, and the archive
-  ops to one below 8, are `refused{fleet.upgrade_required}`; never
+  ops to one below 9, are `refused{fleet.upgrade_required}`; never
   accepted as a socket's kind (hello, `announce`).
 - Its requests are ordinary `SignedEnvelope`s (`Domain::Request`, the
   Rust field order), checked against `src/gen/fleet-vectors.json`.
@@ -933,6 +1061,6 @@ events and replies a pinned computer signed, refusals as codes
 
 ## Not yet
 
-`theodore daemon` (headless Linux device), file transfer, cross-user
-sharing within an org (v1 routes only between one user's own devices).
+`theodore daemon` (headless Linux device), cross-user sharing within an
+org (v1 routes only between one user's own devices).
 Phone and web: docs/mobile.md.

@@ -18,6 +18,7 @@ import { useSheet } from '../components/pickers/sheet-host';
 import { SymbolImage } from '../components/symbol-image';
 import type { SpaceProgress, TurnStep } from '../fleet/contract';
 import type { SpaceStatus } from '../fleet/types';
+import { track } from '../telemetry/log';
 import {
   activityBusy,
   activityHeadline,
@@ -96,7 +97,10 @@ export const ActivityStrip = memo(function ActivityStrip(
       {line ? (
         <Pressable
           disabled={!line.waiting}
-          onPress={props.onWaiting}
+          onPress={() => {
+            track('activity_used', { what: 'waiting' });
+            props.onWaiting();
+          }}
           accessibilityRole={line.waiting ? 'button' : 'text'}
           accessibilityLabel={line.text}
           style={styles.line}
@@ -121,7 +125,10 @@ export const ActivityStrip = memo(function ActivityStrip(
       {headline ? (
         <>
           <Pressable
-            onPress={sheet.open}
+            onPress={() => {
+              track('activity_used', { what: 'headline' });
+              sheet.open();
+            }}
             accessibilityRole="button"
             accessibilityLabel={`${headline}, opens the activity`}
             accessibilityState={{ expanded: sheet.isOpen }}

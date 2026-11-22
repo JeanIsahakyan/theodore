@@ -8,8 +8,9 @@
 //!
 //! ```text
 //! enabled + signed in + cloud URL + org ─▶ FleetPort::start ─▶ link
-//!   account refresh ─▶ Reauth(token)       org switch ─▶ Close, new link
-//!   sign-out / disable ─▶ Close            Fatal ─▶ error, no redial until
+//!   account refresh ─▶ Reauth(token)       org or account switch ─▶ Close,
+//!   sign-out / disable ─▶ Close              new link (that org's device)
+//!                                          Fatal ─▶ error, no redial until
 //!                                            sign-in, org or settings change,
 //!                                            or a new access token
 //! link ─▶ Connected | Message | Disconnected | Fatal ─▶ fleet_inbound
@@ -239,6 +240,10 @@ pub(crate) fn mode_str(m: FleetMode) -> &'static str {
 pub(crate) struct Link {
     pub id: u64,
     pub commands: mpsc::UnboundedSender<FleetCommand>,
+    /// The account (user id) whose token the link carries: another
+    /// account's token is never sent as a `reauth` on this link, even in
+    /// the same organization (the cloud ties a device to its user).
+    pub user: String,
     pub org: String,
     pub cloud_url: String,
     pub token: String,
@@ -446,6 +451,15 @@ pub struct FleetState {
     /// Read-modify-write of the settings.
     pub(crate) settings_lock: tokio::sync::Mutex<()>,
     pub(crate) hosted_loaded: tokio::sync::OnceCell<()>,
+    /// Files another device sent with a `start_space`, by the local space
+    /// id, until its worktree exists (`fleet_files`).
+    pub(crate) pending_context: std::sync::Mutex<
+        std::collections::HashMap<String, Vec<crate::usecases::fleet_files::ReceivedFile>>,
+    >,
+    /// `.context/` files written for a space, waiting to ride with its
+    /// next message (`fleet_files`).
+    pub(crate) pending_attachments:
+        std::sync::Mutex<std::collections::HashMap<String, Vec<theodore_contract::Attachment>>>,
     /// The persisted seen requests, read once.
     pub(crate) seen_loaded: tokio::sync::OnceCell<()>,
     /// The mirrored spaces in the store, followed again once.
@@ -463,6 +477,7 @@ pub struct FleetState {
 
 /// Wanted link: everything a reconcile needs.
 struct Wanted {
+    user: String,
     org: String,
     cloud_url: String,
     token: String,
@@ -1132,12 +1147,12 @@ impl Core {
         let org = session.organization_id.clone()?;
         // Refreshed first when about to expire, like any other caller.
         let token = self.account_access_token().await.ok().flatten()?;
-        // The refresh may have moved the session along: read it again.
-        let org = self
-            .account_session()
-            .and_then(|s| s.organization_id)
-            .unwrap_or(org);
+        // The refresh may have moved the session along, or a switch made
+        // another account active: read it again.
+        let session = self.account_session()?;
+        let org = session.organization_id.unwrap_or(org);
         Some(Wanted {
+            user: session.user.id,
             org,
             cloud_url,
             token,
@@ -1159,7 +1174,11 @@ impl Core {
             match (wanted, mem.link.as_mut()) {
                 (None, Some(_)) => Step::Close,
                 (None, None) => Step::Nothing,
-                (Some(w), Some(link)) if link.org == w.org && link.cloud_url == w.cloud_url => {
+                (Some(w), Some(link))
+                    if link.user == w.user
+                        && link.org == w.org
+                        && link.cloud_url == w.cloud_url =>
+                {
                     if link.token != w.token {
                         let _ = link.commands.send(FleetCommand::Reauth(w.token.clone()));
                         link.token = w.token;
@@ -1167,7 +1186,8 @@ impl Core {
                     Step::Nothing
                 }
                 (Some(w), Some(_)) => {
-                    // Another organization or cloud: a new hub.
+                    // Another account, organization or cloud: a new hub,
+                    // or the same hub as another user.
                     if let Some(old) = mem.link.take() {
                         let _ = old.commands.send(FleetCommand::Close);
                     }
@@ -1247,6 +1267,7 @@ impl Core {
             mem.link = Some(Link {
                 id,
                 commands: link.commands,
+                user: w.user.clone(),
                 org: w.org.clone(),
                 cloud_url: w.cloud_url,
                 token: w.token,

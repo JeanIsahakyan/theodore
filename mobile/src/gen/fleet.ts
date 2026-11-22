@@ -10,6 +10,41 @@ export type AskVia =
 /**  You moved to another device; it followed you. */
 "moved";
 
+/**
+ *  A file encrypted for one device and stored in the cloud as chunks
+ *  (docs/fleet.md "Files (blobs)"). The cloud sees only ciphertext; this
+ *  reference travels inside a signed request or reply, so its integrity is
+ *  the signature's. Made by [`seal_blob`], read by [`open_blob`].
+ */
+export type BlobRef = {
+	/**
+	 *  32 lowercase hex characters, random per blob: the cloud's key for
+	 *  its chunks (`/v1/fleet/blobs/{blob_id}/{i}`).
+	 */
+	blob_id: string,
+	/**
+	 *  The file's name, at most [`blob::MAX_NAME_CHARS`] characters, no
+	 *  `/`, `\` or NUL. Pass it through [`safe_attachment_name`] before
+	 *  writing it anywhere.
+	 */
+	name: string,
+	/**  At most [`blob::MAX_MIME_CHARS`] characters. */
+	mime: string,
+	/**  Plaintext bytes. */
+	size: number,
+	/**
+	 *  1 to [`blob::MAX_CHUNKS`]: the last chunk may be short, an empty
+	 *  file is one empty chunk.
+	 */
+	chunks: number,
+	/**  Hex SHA-256 of the whole plaintext. */
+	sha256: string,
+	/**  Base64 of the sender's ephemeral X25519 public key (32 bytes). */
+	eph_pk: string,
+	/**  Base64 of the 16 random bytes every chunk's nonce starts with. */
+	nonce_prefix: string,
+};
+
 /**  Device ⇄ cloud, device side. */
 export type ClientMessage = { type: "hello"; protocol: number; device_id?: string | null;
 /**  Base64 ed25519 public key. */
@@ -252,6 +287,11 @@ export type PushProvider =
 /**  Expo Push (APNs / FCM behind it). */
 "expo";
 
+/**  `reply.value` for a `read_file`. */
+export type ReadFileResult = {
+	blob: BlobRef,
+};
+
 export type RemoteAsk = {
 	ask_id: string,
 	space: string,
@@ -294,13 +334,25 @@ effort?: string | null;
 /**  The remote space whose agent asked for this one, if any. */
 parent?: string | null;
 /**  0 for a space a person started. */
-depth: number } | { op: "send"; space: string; text: string; mode?: FleetMode | null;
+depth: number;
+/**
+ *  Files for the space's `.context/`, encrypted for the target
+ *  (protocol 8; at most [`blob::MAX_ATTACHMENTS`], each
+ *  [`blob::MAX_ATTACHMENT_BYTES`]). Empty from an older origin;
+ *  written as `[]` when empty (an older peer ignores the field).
+ */
+attachments?: BlobRef[] } | { op: "send"; space: string; text: string; mode?: FleetMode | null;
 /**
  *  From this turn on, as a local send's: the space's agent, model
  *  and effort, each checked against what the host lists
  *  (`DeviceInfo::agents`). `None` keeps the space's.
  */
-agent?: string | null; model?: string | null; effort?: string | null } | { op: "stop"; space: string } |
+agent?: string | null; model?: string | null; effort?: string | null;
+/**
+ *  Files for the space's `.context/`, encrypted for the target
+ *  (protocol 8).
+ */
+attachments?: BlobRef[] } | { op: "stop"; space: string } |
 /**
  *  Answers the question set `ask_id` of `space`: one entry per question,
  *  the chosen options (several when the question allows), or a free
@@ -341,7 +393,12 @@ until_ms?: number | null } |
  *  changed); queued while it runs, `fleet.busy` once 5 from other
  *  devices wait (docs/fleet.md "Sends queue").
  */
-{ op: "send_to"; space: string; message: string } |
+{ op: "send_to"; space: string; message: string;
+/**
+ *  Files for the space's `.context/`, encrypted for the target
+ *  (protocol 8).
+ */
+attachments?: BlobRef[] } |
 /**  Answers question set `ask` waiting in `space`, as `Answer` does. */
 { op: "answer_space"; space: string; ask: string; answers: string[][] } |
 /**
@@ -349,6 +406,19 @@ until_ms?: number | null } |
  *  (`space_merge`); counts as Edit.
  */
 { op: "merge_child"; parent: string; child: string } |
+/**
+ *  A file of `space`'s worktree, encrypted for the origin and uploaded
+ *  as a blob (protocol 8, docs/fleet.md "Files (blobs)"): the ok reply
+ *  value is a [`ReadFileResult`]. Refused with `fleet.too_large` over
+ *  `max_bytes` or [`blob::MAX_READ_FILE_BYTES`]. Permission as
+ *  `read_space` (Ask).
+ */
+{ op: "read_file"; space: string;
+/**
+ *  Relative to the space's worktree, at most
+ *  [`blob::MAX_PATH_CHARS`] characters.
+ */
+path: string; max_bytes: number } |
 /**
  *  Archives the space as the host's own Archive does: its uncommitted
  *  edits checkpointed, the worktree removed, the branch and the PR
@@ -536,6 +606,9 @@ export const FLEET_CODES = {
 	KEY_MISMATCH: "fleet.key_mismatch",
 	TOO_LARGE: "fleet.too_large",
 	RATE_LIMITED: "fleet.rate_limited",
+	BLOB_NOT_FOUND: "fleet.blob_not_found",
+	ATTACHMENT_FAILED: "fleet.attachment_failed",
+	QUOTA: "fleet.quota",
 	NOT_YOURS: "fleet.not_yours",
 	BAD_MESSAGE: "fleet.bad_message",
 	TOO_MANY_DEVICES: "fleet.too_many_devices",

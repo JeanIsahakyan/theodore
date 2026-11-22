@@ -1215,6 +1215,36 @@ pub async fn account_organizations(
 
 #[tauri::command]
 #[specta::specta]
+pub async fn account_accounts(
+    op: crate::op::Op,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<theodore_contract::AccountStatus, CommandError> {
+    op.run(async move { core.account_accounts().await }).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn account_switch(
+    op: crate::op::Op,
+    req: theodore_contract::AccountSwitchRequest,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<theodore_contract::AccountStatus, CommandError> {
+    op.run(async move { core.account_switch(req).await }).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn account_sign_out_of(
+    op: crate::op::Op,
+    user_id: String,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<theodore_contract::AccountStatus, CommandError> {
+    op.run(async move { core.account_sign_out_of(user_id).await })
+        .await
+}
+
+#[tauri::command]
+#[specta::specta]
 pub async fn fleet_status(
     op: crate::op::Op,
     core: State<'_, Arc<dyn CoreApi>>,

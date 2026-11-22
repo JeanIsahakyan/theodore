@@ -4,11 +4,14 @@
  * `createMock()` seeds the store and returns the services plus a `calls` log.
  */
 import type {
+  AccountView,
+  AccountsClient,
   AuthClient,
   Organization,
   Session,
   SignInResult,
 } from '../auth/types';
+import { initials } from '../ui/drawer';
 import type {
   FleetAgentView,
   FleetClient,
@@ -515,6 +518,29 @@ export const mockSubSpaceReads: Record<string, SubSpaceRead> = {
   },
 };
 
+/** Files `readFile` answers with, by path (the demo's file viewer). */
+export const mockFiles: Record<string, { mime: string; bytes: Uint8Array }> = {
+  'ui/AccountCard.tsx': {
+    mime: 'text/typescript',
+    bytes: new TextEncoder().encode(
+      [
+        "import { Card } from './kit';",
+        '',
+        'export function AccountCard({ name }: { name: string }) {',
+        '  return <Card title={name} />;',
+        '}',
+        '',
+      ].join('\n'),
+    ),
+  },
+  'ui/Settings.tsx': {
+    mime: 'text/typescript',
+    bytes: new TextEncoder().encode(
+      "export { AccountCard } from './AccountCard';\n",
+    ),
+  },
+};
+
 export const mockSession: Session = {
   userId: 'user-1',
   email: 'jean@example.com',
@@ -635,8 +661,15 @@ export function createMock(options: MockOptions = {}): Mock {
       useFleetState.setState((s) => ({ spaces: [space, ...s.spaces] }));
       return space;
     },
-    async send(space, text, mode = null, picks) {
-      await call('send', space, text, mode, ...(picks ? [picks] : []));
+    async send(space, text, mode = null, picks, attachments) {
+      await call(
+        'send',
+        space,
+        text,
+        mode,
+        ...(picks ? [picks] : []),
+        ...(attachments?.length ? [attachments] : []),
+      );
       const running = useFleetState
         .getState()
         .spaces.some((s) => s.space === space && s.status === 'running');
@@ -661,6 +694,12 @@ export function createMock(options: MockOptions = {}): Mock {
                   text,
                   at: Date.now(),
                   queued: running ? { seq } : null,
+                  attachments: attachments?.map((a) => ({
+                    id: a.blob_id,
+                    name: a.name,
+                    mime: a.mime,
+                    size: a.size,
+                  })),
                 }),
               },
             },
@@ -725,6 +764,12 @@ export function createMock(options: MockOptions = {}): Mock {
     async registerPush(token) {
       await call('registerPush', token);
     },
+    async dropPushHere() {
+      await call('dropPushHere');
+    },
+    async forgetSaved(scopes) {
+      await call('forgetSaved', scopes);
+    },
     async answerOverHttp(space, askId, answers, hostDevice) {
       await call('answerOverHttp', space, askId, answers, hostDevice);
     },
@@ -744,8 +789,14 @@ export function createMock(options: MockOptions = {}): Mock {
         throw new Error('the other device refused: fleet.unknown_space');
       return read;
     },
-    async sendTo(hostDevice, space, text) {
-      await call('sendTo', hostDevice, space, text);
+    async sendTo(hostDevice, space, text, attachments) {
+      await call(
+        'sendTo',
+        hostDevice,
+        space,
+        text,
+        ...(attachments?.length ? [attachments] : []),
+      );
       const read = mockSubSpaceReads[space];
       counter += 1;
       const message = `sent-${counter}`;
@@ -755,6 +806,60 @@ export function createMock(options: MockOptions = {}): Mock {
     },
     async answerSpace(hostDevice, space, ask, answers) {
       await call('answerSpace', hostDevice, space, ask, answers);
+    },
+    async uploadAttachment(hostDevice, file, onProgress) {
+      await call(
+        'uploadAttachment',
+        hostDevice,
+        file.name,
+        file.mime,
+        file.bytes.length,
+      );
+      onProgress?.(0.5);
+      onProgress?.(1);
+      counter += 1;
+      return {
+        blob_id: counter.toString(16).padStart(32, '0'),
+        name: file.name,
+        mime: file.mime,
+        size: file.bytes.length,
+        chunks: Math.max(1, Math.ceil(file.bytes.length / (4 * 1024 * 1024))),
+        sha256: '0'.repeat(64),
+        eph_pk: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=',
+        nonce_prefix: 'AAAAAAAAAAAAAAAAAAAAAA==',
+      };
+    },
+    async deleteBlob(blobId) {
+      await call('deleteBlob', blobId);
+    },
+    async readFile(hostDevice, space, path, maxBytes) {
+      await call('readFile', hostDevice, space, path, maxBytes);
+      const file = mockFiles[path];
+      if (!file)
+        throw new Error(
+          'the other device refused: fleet.not_found: no such file',
+        );
+      return {
+        blob_id: 'f'.repeat(32),
+        name: path.split('/').pop() ?? 'file',
+        mime: file.mime,
+        size: file.bytes.length,
+        chunks: 1,
+        sha256: '0'.repeat(64),
+        eph_pk: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=',
+        nonce_prefix: 'AAAAAAAAAAAAAAAAAAAAAA==',
+      };
+    },
+    async canOpenBlobs() {
+      return true;
+    },
+    async fetchBlob(ref, onProgress) {
+      await call('fetchBlob', ref.blob_id);
+      onProgress?.(1);
+      const file = Object.values(mockFiles).find(
+        (f) => f.bytes.length === ref.size && f.mime === ref.mime,
+      );
+      return file?.bytes ?? new Uint8Array(ref.size);
     },
     async setMcpAuto(hostDevice, mcpDevice, auto, untilMs) {
       await call('setMcpAuto', hostDevice, mcpDevice, auto, untilMs);
@@ -780,8 +885,8 @@ export function createMock(options: MockOptions = {}): Mock {
     async current() {
       return session;
     },
-    async signIn(): Promise<SignInResult> {
-      await call('signIn');
+    async signIn(opts): Promise<SignInResult> {
+      await call('signIn', ...(opts ? [opts] : []));
       session = { ...base };
       notify();
       return { kind: 'signed_in', session };
@@ -821,7 +926,65 @@ export function createMock(options: MockOptions = {}): Mock {
     },
   };
 
-  return { services: { auth, fleet }, calls, session: () => session };
+  // One account: the session's. Adding one signs in as it again.
+  const accountListeners = new Set<(a: AccountView[]) => void>();
+  const accountList = (): AccountView[] =>
+    session
+      ? [
+          {
+            userId: session.userId,
+            label: session.name || session.email || 'Signed in',
+            initials: initials(session.name, session.email),
+            email: session.email,
+            orgId: session.organizationId,
+            orgs: orgs.map((o) => ({ id: o.id, name: o.name })),
+            stale: false,
+            active: true,
+          },
+        ]
+      : [];
+  const notifyAccounts = () =>
+    accountListeners.forEach((l) => l(accountList()));
+  const accounts: AccountsClient = {
+    accounts: accountList,
+    onAccountsChange(listener) {
+      accountListeners.add(listener);
+      return () => accountListeners.delete(listener);
+    },
+    async addAccount() {
+      await call('addAccount');
+      const r = await auth.signIn();
+      notifyAccounts();
+      return r;
+    },
+    async signInAgain(userId) {
+      await call('signInAgain', userId);
+      const r = await auth.signIn({ loginHint: session?.email ?? null });
+      notifyAccounts();
+      return r;
+    },
+    async switchTo(userId, orgId) {
+      await call('switchTo', userId, orgId ?? null);
+      const s = await auth.switchOrganization(
+        orgId ?? session?.organizationId ?? base.organizationId ?? '',
+      );
+      notifyAccounts();
+      return s;
+    },
+    async loadOrganizations(userId) {
+      await call('loadOrganizations', userId);
+      return orgs.map((o) => ({ id: o.id, name: o.name }));
+    },
+    clientOf(userId) {
+      return session?.userId === userId ? auth : null;
+    },
+  };
+
+  return {
+    services: { auth, fleet, accounts },
+    calls,
+    session: () => session,
+  };
 }
 
 /** Back to an empty store (between tests). */

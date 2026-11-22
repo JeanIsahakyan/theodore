@@ -237,6 +237,7 @@ impl Core {
             agent_session: None,
             sent_feedback: Vec::new(),
             parent,
+            account: self.account_active_user_id(),
             created_at: now,
             updated_at: now,
             attention_at: None,
@@ -301,6 +302,9 @@ impl Core {
         if let Some(created) = created {
             created(&space);
         }
+        // Files another device sent with the start (docs/fleet.md "Files
+        // (blobs)"): into `.context/` now, with the goal's turn.
+        self.fleet_write_pending_context(&id, &wt.path).await?;
         let setup_status = space.setup.as_ref().map(|s| s.status);
         if setup_status == Some(theodore_contract::SetupStatus::Running) {
             // The goal waits for setup (`goal_pending`).
@@ -429,7 +433,10 @@ impl Core {
         }
         let text = req.text.trim().to_string();
         // Checked before anything is stored: an unknown id fails the send.
-        let attachments = self.resolve_attachments(req.attachments.as_deref()).await?;
+        let mut attachments = self.resolve_attachments(req.attachments.as_deref()).await?;
+        // Files another device sent for this message, in `.context/`
+        // already (docs/fleet.md "Files (blobs)").
+        attachments.extend(self.fleet_take_attachments(&space.id));
         let mentions = self
             .resolve_mentions(&space, req.mentions.as_deref())
             .await?;
@@ -613,7 +620,13 @@ impl Core {
             expand_skill(&text, |id| space_skill_content(id, &wt.path, claude_home))
                 .unwrap_or_else(|| text.clone())
         });
+        // Files another device sent live in the space's own `.context/`:
+        // named by path for the agent, images handed to it like any
+        // attachment (docs/fleet.md "Files (blobs)").
+        let (context_files, attachments) =
+            crate::usecases::fleet_files::split_context(&wt.path, &attachments);
         let ask = with_attachments(ask, &attachments);
+        let ask = crate::usecases::fleet_files::with_context_files(ask, &context_files);
         let ask = self.with_mentions(ask, &message.mentions).await;
         let ask = match &message.from_space {
             Some(from) => from_space_prompt(from, &ask),
@@ -740,7 +753,16 @@ impl Core {
                 )))
                 .unwrap_or_default(),
             env: self.space_agent_env(&space).await,
-            attachments: agent_attachments(&attachments),
+            attachments: {
+                let mut all = agent_attachments(&attachments);
+                let images: Vec<_> = context_files
+                    .iter()
+                    .filter(|a| crate::usecases::fleet_files::is_image(a))
+                    .cloned()
+                    .collect();
+                all.extend(agent_attachments(&images));
+                all
+            },
             cwd: wt.path,
             cancel,
             code,
@@ -1913,6 +1935,27 @@ async fn drive_turn(core: &Core, turn: Turn) {
         }
     };
 
+    // The agent merged the base in itself (no Update): the space moves onto
+    // that merge-base now, as an update would have, so the diff and the
+    // "Base moved" count follow; Undo of the turn brings the old base back
+    // (`base_before`). Not while an update resolves: its completion owns
+    // the base.
+    let base_moved = match &checkpoint {
+        Some(cp) if saved.patch.is_none() && space.updating.is_none() => {
+            core.base_merged_in_offline(&space, &cp.sha).await
+        }
+        _ => None,
+    };
+    if let Some(base) = &base_moved {
+        tracing::info!(
+            space = %space.id,
+            base = %space.base,
+            from = %space.base_sha,
+            to = %base,
+            "the turn merged the base in: the space is on its new tip"
+        );
+    }
+
     // A merge's turn holds the base's changes too: not what the agent did.
     let changed_files = match &checkpoint {
         Some(cp) if cp.sha != space.head_sha && saved.base_before.is_none() => {
@@ -2006,6 +2049,9 @@ async fn drive_turn(core: &Core, turn: Turn) {
     if let Some(extra) = saved.patch {
         crate::usecases::space_update::merge_fields(&mut patch, extra);
     }
+    if let Some(base) = &base_moved {
+        patch["base_sha"] = serde_json::json!(base);
+    }
     if let Some(cp) = &checkpoint {
         patch["head_sha"] = serde_json::json!(cp.sha);
         patch["worktree_head"] = serde_json::json!(cp.head);
@@ -2032,7 +2078,10 @@ async fn drive_turn(core: &Core, turn: Turn) {
                 started_at: core.0.deps.clock.now(),
                 finished_at: None,
             }),
-            base_before: saved.base_before.clone(),
+            base_before: saved
+                .base_before
+                .clone()
+                .or_else(|| base_moved.as_ref().map(|_| space.base_sha.clone())),
             plan,
             before_head: space.worktree_head.clone(),
             after_head: Some(cp.head.clone()),

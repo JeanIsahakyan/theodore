@@ -23,19 +23,22 @@ use base64::engine::general_purpose::STANDARD as B64;
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
+pub mod blob;
 pub mod keys;
 
+pub use blob::{BlobError, SealParams, open_blob, safe_attachment_name, seal_blob};
 pub use keys::{DeviceKey, KeyError, fingerprint, verify};
 
 /// Protocol version sent in `hello`; the cloud refuses others with
 /// `fleet.version`.
-pub const PROTOCOL_VERSION: u32 = 8;
+pub const PROTOCOL_VERSION: u32 = 9;
 /// The oldest protocol the cloud still accepts (it hides `mobile` / `web`
 /// devices from protocol-3 connections and `mcp` ones from protocol < 5,
 /// whose `DeviceKind` can't read them; `confirm` / `confirm_dismissed` and
 /// the `confirm` / `set_mcp_auto` ops need protocol 6; the ops on any
-/// space of a computer ([`RemoteOp::on_any_space`]) need protocol 7; the
-/// `archive_space` / `unarchive_space` ops need protocol 8).
+/// space of a computer ([`RemoteOp::on_any_space`]) need protocol 7;
+/// attachments and `read_file` ([`BlobRef`]) need protocol 8; the
+/// `archive_space` / `unarchive_space` ops need protocol 9).
 pub const MIN_PROTOCOL_VERSION: u32 = 3;
 /// A signed request older or newer than this is refused (`fleet.stale_request`).
 pub const REQUEST_WINDOW_MS: u64 = 5 * 60 * 1000;
@@ -377,6 +380,12 @@ pub enum RemoteOp {
         parent: Option<RemoteSpaceId>,
         /// 0 for a space a person started.
         depth: u32,
+        /// Files for the space's `.context/`, encrypted for the target
+        /// (protocol 8; at most [`blob::MAX_ATTACHMENTS`], each
+        /// [`blob::MAX_ATTACHMENT_BYTES`]). Empty from an older origin;
+        /// written as `[]` when empty (an older peer ignores the field).
+        #[serde(default)]
+        attachments: Vec<BlobRef>,
     },
     Send {
         space: RemoteSpaceId,
@@ -392,6 +401,10 @@ pub enum RemoteOp {
         model: Option<String>,
         #[serde(default)]
         effort: Option<String>,
+        /// Files for the space's `.context/`, encrypted for the target
+        /// (protocol 8).
+        #[serde(default)]
+        attachments: Vec<BlobRef>,
     },
     Stop {
         space: RemoteSpaceId,
@@ -451,6 +464,10 @@ pub enum RemoteOp {
     SendTo {
         space: String,
         message: String,
+        /// Files for the space's `.context/`, encrypted for the target
+        /// (protocol 8).
+        #[serde(default)]
+        attachments: Vec<BlobRef>,
     },
     /// Answers question set `ask` waiting in `space`, as `Answer` does.
     AnswerSpace {
@@ -464,7 +481,19 @@ pub enum RemoteOp {
         parent: String,
         child: String,
     },
-    // ── protocol 8: archiving a space the target hosts for this origin
+    /// A file of `space`'s worktree, encrypted for the origin and uploaded
+    /// as a blob (protocol 8, docs/fleet.md "Files (blobs)"): the ok reply
+    /// value is a [`ReadFileResult`]. Refused with `fleet.too_large` over
+    /// `max_bytes` or [`blob::MAX_READ_FILE_BYTES`]. Permission as
+    /// `read_space` (Ask).
+    ReadFile {
+        space: String,
+        /// Relative to the space's worktree, at most
+        /// [`blob::MAX_PATH_CHARS`] characters.
+        path: String,
+        max_bytes: u64,
+    },
+    // ── protocol 9: archiving a space the target hosts for this origin
     // (docs/fleet.md "Archive from another device"). Like `Stop`, on an
     // `rs_` id; never from an `mcp` origin.
     /// Archives the space as the host's own Archive does: its uncommitted
@@ -499,11 +528,13 @@ impl RemoteOp {
             | RemoteOp::AskSpace { .. }
             | RemoteOp::SendTo { .. }
             | RemoteOp::AnswerSpace { .. }
-            | RemoteOp::MergeChild { .. } => "",
+            | RemoteOp::MergeChild { .. }
+            | RemoteOp::ReadFile { .. } => "",
         }
     }
 
-    /// An op on any space of the target, by its local id (protocol 7).
+    /// An op on any space of the target, by its local id (protocol 7;
+    /// `read_file` is protocol 8).
     pub fn on_any_space(&self) -> bool {
         matches!(
             self,
@@ -513,6 +544,7 @@ impl RemoteOp {
                 | RemoteOp::SendTo { .. }
                 | RemoteOp::AnswerSpace { .. }
                 | RemoteOp::MergeChild { .. }
+                | RemoteOp::ReadFile { .. }
         )
     }
 
@@ -521,11 +553,89 @@ impl RemoteOp {
     pub fn protocol(&self) -> u32 {
         match self {
             RemoteOp::Confirm { .. } | RemoteOp::SetMcpAuto { .. } => 6,
-            RemoteOp::ArchiveSpace { .. } | RemoteOp::UnarchiveSpace { .. } => 8,
+            RemoteOp::ArchiveSpace { .. } | RemoteOp::UnarchiveSpace { .. } => 9,
+            RemoteOp::ReadFile { .. } => 8,
             _ if self.on_any_space() => 7,
             _ => MIN_PROTOCOL_VERSION,
         }
     }
+
+    /// The blobs it carries for the target (protocol 8); empty for every
+    /// other op.
+    pub fn attachments(&self) -> &[BlobRef] {
+        match self {
+            RemoteOp::StartSpace { attachments, .. }
+            | RemoteOp::Send { attachments, .. }
+            | RemoteOp::SendTo { attachments, .. } => attachments,
+            _ => &[],
+        }
+    }
+
+    /// Every attachment within its bounds ([`BlobRef::validate`], at most
+    /// [`blob::MAX_ATTACHMENTS`] of [`blob::MAX_ATTACHMENT_BYTES`] each,
+    /// no blob id twice) and a `read_file`'s path within
+    /// [`blob::MAX_PATH_CHARS`].
+    pub fn validate_blobs(&self) -> Result<(), BlobError> {
+        let list = self.attachments();
+        if list.len() > blob::MAX_ATTACHMENTS {
+            return Err(BlobError::TooManyAttachments);
+        }
+        let mut ids = std::collections::HashSet::new();
+        for a in list {
+            a.validate()?;
+            if a.size > blob::MAX_ATTACHMENT_BYTES {
+                return Err(BlobError::TooLarge);
+            }
+            if !ids.insert(a.blob_id.as_str()) {
+                return Err(BlobError::Invalid("blob id listed twice"));
+            }
+        }
+        if let RemoteOp::ReadFile { path, .. } = self {
+            if path.is_empty() || path.chars().count() > blob::MAX_PATH_CHARS {
+                return Err(BlobError::Invalid("path"));
+            }
+            if path.contains('\0') {
+                return Err(BlobError::Invalid("path"));
+            }
+        }
+        Ok(())
+    }
+}
+
+// ── files (blobs) ───────────────────────────────────────────────────────────
+
+/// A file encrypted for one device and stored in the cloud as chunks
+/// (docs/fleet.md "Files (blobs)"). The cloud sees only ciphertext; this
+/// reference travels inside a signed request or reply, so its integrity is
+/// the signature's. Made by [`seal_blob`], read by [`open_blob`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct BlobRef {
+    /// 32 lowercase hex characters, random per blob: the cloud's key for
+    /// its chunks (`/v1/fleet/blobs/{blob_id}/{i}`).
+    pub blob_id: String,
+    /// The file's name, at most [`blob::MAX_NAME_CHARS`] characters, no
+    /// `/`, `\` or NUL. Pass it through [`safe_attachment_name`] before
+    /// writing it anywhere.
+    pub name: String,
+    /// At most [`blob::MAX_MIME_CHARS`] characters.
+    pub mime: String,
+    /// Plaintext bytes.
+    pub size: u64,
+    /// 1 to [`blob::MAX_CHUNKS`]: the last chunk may be short, an empty
+    /// file is one empty chunk.
+    pub chunks: u32,
+    /// Hex SHA-256 of the whole plaintext.
+    pub sha256: String,
+    /// Base64 of the sender's ephemeral X25519 public key (32 bytes).
+    pub eph_pk: String,
+    /// Base64 of the 16 random bytes every chunk's nonce starts with.
+    pub nonce_prefix: String,
+}
+
+/// `reply.value` for a `read_file`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct ReadFileResult {
+    pub blob: BlobRef,
 }
 
 /// The largest `reply.value` a target sends for an op on any space, as its
@@ -792,8 +902,18 @@ pub mod codes {
     pub const NO_ORG: &str = "fleet.no_org";
     pub const VERSION: &str = "fleet.version";
     pub const KEY_MISMATCH: &str = "fleet.key_mismatch";
+    /// A frame, event or blob chunk over its size; a `read_file` over
+    /// `max_bytes` or [`crate::blob::MAX_READ_FILE_BYTES`].
     pub const TOO_LARGE: &str = "fleet.too_large";
     pub const RATE_LIMITED: &str = "fleet.rate_limited";
+    /// No such blob or chunk in the cloud (fetched already, expired, or
+    /// never uploaded): HTTP 404.
+    pub const BLOB_NOT_FOUND: &str = "fleet.blob_not_found";
+    /// An attachment couldn't be fetched, opened or written on the host
+    /// (docs/fleet.md "Files (blobs)"); nothing ran.
+    pub const ATTACHMENT_FAILED: &str = "fleet.attachment_failed";
+    /// The user's blob storage is full (HTTP 429).
+    pub const QUOTA: &str = "fleet.quota";
     pub const NOT_YOURS: &str = "fleet.not_yours";
     pub const BAD_MESSAGE: &str = "fleet.bad_message";
     pub const TOO_MANY_DEVICES: &str = "fleet.too_many_devices";
@@ -835,6 +955,9 @@ pub mod codes {
         ("KEY_MISMATCH", KEY_MISMATCH),
         ("TOO_LARGE", TOO_LARGE),
         ("RATE_LIMITED", RATE_LIMITED),
+        ("BLOB_NOT_FOUND", BLOB_NOT_FOUND),
+        ("ATTACHMENT_FAILED", ATTACHMENT_FAILED),
+        ("QUOTA", QUOTA),
         ("NOT_YOURS", NOT_YOURS),
         ("BAD_MESSAGE", BAD_MESSAGE),
         ("TOO_MANY_DEVICES", TOO_MANY_DEVICES),
@@ -1242,7 +1365,9 @@ pub fn types() -> specta::Types {
         .register::<RemoteAsk>()
         .register::<RemoteConfirm>()
         .register::<StartedSpace>()
-        .register::<MirroredSubSpace>();
+        .register::<MirroredSubSpace>()
+        .register::<BlobRef>()
+        .register::<ReadFileResult>();
     // JS numbers: seqs, generations and unix-ms timestamps stay far below
     // 2^53 (same call as the contract crate).
     use specta::datatype::Primitive as P;

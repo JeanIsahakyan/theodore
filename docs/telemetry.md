@@ -43,7 +43,12 @@ sign-in         ─▶ PostHog distinct_id = user_…   $identify { $anon_distin
 app start, or sharing turned on, signed in ─▶ $identify again: a new version reaches the person
 sign-out        ─▶ a NEW anon id: later events aren't linked to that person
                    New Relic: no enduser.id
+account switch  ─▶ the active account's user_… (several accounts, docs/cloud.md): leaving
+                   the old one renews the anon id as a sign-out does, then $identify as the new
 ```
+
+With several accounts signed in, only the **active** one is the identity;
+the others' ids never leave the machine.
 
 | | PostHog | New Relic |
 |---|---|---|
@@ -295,6 +300,111 @@ and network errors, dropped on another 4xx or after 4 attempts.
 Either way, choose "Help improve Theodore" in onboarding or flip the switches in Settings —
 nothing is sent before that.
 
+## Cloud
+
+The Worker in `cloud/` (`docs/cloud.md`) has the same shape in miniature:
+one structured record, one redaction, two sinks. Code: `cloud/src/telemetry/`
+(`log.ts` the logger, `redact.ts` the rules, `otlp.ts` the export,
+`relay.ts` the app's relay, `http.ts` the request line).
+
+```text
+Worker, OrgHub ─▶ log.info / warn / error / exception ─▶ redaction ─┬─▶ console (Workers Logs)   everything, always
+                                                                    └─▶ OTLP ─▶ New Relic        warn, error, and the
+                                                                        service.name theodore-cloud   info events below
+phone / web app ─▶ POST /v1/telemetry/logs ─▶ checked, redacted again ─▶ OTLP ─▶ New Relic
+                                                                        the app's own resource (service.name theodore-mobile)
+```
+
+Both need `THEODORE_OTLP_ENDPOINT` (a `wrangler.toml` var per environment,
+`https://otlp.nr-data.net`) **and** the Worker secret `THEODORE_OTLP_HEADERS`
+(`api-key=<ingest license key>`; set per environment with `wrangler secret
+put`, or by the deploy steps pending in `docs/cloud.md` "Environments and
+secrets"). Either missing: nothing leaves the Worker, the
+relay still answers `202` and drops, so local dev needs no key. Records are
+batched (at most 200 queued, the oldest dropped) and sent on
+`ctx.waitUntil` after each request, socket message or alarm, coalesced over
+500 ms; a failed send is logged locally and not retried.
+`deployment.environment.name` is the `THEODORE_ENV` var (`staging`,
+`production`, `local`); `cloud.region` is the Cloudflare colo that handled a
+relayed request.
+
+### What the cloud logs
+
+Info for the operational picture, warn and error for failures; every line
+lists ids, kinds, codes and numbers, nothing a person wrote.
+
+| Event | Level | Fields | Remote |
+|---|---|---|---|
+| `http request` | info | `route` (a fixed label, `other` for unknown paths), `method`, `status`, `ms`, `device_kind` (`mobile`, `web`, `desktop`, `mcp`, from the origin, user agent or path), `error.code` on a 4xx/5xx | yes |
+| `auth failed` | info | `code`, `reason` (the cloud's own static words) | yes |
+| `rate limited` | info | `bucket` (`public`, `user`, `telemetry`, `fleet`), the connection's ids on `fleet` | yes |
+| `quota hit` | info | `code` (`fleet.too_many_devices`, `fleet.too_many_connections`, `fleet.too_many_spaces`, `fleet.busy`), `op`, the connection's ids | yes |
+| `fleet connected` | info | `user_id`, `org_id`, `device_id`, `device_kind`, `protocol`, `os`, `app_version`, `new_device` | yes |
+| `fleet disconnected` | info | the same ids, `by` (`device` with its `close_code`; `cloud` with `code` and `close_code`), `phase` | yes |
+| `fleet request` | info | `op`, `via` (`ws`, `http`), `outcome` (`routed`, `refused`, `error`), `code`, `origin_kind`, `ms` | yes |
+| `push sent` | info | `provider` (`expo`), `kind` (`ask`, `finished`, `confirm`), `sent`, `ok`, `unregistered`, `failed` | yes |
+| `push failed` | warn / error | `provider`, `count`, `status` or the exception | yes |
+| `telemetry relayed` | info | `service`, `records`, `dropped`, `signed_in`, `forwarded` | yes |
+| `telemetry export failed`, `telemetry relay failed` | warn | `records`, `status`, `kind` (local only for the export: it can't send itself) | — |
+| `request failed` | warn | `code`, `status`, `reason` (a 5xx the cloud answered) | yes |
+| `internal error`, `fleet internal error`, `http request failed` | error | `error.kind`, `error.message`, `error.stack`, `code` | yes |
+
+Only warn, error and the info events marked remote reach New Relic
+(`REMOTE_INFO` in `log.ts`); other info lines stay in Workers Logs.
+
+### Redaction, cloud side
+
+`redact.ts` applies to every record before either sink, and to what the
+relay forwards:
+
+- **Credential fields** (`token`, `*_token`, `secret`, `password`,
+  `authorization`, `cookie`, `nonce`, `signature`, `api_key`, `*_key` but
+  `public_key` / `target_key`) → `[redacted]`.
+- **Content fields** (`body`, `text`, `message`, `goal`, `envelope`,
+  `question(s)`, `answer(s)`, `title`, `description`, `prompt`, `reply`,
+  `content`, `data`, `info`, `name`, `email`, `options`, …) →
+  `[omitted: N bytes]`; `error.message` is kept, redacted.
+- **Secrets in any text** (JWTs, `Bearer …`, GitHub / GitLab / Atlassian /
+  WorkOS / model-provider / AWS / Slack / Google / npm tokens, Expo push
+  tokens, passwords in URLs, `code=` / `token=` / `key=` … pairs, private
+  keys) → `[redacted]`; **emails** → `<email:hash>`; strings cut at 2 KB
+  (stacks 8 KB).
+- **Remote only:** fields naming a user, account or org (`user_id`,
+  `org_id`, `enduser.id`, `sub`) → `h:<FNV-1a 64 hash>`, the same hash for
+  the same id, so one user's lines still group and an operator who knows
+  an id can look it up. Device ids stay. Workers Logs keep the ids.
+
+`test/telemetry-log.test.ts` and `test/telemetry-hub.test.ts` check that a
+token, a nonce, a public key, an email or a goal never reaches a sink.
+
+### The relay: `POST /v1/telemetry/logs`
+
+The phone and web app hold no New Relic key: their error log goes through
+the cloud, which checks every field and never trusts the client.
+
+```text
+{ records: [{ ts (ms), level: warn | error, msg ≤ 2000, attrs: ≤ 30 keys ≤ 64 chars,
+              values string ≤ 2000 | number | boolean }] 1–100,
+  resource: { service.name: theodore-mobile | theodore-web, service.version, os.type,
+              os.version, deployment.environment.name, service.instance.id, enduser.id? } }
+  ≤ 64 KiB, Authorization: Bearer <access JWT> optional
+  ─▶ a token given: verified as for /v1/fleet/request (401 if bad), RL_USER
+     none: RL_TELEMETRY, 10 / min per client IP
+  ─▶ body not an object, no / empty / > 100 records, unknown service.name ─▶ 400 cloud.bad_request
+  ─▶ a record with another level, a non-string msg, not an object ─▶ dropped (counted)
+     ts missing, not a number, > 5 min ahead or > 30 days back ─▶ now
+     unknown record / resource fields, oversized keys or values, non-primitive values ─▶ dropped
+     msg and strings ─▶ the same secret and email redaction as the cloud's own lines
+     enduser.id ─▶ kept only when it equals the token's user (and is a user_… id), else dropped
+  ─▶ + theodore.relay = true, cloud.region = <colo> on every record
+  ─▶ 202 { accepted: N } at once; the batch goes on ctx.waitUntil as OTLP logs under
+     the app's resource (scope theodore-relay); no OTLP target ─▶ dropped
+```
+
+CORS as the other web app routes (`WEB_ORIGINS`). The app never retries: a
+`202` is final, a `4xx` means the batch was malformed. Tests:
+`test/telemetry-relay.test.ts`, `test/telemetry-otlp.test.ts`.
+
 ## The local log
 
 `<data dir>/logs/theodore.jsonl` (`~/.theodore/logs/` in production, `~/.theodore-<env>/logs/` in
@@ -473,6 +583,91 @@ Open issue ─▶ the text, as today ─▶ "Add your N files" ─▶ Show files
   else).
 - Not in **Save logs only**'s zip, and not available signed out (`save_attachment` waits for
   sign-in like every local write).
+
+## Mobile
+
+The Expo app (`mobile/`, docs/mobile.md) does the same in TypeScript:
+`mobile/src/telemetry/`. One record (`log.ts`), one redaction step
+(`redact.ts`), three sinks, every remote one behind the user's choice.
+
+```text
+log.info / warn / error(msg, fields) ─┐
+track(event, props)   kind="product"  ─┼─▶ redact (local) ─▶ ring   always, on the device
+reportError(code, e)  kind="error"    ─┘       │             (files on native, IndexedDB on web)
+JS errors: ErrorUtils / window.onerror /       ├─▶ redact (remote: names and paths hashed)
+unhandledrejection / ErrorBoundary             │     ├─▶ PostHog  product, "Share usage data"
+                                               │     └─▶ cloud relay ─▶ New Relic
+                                               │          warn + error, "Send error reports"
+no choice recorded ─▶ nothing sent, nothing queued; a switch off ─▶ its queue dropped
+```
+
+| | Local log (`ring.ts`) | Error reports (`relay.ts`) | Usage data (`posthog.ts`) |
+|---|---|---|---|
+| Levels | info+ (debug in dev builds) | warn, error, JS errors | product events |
+| Where | the last 2000 records, ≤ 1 MB, in the app's data storage; leaves the device only through Settings → About → Copy / Share diagnostics | `POST <cloud>/v1/telemetry/logs`, the cloud adds the New Relic key (docs/cloud.md) | `POST <host>/batch/`, plain HTTPS, no SDK |
+| Names (project, computer, branch, paths) | kept | `h:<hash>` / `<path:hash>` (hashed with the install id) | never present (the catalog has no such property) |
+| Identifier | none | `service.instance.id` = install id; `enduser.id` = `user_…` only with error-report consent 2 | `distinct_id` = `user_…` with usage consent 2, else an anonymous id |
+| Batches | written 2 s after a change, at once in the background | ≤ 25 records or 10 s, ≤ 64 KB a request, `Authorization: Bearer <session JWT>` when signed in | 50 or 30 s |
+| Retries | — | backoff on 5xx / 429 / network, 4 attempts; dropped on another 4xx, over 300 queued or after 30 min offline | the same, 500 queued |
+
+- **Catalog**: `mobile/src/telemetry/catalog.ts` lists every product event with
+  the properties it may carry; `track()` drops anything else at runtime and a
+  test checks every call names a listed event. Values are counts, durations,
+  flags, codes or values from a fixed set; no property may carry text. The list
+  is what Settings → Privacy → What's collected shows. Every event also carries
+  `app_version`, `channel` (`store`, `web`, `dev`), `platform`, `os`, `os_version`,
+  `build` (the commit, when CI passed `EXPO_PUBLIC_THEODORE_GIT_SHA`), `build_env`
+  and `$geoip_disable: true`.
+- **What is instrumented**: app start (cold / warm), sign-in and out, org switch,
+  the fleet link (connect with the welcome latency and attempts, disconnect with
+  its reason, protocol), every fleet request (op, target kind, latency, outcome
+  `ok` / `refused` / `timeout` + code, over the socket or HTTP; never the text),
+  push registration and notification actions, screen views (route names only),
+  the Home start flow (computer kind, mode, agent, model, effort, latency,
+  refusal code), sends (queued or not, latency, retries, surface), answers, plan
+  approvals, picks, sheets, the activity strip, sub-space opens and read
+  failures, saved-spaces restore (count, ms), trust changes, archive from the
+  phone (`space_archived`: `action` archive / unarchive, `surface` drawer /
+  header, whether the space was stopped first, outcome, code), diagnostics exports,
+  JS errors (`ui.uncaught`, `ui.unhandled_rejection`, `ui.render_crash`). The
+  file flows (protocol v8) have their events in the catalog (`file_attached`,
+  `file_uploaded`, `file_viewed`: kind, size, chunks, latency, outcome; never a
+  name) for the attach, upload and viewer code to call.
+- **Redaction** (`redact.ts`, tested): the desktop's rules in TypeScript. Secrets
+  in any text (GitHub, GitLab, Atlassian, WorkOS, model-provider, AWS, Slack,
+  Google, npm and PostHog keys, Expo push tokens, JWTs, private keys, `Bearer`,
+  header and query-parameter values, `token=`-style pairs, `*_KEY=` assignments),
+  emails → `<email:hash>`, credential fields → `[redacted]`, content fields
+  (`text`, `goal`, `message`, `title`, `name`, `email`, `reply`, …) →
+  `[omitted: N bytes]`, long values cut. Remote only: fields naming a project,
+  space, device, host, branch, path, URL, login, user or account → `h:<hash>`;
+  our own ids (`dev_…`, `rs_…`, `req_…`, `user_…`) stay.
+- **Operation ids**: a fleet request's `req_…` is its `op_id` from "fleet request
+  sent" to "fleet request done / failed"; a start from Home uses its pending
+  route id.
+- **The choice**: the same words as the desktop ("Help improve Theodore", "Share
+  usage data", "Send error reports", "What's collected"), asked once after
+  sign-in as a card on Home while a sink can send and no choice is recorded;
+  changeable under Settings → Privacy, each switch independent; stored per
+  install (`theodore.telemetry.choice`), kept across sign-out. Turning a switch
+  on is consent 2; the app never had older words, so there is no "ask again"
+  prompt. The demo account is never linked.
+- **Identity**: `theodore.telemetry.install_id` (never changes: the hashing key,
+  `service.instance.id`), `theodore.telemetry.anon_id` (absent, so the install
+  id, until linking starts or the first sign-out; sign-out makes a new one),
+  the account's `user_…` from the session (`set_account` refuses anything else).
+  Sign-in with usage consent 2 ─▶ `$identify {distinct_id: user_…,
+  $anon_distinct_id, $set: build facts}`, once per account and run.
+- **Config**: `EXPO_PUBLIC_THEODORE_POSTHOG_KEY` / `_HOST` at build time (empty
+  key: no usage sink, the switch reads "Not configured in this build"); the relay
+  is `EXPO_PUBLIC_CLOUD_URL`, so error reports are always available;
+  `EXPO_PUBLIC_THEODORE_BUILD_ENV`. CI passes the repository's
+  `THEODORE_POSTHOG_KEY` / `_HOST` to the web build (`mobile-web.yml`) and into
+  the EAS production profile's env (`release.yml` `ios`); by hand,
+  `eas env:create` or the same env on `eas build` (docs/releasing.md "Mobile and
+  web"). No key is committed; the New Relic key never reaches the app.
+- **Export**: Settings → About → Copy diagnostics / Share diagnostics: an
+  app-info header and the ring as JSONL, redacted again with the remote rules.
 
 ## UI errors
 

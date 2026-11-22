@@ -145,6 +145,7 @@ fn send_to(space: &str, message: &str) -> RemoteOp {
     RemoteOp::SendTo {
         space: space.into(),
         message: message.into(),
+        attachments: vec![],
     }
 }
 
@@ -841,3 +842,6 @@ async fn claude_via_the_cloud_never_archives_and_a_stranger_is_refused() {
 
 #[path = "fleet_queue_tests.rs"]
 mod queue;
+
+#[path = "fleet_files_tests.rs"]
+mod files;

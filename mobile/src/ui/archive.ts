@@ -16,7 +16,7 @@
  */
 import type { Space } from '../fleet/contract';
 import type { FleetDeviceView, SpaceView } from '../fleet/types';
-import { canStop, errorText, fleetCode, spaceTitle } from './logic';
+import { canStop, errorText, refusalCode, spaceTitle } from './logic';
 
 /**
  * Whether Archive is offered for `space`. The host decides for real (its
@@ -74,7 +74,7 @@ export function archiveConfirm(
 
 /** A failed archive, by its refusal code; `errorText` for the rest. */
 export function archiveErrorText(e: unknown, hostName: string): string {
-  switch (fleetCode(e)) {
+  switch (refusalCode(e)) {
     case 'fleet.upgrade_required':
       return `Update Theodore on ${hostName} to archive from here`;
     case 'fleet.busy':

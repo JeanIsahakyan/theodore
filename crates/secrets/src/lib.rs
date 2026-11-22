@@ -39,8 +39,14 @@ pub const GITHUB_TOKEN: &str = "github.token";
 pub const GITLAB_TOKEN: &str = "gitlab.token";
 pub const BITBUCKET_TOKEN: &str = "bitbucket.token";
 pub const LINEAR_TOKEN: &str = "linear.token";
-/// The Theodore account session (JSON: tokens + profile).
+/// The Theodore account session of releases before several accounts
+/// (JSON: tokens + profile). Read once, moved to its `account_key` entry.
 pub const THEODORE_ACCOUNT: &str = "theodore.account";
+/// One signed-in Theodore account's session, per user id
+/// (`theodore.account.<user id>`); which exist is the store's index.
+pub fn account_key(user_id: &str) -> String {
+    format!("{THEODORE_ACCOUNT}.{user_id}")
+}
 /// This device's fleet key (docs/fleet.md "Trust"): ed25519 PKCS#8, base64.
 pub const FLEET_DEVICE_KEY: &str = "fleet.device_key";
 

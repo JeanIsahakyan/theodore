@@ -4,12 +4,15 @@
  * (`app/_layout.tsx`); screens and their previews may provide mocks.
  */
 import { createContext, useContext, type ReactNode } from 'react';
-import type { AuthClient } from './auth/types';
+import type { AccountsClient, AuthClient } from './auth/types';
 import type { FleetClient } from './fleet/types';
 
 export interface Services {
+  /** The active account's session (docs/mobile.md "Several accounts"). */
   auth: AuthClient;
   fleet: FleetClient;
+  /** Every account signed in here: add, switch, list. */
+  accounts: AccountsClient;
 }
 
 const ServicesContext = createContext<Services | null>(null);

@@ -12,6 +12,7 @@ pub(crate) mod fleet_agents;
 mod fleet_auto;
 mod fleet_confirm;
 mod fleet_delegate;
+pub(crate) mod fleet_files;
 mod fleet_follow;
 pub(crate) mod fleet_host;
 mod fleet_mirror;

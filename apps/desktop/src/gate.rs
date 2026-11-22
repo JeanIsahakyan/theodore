@@ -39,6 +39,9 @@ pub const ALLOWED_SIGNED_OUT: &[&str] = &[
     // Finishes a sign-in in an organization: there's no session yet.
     "account_sign_in_choose_organization",
     "account_sign_out",
+    // An account whose session ended can be dropped from the sign-in
+    // screen too.
+    "account_sign_out_of",
     "focus_window",
     // Asked once at startup, signed in or not: a later sign-in has no second
     // asking, and links would wait behind it for good.
@@ -156,6 +159,7 @@ mod tests {
             "account_sign_in_cancel",
             "account_sign_in_choose_organization",
             "account_sign_out",
+            "account_sign_out_of",
             "focus_window",
             "take_pending_space",
             "log_client",

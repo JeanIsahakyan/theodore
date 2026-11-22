@@ -21,6 +21,7 @@ import { Image, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useServices } from '../../src/services';
 import { useAuthState } from '../../src/shell/AppProviders';
+import { log, track } from '../../src/telemetry/log';
 import { Notice } from '../../src/ui/kit';
 import { Button } from '../../src/ui/native';
 import { usePalette } from '../../src/ui/theme';
@@ -48,15 +49,27 @@ export default function SignIn() {
             router.push('/choose-organization' as Href);
             break;
           case 'failed':
+            track('sign_in_failed', { reason: 'failed' });
+            log.warn('sign-in failed', {
+              'error.code': 'account.sign_in_failed',
+            });
             setError(r.message);
+            break;
+          case 'cancelled':
+            track('sign_in_failed', { reason: 'cancelled' });
             break;
           default:
             break;
         }
       })
-      .catch((e: unknown) =>
-        setError(e instanceof Error ? e.message : String(e)),
-      )
+      .catch((e: unknown) => {
+        track('sign_in_failed', { reason: 'error' });
+        log.warn('sign-in threw', {
+          'error.code': 'account.sign_in_failed',
+          error: e instanceof Error ? e.message : String(e),
+        });
+        setError(e instanceof Error ? e.message : String(e));
+      })
       .finally(() => setBusy(false));
   };
 
