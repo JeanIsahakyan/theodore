@@ -506,6 +506,29 @@ impl SpaceToolsBackend for CoreTools {
             .sub_space_merge(space, space_mode(turn), target)
             .await
     }
+
+    async fn local_archive(
+        &self,
+        space: &str,
+        turn: TurnMode,
+        target: &str,
+        force: bool,
+    ) -> Result<theodore_ports::LocalSpaceItem, SpaceToolError> {
+        self.space_core()?
+            .sub_space_archive(space, space_mode(turn), target, force)
+            .await
+    }
+
+    async fn local_unarchive(
+        &self,
+        space: &str,
+        turn: TurnMode,
+        target: &str,
+    ) -> Result<theodore_ports::LocalSpaceItem, SpaceToolError> {
+        self.space_core()?
+            .sub_space_unarchive(space, space_mode(turn), target)
+            .await
+    }
 }
 
 /// The worktree a run's code tools work on: its space's on a space turn,

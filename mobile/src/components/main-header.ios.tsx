@@ -6,8 +6,8 @@
  *
  * ```text
  * [☰]          New space          [🔔][✎]
- * [☰]      fix the login bug…     [🔔][✎]   a space: two lines
- *          on mac-A · Running
+ * [☰]      fix the login bug…     [🔔][✎][⋯]   a space: two lines, ⋯ a
+ *          on mac-A · Running                  UIMenu with `menu` items
  * ```
  */
 import { Stack } from 'expo-router';
@@ -20,7 +20,12 @@ import { TitleStack } from './space-title';
 /** Room left for the bar's items on both sides. */
 const SIDES = 150;
 
-export function MainHeader({ title, subtitle, onNewSpace }: MainHeaderProps) {
+export function MainHeader({
+  title,
+  subtitle,
+  onNewSpace,
+  menu,
+}: MainHeaderProps) {
   const p = usePalette();
   const { width } = useWindowDimensions();
   const { openDrawer, newSpace, waiting, openQuestions } =
@@ -68,6 +73,23 @@ export function MainHeader({ title, subtitle, onNewSpace }: MainHeaderProps) {
           tintColor={p.text}
           onPress={newSpace}
         />
+        {menu?.length ? (
+          <Stack.Toolbar.Menu
+            icon="ellipsis.circle"
+            accessibilityLabel="More"
+            tintColor={p.text}
+          >
+            {menu.map((it) => (
+              <Stack.Toolbar.MenuAction
+                key={it.label}
+                destructive={it.destructive}
+                onPress={it.onPress}
+              >
+                {it.label}
+              </Stack.Toolbar.MenuAction>
+            ))}
+          </Stack.Toolbar.Menu>
+        ) : null}
       </Stack.Toolbar>
     </>
   );

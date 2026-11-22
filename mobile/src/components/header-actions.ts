@@ -5,6 +5,7 @@
  * ☰  menu        ─▶ opens the drawer (native) / the sidebar (narrow web)
  * 🔔 questions   ─▶ only while one waits: its space (the question card is there)
  * ✎  new space   ─▶ back to Home
+ * ⋯  more        ─▶ only with `menu` items (a space's Archive)
  * ```
  */
 import { usePathname } from 'expo-router';
@@ -20,6 +21,15 @@ export interface MainHeaderProps {
   /** What "new space" does on Home itself (clear the draft); elsewhere it
    *  goes to Home. */
   onNewSpace?: () => void;
+  /** Items of the "⋯" menu; none or empty: no button. */
+  menu?: HeaderMenuItem[];
+}
+
+export interface HeaderMenuItem {
+  label: string;
+  onPress: () => void;
+  /** In the danger color (iOS: the destructive attribute). */
+  destructive?: boolean;
 }
 
 export function useHeaderActions(onNewSpace?: () => void) {

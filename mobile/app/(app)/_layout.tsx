@@ -38,6 +38,7 @@ import { spaceIdFromPath } from '../../src/shell/paths';
 import { PushedHeader } from '../../src/shell/PushedHeader';
 import { liquidGlass } from '../../src/ui/native';
 import { usePalette } from '../../src/ui/theme';
+import { ToastHost } from '../../src/ui/Toast';
 
 export const unstable_settings = { anchor: 'index' };
 
@@ -139,6 +140,8 @@ export default function AppLayout() {
           <Stack.Screen name="activity-sheet" options={sheet('Activity')} />
         </Stack>
       </AppShell>
+      {/* Over the shell, the open drawer included (an archive from a row). */}
+      <ToastHost />
     </DrawerProvider>
   );
 }

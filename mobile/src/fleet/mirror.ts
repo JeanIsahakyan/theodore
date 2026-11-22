@@ -249,6 +249,8 @@ export function cleanSpace(v: unknown, space: string): Space | null {
     name: str(v.name, NAME_MAX),
     goal: str(v.goal, TEXT_MAX),
     branch: str(v.branch, NAME_MAX),
+    base_sha: str(v.base_sha, 64),
+    head_sha: str(v.head_sha, 64),
     status: ROW_STATUSES.includes(v.status as SpaceStatusRow)
       ? (v.status as SpaceStatusRow)
       : 'idle',
@@ -258,6 +260,14 @@ export function cleanSpace(v: unknown, space: string): Space | null {
     mode: mode(v.mode) ?? 'edit',
     turns: num(v.turns),
     run: optStr(v.run, NAME_MAX),
+    pr: optStr(v.pr, NAME_MAX),
+    shipped: isObj(v.shipped)
+      ? {
+          how: str(v.shipped.how, 40),
+          branch: str(v.shipped.branch, NAME_MAX),
+          sha: str(v.shipped.sha, 64),
+        }
+      : null,
     error: optStr(v.error, LINE_MAX),
     turn_log: cleanTurns(v.turn_log),
     title: optStr(v.title, NAME_MAX),

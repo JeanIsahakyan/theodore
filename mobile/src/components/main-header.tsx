@@ -5,12 +5,13 @@
  *
  * ```text
  * [☰]  New space                       [🔔 3][✎]
- * [☰]  fix the login bug…              [🔔 3][✎]   a space: two lines
- *      on mac-A · Running
+ * [☰]  fix the login bug…              [🔔 3][✎][⋯]   a space: two lines,
+ *      on mac-A · Running                             ⋯ with `menu` items
  * ```
  */
 import { Stack } from 'expo-router';
 import { Pressable, Text, View } from 'react-native';
+import { MoreMenu } from '../ui/MoreMenu';
 import { usePalette } from '../ui/theme';
 import { useHeaderActions, type MainHeaderProps } from './header-actions';
 import { TitleStack } from './space-title';
@@ -46,7 +47,12 @@ function HeaderButton({
   );
 }
 
-export function MainHeader({ title, subtitle, onNewSpace }: MainHeaderProps) {
+export function MainHeader({
+  title,
+  subtitle,
+  onNewSpace,
+  menu,
+}: MainHeaderProps) {
   const p = usePalette();
   const { openDrawer, newSpace, waiting, openQuestions } =
     useHeaderActions(onNewSpace);
@@ -88,6 +94,15 @@ export function MainHeader({ title, subtitle, onNewSpace }: MainHeaderProps) {
               onPress={newSpace}
               color={p.text}
             />
+            {menu?.length ? (
+              <MoreMenu
+                items={menu}
+                icon="more.circle"
+                color={p.text}
+                testID="header-more"
+                className="h-9 w-9 items-center justify-center rounded-lg hover:bg-accent active:bg-accent"
+              />
+            ) : null}
           </View>
         ),
       }}

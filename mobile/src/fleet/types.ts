@@ -130,6 +130,12 @@ export interface SpaceView {
   startedHere: boolean;
   error: string | null;
   /**
+   * Archived on the host (its row says so, or `archiveSpace` succeeded):
+   * still tracked, so Undo (`unarchiveSpace`) is instant, but left out of
+   * the published list. Never `true` on a listed space.
+   */
+  archived?: boolean;
+  /**
    * Unix ms of its last activity, for the drawer's "Today / Yesterday"
    * groups: the host's mirrored row's `updated_at`, else when something of
    * it last arrived here. Set when published, never saved.
@@ -249,6 +255,15 @@ export interface FleetClient {
     picks?: AgentPicks,
   ): Promise<SendResult>;
   stopSpace(space: string): Promise<void>;
+  /**
+   * Archives a space followed here, as the host's own Archive does
+   * (`archive_space`: edits checkpointed, worktree removed, branch and PR
+   * kept). Refused `fleet.busy` while its turn runs. Once the host says ok
+   * the space leaves the list; `unarchiveSpace` brings it back.
+   */
+  archiveSpace(space: string): Promise<void>;
+  /** Undo of `archiveSpace` (`unarchive_space`: the worktree recreated). */
+  unarchiveSpace(space: string): Promise<void>;
   /** One entry per question: chosen options, or one free text. */
   answer(space: string, askId: string, answers: string[][]): Promise<void>;
   /** Pins exactly `publicKey` (refused if the cloud now lists another). */

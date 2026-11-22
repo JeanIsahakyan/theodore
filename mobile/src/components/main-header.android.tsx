@@ -8,14 +8,16 @@
  *
  * ```text
  * [☰]  New space                     [🔔³][✎]
- * [☰]  fix the login bug…            [🔔³][✎]   a space: two lines
- *      on mac-A · Running
+ * [☰]  fix the login bug…            [🔔³][✎][⋮]   a space: two lines, ⋮ a
+ *      on mac-A · Running                          DropdownMenu with `menu` items
  * ```
  */
 import {
   Badge,
   BadgedBox,
   Column,
+  DropdownMenu,
+  DropdownMenuItem,
   Host,
   Icon,
   IconButton,
@@ -24,13 +26,51 @@ import {
 } from '@expo/ui/jetpack-compose';
 import { semantics } from '@expo/ui/jetpack-compose/modifiers';
 import { Stack } from 'expo-router';
+import { useState } from 'react';
 import { View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useHostTheme } from '../ui/native/host.android';
 import { usePalette } from '../ui/theme';
-import { useHeaderActions, type MainHeaderProps } from './header-actions';
+import {
+  useHeaderActions,
+  type HeaderMenuItem,
+  type MainHeaderProps,
+} from './header-actions';
 
 const NO_INSETS = {};
+
+/** The "⋮" action and its dropdown. */
+function MoreAction({ items }: { items: HeaderMenuItem[] }) {
+  const p = usePalette();
+  const [open, setOpen] = useState(false);
+  return (
+    <DropdownMenu expanded={open} onDismissRequest={() => setOpen(false)}>
+      <DropdownMenu.Trigger>
+        <IconButton
+          onClick={() => setOpen(true)}
+          modifiers={[semantics({ contentDescription: 'More' })]}
+        >
+          <Icon source={require('../../assets/icons/more_vert.xml')} />
+        </IconButton>
+      </DropdownMenu.Trigger>
+      <DropdownMenu.Items>
+        {items.map((it) => (
+          <DropdownMenuItem
+            key={it.label}
+            onClick={() => {
+              setOpen(false);
+              it.onPress();
+            }}
+          >
+            <DropdownMenuItem.Text>
+              <Text color={it.destructive ? p.danger : p.text}>{it.label}</Text>
+            </DropdownMenuItem.Text>
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenu.Items>
+    </DropdownMenu>
+  );
+}
 
 function AppBar({
   title,
@@ -39,6 +79,7 @@ function AppBar({
   onMenu,
   onQuestions,
   onNewSpace,
+  menu,
 }: {
   title: string;
   subtitle?: string;
@@ -46,6 +87,7 @@ function AppBar({
   onMenu: () => void;
   onQuestions: () => void;
   onNewSpace: () => void;
+  menu?: HeaderMenuItem[];
 }) {
   const p = usePalette();
   const theme = useHostTheme();
@@ -134,6 +176,7 @@ function AppBar({
             >
               <Icon source={require('../../assets/icons/edit.xml')} />
             </IconButton>
+            {menu?.length ? <MoreAction items={menu} /> : null}
           </TopAppBar.Actions>
         </TopAppBar>
       </Host>
@@ -141,7 +184,12 @@ function AppBar({
   );
 }
 
-export function MainHeader({ title, subtitle, onNewSpace }: MainHeaderProps) {
+export function MainHeader({
+  title,
+  subtitle,
+  onNewSpace,
+  menu,
+}: MainHeaderProps) {
   const { openDrawer, newSpace, waiting, openQuestions } =
     useHeaderActions(onNewSpace);
   return (
@@ -156,6 +204,7 @@ export function MainHeader({ title, subtitle, onNewSpace }: MainHeaderProps) {
             onMenu={openDrawer}
             onQuestions={openQuestions}
             onNewSpace={newSpace}
+            menu={menu}
           />
         ),
       }}

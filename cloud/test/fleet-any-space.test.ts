@@ -260,6 +260,58 @@ describe('ops on any space', () => {
   });
 });
 
+// Protocol 8: archive_space / unarchive_space, on a space the target hosts
+// for the origin, routed like stop.
+describe('archive_space / unarchive_space', () => {
+  const ARCHIVE: RemoteRequest['op'][] = [
+    { op: 'archive_space', space: 'rs_1' },
+    { op: 'unarchive_space', space: 'rs_1' },
+  ];
+
+  it('are read on their space and need protocol 8', () => {
+    for (const op of ARCHIVE) {
+      const r = peekRequest(requestBody(op));
+      expect(r).toMatchObject({ op: op.op, space: 'rs_1', ask_id: null });
+      expect(protocolFor(r.op)).toBe(8);
+    }
+    expect(protocolFor('stop')).toBe(3);
+    expect(code(() => peekRequest(requestBody({ op: 'archive_space' })))).toBe(
+      'fleet.bad_message',
+    );
+  });
+
+  it('route to a protocol-8 host, and refuse an older one in words', async () => {
+    const h = new Harness();
+    const mac1 = await h.device('user_1', 'mac1');
+    const mac2 = await h.device('user_1', 'mac2');
+    await mac1.connect();
+    await mac2.connect();
+    await startSpace(mac1, mac2, 'rs_1');
+    for (const op of ARCHIVE) await mac1.request(mac2.id!, op);
+    expect(refusals(mac1)).toEqual([]);
+    expect(
+      mac2
+        .take('request')
+        .map((r) => (JSON.parse(r.envelope.body) as RemoteRequest).op.op),
+    ).toEqual(['archive_space', 'unarchive_space']);
+
+    const old = await h.device('user_1', 'old-mac');
+    old.protocol = 7;
+    await old.connect();
+    await startSpace(mac1, old, 'rs_2');
+    await mac1.request(old.id!, { op: 'archive_space', space: 'rs_2' });
+    const refused = mac1.take('refused');
+    expect(refused.map((r) => r.code)).toEqual(['fleet.upgrade_required']);
+    expect(refused[0]!.message).toBe(
+      'that computer runs an older Theodore: update it to archive its spaces from another device',
+    );
+    expect(old.take('request')).toEqual([]);
+    // Its older ops still route.
+    await mac1.request(old.id!, { op: 'stop', space: 'rs_2' });
+    expect(old.take('request')).toHaveLength(1);
+  });
+});
+
 describe('the sub_space mirror', () => {
   it('is kept, the latest per sub-space', async () => {
     const h = new Harness();
