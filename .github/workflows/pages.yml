@@ -3,7 +3,8 @@ name: Website
 # Deploys the website in site/ (docs/website.md) to the Cloudflare Pages
 # project `theodore-site`, which serves theodore.cloud:
 #
-#   push main, site/** changed ──▶ checks ──▶ build ──▶ pages deploy --branch main (production)
+#   push main, site/** changed ──▶ checks ──▶ build ──▶ pages deploy --branch main (production: theodore.cloud)
+#   push staging, site/** changed ─▶ checks ──▶ build ──▶ pages deploy --branch staging (staging.theodore.cloud)
 #   Release workflow finished      ──▶ rebuild ──▶ pages deploy --branch main (new version baked in)
 #   pull request touching site/ ──▶ checks ──▶ build ──▶ pages deploy --branch <pr branch> (preview)
 #                                                        ──▶ a comment on the PR with the preview URL
@@ -16,7 +17,7 @@ name: Website
 
 on:
   push:
-    branches: [main]
+    branches: [main, staging]
     paths: ['site/**', '.github/workflows/pages.yml']
   pull_request:
     paths: ['site/**', '.github/workflows/pages.yml']
@@ -30,7 +31,7 @@ on:
 # One production deploy at a time, never cancelled mid-deploy; one preview
 # per PR, the newest push wins.
 concurrency:
-  group: pages-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.number) || 'production' }}
+  group: pages-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.number) || (github.ref == 'refs/heads/staging' && 'staging' || 'production') }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
@@ -79,12 +80,13 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: deploy production
+      - name: deploy ${{ github.event_name != 'workflow_run' && github.ref == 'refs/heads/staging' && 'staging' || 'production' }}
         if: env.CAN_DEPLOY == 'true' && github.event_name != 'pull_request'
-        run: pnpm -C site dlx wrangler@4 pages deploy site/dist --project-name theodore-site --branch main --commit-dirty=true
+        run: pnpm -C site dlx wrangler@4 pages deploy site/dist --project-name theodore-site --branch "$TARGET" --commit-dirty=true
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          TARGET: ${{ github.event_name != 'workflow_run' && github.ref == 'refs/heads/staging' && 'staging' || 'main' }}
 
       - name: deploy preview
         if: env.CAN_DEPLOY == 'true' && github.event_name == 'pull_request'

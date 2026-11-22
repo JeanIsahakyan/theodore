@@ -82,3 +82,10 @@ push it there).
   app links `https://theodore.cloud/privacy` (`mobile/src/config.ts`).
 - Feature copy comes from `README.md`, `docs/plan.md`, `docs/spaces.md`,
   `docs/fleet.md`, `docs/mobile.md`: nothing the docs don't say.
+
+## Staging
+
+A push to `staging` that touches `site/` deploys the Pages branch `staging`:
+https://staging.theodore-site.pages.dev, and https://staging.theodore.cloud
+(a proxied CNAME `staging` → `staging.theodore-site.pages.dev` in the
+theodore.cloud zone). Production (`main`) stays https://theodore.cloud.
