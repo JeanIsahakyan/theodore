@@ -705,6 +705,33 @@ App Store Connect app: "Theodore code", Apple ID 6837583003 (`ascAppId` in
 `DISTRIBUTION` certificate and an `IOS_APP_STORE` profile through the App
 Store Connect API; re-encode them into the secrets.
 
+### App Store submission (per App Store release)
+
+CI only uploads each release's build to TestFlight. Shipping one to the App
+Store is a separate step, done when the owner asks for it:
+
+```
+release vX.Y.Z on main ─▶ release.yml `ios` ─▶ build X.Y.Z in App Store Connect (VALID after ~10 min)
+   ─▶ new appStoreVersion "X.Y.Z" (iOS) ─▶ "What's New" text ─▶ attach the build
+   ─▶ reviewSubmissions: create (platform IOS) ─▶ add item (the version) ─▶ submitted: true
+   ─▶ WAITING_FOR_REVIEW ─▶ approved ─▶ released automatically (versions are set to auto-release)
+```
+
+- All of that is App Store Connect API (`/v1/appStoreVersions`,
+  `/v1/appStoreVersions/<id>/relationships/build`, `/v1/reviewSubmissions`,
+  `/v1/reviewSubmissionItems`) with the Team Key; helpers and keys are in the
+  owner's `~/.config/theodore/` (`bin/asc.py`, `apple/`, `README.md`).
+- The version string must equal the build's (`expo.version`, which
+  `scripts/bump-version.sh` sets). Only one version can be in review at a time.
+- UI-only in App Store Connect (no API): App Privacy answers, the header /
+  search-results art (`~/.config/theodore/store/cover.html`, 5244×2950), the
+  Digital Services Act trader details, App Compliance. Drive them with a
+  browser the owner signs in to.
+- Not distributed in China mainland (needs an ICP filing, a security
+  assessment and an AIGC declaration). EU distribution depends on the DSA
+  trader verification.
+- First submission: 0.1.25 (build 4), 2026-11-21.
+
 ### One-time, by the owner
 
 | # | Step | How |
