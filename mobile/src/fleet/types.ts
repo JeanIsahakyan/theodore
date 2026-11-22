@@ -206,6 +206,12 @@ export interface SubSpaceRead {
 export interface FleetSnapshot {
   connection: ConnectionState;
   error: string | null;
+  /**
+   * This run's first `devices` list (sent right after the welcome) arrived:
+   * what is listed is the fleet's word, not "nothing yet" (`src/ui/load.ts`).
+   * Reset by sign-out and an org switch.
+   */
+  welcomed: boolean;
   deviceId: string | null;
   fingerprint: string;
   devices: FleetDeviceView[];

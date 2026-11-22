@@ -177,7 +177,7 @@ impl Core {
                 }
                 Ok(Some(FleetMode::Ask))
             }
-            RemoteOp::SendTo { space, message } => {
+            RemoteOp::SendTo { space, message, .. } => {
                 let row = self.fleet_reach(origin, space).await?;
                 if message.trim().is_empty() {
                     return Err(refuse(codes::INVALID, "empty message"));
@@ -231,6 +231,12 @@ impl Core {
                 }
                 Ok(Some(FleetMode::Edit))
             }
+            // Protocol 8 (docs/fleet.md "Files (blobs)"): refused at the gate
+            // until this host reads files.
+            RemoteOp::ReadFile { .. } => Err(refuse(
+                codes::INVALID,
+                "read_file isn't supported yet on this device",
+            )),
             _ => Err(refuse(codes::INTERNAL, "not an op on any space")),
         }
     }
@@ -282,7 +288,7 @@ impl Core {
                     .map_err(tool_refusal)?;
                 json(serde_json::to_value(asked))?
             }
-            RemoteOp::SendTo { space, message } => {
+            RemoteOp::SendTo { space, message, .. } => {
                 let row = self.fleet_reach(origin, &space).await?;
                 // Allowed (and maybe said yes to) in the mode it had then.
                 if mode.is_some_and(|m| fleet_mode(row.mode) > m) {
@@ -336,6 +342,13 @@ impl Core {
                     .map_err(tool_refusal)?;
                 tracing::info!(parent = %p.id, child = %child, origin, "merged a sub-space for another device");
                 json(serde_json::to_value(merged))?
+            }
+            // Protocol 8 (docs/fleet.md "Files (blobs)"): not on this host yet.
+            RemoteOp::ReadFile { .. } => {
+                return Err(refuse(
+                    codes::INVALID,
+                    "read_file isn't supported yet on this device",
+                ));
             }
             _ => return Err(refuse(codes::INTERNAL, "not an op on any space")),
         };

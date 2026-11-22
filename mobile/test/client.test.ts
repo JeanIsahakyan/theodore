@@ -123,6 +123,7 @@ describe('connect', () => {
     expect(hub.last().url).toBe('wss://cloud.test/v1/fleet/ws');
     expect(hub.last().token).toBe('tok-1');
     expect(state().connection).toBe('connecting');
+    expect(state().welcomed).toBe(false);
     expect(state().fingerprint).toBe(fingerprint(myKey.publicKey));
 
     const sock = await handshake(hub, [
@@ -154,6 +155,8 @@ describe('connect', () => {
     await waitFor(() => state().connection === 'connected', 'connected');
     expect(state().deviceId).toBe(ME);
     await waitFor(() => state().devices.length === 2, 'devices');
+    // The first list of this run: Home and the drawer leave loading.
+    await waitFor(() => state().welcomed, 'welcomed');
     const host = state().devices.find((d) => d.deviceId === HOST)!;
     expect(host.trusted).toBe(false);
     expect(host.fingerprint).toBe(fingerprint(hostKey.publicKey));
@@ -1168,6 +1171,7 @@ describe('mirrored rows', () => {
       agent: null,
       model: null,
       effort: null,
+      attachments: [],
     });
     sock.deliver({
       type: 'reply',
@@ -1197,6 +1201,7 @@ describe('steering', () => {
       agent: null,
       model: null,
       effort: null,
+      attachments: [],
     });
     sock.deliver({
       type: 'reply',
@@ -1246,6 +1251,7 @@ describe('steering', () => {
       agent: 'codex',
       model: null,
       effort: 'high',
+      attachments: [],
     });
     sock.deliver({
       type: 'reply',
@@ -2089,7 +2095,12 @@ describe('any space on a host (sub-spaces)', () => {
     const sent = client.sendTo(HOST, CHILD, '  go on  ');
     await waitFor(() => sock.of('request').length === 1, 'request');
     const req = lastRequest(sock);
-    expect(req.op).toEqual({ op: 'send_to', space: CHILD, message: 'go on' });
+    expect(req.op).toEqual({
+      op: 'send_to',
+      space: CHILD,
+      message: 'go on',
+      attachments: [],
+    });
     sock.deliver({
       type: 'reply',
       envelope: await reply(req, {
