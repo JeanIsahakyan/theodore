@@ -46,6 +46,7 @@ import { useFleetState } from '../state/fleet';
 import { resetPending } from '../state/pending';
 import { resetAttachments } from '../state/attachments';
 import { clearFileCache } from '../fleet/file-cache';
+import { forgetHostsWithoutFiles } from '../ui/stepImages';
 import { createDemo } from '../dev/demo';
 import { resetFleetState } from '../dev/mock';
 import type { FleetClient } from '../fleet/types';
@@ -274,6 +275,7 @@ export function AppProviders({ children }: { children: ReactNode }) {
       resetPending();
       resetAttachments();
       clearFileCache();
+      forgetHostsWithoutFiles();
     }
     // The last account signed out: its picks go (an account leaving while
     // another stays is the accounts client's hook).

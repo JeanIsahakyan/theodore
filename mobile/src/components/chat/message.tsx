@@ -38,7 +38,9 @@ export function Message({
         style={{ borderCurve: 'continuous', opacity: dim ? 0.5 : 1 }}
       >
         {typeof children === 'string' ? (
-          <Text selectable className="text-base leading-[22px] text-foreground">
+          // Not `selectable`: a long press opens the message menu instead
+          // (Copy, Select text), which selects part of it too.
+          <Text className="text-base leading-[22px] text-foreground">
             {children}
           </Text>
         ) : (
