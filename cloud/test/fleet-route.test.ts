@@ -396,6 +396,22 @@ describe('CORS for the web app', async () => {
       'https://b.dev',
     ]);
   });
+
+  it('allows each listed origin: the new domain and the old workers.dev URL', async () => {
+    const NEW = 'https://app-staging.theodore.cloud';
+    const t = await sign({ sub: 'user_9' });
+    for (const origin of [NEW, WEB]) {
+      const r = await handle(
+        new Request('https://api-staging.theodore.cloud/v1/orgs', {
+          headers: { origin, authorization: `Bearer ${t}` },
+        }),
+        deps,
+        parseOrigins(`${NEW},${WEB}`),
+      );
+      expect(r.status).toBe(200);
+      expect(r.headers.get('access-control-allow-origin')).toBe(origin);
+    }
+  });
 });
 
 describe('readCaller', () => {

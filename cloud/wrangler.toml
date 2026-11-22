@@ -7,6 +7,13 @@
 # "enhanced push security". MCP: MCP_KEY_WRAP (secret, ≥ 32 chars) and the
 # OAUTH_KV binding below. WEB_ORIGINS: the web app's origins (CORS and
 # browser sockets), comma-separated, per environment below.
+#
+# Hosts (docs/cloud.md "Environments"): each environment's `routes` are
+# Workers custom domains on the theodore.cloud zone (api-* for the app,
+# mcp-* for Claude); the deploy creates the DNS records and certificates.
+# `workers_dev` stays on: installed apps built before the domain keep
+# calling the `*.prd-instance.workers.dev` URL, and everything is built
+# from the request's host, so both answer.
 name = "theodore-cloud"
 main = "src/index.ts"
 compatibility_date = "2026-11-01"
@@ -37,7 +44,12 @@ new_sqlite_classes = ["OrgHub"]
 
 [env.staging]
 name = "theodore-cloud-staging"
-vars = { WORKOS_CLIENT_ID = "client_01M5RM1W36AHHEGBE37QD3PS6K", WORKOS_API_BASE = "https://api.workos.com", WEB_ORIGINS = "https://theodore-web-staging.prd-instance.workers.dev" }
+workers_dev = true
+routes = [
+  { pattern = "api-staging.theodore.cloud", custom_domain = true },
+  { pattern = "mcp-staging.theodore.cloud", custom_domain = true },
+]
+vars = { WORKOS_CLIENT_ID = "client_01M5RM1W36AHHEGBE37QD3PS6K", WORKOS_API_BASE = "https://api.workos.com", WEB_ORIGINS = "https://app-staging.theodore.cloud,https://theodore-web-staging.prd-instance.workers.dev" }
 durable_objects.bindings = [{ name = "ORG_HUB", class_name = "OrgHub" }]
 kv_namespaces = [{ binding = "OAUTH_KV", id = "942fd282ce274706bee69d7054122a5e" }]
 ratelimits = [
@@ -47,7 +59,12 @@ ratelimits = [
 
 [env.production]
 name = "theodore-cloud"
-vars = { WORKOS_CLIENT_ID = "client_01M5RMBK860S2JJZNWJDDSH0BM", WORKOS_API_BASE = "https://api.workos.com", WEB_ORIGINS = "https://theodore-web.prd-instance.workers.dev" }
+workers_dev = true
+routes = [
+  { pattern = "api.theodore.cloud", custom_domain = true },
+  { pattern = "mcp.theodore.cloud", custom_domain = true },
+]
+vars = { WORKOS_CLIENT_ID = "client_01M5RMBK860S2JJZNWJDDSH0BM", WORKOS_API_BASE = "https://api.workos.com", WEB_ORIGINS = "https://app.theodore.cloud,https://theodore-web.prd-instance.workers.dev" }
 durable_objects.bindings = [{ name = "ORG_HUB", class_name = "OrgHub" }]
 kv_namespaces = [{ binding = "OAUTH_KV", id = "e6b260ade48b4b3283ddd207f2a534ca" }]
 ratelimits = [

@@ -136,7 +136,8 @@ The app speaks protocol 6. Since v4 it also reads:
 - `POST /v1/fleet/request` routes like a socket `request`; rate-limited per user.
 - Delegations stored per origin; subscribe/ask routing = origin, host, and the
   origin's live delegates.
-- CORS for the web app's origin only (`https://theodore-web[-staging].<account>.workers.dev` per env).
+- CORS for the web app's origins only (`https://app[-staging].theodore.cloud`
+  and the old `https://theodore-web[-staging].prd-instance.workers.dev`, per env).
 - Requests targeting a `mobile` / `web` device: `refused{fleet.invalid}`.
 
 ## App (mobile/)
@@ -753,8 +754,8 @@ release: a new version on `main` builds it on EAS and uploads it to
 TestFlight. Android is an EAS build the owner starts by hand.
 
 ```
-push staging, mobile/** ─▶ mobile-web.yml: checks ─▶ build:web ─▶ Pages theodore-web-staging
-push main,    mobile/** ─▶ mobile-web.yml: checks ─▶ build:web ─▶ Pages theodore-web
+push staging, mobile/** ─▶ mobile-web.yml: checks ─▶ build:web ─▶ Worker theodore-web-staging  (app-staging.theodore.cloud)
+push main,    mobile/** ─▶ mobile-web.yml: checks ─▶ build:web ─▶ Worker theodore-web          (app.theodore.cloud)
 every PR / push          ─▶ ci.yml `mobile`: typecheck, lint, format, test, build:web
 
 new version on main ─▶ release.yml `ios`: eas build --profile production ─▶ eas submit ─▶ TestFlight
@@ -789,21 +790,30 @@ eas build --profile preview    ─▶ internal build (staging cloud) ─▶ Play
 
 ### Web
 
-`mobile-web.yml` deploys `mobile/dist` with wrangler (`pages deploy`) and writes
-`_redirects` (`/* /index.html 200`) so `/callback` and deep links serve the
-single-page app. Same checks as CI run first. Env per channel, baked into the
-bundle (`EXPO_PUBLIC_*`) from the repo variables the desktop builds already
-use:
+`mobile-web.yml` deploys `mobile/dist` as a static-assets Worker
+(`mobile/wrangler.toml`, `not_found_handling = "single-page-application"`
+so `/callback` and deep links serve the app). Same checks as CI run first.
+Env per channel, baked into the bundle (`EXPO_PUBLIC_*`) from the repo
+variables the desktop builds already use:
 
-| | Pages project | `EXPO_PUBLIC_WORKOS_CLIENT_ID` | `EXPO_PUBLIC_CLOUD_URL` |
+| | Worker, host | `EXPO_PUBLIC_WORKOS_CLIENT_ID` | `EXPO_PUBLIC_CLOUD_URL` |
 | --- | --- | --- | --- |
-| staging | `theodore-web-staging` | `THEODORE_WORKOS_CLIENT_ID_STAGING` | `THEODORE_CLOUD_URL_STAGING` |
-| production | `theodore-web` | `THEODORE_WORKOS_CLIENT_ID` | `THEODORE_CLOUD_URL` |
+| staging | `theodore-web-staging`, `https://app-staging.theodore.cloud` | `THEODORE_WORKOS_CLIENT_ID_STAGING` | `THEODORE_CLOUD_URL_STAGING`, unset `https://api-staging.theodore.cloud` |
+| production | `theodore-web`, `https://app.theodore.cloud` | `THEODORE_WORKOS_CLIENT_ID` | `THEODORE_CLOUD_URL`, unset `https://api.theodore.cloud` |
 
-Staging falls back to the app's staging defaults when the variables are unset;
-production fails the run instead of building with them. Manual run (Actions →
-Mobile web → Run workflow) picks the environment; production only from `main`.
-The web origin must be in the cloud's CORS list (above).
+Each host is a Workers custom domain in `mobile/wrangler.toml` (`routes`,
+`custom_domain = true`): the deploy creates its DNS record and certificate
+(`docs/cloud.md` "Hosts on theodore.cloud"). The old
+`https://theodore-web[-staging].prd-instance.workers.dev` URLs keep
+answering (`workers_dev = true`). The app served from either host calls
+the cloud baked in at build time: the channel's `api[-staging]` host, so
+web app and cloud sit on one site (no cookies are involved: the bearer
+token is the credential, CORS allows both origins). Staging falls back to
+the app's staging client id when its variable is unset; production fails
+the run instead of building with it. Manual run (Actions → Mobile web →
+Run workflow) picks the environment; production only from `main`. The web
+origins must be in the cloud's CORS list (above) and registered in WorkOS
+(redirect `<origin>/callback`, allowed CORS origin).
 
 ### iOS and Android builds (EAS)
 
@@ -877,9 +887,11 @@ settings ─▶ Sign out ─▶ mock auth: null ─▶ services = real, fleet st
   iPhone only (`supportsTablet: false`). Text, keywords, age rating, review
   contact and notes are set through the App Store Connect API.
 - Privacy policy: `mobile/public/privacy.html`, served by the web Worker at
-  `https://theodore-web.prd-instance.workers.dev/privacy`, linked in Settings →
-  About. Keep it true when data handling changes (cloud, push payloads,
-  telemetry).
+  `https://app.theodore.cloud/privacy` (`config.privacyPolicyUrl`; the old
+  `https://theodore-web.prd-instance.workers.dev/privacy` still answers),
+  linked in Settings → About. It moves to `https://theodore.cloud/privacy`
+  once the landing site serves it. Keep it true when data handling changes
+  (cloud, push payloads, telemetry).
 - Account deletion (App Store 5.1.1(v)): Settings → Delete account ─▶
   `DELETE /v1/account` (docs/cloud.md "Account deletion") ─▶ signed out.
 - App Privacy answers (App Store Connect, by hand; the API has none): Contact
@@ -944,10 +956,11 @@ release vX.Y.Z on main ─▶ release.yml `ios` ─▶ build X.Y.Z in App Store 
 | 4 | iOS push key | done (2026-11-20): APNs key TG8NSFRC8T (Sandbox & Production) on EAS for `app.theodore.mobile`; Expo's push service uses it. Replace with `eas credentials` → iOS → Push Notifications. Never commit it |
 | 5 | Google Play Console | pay, create the app `app.theodore.mobile`; make a service account key for `eas submit` (`eas credentials` → Android) |
 | 6 | FCM for Android push | create a Firebase project, add the Android app, download `google-services.json`, point `expo.android.googleServicesFile` at it (upload it as an EAS file env var, not in git), then `eas credentials` → Android → FCM V1 service account key |
-| 7 | WorkOS redirects | add `theodore-mobile://callback` and `https://theodore-web-staging.prd-instance.workers.dev/callback` to the staging environment, `theodore-mobile://callback` and `https://theodore-web.prd-instance.workers.dev/callback` to production (docs/releasing.md "WorkOS redirects to register") |
-| 8 | Pages projects | `wrangler pages project create theodore-web-staging --production-branch staging` and `wrangler pages project create theodore-web --production-branch main` |
-| 9 | Cloud CORS | the two web origins in the Worker's CORS config ("Cloud" above) |
+| 7 | WorkOS redirects | add `theodore-mobile://callback`, `https://app-staging.theodore.cloud/callback` and the old `https://theodore-web-staging.prd-instance.workers.dev/callback` to the staging environment; `theodore-mobile://callback`, `https://app.theodore.cloud/callback` and the old `https://theodore-web.prd-instance.workers.dev/callback` to production (docs/releasing.md "WorkOS redirects to register"); each web origin also as an allowed CORS origin there |
+| 8 | Web Workers' hosts | nothing by hand: `mobile/wrangler.toml` declares `app[-staging].theodore.cloud` as custom domains and the deploy creates them (the zone must be active on the account) |
+| 9 | Cloud CORS | the web origins, new and old, in `WEB_ORIGINS` ("Cloud" above) |
 
-`mobile-web.yml` reuses `CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID`; the
-token must also carry "Cloudflare Pages: Edit". No other secret is added to
-GitHub: EAS holds the Apple, Google and push credentials.
+`mobile-web.yml` reuses `CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID`;
+the token needs Workers Scripts: Edit and, for the custom domains, Zone:
+Read, DNS: Edit and Workers Routes: Edit on theodore.cloud. No other secret
+is added to GitHub: EAS holds the Apple, Google and push credentials.
