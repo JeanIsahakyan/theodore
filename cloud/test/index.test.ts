@@ -190,7 +190,7 @@ describe('worker', () => {
     const r = await worker.fetch(
       new Request('https://cloud.test/v1/health'),
       { WORKOS_API_KEY: '', WORKOS_CLIENT_ID: '' },
-      {} as ExecutionContext,
+      { waitUntil() {} } as unknown as ExecutionContext,
     );
     expect(r.status).toBe(500);
     expect(await r.text()).toContain('cloud.config');

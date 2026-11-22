@@ -24,8 +24,10 @@ Why it exists:
 | `/.well-known/oauth-protected-resource/mcp`, `/.well-known/oauth-authorization-server`, `/oauth/register`, `/oauth/authorize`, `/oauth/callback`, `/oauth/org`, `/oauth/token` | none (OAuth itself) | the authorization server for `/mcp` ("MCP" below) |
 | `GET /v1/fleet/ws` | bearer access JWT with `org_id`; from a browser, the subprotocol `bearer.<JWT>` (below) | WebSocket upgrade to the org's fleet hub (below, and `docs/fleet.md`) |
 | `POST /v1/fleet/request` | bearer access JWT with `org_id` | a one-shot signed fleet request, no socket (a phone's notification action): `{ device_id, envelope }` ─▶ `202 { accepted: true, req_id }` or `409 { accepted: false, req_id, refused: { code, message } }` (`400` for `fleet.bad_message`) |
+| `POST /v1/telemetry/logs` | bearer access JWT, optional | the phone / web app's error log, relayed to New Relic (`docs/telemetry.md` "Cloud"): `{ records, resource }` ─▶ `202 { accepted }`, always, forwarded only when the Worker has an OTLP target |
 
-Body: JSON object, 64 KiB max. Errors: `{ "error": { "code", "message" } }`.
+Body: JSON object, 64 KiB max. Errors: `{ "error": { "code", "message" } }`,
+the code also in the `x-theodore-error` header.
 
 ### The web app (CORS, browser sockets)
 
@@ -39,7 +41,7 @@ environment in `wrangler.toml`):
 | production | `https://theodore-web.prd-instance.workers.dev` |
 
 ```
-OPTIONS /v1/orgs*, /v1/auth/select-organization, /v1/fleet/request, /v1/account
+OPTIONS /v1/orgs*, /v1/auth/select-organization, /v1/fleet/request, /v1/account, /v1/telemetry/logs
   Origin in WEB_ORIGINS ─▶ 204 + Allow-Origin <origin>, Allow-Methods GET, POST, DELETE, OPTIONS,
                                Allow-Headers Authorization, Content-Type, Max-Age 600
   any other Origin      ─▶ 204, no CORS headers (the browser stops)
@@ -68,8 +70,11 @@ environment; over: `429 cloud.rate_limited`):
 
 | Bucket | Key | Limit | Routes |
 | --- | --- | --- | --- |
-| `RL_PUBLIC` | client IP (`cf-connecting-ip`) | 30 / min | `POST /v1/auth/select-organization`, `GET /v1/fleet/ws` |
-| `RL_USER` | user (`sub`, after the token checks out) | 120 / min | `GET /v1/orgs`, `POST /v1/orgs/personal`, `POST /v1/fleet/request`, `DELETE /v1/account` |
+| `RL_PUBLIC` | client IP (`cf-connecting-ip`) | 30 / min | `POST /v1/auth/select-organization`, `GET /v1/fleet/ws`, `/oauth/*` |
+| `RL_USER` | user (`sub`, after the token checks out) | 120 / min | `GET /v1/orgs`, `POST /v1/orgs/personal`, `POST /v1/fleet/request`, `DELETE /v1/account`, `POST /mcp`, `POST /v1/telemetry/logs` with a token |
+| `RL_TELEMETRY` | client IP | 10 / min | `POST /v1/telemetry/logs` without a token |
+
+Every hit is one `rate limited` log line (`bucket`), never the key.
 
 ## Auth
 
@@ -155,7 +160,7 @@ What isn't deleted here:
 | Team orgs the user was in | kept for the other members (only the user's rows and membership go) |
 | Data on the user's own computers and phones (journals, spaces, keys, the session) | there; the app signs out after the `204` |
 | WorkOS audit logs and events | WorkOS, per its retention |
-| Expo push receipts, Cloudflare request logs, New Relic / PostHog diagnostics | those services, per their retention; the cloud's own logs carry error kinds only, never a token or an email |
+| Expo push receipts, Cloudflare request logs, New Relic / PostHog diagnostics | those services, per their retention; the cloud's own logs carry ids, kinds and codes only, never a token or an email, and user and org ids reach New Relic hashed (`docs/telemetry.md` "Cloud") |
 | The user id in `gone_users` | 24 h, then dropped |
 | OAuth clients Claude registered (DCR) | `OAUTH_KV`: a client record names no user; its grants for this user are gone |
 
@@ -237,6 +242,9 @@ Stable `area.kind` codes, same form as the app's `error.code`
 | WorkOS API key | Worker secret `WORKOS_API_KEY` | Worker secret `WORKOS_API_KEY` |
 | Web app origins (`WEB_ORIGINS` var) | `https://theodore-web-staging.prd-instance.workers.dev` | `https://theodore-web.prd-instance.workers.dev` |
 | Expo access token (optional) | Worker secret `EXPO_ACCESS_TOKEN` | Worker secret `EXPO_ACCESS_TOKEN` |
+| Environment name (`THEODORE_ENV` var; `deployment.environment.name`) | `staging` | `production` |
+| New Relic OTLP endpoint (`THEODORE_OTLP_ENDPOINT` var) | `https://otlp.nr-data.net` | `https://otlp.nr-data.net` |
+| New Relic license key (`THEODORE_OTLP_HEADERS`, `api-key=<key>`) | Worker secret | Worker secret |
 | Deployed by | push to `staging` | push to `main` |
 
 - The API key is set by the owner, never in git or CI:
@@ -247,6 +255,13 @@ Stable `area.kind` codes, same form as the app's `error.code`
 - `EXPO_ACCESS_TOKEN` is needed only if the Expo project turns on
   "enhanced push security"; without it pushes go out unauthenticated, as
   Expo allows by default.
+- `THEODORE_OTLP_HEADERS` (`wrangler secret put THEODORE_OTLP_HEADERS
+  --env staging|production`, value `api-key=<New Relic ingest license
+  key>`) turns on the cloud's own logs to New Relic and the telemetry relay
+  (`docs/telemetry.md` "Cloud"). Without it (local dev, a fresh
+  environment) everything stays in Workers Logs and the relay answers
+  `202` and drops. EU accounts: set `THEODORE_OTLP_ENDPOINT` to
+  `https://otlp.eu01.nr-data.net` in `wrangler.toml`.
 
 ## Local dev
 
@@ -283,7 +298,10 @@ Needed before the first deploy works; none of it is done yet.
 3. GitHub → Settings → Secrets and variables → Actions → **Secrets**:
    `CLOUDFLARE_API_TOKEN` (Workers edit permission) and
    `CLOUDFLARE_ACCOUNT_ID`.
-4. Later: a custom domain per Worker (`routes` in `wrangler.toml`). Until
+4. `wrangler secret put THEODORE_OTLP_HEADERS --env staging`, then
+   `--env production`, value `api-key=<New Relic ingest license key>`
+   (optional: without it nothing is sent to New Relic).
+5. Later: a custom domain per Worker (`routes` in `wrangler.toml`). Until
    then the Workers answer on `workers.dev`.
 
 ## Fleet
@@ -623,7 +641,8 @@ device).
 HTTP on the upgrade: 401/403 fatal, 5xx redial, 426 `fleet.upgrade_required`
 without `Upgrade: websocket`.
 
-Logs name the error kind only: never a token, a nonce or an envelope body.
+Logs name ids, kinds and codes only: never a token, a nonce, a device's
+name or an envelope body (`docs/telemetry.md` "Cloud" lists the lines).
 
 Tests (`test/fleet-*.test.ts`) drive `Hub` with node:sqlite, fake sockets
 and a fake clock; the DO shell (`org-hub.ts`) itself runs only in Workers.
