@@ -23,11 +23,12 @@ name: Release
 #
 # Variables: THEODORE_WORKOS_CLIENT_ID, the production account's client id,
 # baked into the build (unset: no account), and THEODORE_CLOUD_URL, the
-# production cloud (optional; unset: no organizations). Secrets and the telemetry
-# variables: build.yml. The ios job writes THEODORE_POSTHOG_KEY / _HOST into
-# the EAS production profile's env (EXPO_PUBLIC_THEODORE_POSTHOG_*), so the
-# store build has the same usage sink as the desktop (docs/telemetry.md
-# "Mobile"); unset: none. The commit goes along as EXPO_PUBLIC_THEODORE_GIT_SHA.
+# production cloud (unset: https://api.theodore.cloud, docs/cloud.md
+# "Environments"). Secrets and the telemetry variables: build.yml.
+# The ios job writes THEODORE_POSTHOG_KEY / _HOST into the EAS production
+# profile's env (EXPO_PUBLIC_THEODORE_POSTHOG_*), so the store build has the
+# same usage sink as the desktop (docs/telemetry.md "Mobile"); unset: none.
+# The commit goes along as EXPO_PUBLIC_THEODORE_GIT_SHA.
 
 on:
   push:
@@ -46,7 +47,7 @@ jobs:
     with:
       build-env: production
       workos-client-id: ${{ vars.THEODORE_WORKOS_CLIENT_ID }}
-      cloud-url: ${{ vars.THEODORE_CLOUD_URL }}
+      cloud-url: ${{ vars.THEODORE_CLOUD_URL || 'https://api.theodore.cloud' }}
     secrets: inherit
 
   publish:

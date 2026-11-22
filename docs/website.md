@@ -65,7 +65,7 @@ PR touching site/  ──▶ the same ──▶ --branch <pr branch> ──▶ a
 | Secrets | `CLOUDFLARE_API_TOKEN` (Cloudflare Pages: Edit), `CLOUDFLARE_ACCOUNT_ID`, as `cloud.yml` |
 | Headers | `public/_headers`: immutable cache for `/assets`, nosniff, referrer policy, no framing |
 
-The workflow file is `site/deploy/pages.yml`; it belongs at
+The workflow file is `.github/workflows/pages.yml`; it belongs at
 `.github/workflows/pages.yml` (a token without the `workflow` scope can't
 push it there).
 

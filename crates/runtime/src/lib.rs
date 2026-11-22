@@ -46,9 +46,32 @@ pub const BUILT_IN_CLIENT_ID: Option<&str> = option_env!("THEODORE_WORKOS_CLIENT
 /// The Theodore cloud (docs/cloud.md) for this channel, baked in when the
 /// build ran with `THEODORE_CLOUD_URL` set (`build.yml`'s `cloud-url`
 /// input). Same order as the client id: the env var at run time, then the
-/// `account.cloud_url` setting, then this. Without one, a build signs in as
-/// before but has no organizations.
+/// `account.cloud_url` setting, then this, then the channel's own host
+/// (`default_cloud_url`). Without any, a build signs in as before but has
+/// no organizations.
 pub const BUILT_IN_CLOUD_URL: Option<&str> = option_env!("THEODORE_CLOUD_URL");
+
+/// The cloud a production or staging build calls when none was baked in
+/// (docs/cloud.md "Environments"): the channel's host on theodore.cloud.
+/// A nightly or dev build has none: it is pointed at a cloud by hand
+/// (`THEODORE_CLOUD_URL`, the setting) or has no organizations.
+pub fn default_cloud_url(env: BuildEnv) -> Option<&'static str> {
+    match env {
+        BuildEnv::Production => Some("https://api.theodore.cloud"),
+        BuildEnv::Staging => Some("https://api-staging.theodore.cloud"),
+        BuildEnv::Nightly | BuildEnv::Dev => None,
+    }
+}
+
+/// The cloud URL compiled into this binary: `THEODORE_CLOUD_URL` at build
+/// time, else `default_cloud_url(env)`.
+pub fn built_in_cloud_url(env: BuildEnv) -> Option<String> {
+    BUILT_IN_CLOUD_URL
+        .map(str::trim)
+        .filter(|u| !u.is_empty())
+        .or_else(|| default_cloud_url(env))
+        .map(str::to_string)
+}
 
 #[derive(Debug, Clone)]
 pub struct RuntimeConfig {
@@ -309,7 +332,7 @@ pub async fn start(cfg: &RuntimeConfig) -> anyhow::Result<Runtime> {
         device_login: a.device_login,
         account: a.account,
         account_client_id: BUILT_IN_CLIENT_ID.map(str::to_string),
-        account_cloud_url: BUILT_IN_CLOUD_URL.map(str::to_string),
+        account_cloud_url: built_in_cloud_url(cfg.build_env),
         claude_home,
         commands: Arc::new(theodore_agents::ShellRunner::new()),
         terminals: Arc::new(theodore_agents::PtyRunner::new()),
@@ -371,6 +394,35 @@ fn skills_dir(sandbox: bool, data_dir: &Path, home: Option<PathBuf>) -> PathBuf 
     }
     home.map(|h| h.join(".claude/skills"))
         .unwrap_or_else(|| PathBuf::from(".claude/skills"))
+}
+
+#[cfg(test)]
+mod default_cloud_url_tests {
+    use super::*;
+
+    #[test]
+    fn release_channels_have_a_cloud_the_others_do_not() {
+        assert_eq!(
+            default_cloud_url(BuildEnv::Production),
+            Some("https://api.theodore.cloud")
+        );
+        assert_eq!(
+            default_cloud_url(BuildEnv::Staging),
+            Some("https://api-staging.theodore.cloud")
+        );
+        assert_eq!(default_cloud_url(BuildEnv::Nightly), None);
+        assert_eq!(default_cloud_url(BuildEnv::Dev), None);
+    }
+
+    #[test]
+    fn the_default_is_a_cloud_url_the_app_accepts() {
+        // `valid_cloud_url` (crates/app) wants https, no trailing `/`.
+        for env in [BuildEnv::Production, BuildEnv::Staging] {
+            let url = default_cloud_url(env).unwrap();
+            assert!(url.starts_with("https://"), "{url}");
+            assert!(!url.ends_with('/'), "{url}");
+        }
+    }
 }
 
 #[cfg(test)]

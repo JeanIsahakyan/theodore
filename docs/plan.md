@@ -769,7 +769,8 @@ Verified live against the staging WorkOS environment:
 | --- | --- |
 | env `THEODORE_CLOUD_URL` | run time |
 | setting `account.cloud_url` (scope `user`) | |
-| compiled in (`option_env!`, `theodore-runtime`) | `build.yml` input `cloud-url`: `vars.THEODORE_CLOUD_URL_STAGING` (staging), `vars.THEODORE_CLOUD_URL` (release); optional, not a release key |
+| compiled in (`option_env!`, `theodore-runtime`) | `build.yml` input `cloud-url`: `vars.THEODORE_CLOUD_URL_STAGING` (staging), `vars.THEODORE_CLOUD_URL` (release); not a release key |
+| the channel's host (`theodore_runtime::default_cloud_url`) | production `https://api.theodore.cloud`, staging `https://api-staging.theodore.cloud`; nightly and dev have none |
 
 `https://` only, plus `http://127.0.0.1:*` / `http://localhost:*` for
 `wrangler dev`; anything else is ignored with a warning and the next source
@@ -857,7 +858,7 @@ hide it.
 | Redirect URI | `THEODORE_WORKOS_REDIRECT_URI` | `account.workos.redirect_uri` | the build's own in the app bundle (`theodore://callback`, `theodore-staging://…`, `theodore-nightly://…`), else `http://127.0.0.1:47823/callback` |
 | API base | `THEODORE_WORKOS_API_BASE` | — | `https://api.workos.com` |
 | Extra accepted `iss` | `THEODORE_WORKOS_ISSUER` | — | none (set it with a custom auth domain) |
-| Theodore cloud | `THEODORE_CLOUD_URL` | `account.cloud_url` | the one compiled in, else none: no organizations ("Organizations") |
+| Theodore cloud | `THEODORE_CLOUD_URL` | `account.cloud_url` | the one compiled in, else the channel's `api[-staging].theodore.cloud` (production, staging), else none: no organizations ("Organizations") |
 
 Accepted issuers: the API base itself, or `<API base>/user_management/client_…`
 with any client id. An app signing in through one of the environment's

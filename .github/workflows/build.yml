@@ -53,7 +53,7 @@ on:
         type: string
         default: ""
       cloud-url:
-        description: "the Theodore cloud URL, baked in (empty: no organizations; docs/cloud.md)"
+        description: "the Theodore cloud URL, baked in (empty: the channel's api[-staging].theodore.cloud for production and staging, else no organizations; docs/cloud.md)"
         required: false
         type: string
         default: ""
@@ -202,7 +202,7 @@ jobs:
           # Compiled in as the lowest-priority client id (docs/releasing.md).
           THEODORE_WORKOS_CLIENT_ID: ${{ inputs.workos-client-id }}
           # The Theodore cloud for this channel, the lowest-priority source
-          # (docs/cloud.md "App side"). Optional: not a release key.
+          # (docs/cloud.md "App side"). Empty: the channel's default host.
           THEODORE_CLOUD_URL: ${{ inputs.cloud-url }}
           # "Sign in with GitHub" (device flow): the GitHub OAuth App's
           # client id, public, the same for every build.
