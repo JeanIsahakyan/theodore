@@ -51,6 +51,15 @@ export const UNREACHABLE_TITLE = "Can't reach the server";
 export const UNREACHABLE_HINT = 'Check your connection and try again.';
 export const LOADING_TEXT = 'Connecting to your devices…';
 
+/**
+ * The loading line: "Switching to Acme Inc…" while an account or org
+ * switch is under way (`src/state/accounts.ts`), else the first
+ * connection's text.
+ */
+export function loadingText(switching: string | null): string {
+  return switching ? `Switching to ${switching}…` : LOADING_TEXT;
+}
+
 /** What the unreachable state says under its title: the fleet's reason, else a hint. */
 export function unreachableHint(error: string | null): string {
   return error ? error : UNREACHABLE_HINT;

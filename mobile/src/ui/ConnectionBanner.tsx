@@ -15,6 +15,7 @@ import {
   type StyleProp,
   type ViewStyle,
 } from 'react-native';
+import { useAccountSwitch } from '../state/accounts';
 import { useFleetState } from '../state/fleet';
 import { connectionBanner, lateConnecting } from './connection';
 import { Glass } from './native';
@@ -24,6 +25,7 @@ export function ConnectionBanner({ style }: { style?: StyleProp<ViewStyle> }) {
   const p = usePalette();
   const connection = useFleetState((s) => s.connection);
   const error = useFleetState((s) => s.error);
+  const switching = useAccountSwitch((s) => s.switching);
   const [late, setLate] = useState(false);
 
   useEffect(() => {
@@ -36,7 +38,7 @@ export function ConnectionBanner({ style }: { style?: StyleProp<ViewStyle> }) {
     };
   }, []);
 
-  const view = connectionBanner(connection, error, late);
+  const view = connectionBanner(connection, error, late, switching);
   if (!view) return null;
   const danger = view.tone === 'danger';
   return (

@@ -39,7 +39,8 @@
  * delegations ─▶ followed: its origin still delegates here ─▶ subscribe{since}
  *                          else ─▶ dropped
  * a change ─▶ saved within a second; the app going to the background ─▶ now
- * sign-out, org switch ─▶ the set is removed
+ * sign-out ─▶ the set is removed; org or account switch ─▶ kept, another listed
+ *   (`forgetSaved` removes an account's sets once it left this device)
  * ```
  *
  * Following (delegation): when an origin has delegated to this device and
@@ -124,6 +125,8 @@ import type {
   ConfirmView,
   FleetClient,
   FleetDeviceView,
+  FleetSnapshot,
+  PushIdentity,
   QuestionView,
   SpaceLine,
   SpaceView,
@@ -207,10 +210,22 @@ export interface FleetDeps {
   now: () => number;
   /** In [0, 1): backoff jitter. */
   random: () => number;
+  /**
+   * Where the snapshot is published (defaults to the app's `useFleetState`).
+   * A throwaway store for a short-lived client (registering a push token
+   * in another account's org) keeps it off the screens.
+   */
+  store: FleetStore;
   /** Random bytes for blob ids, keys and nonces (defaults to `crypto`). */
   randomBytes: (n: number) => Uint8Array;
   /** The cloud's blob store (defaults to one over `fetch` and `cloudUrl`). */
   blobs?: BlobStore;
+}
+
+/** The part of the zustand store the client writes. */
+export interface FleetStore {
+  setState: typeof useFleetState.setState;
+  getState: () => FleetSnapshot;
 }
 
 type Answer =
@@ -283,11 +298,17 @@ const wsUrl = (cloud: string) =>
 const isObj = (v: unknown): v is Record<string, unknown> =>
   !!v && typeof v === 'object' && !Array.isArray(v);
 
+/** A fleet client that can also be taken down for good (`dispose`). */
+export interface OwnedFleetClient extends FleetClient {
+  /** Stops it and drops its listeners: nothing of it runs again. */
+  dispose(): void;
+}
+
 export function createFleetClient(
   auth: AuthClient,
   keys: KeyStore = createKeyStore(),
   overrides: Partial<FleetDeps> = {},
-): FleetClient {
+): OwnedFleetClient {
   const platform = overrides.platform ?? defaultPlatform();
   const deps: FleetDeps = {
     platform,
@@ -299,13 +320,15 @@ export function createFleetClient(
     timing: overrides.timing ?? DEFAULT_TIMING,
     now: overrides.now ?? Date.now,
     random: overrides.random ?? Math.random,
+    store: overrides.store ?? useFleetState,
     randomBytes: overrides.randomBytes ?? randomBytes,
     blobs: overrides.blobs,
   };
   const t = deps.timing;
   const pins: PinStore = pinStore(deps.storage);
   const saved = savedSpaces(deps.data);
-  const set = useFleetState.setState;
+  const store = deps.store;
+  const set = store.setState;
   const blobs: BlobStore =
     deps.blobs ??
     createBlobStore({
@@ -454,7 +477,7 @@ export function createFleetClient(
     rawDelegations = [];
     delegators = new Map();
     me = null;
-    set({ ...initialFleet, fingerprint: useFleetState.getState().fingerprint });
+    set({ ...initialFleet, fingerprint: store.getState().fingerprint });
   };
 
   // ── kept across restarts ────────────────────────────────────────────────
@@ -1381,15 +1404,29 @@ export function createFleetClient(
    * Signs `op` for a pinned `hostDevice` and posts it (`POST
    * /v1/fleet/request`): a notification action, maybe the first thing to
    * run after a cold start, so it loads the session and device id itself.
+   * `as`: another signed-in account's token and org (a push for an
+   * account that isn't the active one), with this device's id in that org.
    * Resolves once the cloud accepted it; the host's word comes later.
    */
-  const overHttp = async (hostDevice: string, op: RemoteOp) => {
-    const s = await auth.current();
-    const token = await auth.accessToken();
-    if (!s || !token) throw new FleetError('not signed in');
-    if (!s.organizationId) throw new FleetError('no organization chosen');
+  const overHttp = async (
+    hostDevice: string,
+    op: RemoteOp,
+    as: PushIdentity | null = null,
+  ) => {
+    let token: string | null;
+    let organizationId: string | null;
+    if (as) {
+      ({ accessToken: token, organizationId } = as);
+    } else {
+      const s = await auth.current();
+      token = await auth.accessToken();
+      if (!s || !token) throw new FleetError('not signed in');
+      organizationId = s.organizationId;
+    }
+    if (!organizationId) throw new FleetError('no organization chosen');
     const origin =
-      me ?? (await deps.storage.get(deviceIdKey(s.organizationId)));
+      (!as || link?.org === organizationId ? me : null) ??
+      (await deps.storage.get(deviceIdKey(organizationId)));
     if (!validDeviceId(origin)) {
       throw new FleetError(
         'this device has not joined the fleet yet: open the app once',
@@ -1613,13 +1650,27 @@ export function createFleetClient(
       sendMsg({ type: 'register_push', provider: 'expo', token: push.token });
     },
 
-    async answerOverHttp(space, askId, answers, hostDevice) {
-      await overHttp(hostDevice, {
-        op: 'answer',
-        space,
-        ask_id: askId,
-        answers,
-      });
+    async dropPushHere() {
+      // The token itself stays: the next link (another account or org)
+      // registers it again at its welcome.
+      if (push?.token)
+        sendMsg({ type: 'register_push', provider: 'expo', token: '' });
+    },
+
+    async forgetSaved(scopes) {
+      for (const s of scopes) {
+        if (s === scope) leaveScope(true);
+        else await queue(() => saved.clear(s));
+      }
+      await ops;
+    },
+
+    async answerOverHttp(space, askId, answers, hostDevice, as = null) {
+      await overHttp(
+        hostDevice,
+        { op: 'answer', space, ask_id: askId, answers },
+        as,
+      );
       if (questions.delete(askId)) publishQuestions();
     },
 
@@ -1638,12 +1689,12 @@ export function createFleetClient(
       if (err) throw err;
     },
 
-    async confirmOverHttp(hostDevice, confirmId, allow) {
-      await overHttp(hostDevice, {
-        op: 'confirm',
-        confirm_id: confirmId,
-        allow,
-      });
+    async confirmOverHttp(hostDevice, confirmId, allow, as = null) {
+      await overHttp(
+        hostDevice,
+        { op: 'confirm', confirm_id: confirmId, allow },
+        as,
+      );
       dropConfirm(confirmId);
     },
 
@@ -1788,7 +1839,7 @@ export function createFleetClient(
   };
 
   // ── account and app lifecycle ───────────────────────────────────────────
-  auth.onChange((s) => {
+  const offAuth = auth.onChange((s) => {
     if (superseded) return;
     const before = session;
     session = s;
@@ -1806,7 +1857,14 @@ export function createFleetClient(
       return;
     }
     if (!wanted) return;
-    if (before && before.organizationId !== s.organizationId) {
+    if (
+      before &&
+      (before.userId !== s.userId || before.organizationId !== s.organizationId)
+    ) {
+      // Another org, or another account (docs/mobile.md "Several
+      // accounts"): the link is redialed as it; what was listed goes, its
+      // saved set stays for when it is back. Requests in flight are
+      // settled as timed out.
       epoch++;
       closeLink();
       leaveScope(false);
@@ -1837,7 +1895,7 @@ export function createFleetClient(
     // Not welcomed yet: the welcome sends the latest token (`session`).
   });
 
-  platform.onActive((active) => {
+  const offActive = platform.onActive((active) => {
     if (superseded) return;
     background = !active;
     if (!active) {
@@ -1858,7 +1916,16 @@ export function createFleetClient(
     void connect();
   });
 
-  return client;
+  return {
+    ...client,
+    dispose() {
+      client.stop();
+      superseded = true;
+      liveLinks.delete(liveProbe);
+      offAuth();
+      offActive();
+    },
+  };
 }
 
 function fatalText(code: string): string {

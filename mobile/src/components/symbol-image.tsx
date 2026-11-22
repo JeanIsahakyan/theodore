@@ -12,6 +12,7 @@ import { SymbolView } from 'expo-symbols';
 import type { AndroidSymbol, SFSymbol } from 'expo-symbols';
 import {
   ArrowUp,
+  ArrowUpDown,
   BadgeCheck,
   Download,
   Paperclip,
@@ -54,6 +55,8 @@ import {
   SquarePen,
   SquareTerminal,
   SunMoon,
+  UserPlus,
+  Users,
   X,
   type LucideIcon,
 } from 'lucide-react-native';
@@ -110,6 +113,9 @@ export const SYMBOLS = {
   download: { sf: 'arrow.down.circle', md: 'download', web: Download },
   // Settings and Devices (src/components/settings/).
   organization: { sf: 'building.2', md: 'corporate_fare', web: Building },
+  accounts: { sf: 'person.2', md: 'group', web: Users },
+  'add-account': { sf: 'person.badge.plus', md: 'person_add', web: UserPlus },
+  switch: { sf: 'arrow.up.arrow.down', md: 'swap_vert', web: ArrowUpDown },
   phone: { sf: 'iphone', md: 'smartphone', web: Smartphone },
   server: { sf: 'server.rack', md: 'dns', web: Server },
   globe: { sf: 'globe', md: 'language', web: Globe },

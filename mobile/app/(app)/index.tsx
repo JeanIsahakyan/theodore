@@ -73,14 +73,15 @@ import {
   takeHomeRestore,
   usePending,
 } from '../../src/state/pending';
+import { useAccountSwitch } from '../../src/state/accounts';
 import { useFleetState } from '../../src/state/fleet';
 import { startPicks } from '../../src/ui/agents';
 import { allUploaded } from '../../src/ui/attachments';
 import { ConnectionBanner } from '../../src/ui/ConnectionBanner';
 import {
-  LOADING_TEXT,
   UNREACHABLE_TITLE,
   lastPicksPreview,
+  loadingText,
   unreachableHint,
 } from '../../src/ui/load';
 import { RUN_WARNING, errorText } from '../../src/ui/logic';
@@ -308,7 +309,9 @@ function FirstConnect({
   const error = useFleetState((s) => s.error);
   const spaces = useFleetState((s) => s.spaces);
   const draft = useCompose((s) => s.home);
+  const switching = useAccountSwitch((s) => s.switching);
   const last = lastPicksPreview(draft, spaces);
+  const loading = loadingText(switching);
   return (
     <>
       <SymbolImage name="chat" size={44} color={p.muted} />
@@ -364,14 +367,12 @@ function FirstConnect({
         <View
           accessible
           accessibilityRole="progressbar"
-          accessibilityLabel={LOADING_TEXT}
+          accessibilityLabel={loading}
           accessibilityLiveRegion="polite"
           className="mt-3 flex-row items-center gap-2"
         >
           <Spinner color={p.muted} />
-          <Text className="text-[13px] text-muted-foreground">
-            {LOADING_TEXT}
-          </Text>
+          <Text className="text-[13px] text-muted-foreground">{loading}</Text>
         </View>
       )}
     </>

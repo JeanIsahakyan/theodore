@@ -234,10 +234,28 @@ export interface FleetSnapshot {
   confirms: ConfirmView[];
 }
 
+/**
+ * Who a one-shot request is signed in as when it isn't the active account
+ * (a notification for another signed-in account): that account's token in
+ * the org the space lives in; this device's id in that org is read here.
+ */
+export interface PushIdentity {
+  accessToken: string;
+  organizationId: string;
+}
+
 export interface FleetClient {
   /** Connects (or reconnects) with the current session; idempotent. */
   start(): Promise<void>;
   stop(): void;
+  /**
+   * Tells the cloud to forget this device's push token in the connected
+   * organization (the active account signs out of this device); the token
+   * itself is kept for the next account's link.
+   */
+  dropPushHere(): Promise<void>;
+  /** Removes the saved sets of these `<user>.<org>` scopes (an account left). */
+  forgetSaved(scopes: readonly string[]): Promise<void>;
   /** `agent` / `model` / `effort`: only what was picked; the host's
    *  defaults run for the rest. `attachments`: blobs uploaded for that
    *  computer (`uploadAttachment`), for the space's `.context/`. */
@@ -269,12 +287,14 @@ export interface FleetClient {
   untrust(deviceId: string): Promise<void>;
   lines(space: string): Promise<SpaceLine[]>;
   registerPush(token: string | null): Promise<void>;
-  /** Signs and sends a request without the socket (notification action). */
+  /** Signs and sends a request without the socket (notification action);
+   *  `as`: for another signed-in account's space. */
   answerOverHttp(
     space: string,
     askId: string,
     answers: string[][],
     hostDevice: string,
+    as?: PushIdentity | null,
   ): Promise<void>;
   /**
    * Allow or Deny a confirm waiting on `hostDevice`. The card goes once
@@ -287,6 +307,7 @@ export interface FleetClient {
     hostDevice: string,
     confirmId: string,
     allow: boolean,
+    as?: PushIdentity | null,
   ): Promise<void>;
   /**
    * Sets a pinned computer's auto mode for an `mcp` device it pins; the new
