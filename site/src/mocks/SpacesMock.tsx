@@ -1,6 +1,7 @@
 /**
  * A space with sub-spaces: the sidebar's Spaces section with its tree
- * (Sidebar.tsx), and the chat's sub-space tool rows (SpaceToolRow.tsx).
+ * (Sidebar.tsx), the chat's sub-space tool rows (SpaceToolRow.tsx) and the
+ * live diff of the space beside it (SpaceDiff.tsx).
  */
 import { Spinner } from '@heroui/react';
 import {
@@ -65,7 +66,7 @@ function Glyph({
     case 'done':
       return <Ring color="var(--accent)" check title="Merged" size={12} />;
     case 'asking':
-      return <CircleQuestion className="size-3.5 text-accent" />;
+      return <CircleQuestion className="size-3.5 text-signal-ink" />;
     case 'pr':
       return <CodePullRequest className="size-3.5 text-success" />;
   }
@@ -103,9 +104,9 @@ function Sidebar() {
     <>
       <div className="flex items-center gap-2 px-3 pb-2 pt-3 text-[13px] font-medium">
         <Ring color="var(--accent)" fill={1} title="Project" size={12} />
-        acme/storefront
-        <ChevronRight className="size-3 rotate-90 text-muted" />
-        <span className="ms-auto grid size-6 place-items-center rounded-lg text-muted">
+        <span className="min-w-0 truncate">acme/storefront</span>
+        <ChevronRight className="size-3 shrink-0 rotate-90 text-muted" />
+        <span className="ms-auto grid size-6 shrink-0 place-items-center rounded-lg text-muted">
           <Magnifier className="size-3.5" />
         </span>
       </div>
@@ -114,7 +115,6 @@ function Sidebar() {
         <NavRow label="Inbox" count={2} />
         <NavRow label="My PRs" count={1} />
         <NavRow label="Tasks" />
-        <NavRow label="Skills" />
       </div>
       <div className="flex items-center justify-between pb-1 pe-3 ps-5 pt-5 text-xs text-muted">
         Spaces
@@ -162,7 +162,11 @@ function SubSpaceRow({
       <span className="min-w-0 truncate font-medium">{name}</span>
       {stage && (
         <span
-          className={`inline-flex shrink-0 items-center gap-1 rounded-full bg-default px-1.5 py-0.5 text-[11px] ${stage === 'asking' ? 'text-accent' : 'text-muted'}`}
+          className={`inline-flex shrink-0 items-center gap-1 rounded-full px-1.5 py-0.5 text-[11px] ${
+            stage === 'asking'
+              ? 'bg-signal text-signal-ink'
+              : 'bg-default text-muted'
+          }`}
         >
           {stage === 'running' && (
             <Spinner size="sm" color="current" className="size-2.5" />
@@ -181,6 +185,57 @@ function SubSpaceRow({
   );
 }
 
+/** The live diff pane: the files of the change so far, one hunk open. */
+function LiveDiff() {
+  const files: [string, number, number][] = [
+    ['db/migrations/0042_accounts.sql', 38, 0],
+    ['src/billing/types.ts', 61, 12],
+    ['src/billing/parser.ts', 14, 9],
+  ];
+  return (
+    <>
+      <div className="flex items-center gap-2 border-b border-separator px-3 py-2 text-xs">
+        <span className="font-semibold">Changes</span>
+        <span className="text-muted">3 files</span>
+        <span className="ms-auto flex items-center gap-1 tabular-nums">
+          <LineCounts added={113} removed={21} />
+        </span>
+      </div>
+      <div className="flex flex-col gap-0.5 px-2 py-2 text-[12px]">
+        {files.map(([f, a, d], i) => (
+          <div
+            key={f}
+            className={`flex items-center gap-2 rounded-lg px-2 py-1 ${i === 1 ? 'bg-default' : ''}`}
+          >
+            <span className="min-w-0 flex-1 truncate font-mono text-[11.5px]">
+              {f.split('/').pop()}
+            </span>
+            <span className="flex shrink-0 gap-1">
+              <LineCounts added={a} removed={d} />
+            </span>
+          </div>
+        ))}
+      </div>
+      <div className="lines border-t border-separator py-1">
+        {[
+          ['ctx', '  '],
+          ['del', '  amount: number;'],
+          ['add', '  invoice: Invoice;'],
+          ['add', '  account: Account;'],
+          ['ctx', '}'],
+        ].map(([t, s], i) => (
+          <div key={i} className={`ln compact t-${t === 'ctx' ? 'none' : t}`}>
+            <span className="mark">
+              {t === 'add' ? '+' : t === 'del' ? '−' : ''}
+            </span>
+            <span className="src">{s}</span>
+          </div>
+        ))}
+      </div>
+    </>
+  );
+}
+
 export function SpacesMock() {
   return (
     <Window
@@ -189,18 +244,25 @@ export function SpacesMock() {
         <Spinner size="sm" color="current" className="size-3 text-muted" />
       }
       sidebar={<Sidebar />}
-      label="A space whose agent split the work into three sub-spaces, one merged, one running, one waiting for an answer; the sidebar lists them under their parent"
-      className="min-h-[480px]"
+      aside={<LiveDiff />}
+      label="A space whose agent split the work into three sub-spaces, one merged, one running, one waiting for an answer; the sidebar lists them under their parent and the live diff shows the change so far"
+      className="min-h-[460px]"
     >
       <WindowHeader
         title="Migrate the billing schema"
         chip="Drafting"
         right={
           <>
-            <MockBtn tone="ghost" icon={<ArrowUturnCcwLeft />}>
+            <MockBtn
+              tone="ghost"
+              icon={<ArrowUturnCcwLeft />}
+              className="hidden xl:inline-flex"
+            >
               Undo
             </MockBtn>
-            <MockBtn icon={<Eye />}>Review</MockBtn>
+            <MockBtn icon={<Eye />} className="hidden sm:inline-flex">
+              Review
+            </MockBtn>
             <MockBtn tone="primary" icon={<CodePullRequest />}>
               Open PR
             </MockBtn>
@@ -219,19 +281,19 @@ export function SpacesMock() {
           </AgentText>
           <SubSpaceRow
             icon={CodeFork}
-            verb="Sub-space started:"
+            verb="Sub-space:"
             name="Move the types"
             stage="merged"
           />
           <SubSpaceRow
             icon={CodeFork}
-            verb="Sub-space started:"
+            verb="Sub-space:"
             name="Port the parser"
             stage="running"
           />
           <SubSpaceRow
             icon={CodeFork}
-            verb="Sub-space started:"
+            verb="Sub-space:"
             name="Fix the flaky test"
             stage="asking"
           />
@@ -260,7 +322,7 @@ export function SpacesMock() {
         <div className="mt-auto">
           <Composer
             placeholder="Add to the queue…"
-            chips={['Edit', 'Claude · Opus 4.1 · High']}
+            chips={['Edit', 'Claude · Opus · High']}
           />
         </div>
       </div>

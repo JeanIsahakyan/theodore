@@ -5,7 +5,7 @@
  * reply. Static, for the mocks on this site.
  */
 import type { ComponentType, ReactNode } from 'react';
-import { Button, Card, Chip, Spinner, ToggleButton } from '@heroui/react';
+import { Chip, Spinner } from '@heroui/react';
 import { ChevronRight } from '@gravity-ui/icons';
 
 export const ROW = 'flex min-w-0 items-center gap-1.5 text-[13px]';
@@ -72,7 +72,6 @@ export function ToolRow({
   busy,
   mono = true,
   className = '',
-  ...rest
 }: {
   icon: ComponentType<{ className?: string }>;
   verb: string;
@@ -83,10 +82,9 @@ export function ToolRow({
   busy?: boolean;
   mono?: boolean;
   className?: string;
-  'data-on'?: boolean;
 }) {
   return (
-    <div className={`turn-tool ${ROW} ${className}`} {...rest}>
+    <div className={`turn-tool ${ROW} ${className}`}>
       <StepIcon busy={busy}>
         <Icon />
       </StepIcon>
@@ -103,8 +101,19 @@ export function ToolRow({
   );
 }
 
-/** The card an `ask_user` question shows (SpacePlan.tsx). `answered`
- *  collapses it to who answered and what. */
+/** The signal: the agent is waiting for you. The one place the site's
+ *  yellow appears. */
+export function SignalDot({ pulse = false }: { pulse?: boolean }) {
+  return (
+    <span
+      aria-hidden
+      className={`inline-block size-2 shrink-0 rounded-full bg-signal ${pulse ? 'signal-dot' : ''}`}
+    />
+  );
+}
+
+/** The card an `ask_user` question shows (SpacePlan.tsx). While it waits it
+ *  carries the signal; `answered` collapses it to who answered and what. */
 export function QuestionCard({
   question,
   options,
@@ -112,7 +121,6 @@ export function QuestionCard({
   answered,
   answeredFrom,
   className = '',
-  ...rest
 }: {
   question: string;
   options: string[];
@@ -120,20 +128,22 @@ export function QuestionCard({
   answered?: boolean;
   answeredFrom?: string;
   className?: string;
-  'data-on'?: boolean;
 }) {
   return (
-    <Card
-      variant="secondary"
-      className={`space-question flex flex-col gap-3 px-4 py-3 ${className}`}
-      {...rest}
+    <div
+      className={`space-question flex flex-col gap-2.5 rounded-2xl bg-surface px-4 py-3 shadow-card ${className}`}
     >
-      <span className="text-xs font-medium text-muted">
-        {answered
-          ? `Answered from ${answeredFrom ?? 'your phone'}`
-          : 'The agent is waiting for your answer'}
+      <span className="flex items-center gap-2 text-xs font-medium text-muted">
+        {answered ? (
+          `Answered from ${answeredFrom ?? 'your phone'}`
+        ) : (
+          <>
+            <SignalDot pulse />
+            Waiting for your answer
+          </>
+        )}
       </span>
-      <span className="text-sm font-medium">{question}</span>
+      <span className="text-sm font-medium leading-snug">{question}</span>
       {answered ? (
         <div className="flex flex-wrap gap-1.5">
           <Chip size="sm" variant="soft" color="accent">
@@ -141,36 +151,22 @@ export function QuestionCard({
           </Chip>
         </div>
       ) : (
-        <>
-          <div className="flex flex-wrap gap-1.5">
-            {options.map((o) => (
-              <ToggleButton
-                key={o}
-                size="sm"
-                isSelected={picked === o}
-                className="space-option pointer-events-none"
-                excludeFromTabOrder
-                aria-hidden
-              >
-                {o}
-              </ToggleButton>
-            ))}
-          </div>
-          <div className="flex gap-1.5">
-            <Button
-              size="sm"
-              variant="primary"
-              isDisabled={!picked}
-              className="pointer-events-none"
-              excludeFromTabOrder
-              aria-hidden
+        <div className="flex flex-wrap gap-1.5">
+          {options.map((o) => (
+            <span
+              key={o}
+              className={`inline-flex h-7 items-center rounded-lg px-2.5 text-xs font-medium ${
+                picked === o
+                  ? 'bg-accent text-accent-foreground'
+                  : 'bg-default text-foreground'
+              }`}
             >
-              Send answer
-            </Button>
-          </div>
-        </>
+              {o}
+            </span>
+          ))}
+        </div>
       )}
-    </Card>
+    </div>
   );
 }
 
@@ -178,14 +174,12 @@ export function QuestionCard({
 export function AgentText({
   children,
   className = '',
-  ...rest
 }: {
   children: ReactNode;
   className?: string;
-  'data-on'?: boolean;
 }) {
   return (
-    <div className={`turn-text text-sm leading-relaxed ${className}`} {...rest}>
+    <div className={`turn-text text-sm leading-relaxed ${className}`}>
       {children}
     </div>
   );
@@ -200,7 +194,7 @@ export function Composer({
   chips: string[];
 }) {
   return (
-    <div className="composer flex flex-col gap-2 rounded-3xl border border-separator bg-surface px-3 pb-2 pt-3">
+    <div className="composer flex flex-col gap-2 rounded-3xl bg-surface px-3 pb-2 pt-3 shadow-card">
       <span className="px-1 text-sm text-muted">{placeholder}</span>
       <div className="flex items-center gap-1.5">
         {chips.map((c) => (

@@ -154,7 +154,7 @@ export function ReviewMock() {
           </>
         }
       />
-      <div className="grid flex-1 grid-cols-1 md:grid-cols-[270px_minmax(0,1fr)]">
+      <div className="grid flex-1 grid-cols-1 md:grid-cols-[250px_minmax(0,1fr)]">
         <div className="groups flex flex-col border-b border-separator md:border-b-0 md:border-r">
           <div className="flex items-center gap-2 px-4 pt-4 text-xs text-muted">
             <span className="h-1 flex-1 overflow-hidden rounded-full bg-default">
@@ -231,7 +231,7 @@ export function ReviewMock() {
               </div>
             ))}
           </div>
-          <div className="mx-3 mb-3 mt-1 flex flex-col gap-2 rounded-xl border border-separator bg-surface px-3 py-2.5 text-xs">
+          <div className="mx-3 mb-3 mt-1 flex flex-col gap-2 rounded-xl bg-surface px-3 py-2.5 text-xs shadow-card">
             <div className="flex flex-wrap items-center gap-1.5">
               <Chip size="sm" variant="soft" color="warning">
                 warn
