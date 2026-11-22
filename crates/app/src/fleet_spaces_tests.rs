@@ -145,6 +145,7 @@ fn send_to(space: &str, message: &str) -> RemoteOp {
     RemoteOp::SendTo {
         space: space.into(),
         message: message.into(),
+        attachments: vec![],
     }
 }
 

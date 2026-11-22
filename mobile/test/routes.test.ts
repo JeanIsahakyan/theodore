@@ -14,6 +14,7 @@ const screens = (dir: string) =>
 describe('signed-in routes', () => {
   it('has Home, a space, its sub-spaces, Devices, Settings, the sheets and the /start redirect', () => {
     expect(screens(app)).toEqual([
+      'accounts-sheet.tsx',
       'activity-sheet.tsx',
       'computer-picker.tsx',
       'devices.tsx',
@@ -58,6 +59,7 @@ describe('signed-in routes', () => {
       'computer-picker',
       'project-picker',
       'activity-sheet',
+      'accounts-sheet',
       'sub-space/[space]/[child]',
     ])
       expect(stack).toContain(`name="${name}"`);

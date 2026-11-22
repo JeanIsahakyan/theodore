@@ -4,11 +4,14 @@
  * `createMock()` seeds the store and returns the services plus a `calls` log.
  */
 import type {
+  AccountView,
+  AccountsClient,
   AuthClient,
   Organization,
   Session,
   SignInResult,
 } from '../auth/types';
+import { initials } from '../ui/drawer';
 import type {
   FleetAgentView,
   FleetClient,
@@ -705,6 +708,12 @@ export function createMock(options: MockOptions = {}): Mock {
     async registerPush(token) {
       await call('registerPush', token);
     },
+    async dropPushHere() {
+      await call('dropPushHere');
+    },
+    async forgetSaved(scopes) {
+      await call('forgetSaved', scopes);
+    },
     async answerOverHttp(space, askId, answers, hostDevice) {
       await call('answerOverHttp', space, askId, answers, hostDevice);
     },
@@ -760,8 +769,8 @@ export function createMock(options: MockOptions = {}): Mock {
     async current() {
       return session;
     },
-    async signIn(): Promise<SignInResult> {
-      await call('signIn');
+    async signIn(opts): Promise<SignInResult> {
+      await call('signIn', ...(opts ? [opts] : []));
       session = { ...base };
       notify();
       return { kind: 'signed_in', session };
@@ -801,7 +810,65 @@ export function createMock(options: MockOptions = {}): Mock {
     },
   };
 
-  return { services: { auth, fleet }, calls, session: () => session };
+  // One account: the session's. Adding one signs in as it again.
+  const accountListeners = new Set<(a: AccountView[]) => void>();
+  const accountList = (): AccountView[] =>
+    session
+      ? [
+          {
+            userId: session.userId,
+            label: session.name || session.email || 'Signed in',
+            initials: initials(session.name, session.email),
+            email: session.email,
+            orgId: session.organizationId,
+            orgs: orgs.map((o) => ({ id: o.id, name: o.name })),
+            stale: false,
+            active: true,
+          },
+        ]
+      : [];
+  const notifyAccounts = () =>
+    accountListeners.forEach((l) => l(accountList()));
+  const accounts: AccountsClient = {
+    accounts: accountList,
+    onAccountsChange(listener) {
+      accountListeners.add(listener);
+      return () => accountListeners.delete(listener);
+    },
+    async addAccount() {
+      await call('addAccount');
+      const r = await auth.signIn();
+      notifyAccounts();
+      return r;
+    },
+    async signInAgain(userId) {
+      await call('signInAgain', userId);
+      const r = await auth.signIn({ loginHint: session?.email ?? null });
+      notifyAccounts();
+      return r;
+    },
+    async switchTo(userId, orgId) {
+      await call('switchTo', userId, orgId ?? null);
+      const s = await auth.switchOrganization(
+        orgId ?? session?.organizationId ?? base.organizationId ?? '',
+      );
+      notifyAccounts();
+      return s;
+    },
+    async loadOrganizations(userId) {
+      await call('loadOrganizations', userId);
+      return orgs.map((o) => ({ id: o.id, name: o.name }));
+    },
+    clientOf(userId) {
+      return session?.userId === userId ? auth : null;
+    },
+  };
+
+  return {
+    services: { auth, fleet, accounts },
+    calls,
+    session: () => session,
+  };
 }
 
 /** Back to an empty store (between tests). */

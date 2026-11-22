@@ -12,6 +12,7 @@
  * question cut to 180 chars, its option labels. Never a token in a log.
  */
 import type { FleetMode, RemoteConfirm } from '../gen/fleet';
+import { noopLogger, type Logger } from '../telemetry/log';
 
 export const EXPO_PUSH_URL = 'https://exp.host/--/api/v2/push/send';
 
@@ -55,12 +56,13 @@ const BATCH = 100;
 export function expoSender(
   fetchFn: typeof fetch,
   accessToken?: string,
+  log: Logger = noopLogger,
 ): PushSender {
   return async (msgs) => {
     const out: PushResult[] = [];
     for (let i = 0; i < msgs.length; i += BATCH) {
       const batch = msgs.slice(i, i + BATCH);
-      out.push(...(await sendBatch(fetchFn, batch, accessToken)));
+      out.push(...(await sendBatch(fetchFn, batch, accessToken, log)));
     }
     return out;
   };
@@ -69,7 +71,8 @@ export function expoSender(
 async function sendBatch(
   fetchFn: typeof fetch,
   batch: PushMessage[],
-  accessToken?: string,
+  accessToken: string | undefined,
+  log: Logger,
 ): Promise<PushResult[]> {
   const failed = batch.map((): PushResult => 'failed');
   let res: Response;
@@ -85,11 +88,15 @@ async function sendBatch(
       body: JSON.stringify(batch),
     });
   } catch (e) {
-    console.error('fleet.push', e instanceof Error ? e.name : typeof e);
+    log.exception('push failed', e, { provider: 'expo', count: batch.length });
     return failed;
   }
   if (!res.ok) {
-    console.error('fleet.push', `http ${res.status}`);
+    log.warn('push failed', {
+      provider: 'expo',
+      count: batch.length,
+      status: res.status,
+    });
     return failed;
   }
   let tickets: unknown;

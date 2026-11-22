@@ -1,6 +1,8 @@
 /**
- * Where the session lives: one entry, `theodore.account`, holding the
- * `Session` as JSON. The platform picks the backend (`platform.ts`):
+ * Where a session lives: one entry holding the `Session` as JSON. Builds
+ * before several accounts kept one, `theodore.account`; now each account
+ * has its own, `theodore.account.<user id>`, named by the accounts index
+ * (`accounts.ts`, `multi.ts`). The platform picks the backend (`platform.ts`):
  *
  * | Platform      | Backend                                  |
  * | ------------- | ---------------------------------------- |
