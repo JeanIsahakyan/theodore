@@ -79,7 +79,25 @@ jobs:
         run: pnpm -C cloud test
 
       - name: deploy ${{ env.TARGET }}
-        run: pnpm -C cloud deploy:${{ env.TARGET }}
+        run: |
+          if [ -n "$THEODORE_OTLP_ENDPOINT" ]; then
+            pnpm -C cloud exec wrangler deploy --env "$TARGET" --var "THEODORE_OTLP_ENDPOINT:$THEODORE_OTLP_ENDPOINT"
+          else
+            pnpm -C cloud deploy:"$TARGET"
+          fi
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          THEODORE_OTLP_ENDPOINT: ${{ vars.THEODORE_OTLP_ENDPOINT }}
+
+      - name: New Relic secret (${{ env.TARGET }})
+        run: |
+          if [ -z "$THEODORE_OTLP_HEADERS" ]; then
+            echo "THEODORE_OTLP_HEADERS not set: the Worker keeps its current value, if any"
+            exit 0
+          fi
+          printf '%s' "$THEODORE_OTLP_HEADERS" | pnpm -C cloud exec wrangler secret put THEODORE_OTLP_HEADERS --env "$TARGET"
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          THEODORE_OTLP_HEADERS: ${{ secrets.THEODORE_OTLP_HEADERS }}

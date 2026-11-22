@@ -264,48 +264,16 @@ Stable `area.kind` codes, same form as the app's `error.code`
   answers `202` and drops, so local dev and a fresh environment work the
   same. EU accounts: `https://otlp.eu01.nr-data.net`.
 
-### Pending: New Relic secret in the deploy workflow
+### New Relic secret in the deploy workflow
 
-Not in `.github/workflows/cloud.yml` yet: the tokens at hand lacked the
-`workflow` scope GitHub wants for a push under `.github/workflows`. In the
-`deploy` job, replace the `deploy ${{ env.TARGET }}` step with these two.
-The secret goes **after** the deploy: it can only be put on a Worker that
-exists, and a deploy keeps the previous value meanwhile.
-
-```yaml
-      - name: deploy ${{ env.TARGET }}
-        run: |
-          if [ -n "$THEODORE_OTLP_ENDPOINT" ]; then
-            pnpm -C cloud exec wrangler deploy --env "$TARGET" --var "THEODORE_OTLP_ENDPOINT:$THEODORE_OTLP_ENDPOINT"
-          else
-            pnpm -C cloud deploy:"$TARGET"
-          fi
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          THEODORE_OTLP_ENDPOINT: ${{ vars.THEODORE_OTLP_ENDPOINT }}
-
-      - name: New Relic secret (${{ env.TARGET }})
-        run: |
-          if [ -z "$THEODORE_OTLP_HEADERS" ]; then
-            echo "THEODORE_OTLP_HEADERS not set: the Worker keeps its current value, if any"
-            exit 0
-          fi
-          printf '%s' "$THEODORE_OTLP_HEADERS" | pnpm -C cloud exec wrangler secret put THEODORE_OTLP_HEADERS --env "$TARGET"
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          THEODORE_OTLP_HEADERS: ${{ secrets.THEODORE_OTLP_HEADERS }}
-```
+`cloud.yml` passes `vars.THEODORE_OTLP_ENDPOINT` to the deploy (`--var`) and,
+after it, puts `secrets.THEODORE_OTLP_HEADERS` on the Worker with `wrangler
+secret put` (skipped when the secret is empty: the Worker keeps its value).
 
 ```text
 vars.THEODORE_OTLP_ENDPOINT   ─▶ --var on deploy (unset: the wrangler.toml default)
 secrets.THEODORE_OTLP_HEADERS ─▶ wrangler secret put, after the deploy (empty: skipped)
 ```
-
-Meanwhile the owner can set the secret by hand once per environment, in
-`cloud/`: `wrangler secret put THEODORE_OTLP_HEADERS --env staging|production`
-(`gh auth refresh -s workflow` lets Theodore push the workflow change).
 
 ## Local dev
 
