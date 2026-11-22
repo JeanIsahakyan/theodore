@@ -880,6 +880,9 @@ pub mod codes {
     /// No such blob or chunk in the cloud (fetched already, expired, or
     /// never uploaded): HTTP 404.
     pub const BLOB_NOT_FOUND: &str = "fleet.blob_not_found";
+    /// An attachment couldn't be fetched, opened or written on the host
+    /// (docs/fleet.md "Files (blobs)"); nothing ran.
+    pub const ATTACHMENT_FAILED: &str = "fleet.attachment_failed";
     /// The user's blob storage is full (HTTP 429).
     pub const QUOTA: &str = "fleet.quota";
     pub const NOT_YOURS: &str = "fleet.not_yours";
@@ -924,6 +927,7 @@ pub mod codes {
         ("TOO_LARGE", TOO_LARGE),
         ("RATE_LIMITED", RATE_LIMITED),
         ("BLOB_NOT_FOUND", BLOB_NOT_FOUND),
+        ("ATTACHMENT_FAILED", ATTACHMENT_FAILED),
         ("QUOTA", QUOTA),
         ("NOT_YOURS", NOT_YOURS),
         ("BAD_MESSAGE", BAD_MESSAGE),

@@ -118,6 +118,8 @@ Two kinds of refusal, told apart on the wire:
 | `fleet.denied` | target | from an `mcp` device, an edit or run the person on the target (or on a device it delegates to) denied, or didn't allow before `issued_at` + 5 min; a daemon's at once, unless auto mode covers it |
 | `fleet.offline` | cloud | target not connected within 10 s grace |
 | `fleet.too_many_spaces` | cloud | the user's 200 spaces |
+| `fleet.attachment_failed` | target | an attachment couldn't be fetched, opened (a tag, the size or the sha256), or written into the space's `.context/`; nothing ran ("Files (blobs)") |
+| `fleet.too_large` | target, cloud | over 10 attachments or one over 20 MiB; a `read_file` over `max_bytes` or 50 MiB; a blob chunk the cloud refuses |
 
 ### Agent, model and effort
 
@@ -841,6 +843,50 @@ dropped or altered chunk, another blob id or nonce prefix all fail.
 | Cloud HTTP, Bearer = the account session JWT | `PUT /v1/fleet/blobs/{blob_id}/{i}` body = the chunk (≤ 4 MiB + 16), header `x-theodore-chunks: N` ─▶ 204; `GET …/{blob_id}/{i}` ─▶ 200 bytes; `DELETE …/{blob_id}` ─▶ 204 (all chunks). Same org only |
 | Errors (JSON `{code}`) | `fleet.blob_not_found` 404, `fleet.too_large` 413, `fleet.quota` 429, `fleet.unauthorized` 401 |
 | Older peers | a protocol-7 origin never sends attachments or `read_file`; a protocol-7 host refuses `read_file` as an unknown op, and a host on 8 that doesn't read files yet refuses attachments and `read_file` with `fleet.invalid` |
+
+### Host side
+
+The desktop as the target (`crates/app/src/usecases/fleet_files.rs`; the
+HTTP routes behind `FleetPort::put_chunk` / `get_chunk` / `delete_blob`,
+`crates/fleet/src/blobs.rs`, Bearer = the account's current access token,
+the cloud the link dialed).
+
+```
+start / send / send_to {attachments}
+  gate ─▶ validate_blobs (≤ 10, each ≤ 20 MiB, no id twice) ─▶ else fleet.too_large /
+          fleet.attachment_failed before the claim, nothing fetched
+  claim ─▶ run: GET every chunk of every blob ─▶ open_blob(own seed), all in memory
+       ─▶ one failure (404, a tag, the digest, a 5xx) ─▶ fleet.attachment_failed
+          (fleet.too_large for a size the cloud refuses); nothing written, no turn
+       ─▶ <worktree>/.context/<safe_attachment_name> (made; "name (2).ext" on a clash)
+          + "/.context/" in the cache's info/exclude, once ─▶ DELETE each blob
+       ─▶ the message's attachments ─▶ its turn:
+            prompt + "Attached files (in .context/): shot.png (image/png, 340 KB), log.txt (text/plain, 2 KB)"
+            images also as AgentRequest.attachments (Claude: --add-dir; Codex: -i); the rest by name
+  start: fetched before create_space; written right after the worktree exists,
+         before the goal's turn (after setup too); a failed write ─▶ fleet.attachment_failed,
+         no space
+  send while the space runs ("Sends queue"): fetched and written at accept time;
+         the queued row carries them; dropped (the gate again) or cancelled here
+         ─▶ its .context files removed
+read_file {space, path, max_bytes}
+  gate ─▶ as read_space (Ask): the space here, with a worktree (a mirror has none ─▶ fleet.invalid)
+  run  ─▶ path relative, no `..`, no `.git` component, resolved (symlinks followed) still
+          inside the worktree, a regular file ─▶ else fleet.invalid
+       ─▶ size ≤ min(max_bytes, 50 MiB) ─▶ else fleet.too_large
+       ─▶ seal_blob(the key the request verified against: the origin's pin) ─▶ PUT ×chunks
+          (a failed PUT ─▶ DELETE, fleet.quota / fleet.too_large / fleet.unauthorized / fleet.internal)
+       ─▶ ok {blob}; mime by extension (`guess_mime`, application/octet-stream otherwise)
+```
+
+- `.context/` is the space's and never Theodore's to commit: checkpoints,
+  snapshots and the shipped commit leave it out by pathspec whatever the
+  excludes say (docs/spaces.md "The `.context/` folder").
+- Every transfer logs `fleet file transfer` (`direction` in / out, `bytes`,
+  `chunks`, `ms`, `outcome`), a failure at warn with `error.code`; never a
+  file name or path (docs/telemetry.md).
+- The desktop UI shows the received files as the message's attachments
+  (chips by name; no preview: they aren't in the attachments store).
 
 Test vectors (`cloud/src/gen/fleet-vectors.json` → `blobs`, copied to
 `mobile/src/gen`): a fixed recipient seed with its ed25519 and X25519 keys,

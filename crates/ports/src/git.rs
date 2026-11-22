@@ -568,6 +568,15 @@ pub trait GitPort: Send + Sync {
         Ok(())
     }
 
+    /// Puts one exclude `pattern` (a gitignore line, e.g. `/.context/`) in
+    /// the worktree's `info/exclude` (the cache's, shared by its worktrees:
+    /// `git rev-parse --git-path info/exclude`) unless it's there already.
+    /// `Ok` by default (fakes).
+    async fn space_exclude_pattern(&self, worktree: &Path, pattern: &str) -> GitResult<()> {
+        let _ = (worktree, pattern);
+        Ok(())
+    }
+
     /// The space's worktree as it is now, as a commit on top of `HEAD`:
     /// staged through a temporary index, so the worktree's own index, its
     /// `HEAD` and every ref stay as they were. `HEAD` itself when nothing

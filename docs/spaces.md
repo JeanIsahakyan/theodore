@@ -1543,6 +1543,25 @@ and Push. A worktree recreated from the ref (unarchive) starts with `HEAD`
 at the checkpoint. Checkpoints are authored by Theodore and never leave the
 cache; what ships is one squashed commit authored by you (§12 #2).
 
+**The `.context/` folder.** Files another device sends with a message
+(docs/fleet.md "Files (blobs)": a phone's screenshot, a log) are written to
+`<worktree>/.context/<name>` (`name (2).ext` on a clash) before the turn,
+and the prompt lists them ("Attached files (in .context/): …"); images also
+reach the agent as attachments. The folder is the space's to read, never
+Theodore's to commit:
+
+```
+.context/ made ─▶ "/.context/" appended once to the cache's info/exclude
+                  (git rev-parse --git-path info/exclude; shared by its worktrees)
+checkpoint, snapshot, Update's commit ─▶ add -A -- ':(top)' ':(exclude,top).context'
+                  + rm --cached of a tracked .context ─▶ never in the tree, so never shipped
+a deeper `src/.context` is a file like any other
+```
+
+A queued message's files go when it's dropped or cancelled; a turn's files
+stay for later turns (and `git clean` would remove them, as any ignored
+file).
+
 **Worktree guard** (checkpoint, Undo, the busy check, reopen, archive):
 
 ```
