@@ -502,6 +502,7 @@ async fn send_stop_answer_and_approve_go_to_the_host() {
             agent: Some("codex".into()),
             model: Some("x".into()),
             effort: Some("high".into()),
+            attachments: vec![],
         }
     );
     sent.await.unwrap().unwrap();
@@ -577,6 +578,7 @@ async fn send_stop_answer_and_approve_go_to_the_host() {
             agent: None,
             model: None,
             effort: None,
+            attachments: vec![],
         }
     );
     approved.await.unwrap().unwrap();

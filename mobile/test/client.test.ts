@@ -1168,6 +1168,7 @@ describe('mirrored rows', () => {
       agent: null,
       model: null,
       effort: null,
+      attachments: [],
     });
     sock.deliver({
       type: 'reply',
@@ -1197,6 +1198,7 @@ describe('steering', () => {
       agent: null,
       model: null,
       effort: null,
+      attachments: [],
     });
     sock.deliver({
       type: 'reply',
@@ -1246,6 +1248,7 @@ describe('steering', () => {
       agent: 'codex',
       model: null,
       effort: 'high',
+      attachments: [],
     });
     sock.deliver({
       type: 'reply',
@@ -2089,7 +2092,12 @@ describe('any space on a host (sub-spaces)', () => {
     const sent = client.sendTo(HOST, CHILD, '  go on  ');
     await waitFor(() => sock.of('request').length === 1, 'request');
     const req = lastRequest(sock);
-    expect(req.op).toEqual({ op: 'send_to', space: CHILD, message: 'go on' });
+    expect(req.op).toEqual({
+      op: 'send_to',
+      space: CHILD,
+      message: 'go on',
+      attachments: [],
+    });
     sock.deliver({
       type: 'reply',
       envelope: await reply(req, {

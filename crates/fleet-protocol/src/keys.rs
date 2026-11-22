@@ -18,7 +18,14 @@ pub enum KeyError {
 pub struct DeviceKey {
     pair: Ed25519KeyPair,
     pkcs8_b64: String,
+    /// The 32-byte ed25519 seed: what the blob key is derived from
+    /// (`blob::x25519_secret_from_ed25519_seed`).
+    seed: [u8; 32],
 }
+
+/// PKCS#8 (RFC 8410): the seed is the OCTET STRING inside the private key's
+/// OCTET STRING, `04 22 04 20 <32 bytes>`.
+const PKCS8_SEED_MARK: [u8; 4] = [0x04, 0x22, 0x04, 0x20];
 
 impl std::fmt::Debug for DeviceKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -42,15 +49,24 @@ impl DeviceKey {
         Ok(DeviceKey {
             pair,
             pkcs8_b64: String::new(),
+            seed: *seed,
         })
     }
 
     fn from_pkcs8(bytes: &[u8]) -> Result<Self, KeyError> {
         let pair = Ed25519KeyPair::from_pkcs8(bytes).map_err(|_| KeyError::Unreadable)?;
+        let seed = seed_of_pkcs8(bytes, pair.public_key().as_ref()).ok_or(KeyError::Unreadable)?;
         Ok(DeviceKey {
             pair,
             pkcs8_b64: b64(bytes),
+            seed,
         })
+    }
+
+    /// The 32-byte seed the key was made from. Only
+    /// [`crate::blob::open_blob`] needs it; never on the wire.
+    pub fn seed(&self) -> &[u8; 32] {
+        &self.seed
     }
 
     /// What to store in the keychain.
@@ -72,6 +88,18 @@ impl DeviceKey {
     pub fn sign(&self, msg: &[u8]) -> String {
         b64(self.pair.sign(msg).as_ref())
     }
+}
+
+/// The seed inside a PKCS#8 document, checked against the pair's public
+/// key (the document's layout is ring's, but the check makes it exact).
+fn seed_of_pkcs8(doc: &[u8], public_key: &[u8]) -> Option<[u8; 32]> {
+    let at = doc
+        .windows(PKCS8_SEED_MARK.len())
+        .position(|w| w == PKCS8_SEED_MARK)?
+        + PKCS8_SEED_MARK.len();
+    let seed: [u8; 32] = doc.get(at..at + 32)?.try_into().ok()?;
+    let again = Ed25519KeyPair::from_seed_unchecked(&seed).ok()?;
+    (again.public_key().as_ref() == public_key).then_some(seed)
 }
 
 /// Checks a base64 signature over `msg` against a base64 public key.
