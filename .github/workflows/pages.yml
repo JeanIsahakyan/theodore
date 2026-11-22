@@ -4,6 +4,7 @@ name: Website
 # project `theodore-site`, which serves theodore.cloud:
 #
 #   push main, site/** changed ──▶ checks ──▶ build ──▶ pages deploy --branch main (production)
+#   Release workflow finished      ──▶ rebuild ──▶ pages deploy --branch main (new version baked in)
 #   pull request touching site/ ──▶ checks ──▶ build ──▶ pages deploy --branch <pr branch> (preview)
 #                                                        ──▶ a comment on the PR with the preview URL
 #
@@ -20,6 +21,11 @@ on:
   pull_request:
     paths: ['site/**', '.github/workflows/pages.yml']
   workflow_dispatch:
+  # A new release: rebuild so the pages carry its version and links
+  # (scripts/prerender.mjs bakes the latest release in).
+  workflow_run:
+    workflows: [Release]
+    types: [completed]
 
 # One production deploy at a time, never cancelled mid-deploy; one preview
 # per PR, the newest push wins.
@@ -34,6 +40,8 @@ permissions:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    # After a release only when it succeeded (it runs on main's code then).
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     # A PR from a fork has no secrets: build only.
     env:
       CAN_DEPLOY: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
