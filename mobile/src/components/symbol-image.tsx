@@ -110,7 +110,7 @@ export const SYMBOLS = {
     web: ChevronRight,
   },
   more: { sf: 'ellipsis', md: 'more_horiz', web: Ellipsis },
-  /** Archive a space (a header button, the drawer's swipe action). */
+  /** Archive a space (the drawer row's menu, src/components/space-menu*). */
   archive: { sf: 'archivebox', md: 'archive', web: Archive },
   // Files (src/components/chat/attach-button.tsx, app/(app)/file/[space].tsx).
   attach: { sf: 'paperclip', md: 'attach_file', web: Paperclip },

@@ -127,7 +127,7 @@ The app speaks protocol 6. Since v4 it also reads:
 | `DeviceInfo.mcp_auto` (v6) | a computer's auto mode per `mcp` device it pins, on its Devices card; changed with a signed `RemoteOp::SetMcpAuto` to that computer (trusted here) |
 | `ServerMessage::Confirm{envelope}` (v6) | `RemoteConfirm`, `Domain::Confirm`, opened with the host's pin, signer = `host_device`; kept until `confirm_dismissed`, its expiry, an answer, or the next welcome (the cloud sends the waiting ones again) |
 | `RemoteOp::Confirm{confirm_id, allow}` (v6) | the card's or the push's Allow / Deny, to the host; a late one (`fleet.invalid`) just drops the card |
-| `RemoteOp::ArchiveSpace{space}` / `UnarchiveSpace{space}` (v9) | Archive from the drawer or a space's header ("Archive" below), routed like a stop; a host below 9 ─▶ `fleet.upgrade_required` from the cloud |
+| `RemoteOp::ArchiveSpace{space}` / `UnarchiveSpace{space}` (v9) | Archive from a drawer row's long-press menu ("Archive" below), routed like a stop; a host below 9 ─▶ `fleet.upgrade_required` from the cloud |
 
 ## Cloud (cloud/)
 
@@ -467,12 +467,20 @@ A space is archived on its host as the desktop's Archive does it
 (docs/spaces.md): uncommitted edits checkpointed, the worktree removed, the
 branch and the PR left alone, the row archived. `archive_space` (protocol 9).
 
+Archive lives in the drawer row's context menu only: no swipe action, no
+header button (the title keeps its room). The destructive look is the menu
+item's alone.
+
 ```text
-drawer, iOS / Android   row swiped left ─▶ [ ⌸ Archive ] (red; the glyph, its label under it)
-drawer, web             hover / focus on a row ─▶ [⌸] icon button at its right
-a space's header        [⌸] icon button after ✎ ("Archive space"; SF archivebox,
-                        Material archive, Lucide Archive: `archive` in symbol-image.tsx)
-        │
+drawer, iOS       long press a row ─▶ SwiftUI ContextMenu (UIKit's: the row lifts, its
+                  haptic)                        ╭ Archive              ⌸ ╮  destructive role
+drawer, Android   long press a row (light haptic) ─▶ Compose DropdownMenu under
+                  the row                        ╭ ⌸ Archive ╮  danger color
+drawer, web       right-click a row, or ⋯ at its right (hover, focus, the active
+                  row) ─▶ a small menu under the row's right edge; Esc / outside closes
+a space's screen  no Archive of its own: ☰ ─▶ the drawer ─▶ its row
+        │                                     glyph: `archive` in symbol-image.tsx (SF
+        │                                     archivebox, Material archive, Lucide Archive)
         ▼ confirm (system alert / window.confirm)
    Archive “<title>”?                                    title: spaceTitle, else "Untitled space"
    [The agent is still working: it is stopped first. ]   running ─▶ label "Stop and archive"
@@ -481,12 +489,12 @@ a space's header        [⌸] icon button after ✎ ("Archive space"; SF archive
         │                                                head_sha ≠ base_sha (no row: left out)
         ├─ running ─▶ stop ─▶ archive_space
         └─ else            ─▶ archive_space
-   ok     ─▶ the space leaves the list (still tracked); header: back Home
+   ok     ─▶ the space leaves the list (still tracked)
              toast  ╭ Archived                 Undo ╮  6 s; Undo ─▶ unarchive_space
    refused ─▶ toast with the hint, no action
 ```
 
-| Shown when (`canArchive`, `src/ui/archive.ts`) | |
+| The menu shows when (`canArchive`, `src/ui/archive.ts`; items: `spaceMenuItems`, `src/ui/spaceMenu.ts`; no item ─▶ no menu, a plain row) | |
 | --- | --- |
 | the host is listed and trusted here | nothing can be signed to it otherwise |
 | started here, or followed and the host `acceptsRemote` | the host decides for real; its refusal is the hint |
@@ -504,11 +512,16 @@ a space's header        [⌸] icon button after ✎ ("Archive space"; SF archive
   once, the host's next row sets the status. A mirrored row saying
   `archived` (archived on the computer) hides it the same way; another
   status lists it again.
-- Flow: `src/ui/useArchive.ts`; toast: `src/state/toast.ts`, `src/ui/Toast.tsx`
-  (mounted once in `app/(app)/_layout.tsx`, over the open drawer too); the
-  header's icon buttons: `MainHeaderProps.actions` (`HeaderAction`: icon,
-  label, onPress, destructive), one `Stack.Toolbar.Button` / Compose
-  `IconButton` / web button each.
+- Flow: `src/ui/archiveFlow.ts` (pure, its dependencies passed in: the
+  tests run it), bound by `src/ui/useArchive.ts`; telemetry `space_archived`
+  with `surface: row_menu`. Toast: `src/state/toast.ts`, `src/ui/Toast.tsx`
+  (mounted once in `app/(app)/_layout.tsx`, over the open drawer too).
+- The menu: `src/components/space-menu{.ios,.android,}.tsx` around the row
+  (`SpaceMenu`: title, items, onSelect; hands the row its long press on
+  Android and the ⋯ button on web). iOS hosts the React Native row in the
+  SwiftUI tree (`RNHostView`) as the `ContextMenu`'s trigger; Android anchors
+  the `DropdownMenu` to a hairline under the row. The main header has no
+  screen-specific buttons.
 
 ### Activity strip
 
