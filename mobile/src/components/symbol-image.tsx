@@ -51,7 +51,6 @@ import {
   Search,
   Server,
   Settings,
-  Share2,
   SlidersHorizontal,
   Smartphone,
   Square,
@@ -137,7 +136,6 @@ export const SYMBOLS = {
   chart: { sf: 'chart.bar', md: 'bar_chart', web: ChartColumn },
   warning: { sf: 'ladybug', md: 'bug_report', web: Bug },
   list: { sf: 'list.bullet.rectangle', md: 'list_alt', web: ScrollText },
-  share: { sf: 'square.and.arrow.up', md: 'share', web: Share2 },
   // A space's steps, by kind of tool (src/ui/Timeline.tsx).
   'step.read': { sf: 'doc.text', md: 'description', web: FileText },
   'step.edit': { sf: 'pencil', md: 'edit', web: Pencil },

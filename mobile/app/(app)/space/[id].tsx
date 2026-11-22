@@ -640,7 +640,7 @@ function LiveSpaceScreen({ id }: { id: string }) {
       });
       toEnd();
       track('plan_decided', { decision: 'approve' });
-      dispatch(key, APPROVED_TEXT, build, picks, 'approve');
+      dispatch(key, APPROVED_TEXT, build, picks, [], 'approve');
     },
     onRevise: () => {
       track('plan_decided', { decision: 'revise' });

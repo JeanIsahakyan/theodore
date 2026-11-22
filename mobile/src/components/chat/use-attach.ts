@@ -126,7 +126,10 @@ export function useAttach(composer: string, hostDevice: string | null): Attach {
           source,
           count: picked.length,
           bytes: picked.reduce((n, f) => n + f.bytes.length, 0),
-          media: picked.length === 1 ? fileKind(picked[0]!.name, picked[0]!.mime) : null,
+          media:
+            picked.length === 1
+              ? fileKind(picked[0]!.name, picked[0]!.mime)
+              : null,
           outcome: picked.length ? 'ok' : 'none',
           code: null,
         });
