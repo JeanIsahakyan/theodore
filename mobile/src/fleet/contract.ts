@@ -91,6 +91,13 @@ export interface SpaceTurn {
 
 export type SpaceProgressState = 'pending' | 'active' | 'done';
 
+/** How a space was last shipped (`SpaceShipped`; `how`: `pr`, `merged_locally`, …). */
+export interface SpaceShipped {
+  how: string;
+  branch: string;
+  sha: string;
+}
+
 export interface SpaceProgress {
   steps: { label: string; state: SpaceProgressState }[];
   note?: string | null;
@@ -103,6 +110,9 @@ export interface Space {
   name: string;
   goal: string;
   branch: string;
+  /** The commit it forked from, and its last checkpoint: equal ⇒ nothing done yet. */
+  base_sha: string;
+  head_sha: string;
   status: SpaceStatusRow;
   agent: string;
   model?: string | null;
@@ -112,6 +122,10 @@ export interface Space {
   turns: number;
   /** The turn in flight (`space:rs_…:<message>`). */
   run?: string | null;
+  /** The host PR, once opened. */
+  pr?: string | null;
+  /** The last Open PR / Push / Merge locally / Keep as branch. */
+  shipped?: SpaceShipped | null;
   error?: string | null;
   turn_log?: SpaceTurn[];
   title?: string | null;

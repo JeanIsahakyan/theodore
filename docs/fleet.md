@@ -446,6 +446,7 @@ it: the host caps it (`crates/app/src/usecases/fleet_confirm.rs`).
 gate passes, origin pinned (or listed) as mcp
   ├─ Ask / Plan start or send, answer, stop, list / read / ask any space
   │    ─▶ claim ─▶ run, as any client
+  ├─ archive_space / unarchive_space ─▶ reply{fleet.denied}: a person's call only
   └─ start or send in Edit / Run (a plan's approval is a send in Edit / Run),
      send_to a space in Edit / Run, merge_child
        ├─ auto mode covers the mode, not expired ─▶ claim ─▶ auto read
@@ -502,6 +503,38 @@ request ─▶ the gate above (pin, target_key, fresh, accept_remote, claim)
   (docs/cloud.md "MCP").
 - To a computer below protocol 7 the cloud answers
   `refused{fleet.upgrade_required}`: it couldn't read the op.
+
+#### Archive from another device
+
+Protocol 9. The origin of a space hosted here (a phone, the web app,
+another computer: whoever started it, or follows it and is trusted here)
+archives it as this computer's Archive does (docs/spaces.md §7), and
+brings it back. Named by its `rs_` id, routed like `stop`.
+
+```
+archive_space{rs_}   ─▶ the gate (pin, target_key, fresh, accept_remote), hosted here
+                       ├─ origin is mcp (Claude via the cloud) ─▶ fleet.denied, no prompt
+                       ├─ its turn runs ─▶ fleet.busy ("stop it first": the phone
+                       │                    offers Stop and archive = stop, then archive)
+                       └─▶ archive_space: edits checkpointed, worktree removed, branch
+                           and PR kept, ports released; the row stays hosted
+                           ─▶ ok {}; the mirrored space row reads status archived
+                               (RemoteSpaceStatus: stopped)
+unarchive_space{rs_} ─▶ the same gate ─▶ unarchive_space: the worktree recreated from
+                       its checkpoints ─▶ ok {}
+```
+
+| Op | Counts as | Refused with |
+| --- | --- | --- |
+| `archive_space {space}` | — (no mode; a person's call) | `fleet.unknown_space` (not hosted here), `fleet.busy` (running), `fleet.denied` (from `mcp`), `fleet.untrusted_device` / `fleet.remote_off` as any |
+| `unarchive_space {space}` | — | the same, without `fleet.busy` |
+
+- Nothing is archived on its own: no device, agent or timer archives a
+  space for you except the auto-archive sweep of done spaces
+  (docs/spaces.md §7).
+- A computer below protocol 9 can't read the ops: the cloud answers
+  `refused{fleet.upgrade_required}` and the phone says "Update Theodore on
+  <computer> to archive from here".
 
 #### Auto mode and remote prompts
 
@@ -691,8 +724,9 @@ can be delegates ("Send my spaces' questions here", which also brings this
 device's Claude via cloud prompts); a daemon or an `mcp` device can't.
 
 ```
-trusted phone ─signs─▶ start / send / stop / answer ─▶ this device's gate,
-  exactly as a computer's (pin, target_key, fresh, accept_remote, max_mode)
+trusted phone ─signs─▶ start / send / stop / answer / archive_space / unarchive_space
+  ─▶ this device's gate, exactly as a computer's (pin, target_key, fresh,
+     accept_remote, max_mode)
 start dialog, fleet_devices, fleet_start_space, any request from here
   ─▶ kind mobile / web ─▶ skipped / refused here, nothing signed
 ```
@@ -1008,12 +1042,13 @@ events and replies a pinned computer signed, refusals as codes
   `read_space`, `ask_space`, `send_to`, `answer_space`, `merge_child` —,
   the `sub_space` mirror, `ConfirmAction::Merge` and `fleet.timeout`; 8
   adds files: `attachments` on `start_space` / `send` / `send_to`, the
-  `read_file` op and the blob HTTP routes, "Files (blobs)").
-  Hub: protocols 3 to 7; `mcp` hidden from connections below 5
+  `read_file` op and the blob HTTP routes, "Files (blobs)"; 9 adds
+  `archive_space` / `unarchive_space`, "Archive from another device").
+  Hub: protocols 3 to 9; `mcp` hidden from connections below 5
   (`devices`); the confirm frames never sent below 6; the confirm ops to a
-  computer below 6, and the ops on any space to one below 7, are
-  `refused{fleet.upgrade_required}`; never accepted as a socket's kind
-  (hello, `announce`).
+  computer below 6, the ops on any space to one below 7, and the archive
+  ops to one below 9, are `refused{fleet.upgrade_required}`; never
+  accepted as a socket's kind (hello, `announce`).
 - Its requests are ordinary `SignedEnvelope`s (`Domain::Request`, the
   Rust field order), checked against `src/gen/fleet-vectors.json`.
 - To a computer below protocol 5: `refused{fleet.upgrade_required}` (it

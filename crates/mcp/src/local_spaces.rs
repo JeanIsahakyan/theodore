@@ -1,8 +1,9 @@
 //! The local-space tools of `space-tools` (docs/spaces.md "Sub-spaces"):
 //! `spaces_list`, `space_read` and `space_ask` see the other spaces on
 //! this computer; `space_send` and `space_answer` reach any of them;
-//! `space_start`, `space_wait`, `space_stop` and `space_merge` start,
-//! steer and bring back sub-spaces of the calling space. The steering
+//! `space_start`, `space_wait`, `space_stop`, `space_merge`,
+//! `space_archive` and `space_unarchive` start, steer, bring back and
+//! archive sub-spaces of the calling space. The steering
 //! ones only in an Edit or Run turn, and the sub-space ones only while
 //! `spaces.sub_spaces` is on. A space hosted here for another device gets
 //! them too; the core keeps it to what that device may do here. The
@@ -108,6 +109,16 @@ pub struct SpaceWaitParams {
 pub struct SpaceTargetParam {
     /// A sub-space this space started.
     pub space: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct SpaceArchiveParams {
+    /// A sub-space this space started (or one of theirs).
+    pub space: String,
+    /// Archive it even with changes neither merged into this space nor
+    /// shipped (its branch keeps them). Default false.
+    #[serde(default)]
+    pub force: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -283,5 +294,35 @@ impl ReviewToolsServer {
         let (run, space) = run_space(&parts)?;
         let turn = turn_mode(&run)?;
         space_result(self.spaces.local_merge(&space, turn, &p.space).await)
+    }
+
+    #[tool(
+        description = "Archive a sub-space this space started (or one of theirs), as the user's Archive does: its uncommitted edits are checkpointed, its worktree removed, its branch and PR left as they are, and it frees one of this space's live sub-space slots. Refused while it runs (space_stop it first) and, unless `force` is true, while it has changes neither merged into this space (space_merge) nor shipped; the refusal says what would be set aside. Call it only when the user asks to archive or clean up sub-spaces; never archive without being asked. space_unarchive brings one back."
+    )]
+    async fn space_archive(
+        &self,
+        Extension(parts): Extension<http::request::Parts>,
+        Parameters(p): Parameters<SpaceArchiveParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let (run, space) = run_space(&parts)?;
+        let turn = turn_mode(&run)?;
+        space_result(
+            self.spaces
+                .local_archive(&space, turn, &p.space, p.force.unwrap_or(false))
+                .await,
+        )
+    }
+
+    #[tool(
+        description = "Bring back an archived sub-space this space started (or one of theirs): its worktree is recreated from its checkpoints. Call it only when the user asks."
+    )]
+    async fn space_unarchive(
+        &self,
+        Extension(parts): Extension<http::request::Parts>,
+        Parameters(p): Parameters<SpaceTargetParam>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let (run, space) = run_space(&parts)?;
+        let turn = turn_mode(&run)?;
+        space_result(self.spaces.local_unarchive(&space, turn, &p.space).await)
     }
 }

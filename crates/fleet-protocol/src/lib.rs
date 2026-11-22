@@ -31,13 +31,14 @@ pub use keys::{DeviceKey, KeyError, fingerprint, verify};
 
 /// Protocol version sent in `hello`; the cloud refuses others with
 /// `fleet.version`.
-pub const PROTOCOL_VERSION: u32 = 8;
+pub const PROTOCOL_VERSION: u32 = 9;
 /// The oldest protocol the cloud still accepts (it hides `mobile` / `web`
 /// devices from protocol-3 connections and `mcp` ones from protocol < 5,
 /// whose `DeviceKind` can't read them; `confirm` / `confirm_dismissed` and
 /// the `confirm` / `set_mcp_auto` ops need protocol 6; the ops on any
 /// space of a computer ([`RemoteOp::on_any_space`]) need protocol 7;
-/// attachments and `read_file` ([`BlobRef`]) need protocol 8).
+/// attachments and `read_file` ([`BlobRef`]) need protocol 8; the
+/// `archive_space` / `unarchive_space` ops need protocol 9).
 pub const MIN_PROTOCOL_VERSION: u32 = 3;
 /// A signed request older or newer than this is refused (`fleet.stale_request`).
 pub const REQUEST_WINDOW_MS: u64 = 5 * 60 * 1000;
@@ -492,6 +493,20 @@ pub enum RemoteOp {
         path: String,
         max_bytes: u64,
     },
+    // ── protocol 9: archiving a space the target hosts for this origin
+    // (docs/fleet.md "Archive from another device"). Like `Stop`, on an
+    // `rs_` id; never from an `mcp` origin.
+    /// Archives the space as the host's own Archive does: its uncommitted
+    /// edits checkpointed, the worktree removed, the branch and the PR
+    /// left as they are. `fleet.busy` while its turn runs (stop it first).
+    ArchiveSpace {
+        space: RemoteSpaceId,
+    },
+    /// Brings an archived space back: its worktree recreated from its
+    /// checkpoints.
+    UnarchiveSpace {
+        space: RemoteSpaceId,
+    },
 }
 
 impl RemoteOp {
@@ -503,7 +518,9 @@ impl RemoteOp {
             RemoteOp::StartSpace { space, .. }
             | RemoteOp::Send { space, .. }
             | RemoteOp::Stop { space }
-            | RemoteOp::Answer { space, .. } => space,
+            | RemoteOp::Answer { space, .. }
+            | RemoteOp::ArchiveSpace { space }
+            | RemoteOp::UnarchiveSpace { space } => space,
             RemoteOp::Confirm { .. }
             | RemoteOp::SetMcpAuto { .. }
             | RemoteOp::ListSpaces { .. }
@@ -529,6 +546,18 @@ impl RemoteOp {
                 | RemoteOp::MergeChild { .. }
                 | RemoteOp::ReadFile { .. }
         )
+    }
+
+    /// The protocol a target needs to read this op (the cloud refuses the
+    /// request with `fleet.upgrade_required` to an older one).
+    pub fn protocol(&self) -> u32 {
+        match self {
+            RemoteOp::Confirm { .. } | RemoteOp::SetMcpAuto { .. } => 6,
+            RemoteOp::ArchiveSpace { .. } | RemoteOp::UnarchiveSpace { .. } => 9,
+            RemoteOp::ReadFile { .. } => 8,
+            _ if self.on_any_space() => 7,
+            _ => MIN_PROTOCOL_VERSION,
+        }
     }
 
     /// The blobs it carries for the target (protocol 8); empty for every

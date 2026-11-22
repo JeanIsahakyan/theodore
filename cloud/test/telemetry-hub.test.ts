@@ -3,6 +3,7 @@
 import { describe, expect, it } from 'vitest';
 import { Logger, type LogRecord } from '../src/telemetry/log';
 import { hashText } from '../src/telemetry/redact';
+import { PROTOCOL_VERSION } from '../src/fleet/limits';
 import { Harness, startSpace } from './fleet-harness';
 
 function harness() {
@@ -28,7 +29,7 @@ describe('hub logs', () => {
       org_id: 'org_1',
       device_id: mac.id,
       device_kind: 'desktop',
-      protocol: 7,
+      protocol: PROTOCOL_VERSION,
       os: 'macos',
       new_device: true,
     });
@@ -52,7 +53,7 @@ describe('hub logs', () => {
     const { nonce } = await mac.open();
     await mac.send({
       type: 'hello',
-      protocol: 7,
+      protocol: PROTOCOL_VERSION,
       device_id: null,
       public_key: mac.publicKey,
       signature: await mac.signHello(nonce.slice(0, 10) + 'AAAA'),

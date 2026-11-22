@@ -495,6 +495,48 @@ fn ops_on_any_space_are_tagged_and_on_no_cloud_space() {
 }
 
 #[test]
+fn archive_ops_are_on_a_hosted_space_and_need_protocol_9() {
+    let ops = [
+        (
+            RemoteOp::ArchiveSpace {
+                space: "rs_1".into(),
+            },
+            serde_json::json!({"op": "archive_space", "space": "rs_1"}),
+        ),
+        (
+            RemoteOp::UnarchiveSpace {
+                space: "rs_1".into(),
+            },
+            serde_json::json!({"op": "unarchive_space", "space": "rs_1"}),
+        ),
+    ];
+    for (op, json) in ops {
+        assert!(!op.on_any_space(), "{op:?}");
+        assert_eq!(op.space(), "rs_1", "{op:?}");
+        assert_eq!(op.protocol(), 9);
+        assert_eq!(serde_json::to_value(&op).unwrap(), json);
+        assert_eq!(serde_json::from_value::<RemoteOp>(json).unwrap(), op);
+    }
+    assert_eq!(PROTOCOL_VERSION, 9);
+    assert_eq!(
+        RemoteOp::Stop {
+            space: "rs_1".into()
+        }
+        .protocol(),
+        MIN_PROTOCOL_VERSION
+    );
+    assert_eq!(
+        RemoteOp::Confirm {
+            confirm_id: "c".into(),
+            allow: true
+        }
+        .protocol(),
+        6
+    );
+    assert_eq!(RemoteOp::ListSpaces { project: None }.protocol(), 7);
+}
+
+#[test]
 fn a_confirm_is_signed_by_its_host_for_its_own_domain() {
     let key = DeviceKey::generate().unwrap();
     let c = RemoteConfirm {
@@ -1039,7 +1081,7 @@ mod blobs {
         assert_eq!(ok.validate_blobs(), Ok(()));
         let v = serde_json::to_value(ReadFileResult { blob: good() }).unwrap();
         assert_eq!(v["blob"]["name"], "notes.md");
-        assert_eq!(PROTOCOL_VERSION, 8);
+        assert_eq!(PROTOCOL_VERSION, 9);
         assert_eq!(codes::BLOB_NOT_FOUND, "fleet.blob_not_found");
         assert_eq!(codes::QUOTA, "fleet.quota");
     }

@@ -88,6 +88,8 @@ pub const SUB_SPACE_TOOL_NAMES: &[&str] = &[
     "space_stop",
     "space_answer",
     "space_merge",
+    "space_archive",
+    "space_unarchive",
 ];
 
 /// The sub-space tools that change something: a turn in Edit or Run only
@@ -98,6 +100,8 @@ pub const SUB_SPACE_STEER_TOOL_NAMES: &[&str] = &[
     "space_stop",
     "space_answer",
     "space_merge",
+    "space_archive",
+    "space_unarchive",
 ];
 
 /// Drafts a problem report about the run's chat (docs/telemetry.md
@@ -735,6 +739,28 @@ pub trait SpaceToolsBackend: Send + Sync {
         turn: TurnMode,
         target: &str,
     ) -> Result<LocalSpaceMerge, SpaceToolError> {
+        let _ = (space, turn, target);
+        Err(no_local())
+    }
+    /// Archives `target`, a sub-space under `space`, as the UI's Archive
+    /// does; `force` archives work neither merged nor shipped.
+    async fn local_archive(
+        &self,
+        space: &str,
+        turn: TurnMode,
+        target: &str,
+        force: bool,
+    ) -> Result<LocalSpaceItem, SpaceToolError> {
+        let _ = (space, turn, target, force);
+        Err(no_local())
+    }
+    /// Brings an archived sub-space under `space` back.
+    async fn local_unarchive(
+        &self,
+        space: &str,
+        turn: TurnMode,
+        target: &str,
+    ) -> Result<LocalSpaceItem, SpaceToolError> {
         let _ = (space, turn, target);
         Err(no_local())
     }

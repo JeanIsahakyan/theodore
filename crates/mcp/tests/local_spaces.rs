@@ -261,6 +261,25 @@ impl SpaceToolsBackend for FakeLocal {
             note: "resolve them".into(),
         })
     }
+    async fn local_archive(
+        &self,
+        space: &str,
+        turn: TurnMode,
+        target: &str,
+        force: bool,
+    ) -> Result<LocalSpaceItem, SpaceToolError> {
+        self.log(format!("archive {space} {turn:?} {target} {force}"));
+        Ok(item(target, "archived"))
+    }
+    async fn local_unarchive(
+        &self,
+        space: &str,
+        turn: TurnMode,
+        target: &str,
+    ) -> Result<LocalSpaceItem, SpaceToolError> {
+        self.log(format!("unarchive {space} {turn:?} {target}"));
+        Ok(item(target, "idle"))
+    }
 }
 
 fn turn(tools: ToolSet, mode: TurnMode, fleet: FleetTools) -> RunContext {
@@ -380,6 +399,15 @@ async fn local_space_tools_follow_the_turn_the_setting_and_the_host() {
     )
     .await;
     call(&client, "space_stop", json!({"space": "s3"})).await;
+    let archived = call(
+        &client,
+        "space_archive",
+        json!({"space": "s3", "force": true}),
+    )
+    .await;
+    assert_eq!(archived["status"], json!("archived"));
+    call(&client, "space_archive", json!({"space": "s3"})).await;
+    call(&client, "space_unarchive", json!({"space": "s3"})).await;
     let merged = call(&client, "space_merge", json!({"space": "s3"})).await;
     assert_eq!(merged["space"]["done"], json!(true));
     assert_eq!(
@@ -413,6 +441,9 @@ async fn local_space_tools_follow_the_turn_the_setting_and_the_host() {
             "wait s1 s3 600000",
             "answer s1 Edit s3 q1 [\"SQLite\"]",
             "stop s1 Edit s3",
+            "archive s1 Edit s3 true",
+            "archive s1 Edit s3 false",
+            "unarchive s1 Edit s3",
             "merge s1 Edit s3",
             "merge s1 Edit busy",
         ]

@@ -163,6 +163,7 @@ function cleanView(v: unknown, space: string): SpaceView | null {
     question: cleanQuestion(v.question, space),
     startedHere: v.startedHere === true,
     error: typeof v.error === 'string' ? truncate(v.error, 300) : null,
+    ...(v.archived === true ? { archived: true } : null),
   };
 }
 

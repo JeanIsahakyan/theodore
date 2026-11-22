@@ -418,7 +418,18 @@ attachments?: BlobRef[] } |
  *  Relative to the space's worktree, at most
  *  [`blob::MAX_PATH_CHARS`] characters.
  */
-path: string; max_bytes: number };
+path: string; max_bytes: number } |
+/**
+ *  Archives the space as the host's own Archive does: its uncommitted
+ *  edits checkpointed, the worktree removed, the branch and the PR
+ *  left as they are. `fleet.busy` while its turn runs (stop it first).
+ */
+{ op: "archive_space"; space: string } |
+/**
+ *  Brings an archived space back: its worktree recreated from its
+ *  checkpoints.
+ */
+{ op: "unarchive_space"; space: string };
 
 export type RemoteQuestion = {
 	question: string,
@@ -596,6 +607,7 @@ export const FLEET_CODES = {
 	TOO_LARGE: "fleet.too_large",
 	RATE_LIMITED: "fleet.rate_limited",
 	BLOB_NOT_FOUND: "fleet.blob_not_found",
+	ATTACHMENT_FAILED: "fleet.attachment_failed",
 	QUOTA: "fleet.quota",
 	NOT_YOURS: "fleet.not_yours",
 	BAD_MESSAGE: "fleet.bad_message",

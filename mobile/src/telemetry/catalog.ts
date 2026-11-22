@@ -101,6 +101,10 @@ export const CATALOG = {
     answers: 'Do people stop spaces from the phone?',
     props: ['outcome', 'code'],
   },
+  space_archived: {
+    answers: 'Do people archive (and undo) from the phone, why refused?',
+    props: ['action', 'surface', 'stopped_first', 'outcome', 'code'],
+  },
   device_trusted: {
     answers: 'Are computers trusted from the phone?',
     props: ['trusted', 'kind'],

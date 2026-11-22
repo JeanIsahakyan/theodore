@@ -754,4 +754,213 @@ async fn the_prompt_says_to_merge_what_to_keep() {
     let system = e.f.agents.last_request().unwrap().system.unwrap();
     assert!(system.contains("space_merge"), "{system}");
     assert!(system.contains("conflict markers"), "{system}");
+    assert!(system.contains("space_archive"), "{system}");
+    assert!(
+        system.contains("never archive a sub-space without being asked"),
+        "{system}"
+    );
+}
+
+// ── space_archive / space_unarchive ─────────────────────────────────────
+
+#[tokio::test]
+async fn a_merged_child_is_archived_as_the_ui_does_and_frees_a_slot() {
+    let e = start_env(true).await;
+    put_setting(&e, "spaces.max_children", serde_json::json!(1));
+    let p = parent(&e).await;
+    let c = child_at(&e, &p, "child1").await;
+    e.core
+        .sub_space_merge(&p.id, SpaceMode::Edit, &c.id)
+        .await
+        .unwrap();
+
+    let archived = e
+        .core
+        .sub_space_archive(&p.id, SpaceMode::Edit, &c.id, false)
+        .await
+        .unwrap();
+    assert_eq!(archived.status, "archived");
+    assert_eq!(archived.relation.as_deref(), Some("child"));
+    let row = e.space(&c.id);
+    assert_eq!(row.status, SpaceStatus::Archived);
+    assert_eq!(e.f.git.removed_spaces(), vec![c.id.clone()]);
+    assert_eq!(row.branch, c.branch, "the branch stays");
+    assert!(row.shipped.is_some(), "the merge record stays");
+    // Out of the list, and the slot is free (a merged child was free
+    // already; an archived one is too).
+    let list = e.core.sub_space_list(&p.id, None, true).await.unwrap();
+    assert!(list.spaces.iter().all(|s| s.space != c.id));
+    // Archiving again is a no-op.
+    let again = e
+        .core
+        .sub_space_archive(&p.id, SpaceMode::Edit, &c.id, false)
+        .await
+        .unwrap();
+    assert_eq!(again.status, "archived");
+    assert_eq!(e.f.git.removed_spaces().len(), 1);
+
+    // Back, and listed again.
+    let back = e
+        .core
+        .sub_space_unarchive(&p.id, SpaceMode::Edit, &c.id)
+        .await
+        .unwrap();
+    assert_eq!(back.status, "idle");
+    assert_eq!(e.space(&c.id).status, SpaceStatus::Idle);
+    let r = e
+        .core
+        .sub_space_unarchive(&p.id, SpaceMode::Edit, &c.id)
+        .await;
+    assert_eq!(code(r), "sub_spaces.not_archived");
+}
+
+#[tokio::test]
+async fn an_unmerged_child_frees_the_slot_once_archived() {
+    let e = start_env(true).await;
+    put_setting(&e, "spaces.max_children", serde_json::json!(1));
+    let p = parent(&e).await;
+    // No checkpoint: nothing to lose, so no force needed.
+    let c = e
+        .core
+        .sub_space_start(&p.id, SpaceMode::Edit, goal("Look around"))
+        .await
+        .unwrap();
+    settle(&e, &c.space).await;
+    let full = e
+        .core
+        .sub_space_start(&p.id, SpaceMode::Edit, goal("B"))
+        .await;
+    assert_eq!(code(full), "sub_spaces.children");
+    e.core
+        .sub_space_archive(&p.id, SpaceMode::Edit, &c.space, false)
+        .await
+        .unwrap();
+    e.core
+        .sub_space_start(&p.id, SpaceMode::Edit, goal("B"))
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn a_running_child_is_not_archived() {
+    let e = start_env(true).await;
+    let p = parent(&e).await;
+    e.f.agents.hang_next_run();
+    let c = e
+        .core
+        .sub_space_start(&p.id, SpaceMode::Edit, goal("Port it"))
+        .await
+        .unwrap();
+    let r = e
+        .core
+        .sub_space_archive(&p.id, SpaceMode::Edit, &c.space, true)
+        .await;
+    match r {
+        Err(SpaceToolError::Unavailable(m)) => {
+            assert!(m.starts_with("sub_spaces.running:"), "{m}");
+            assert!(m.contains("space_stop it first"), "{m}");
+        }
+        other => panic!("not refused: {other:?}"),
+    }
+    assert!(e.f.git.removed_spaces().is_empty());
+    e.core
+        .sub_space_stop(&p.id, SpaceMode::Edit, &c.space)
+        .await
+        .unwrap();
+    e.until(&c.space, |s| s.status != SpaceStatus::Running)
+        .await;
+}
+
+#[tokio::test]
+async fn unmerged_work_refuses_unless_forced_and_says_what_is_set_aside() {
+    let e = start_env(true).await;
+    let p = parent(&e).await;
+    let c = child_at(&e, &p, "child1").await;
+    let r = e
+        .core
+        .sub_space_archive(&p.id, SpaceMode::Edit, &c.id, false)
+        .await;
+    match r {
+        Err(SpaceToolError::Unavailable(m)) => {
+            assert!(m.starts_with("sub_spaces.unmerged:"), "{m}");
+            assert!(m.contains("since it started"), "{m}");
+            assert!(m.contains("space_merge it first"), "{m}");
+            assert!(m.contains("force: true"), "{m}");
+        }
+        other => panic!("not refused: {other:?}"),
+    }
+    assert!(e.f.git.removed_spaces().is_empty());
+    assert_eq!(e.space(&c.id).status, SpaceStatus::Idle);
+
+    // Shipped on its own: nothing of it is only here.
+    let shipped = child_at(&e, &p, "child2").await;
+    mark_shipped(&e, &shipped.id, ShipKind::Branch);
+    e.core
+        .sub_space_archive(&p.id, SpaceMode::Edit, &shipped.id, false)
+        .await
+        .unwrap();
+    assert_eq!(e.f.git.removed_spaces(), vec![shipped.id.clone()]);
+
+    // Forced: archived, its branch kept.
+    let forced = e
+        .core
+        .sub_space_archive(&p.id, SpaceMode::Edit, &c.id, true)
+        .await
+        .unwrap();
+    assert_eq!(forced.status, "archived");
+    let row = e.space(&c.id);
+    assert_eq!(row.status, SpaceStatus::Archived);
+    assert_eq!(row.head_sha, Sha::new("child1"));
+    assert_eq!(row.branch, c.branch);
+}
+
+#[tokio::test]
+async fn only_a_space_under_this_one_is_archived_from_an_edit_or_run_turn() {
+    let e = start_env(true).await;
+    let p = parent(&e).await;
+    e.f.agents.push_script(done("ok"));
+    let other = e.create("Someone else's").await;
+    settle(&e, &other.id).await;
+    let r = e
+        .core
+        .sub_space_archive(&p.id, SpaceMode::Edit, &other.id, true)
+        .await;
+    assert_eq!(code(r), "sub_spaces.not_child");
+    let r = e
+        .core
+        .sub_space_unarchive(&p.id, SpaceMode::Edit, &other.id)
+        .await;
+    assert_eq!(code(r), "sub_spaces.not_child");
+    let r = e
+        .core
+        .sub_space_archive(&p.id, SpaceMode::Edit, "nope", true)
+        .await;
+    assert_eq!(code(r), "sub_spaces.unknown");
+
+    let c = child_at(&e, &p, "child1").await;
+    for turn in [SpaceMode::Ask, SpaceMode::Plan] {
+        let r = e.core.sub_space_archive(&p.id, turn, &c.id, true).await;
+        assert_eq!(code(r), "sub_spaces.mode", "{turn:?}");
+    }
+    // A grandchild is under this space too: archived from here, unlike a
+    // merge (which goes into its own parent).
+    let g = child_at(&e, &c, "grand1").await;
+    let r = e
+        .core
+        .sub_space_archive(&c.id, SpaceMode::Edit, &p.id, true)
+        .await;
+    assert_eq!(code(r), "sub_spaces.not_child", "not upwards");
+    e.core
+        .sub_space_archive(&p.id, SpaceMode::Edit, &g.id, true)
+        .await
+        .unwrap();
+    assert_eq!(e.space(&g.id).status, SpaceStatus::Archived);
+
+    put_setting(&e, "spaces.sub_spaces", serde_json::json!(false));
+    let r = e
+        .core
+        .sub_space_archive(&p.id, SpaceMode::Edit, &c.id, true)
+        .await;
+    assert_eq!(code(r), "sub_spaces.off");
+    assert_eq!(e.f.git.removed_spaces(), vec![g.id.clone()]);
 }

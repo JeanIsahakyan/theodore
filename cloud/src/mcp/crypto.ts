@@ -232,6 +232,10 @@ function opInOrder(op: RemoteOp): RemoteOp {
         path: op.path,
         max_bytes: op.max_bytes,
       };
+    case 'archive_space':
+      return { op: 'archive_space', space: op.space };
+    case 'unarchive_space':
+      return { op: 'unarchive_space', space: op.space };
   }
 }
 

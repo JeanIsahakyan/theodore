@@ -1310,6 +1310,97 @@ describe('steering', () => {
     await sent;
   });
 
+  it('archives: the op signed to the host, the space hidden, Undo lists it again', async () => {
+    const { client, sock, space } = await runningSpace();
+    sock.deliver({
+      type: 'space_event',
+      envelope: await event(space, 1, { kind: 'status', status: 'idle' }),
+    });
+    await waitFor(() => state().spaces[0]?.status === 'idle', 'idle');
+    const archived = client.archiveSpace(space);
+    await waitFor(() => sock.of('request').length === 2, 'archive');
+    const req = lastRequest(sock);
+    expect(req.target_device).toBe(HOST);
+    expect(req.op).toEqual({ op: 'archive_space', space });
+    // Not before the host's word.
+    expect(state().spaces.map((s) => s.space)).toEqual([space]);
+    sock.deliver({
+      type: 'reply',
+      envelope: await reply(req, { outcome: 'ok', value: null }),
+    });
+    await archived;
+    expect(state().spaces).toEqual([]);
+    // Still tracked: its history stays, and it can come back.
+    expect(state().lines[space]!.map((l) => l.seq)).toEqual([1]);
+
+    const back = client.unarchiveSpace(space);
+    await waitFor(() => sock.of('request').length === 3, 'unarchive');
+    const again = lastRequest(sock);
+    expect(again.op).toEqual({ op: 'unarchive_space', space });
+    sock.deliver({
+      type: 'reply',
+      envelope: await reply(again, { outcome: 'ok', value: null }),
+    });
+    await back;
+    expect(state().spaces.map((s) => s.space)).toEqual([space]);
+  });
+
+  it('a busy refusal of an archive keeps the space listed', async () => {
+    const { client, sock, space } = await runningSpace();
+    const archived = client.archiveSpace(space);
+    await waitFor(() => sock.of('request').length === 2, 'archive');
+    sock.deliver({
+      type: 'reply',
+      envelope: await reply(lastRequest(sock), {
+        outcome: 'err',
+        code: 'fleet.busy',
+        message: 'stop it first',
+      }),
+    });
+    await expect(archived).rejects.toThrow(
+      'the other device refused: fleet.busy: stop it first',
+    );
+    expect(state().spaces.map((s) => s.space)).toEqual([space]);
+  });
+
+  it('a mirrored row saying archived hides the space; another status shows it', async () => {
+    const { sock, space } = await runningSpace();
+    const row = (status: string) => ({
+      id: space,
+      name: 'fix-bug',
+      goal: 'Fix it',
+      branch: 'th/fix',
+      status,
+      agent: 'claude',
+      mode: 'edit',
+      turns: 1,
+      created_at: 1,
+      updated_at: 2,
+    });
+    sock.deliver({
+      type: 'space_event',
+      envelope: await event(space, 1, {
+        kind: 'mirror',
+        model: 'space',
+        id: space,
+        data: row('archived'),
+      }),
+    });
+    await waitFor(() => state().spaces.length === 0, 'hidden');
+    sock.deliver({
+      type: 'space_event',
+      envelope: await event(space, 2, {
+        kind: 'mirror',
+        model: 'space',
+        id: space,
+        data: row('idle'),
+      }),
+    });
+    await waitFor(() => state().spaces.length === 1, 'listed');
+    expect(state().spaces[0]).toMatchObject({ space, status: 'idle' });
+    expect(state().spaces[0]).not.toHaveProperty('archived');
+  });
+
   it("times out when the host doesn't answer", async () => {
     const { client, space } = await runningSpace();
     await expect(client.stopSpace(space)).rejects.toThrow(/in time/);

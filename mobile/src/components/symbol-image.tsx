@@ -11,6 +11,7 @@
 import { SymbolView } from 'expo-symbols';
 import type { AndroidSymbol, SFSymbol } from 'expo-symbols';
 import {
+  Archive,
   ArrowUp,
   ArrowUpDown,
   BadgeCheck,
@@ -109,6 +110,8 @@ export const SYMBOLS = {
     web: ChevronRight,
   },
   more: { sf: 'ellipsis', md: 'more_horiz', web: Ellipsis },
+  /** Archive a space (a header button, the drawer's swipe action). */
+  archive: { sf: 'archivebox', md: 'archive', web: Archive },
   // Files (src/components/chat/attach-button.tsx, app/(app)/file/[space].tsx).
   attach: { sf: 'paperclip', md: 'attach_file', web: Paperclip },
   retry: { sf: 'arrow.clockwise', md: 'refresh', web: RotateCw },

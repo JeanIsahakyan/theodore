@@ -42,6 +42,7 @@ import { PushedHeader } from '../../src/shell/PushedHeader';
 import { track } from '../../src/telemetry/log';
 import { liquidGlass } from '../../src/ui/native';
 import { usePalette } from '../../src/ui/theme';
+import { ToastHost } from '../../src/ui/Toast';
 
 export const unstable_settings = { anchor: 'index' };
 
@@ -152,6 +153,8 @@ export default function AppLayout() {
           <Stack.Screen name="accounts-sheet" options={sheet('Accounts')} />
         </Stack>
       </AppShell>
+      {/* Over the shell, the open drawer included (an archive from a row). */}
+      <ToastHost />
     </DrawerProvider>
   );
 }

@@ -22,6 +22,8 @@
  *   ─▶ request on any space of the target (protocol 7: list_spaces …
  *      merge_child, by its local id) ─▶ routed on no cloud space; a target
  *      below 7 ─▶ refused{fleet.upgrade_required}
+ *   ─▶ archive_space / unarchive_space (protocol 9) ─▶ routed like stop; a
+ *      target below 9 ─▶ refused{fleet.upgrade_required}
  * POST /v1/fleet/request ─▶ routed like a socket request
  * ```
  *
@@ -120,6 +122,7 @@ import {
   peekEvent,
   peekReply,
   peekRequest,
+  archives,
   onAnySpace,
   protocolFor,
   protocolToSee,
@@ -2528,6 +2531,9 @@ function badToken(e: unknown): boolean {
 
 /** Why a target too old for `op` is refused (static words). */
 function upgradeWords(op: string): string {
+  if (archives(op)) {
+    return 'that computer runs an older Theodore: update it to archive its spaces from another device';
+  }
   return onAnySpace(op)
     ? 'that computer runs an older Theodore: update it to reach all its spaces'
     : 'that computer runs an older Theodore: update it to take approvals and auto mode from another device';

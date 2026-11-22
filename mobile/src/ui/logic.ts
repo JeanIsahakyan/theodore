@@ -280,7 +280,7 @@ export function refusalCode(e: unknown): string | null {
 export function errorText(e: unknown): string {
   const raw = e instanceof Error ? e.message : typeof e === 'string' ? e : null;
   if (raw === null) return 'Something went wrong. Try again.';
-  const code = /\bfleet\.[a-z_]+/.exec(raw)?.[0];
+  const code = refusalCode(raw);
   return (code && FLEET_HINTS[code]) || raw;
 }
 
