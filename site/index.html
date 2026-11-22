@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!--app-head-->
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="icon" href="/favicon.png" type="image/png" sizes="32x32" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <meta
+      name="theme-color"
+      content="#f7f7f7"
+      media="(prefers-color-scheme: light)"
+    />
+    <meta
+      name="theme-color"
+      content="#121214"
+      media="(prefers-color-scheme: dark)"
+    />
+    <script>
+      // The theme before the first paint, as the desktop app does: the
+      // stored choice, else the system's. Same `.dark` class HeroUI reads.
+      (function () {
+        try {
+          var t = localStorage.getItem('theodore-theme');
+          var dark =
+            t === 'dark' ||
+            (t !== 'light' &&
+              matchMedia('(prefers-color-scheme: dark)').matches);
+          var root = document.documentElement;
+          root.classList.toggle('dark', dark);
+          root.dataset.theme = dark ? 'dark' : 'light';
+        } catch (e) {
+          /* no storage: the system theme */
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"><!--app-html--></div>
+    <!--app-data-->
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

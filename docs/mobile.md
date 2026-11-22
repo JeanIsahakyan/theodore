@@ -876,9 +876,11 @@ settings ─▶ Sign out ─▶ mock auth: null ─▶ services = real, fleet st
 - App Store Connect: "Theodore Code", Developer Tools, free, all territories,
   iPhone only (`supportsTablet: false`). Text, keywords, age rating, review
   contact and notes are set through the App Store Connect API.
-- Privacy policy: `mobile/public/privacy.html`, served by the web Worker at
-  `https://theodore-web.prd-instance.workers.dev/privacy`, linked in Settings →
-  About. Keep it true when data handling changes (cloud, push payloads,
+- Privacy policy: `https://theodore.cloud/privacy` on the website
+  (`site/src/pages/Privacy.tsx`, docs/website.md), linked in Settings →
+  About (`privacyPolicyUrl` in `src/config.ts`). `mobile/public/privacy.html`
+  is the same text, still served by the web Worker at `/privacy` for older
+  builds. Keep both true when data handling changes (cloud, push payloads,
   telemetry).
 - Account deletion (App Store 5.1.1(v)): Settings → Delete account ─▶
   `DELETE /v1/account` (docs/cloud.md "Account deletion") ─▶ signed out.
