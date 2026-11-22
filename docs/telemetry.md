@@ -632,8 +632,9 @@ no choice recorded ─▶ nothing sent, nothing queued; a switch off ─▶ its 
   outcome, code), diagnostics exports,
   JS errors (`ui.uncaught`, `ui.unhandled_rejection`, `ui.render_crash`). The
   file flows (protocol v8) have their events in the catalog (`file_attached`,
-  `file_uploaded`, `file_viewed`: kind, size, chunks, latency, outcome; never a
-  name) for the attach, upload and viewer code to call.
+  `file_uploaded`, `file_viewed`: kind, size, chunks, latency, outcome, and for
+  `file_viewed` the `surface`: `viewer` or `step_thumbnail`, an image the agent
+  read drawn in its step row; never a name).
 - **Redaction** (`redact.ts`, tested): the desktop's rules in TypeScript. Secrets
   in any text (GitHub, GitLab, Atlassian, WorkOS, model-provider, AWS, Slack,
   Google, npm and PostHog keys, Expo push tokens, JWTs, private keys, `Bearer`,

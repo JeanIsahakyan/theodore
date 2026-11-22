@@ -6,13 +6,16 @@
 import {
   Host,
   ModalBottomSheet,
+  RNHostView,
   type ModalBottomSheetRef,
 } from '@expo/ui/jetpack-compose';
 import { useRef, useState } from 'react';
+import { useWindowDimensions } from 'react-native';
 import { track } from '../../telemetry/log';
 import { ActivitySheet } from '../../ui/ActivitySheet';
 import { useHostTheme } from '../../ui/native/host.android';
 import { AccountsSheet } from '../accounts/accounts-sheet.android';
+import { SelectTextSheet } from '../chat/select-text-sheet';
 import { ModelPickerSheet } from './model-picker-sheet.android';
 import type { SheetHandle, SheetKind } from './types';
 import {
@@ -35,7 +38,22 @@ export function SheetContent({
     return <ActivitySheet space={space ?? ''} onClose={onClose} />;
   if (kind === 'accounts') return <AccountsSheet onClose={onClose} />;
   if (kind === 'computer') return <ComputerPickerSheet onClose={onClose} />;
+  if (kind === 'text') return <SelectTextInSheet onClose={onClose} />;
   return <ProjectPickerSheet onClose={onClose} />;
+}
+
+/** React Native's read-only field inside the Compose sheet: the system's
+ *  selection handles need a real TextInput, which Compose hosts here. */
+function SelectTextInSheet({ onClose }: { onClose: () => void }) {
+  const { height } = useWindowDimensions();
+  return (
+    <RNHostView matchContents={{ vertical: true }}>
+      <SelectTextSheet
+        onClose={onClose}
+        maxHeight={Math.round(height * 0.55)}
+      />
+    </RNHostView>
+  );
 }
 
 /** The sheet's state; `sheet(…)` draws it inside a Compose `Host`. */

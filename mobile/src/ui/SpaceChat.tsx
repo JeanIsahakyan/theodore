@@ -13,10 +13,13 @@
  * (Approve) (Revise)  Approve implements it in Edit  plan reply
  * 1m 12s · 3:37 PM   [auth.ts +12 −3]
  * ```
+ *
+ * A long press on a reply or on your bubble: Copy, Select text (the sheet;
+ * `components/chat/long-press.tsx`).
  */
 import { memo, useEffect, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
-import { Message, SentFiles, Shimmer } from '../components/chat';
+import { LongPressMenu, Message, SentFiles, Shimmer } from '../components/chat';
 import { AttachmentChips } from '../components/chat/file-link';
 import { ChatMarkdown } from '../components/markdown';
 import type { ChatMessage, SpaceProgress } from '../fleet/contract';
@@ -71,10 +74,23 @@ function UserBubble({
         <AttachmentChips attachments={m.attachments} />
       ) : null}
       {m.text || !m.attachments?.length ? (
-        <Message from="user">{m.text}</Message>
+        <LongPressMenu text={m.text} kind="mine">
+          <Message from="user">{m.text}</Message>
+        </LongPressMenu>
       ) : null}
     </View>
   );
+}
+
+/** What Copy and Select text take of a reply: its text, else the words its
+ *  steps hold (a reply whose text is in its steps). */
+export function replyText(m: ChatMessage): string {
+  if (m.text.trim()) return m.text;
+  return (m.activity ?? [])
+    .filter((s) => s.kind === 'text' && !s.parent)
+    .map((s) => (s.kind === 'text' ? s.text : ''))
+    .filter((t) => t.trim())
+    .join('\n\n');
 }
 
 function Tag({ label, tone }: { label: string; tone: 'accent' | 'muted' }) {
@@ -164,56 +180,58 @@ function AgentReply({
   const agent = m.author.kind === 'agent' ? m.author.agent : '';
   const badges = (tagged && agent) || marks.plan || marks.undone;
   return (
-    <Message from="assistant" dim={marks.undone}>
-      {badges ? (
-        <View style={styles.badges}>
-          {tagged && agent ? <Tag label={agent} tone="muted" /> : null}
-          {marks.plan ? <Tag label="plan" tone="accent" /> : null}
-          {marks.undone ? <Tag label="undone" tone="muted" /> : null}
-        </View>
-      ) : null}
-      {m.from_tasks?.length ? (
-        <Text numberOfLines={1} style={[styles.small, { color: p.muted }]}>
-          {fromTasksLabel(m.from_tasks)}
-        </Text>
-      ) : null}
-      {m.activity?.length ? (
-        <TimelineRows
-          steps={m.activity}
-          keptAs={m.id}
-          pinLastText={!!m.text_in_steps || !m.text.trim()}
-          keepText={!!m.failed}
-        />
-      ) : null}
-      {m.failed && m.text && !m.text_in_steps ? (
-        <ChatMarkdown>{m.text}</ChatMarkdown>
-      ) : null}
-      {m.failed === STOPPED ? (
-        <Text style={[styles.small, { color: p.muted }]}>Stopped</Text>
-      ) : m.failed ? (
-        <View
-          accessibilityRole="alert"
-          style={[styles.failed, { borderColor: p.danger }]}
-        >
-          <Text selectable style={[styles.small, { color: p.danger }]}>
-            {m.failed}
+    <LongPressMenu text={replyText(m)} kind="reply">
+      <Message from="assistant" dim={marks.undone}>
+        {badges ? (
+          <View style={styles.badges}>
+            {tagged && agent ? <Tag label={agent} tone="muted" /> : null}
+            {marks.plan ? <Tag label="plan" tone="accent" /> : null}
+            {marks.undone ? <Tag label="undone" tone="muted" /> : null}
+          </View>
+        ) : null}
+        {m.from_tasks?.length ? (
+          <Text numberOfLines={1} style={[styles.small, { color: p.muted }]}>
+            {fromTasksLabel(m.from_tasks)}
           </Text>
-        </View>
-      ) : !m.text_in_steps && m.text ? (
-        <ChatMarkdown>{m.text}</ChatMarkdown>
-      ) : null}
-      {plan ? <PlanActions {...plan} /> : null}
-      {m.duration_ms != null || m.changed_files?.length ? (
-        <View style={styles.footer}>
-          {m.duration_ms != null ? (
-            <Text style={[styles.small, { color: p.muted }]}>
-              {formatDuration(m.duration_ms)} · {clock(m.at)}
+        ) : null}
+        {m.activity?.length ? (
+          <TimelineRows
+            steps={m.activity}
+            keptAs={m.id}
+            pinLastText={!!m.text_in_steps || !m.text.trim()}
+            keepText={!!m.failed}
+          />
+        ) : null}
+        {m.failed && m.text && !m.text_in_steps ? (
+          <ChatMarkdown>{m.text}</ChatMarkdown>
+        ) : null}
+        {m.failed === STOPPED ? (
+          <Text style={[styles.small, { color: p.muted }]}>Stopped</Text>
+        ) : m.failed ? (
+          <View
+            accessibilityRole="alert"
+            style={[styles.failed, { borderColor: p.danger }]}
+          >
+            <Text selectable style={[styles.small, { color: p.danger }]}>
+              {m.failed}
             </Text>
-          ) : null}
-          {m.changed_files?.length ? <Files m={m} /> : null}
-        </View>
-      ) : null}
-    </Message>
+          </View>
+        ) : !m.text_in_steps && m.text ? (
+          <ChatMarkdown>{m.text}</ChatMarkdown>
+        ) : null}
+        {plan ? <PlanActions {...plan} /> : null}
+        {m.duration_ms != null || m.changed_files?.length ? (
+          <View style={styles.footer}>
+            {m.duration_ms != null ? (
+              <Text style={[styles.small, { color: p.muted }]}>
+                {formatDuration(m.duration_ms)} · {clock(m.at)}
+              </Text>
+            ) : null}
+            {m.changed_files?.length ? <Files m={m} /> : null}
+          </View>
+        ) : null}
+      </Message>
+    </LongPressMenu>
   );
 }
 

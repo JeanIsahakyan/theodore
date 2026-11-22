@@ -75,6 +75,10 @@ for (const [name, grammar] of Object.entries(GRAMMARS)) {
   SyntaxHighlighter.registerLanguage(name, grammar);
 }
 
+/** DOM text selects on the web; on the phone the message's long press
+ *  offers Copy / Select text (`chat/long-press.tsx`). */
+const selectable = process.env.EXPO_OS === 'web';
+
 type HljsTheme = Record<string, Record<string, unknown>>;
 type Sheet = Record<string, TextStyle>;
 
@@ -149,7 +153,7 @@ export const CodeBlock = memo(function CodeBlock({
 
   const renderer = useCallback(
     ({ rows }: { rows: RendererNode[] }) => (
-      <Text selectable style={base}>
+      <Text selectable={selectable} style={base}>
         {rows.map((row, i) => (
           <Text key={i}>
             {renderNodes(row.children ?? [], String(i))}
@@ -194,7 +198,7 @@ export const CodeBlock = memo(function CodeBlock({
             {body}
           </SyntaxHighlighter>
         ) : (
-          <Text selectable style={base}>
+          <Text selectable={selectable} style={base}>
             {body}
           </Text>
         )}

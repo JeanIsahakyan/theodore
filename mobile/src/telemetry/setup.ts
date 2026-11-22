@@ -12,6 +12,7 @@
  *                                            the cloud URL (…-staging) or dev
  * ```
  */
+import { randomUUID } from '../fleet/random';
 import Constants from 'expo-constants';
 import * as Device from 'expo-device';
 import { Platform } from 'react-native';
@@ -86,7 +87,7 @@ export function startTelemetry(auth: AuthClient): Promise<void> {
   return telemetry.configure({
     storage: createDataStorage(),
     facts: appFacts(),
-    randomUUID: () => globalThis.crypto.randomUUID(),
+    randomUUID: () => randomUUID(),
     fetch: (...a) => fetch(...a),
     posthog: posthogConfig(),
     cloudUrl: config.cloudUrl,

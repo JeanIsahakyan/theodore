@@ -65,6 +65,7 @@ import {
   ComposerDock,
   Conversation,
   ConversationScrollButton,
+  LongPressMenu,
   Message,
   PromptInput,
   SentFiles,
@@ -163,22 +164,29 @@ function Line({ line }: { line: SpaceLine }) {
   const p = usePalette();
   switch (line.kind) {
     case 'turn':
-      return <Message from="user">{line.text}</Message>;
+      return (
+        <LongPressMenu text={line.text} kind="mine">
+          <Message from="user">{line.text}</Message>
+        </LongPressMenu>
+      );
     case 'reply':
       return (
-        <Message from="assistant">
-          <ChatMarkdown>{line.text}</ChatMarkdown>
-        </Message>
+        <LongPressMenu text={line.text} kind="reply">
+          <Message from="assistant">
+            <ChatMarkdown>{line.text}</ChatMarkdown>
+          </Message>
+        </LongPressMenu>
       );
     case 'tool':
       return (
-        <Text
-          selectable
-          numberOfLines={2}
-          style={[mono, styles.tool, { color: p.muted }]}
-        >
-          {line.text}
-        </Text>
+        <LongPressMenu text={line.text} kind="step">
+          <Text
+            numberOfLines={2}
+            style={[mono, styles.tool, { color: p.muted }]}
+          >
+            {line.text}
+          </Text>
+        </LongPressMenu>
       );
     case 'question':
       return (

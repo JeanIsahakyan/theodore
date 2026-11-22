@@ -22,6 +22,7 @@
  * exposes a `BlobOpener` (the X25519 public key and a shared-secret
  * function); a WebCrypto key (web) has none and can't open blobs.
  */
+import { randomBytes } from './random';
 import { xchacha20poly1305 } from '@noble/ciphers/chacha.js';
 import { ed25519, x25519 } from '@noble/curves/ed25519.js';
 import { hkdf } from '@noble/hashes/hkdf.js';
@@ -382,10 +383,9 @@ export function safeAttachmentName(name: string): string {
   return `${chars.slice(0, keep).join('').trimEnd()}${ext}`;
 }
 
-/** Random bytes from the runtime's `crypto` (Hermes, browsers, Node). */
-export function randomBytes(n: number): Uint8Array {
-  return crypto.getRandomValues(new Uint8Array(n));
-}
+/** Random bytes: Web Crypto on web and in tests, expo-crypto on iOS and
+ *  Android (Hermes has no global Web Crypto), see `./random`. */
+export { randomBytes };
 
 /** The vectors' plaintext generator: byte `i` is `(i × 31) mod 251`. */
 export function generatedPlaintext(size: number): Uint8Array {
