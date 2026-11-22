@@ -1,12 +1,118 @@
 {
+  "blobs": {
+    "cases": [
+      {
+        "chunks": [
+          {
+            "aad_hex": "31303130313031303130313031303130313031303130313031303130313031300000000000000001",
+            "ciphertext_len": 16,
+            "ciphertext_sha256": "24bbd3da9c3a5520db19a55d81c53f1ec930a4e54b0b7c20aceec24efeb05f05",
+            "index": 0,
+            "nonce_b64": "MTExMTExMTExMTExMTExMQAAAAAAAAAA"
+          }
+        ],
+        "eph_public_key_b64": "fTSkgV+muYJTXmCvO9m0lVaBYIDxZB/4HSt8iugmikQ=",
+        "eph_secret_b64": "ISEhISEhISEhISEhISEhISEhISEhISEhISEhISEhISE=",
+        "key_b64": "nS+WAr5jeFwJucXjxuJMH0DzOkeIiJVyi/ezfdtHtAg=",
+        "plaintext": {
+          "generator": "i*31 mod 251",
+          "size": 0
+        },
+        "ref": {
+          "blob_id": "10101010101010101010101010101010",
+          "chunks": 1,
+          "eph_pk": "fTSkgV+muYJTXmCvO9m0lVaBYIDxZB/4HSt8iugmikQ=",
+          "mime": "application/octet-stream",
+          "name": "empty.bin",
+          "nonce_prefix": "MTExMTExMTExMTExMTExMQ==",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "size": 0
+        },
+        "title": "empty"
+      },
+      {
+        "chunks": [
+          {
+            "aad_hex": "32303230323032303230323032303230323032303230323032303230323032300000000000000001",
+            "ciphertext_len": 26,
+            "ciphertext_sha256": "7ff052e2303c3834ffc14c5c6b30e5d4a6c01ac66ca59a24b9dda640b94e22d0",
+            "index": 0,
+            "nonce_b64": "MjIyMjIyMjIyMjIyMjIyMgAAAAAAAAAA"
+          }
+        ],
+        "eph_public_key_b64": "D6poTtKIZ7l/Smot7l34zpdOdrcBjj8iocTPJnhXDyA=",
+        "eph_secret_b64": "IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI=",
+        "key_b64": "uMSZFnpvrxIXoDkpnNvMqZRnpi9RPRsnDjMTCYyUXqs=",
+        "plaintext": {
+          "generator": "i*31 mod 251",
+          "size": 10
+        },
+        "ref": {
+          "blob_id": "20202020202020202020202020202020",
+          "chunks": 1,
+          "eph_pk": "D6poTtKIZ7l/Smot7l34zpdOdrcBjj8iocTPJnhXDyA=",
+          "mime": "text/plain",
+          "name": "ten.txt",
+          "nonce_prefix": "MjIyMjIyMjIyMjIyMjIyMg==",
+          "sha256": "85906e1c4e3a60fab115e4396fa0c77d02eb400ec51cbb5f6034ada84c7046ab",
+          "size": 10
+        },
+        "title": "ten bytes"
+      },
+      {
+        "chunks": [
+          {
+            "aad_hex": "33303330333033303330333033303330333033303330333033303330333033300000000000000002",
+            "ciphertext_len": 4194320,
+            "ciphertext_sha256": "090d26ad158a3dbac1f06d9dfd3197e8a4342b5382455c070e4aaef465a1056e",
+            "index": 0,
+            "nonce_b64": "MzMzMzMzMzMzMzMzMzMzMwAAAAAAAAAA"
+          },
+          {
+            "aad_hex": "33303330333033303330333033303330333033303330333033303330333033300000000100000002",
+            "ciphertext_len": 19,
+            "ciphertext_sha256": "13e69dc54243affb8f2c577426376e0cae8fdc7c4f6add30a93094871cfea9f4",
+            "index": 1,
+            "nonce_b64": "MzMzMzMzMzMzMzMzMzMzMwAAAAAAAAAB"
+          }
+        ],
+        "eph_public_key_b64": "mkUDqYqxD+jTVMnELL0MnXlE9S59FNjqWXdefcnjv0s=",
+        "eph_secret_b64": "IyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyM=",
+        "key_b64": "lAjIPesV/2U2bBC1XjsE2AK+PKHNmwkZXYn/qHXp8S8=",
+        "plaintext": {
+          "generator": "i*31 mod 251",
+          "size": 4194307
+        },
+        "ref": {
+          "blob_id": "30303030303030303030303030303030",
+          "chunks": 2,
+          "eph_pk": "mkUDqYqxD+jTVMnELL0MnXlE9S59FNjqWXdefcnjv0s=",
+          "mime": "application/octet-stream",
+          "name": "big.bin",
+          "nonce_prefix": "MzMzMzMzMzMzMzMzMzMzMw==",
+          "sha256": "e51014f476751f6f9968d6478e34ff7ca33c2cda9e4cf7c6c8a358b2ea925d81",
+          "size": 4194307
+        },
+        "title": "4 MiB + 3: two chunks"
+      }
+    ],
+    "chunk_bytes": 4194304,
+    "info": "theodore-blob-v1",
+    "recipient": {
+      "public_key": "Zr5+Myx6RTMyvZ0Kf32wVfXF7xoGraZtmLOftoEMRzo=",
+      "seed_b64": "CwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCws=",
+      "x25519_public_key_b64": "S75uImrPxDY50B7SkbXGV0bGYNBGBxynbqzFGL2uCBk=",
+      "x25519_secret_b64": "gPkNkoHHib3m53p+QFxm3iVj22J1RDmMQfS7iTbHT0Y="
+    }
+  },
   "hello": {
     "nonce_b64": "CQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQk=",
     "signature": "WiT3YZ0bdSx3C40cIKSzxSJiuq824KHNX3Itg0Ffws0lGMEw0/5e+DNS0TYC7tUWF0QBUJiaN/Xk0ojUu7GVAQ=="
   },
   "public_key": "6kpsY+KcUgq+9VB7Ey7F+ZVHdq6+vnuSQh7qaRRG0iw=",
   "request": {
-    "body": "{\"req_id\":\"req_vector\",\"origin_device\":\"dev_00000000-0000-4000-8000-000000000001\",\"target_device\":\"dev_00000000-0000-4000-8000-000000000002\",\"target_key\":\"target-key\",\"issued_at_ms\":1700000000000,\"op\":{\"op\":\"send\",\"space\":\"rs_vector\",\"text\":\"hello\",\"mode\":\"edit\",\"agent\":\"claude\",\"model\":\"opus\",\"effort\":\"high\"}}",
-    "signature": "9sFEcpeYg5ZPl2iAo+fgeQDnAWoTATZ7AuiEgfMJiA6DcylMLIn749UnZb4FL2B1plQ569ImUvl4G44hl4mKAg=="
+    "body": "{\"req_id\":\"req_vector\",\"origin_device\":\"dev_00000000-0000-4000-8000-000000000001\",\"target_device\":\"dev_00000000-0000-4000-8000-000000000002\",\"target_key\":\"target-key\",\"issued_at_ms\":1700000000000,\"op\":{\"op\":\"send\",\"space\":\"rs_vector\",\"text\":\"hello\",\"mode\":\"edit\",\"agent\":\"claude\",\"model\":\"opus\",\"effort\":\"high\",\"attachments\":[]}}",
+    "signature": "39Xlj9YS6GEUonenGrX6efEwbJRSL83z/V11fadY3idmGo/2s5UGJdV5xgd+LXxd6yYBc82HbEnC7gjuHApBAQ=="
   },
   "seed_b64": "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=",
   "tags": {

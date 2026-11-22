@@ -289,7 +289,7 @@ impl Core {
                     ..base
                 }
             }
-            RemoteOp::SendTo { space, message } => {
+            RemoteOp::SendTo { space, message, .. } => {
                 let local = self.fleet_any_local(&c.req.origin_device, space);
                 let name = self
                     .space_row(&local)

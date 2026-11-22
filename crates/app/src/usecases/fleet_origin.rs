@@ -444,6 +444,7 @@ impl Core {
                     effort: pick.effort,
                     parent,
                     depth,
+                    attachments: vec![],
                 },
                 true,
             )
@@ -514,6 +515,7 @@ impl Core {
                         agent: req.agent.map(|a| a.as_str().to_string()),
                         model: req.model.clone(),
                         effort: req.effort.clone(),
+                        attachments: vec![],
                     },
                     false,
                 )
