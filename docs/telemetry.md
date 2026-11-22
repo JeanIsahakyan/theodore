@@ -622,7 +622,10 @@ no choice recorded ─▶ nothing sent, nothing queued; a switch off ─▶ its 
   refusal code), sends (queued or not, latency, retries, surface), answers, plan
   approvals, picks, sheets, the activity strip, sub-space opens and read
   failures, saved-spaces restore (count, ms), trust changes, diagnostics exports,
-  JS errors (`ui.uncaught`, `ui.unhandled_rejection`, `ui.render_crash`).
+  JS errors (`ui.uncaught`, `ui.unhandled_rejection`, `ui.render_crash`). The
+  file flows (protocol v8) have their events in the catalog (`file_attached`,
+  `file_uploaded`, `file_viewed`: kind, size, chunks, latency, outcome; never a
+  name) for the attach, upload and viewer code to call.
 - **Redaction** (`redact.ts`, tested): the desktop's rules in TypeScript. Secrets
   in any text (GitHub, GitLab, Atlassian, WorkOS, model-provider, AWS, Slack,
   Google, npm and PostHog keys, Expo push tokens, JWTs, private keys, `Bearer`,

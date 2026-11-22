@@ -333,6 +333,7 @@ describe('the relay payload', () => {
       'service.name': 'theodore-mobile',
       'service.version': '0.1.30',
       'os.type': 'ios',
+      'os.version': '18.1',
       'deployment.environment.name': 'staging',
       'service.instance.id': 'install-1',
     });

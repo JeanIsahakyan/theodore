@@ -6,7 +6,7 @@
  * ```text
  * warn / error record ─▶ {ts, level, msg ≤ 2000, attrs ≤ 30 keys of string|number|boolean}
  * batch ─▶ {records, resource: {service.name: theodore-mobile, service.version,
- *           os.type, deployment.environment.name, service.instance.id: <install id>,
+ *           os.type, os.version, deployment.environment.name, service.instance.id: <install id>,
  *           enduser.id?: user_… (consent 2 only)}}   ≤ 64 KB a request
  * Authorization: Bearer <session JWT> when signed in; errors before sign-in go without
  * ```
@@ -33,6 +33,7 @@ export interface RelayResource {
   'service.name': 'theodore-mobile';
   'service.version': string;
   'os.type': string;
+  'os.version': string;
   'deployment.environment.name': string;
   'service.instance.id': string;
   'enduser.id'?: string;
@@ -101,6 +102,7 @@ export function relayBody(
     'service.name': 'theodore-mobile',
     'service.version': facts.app_version,
     'os.type': facts.os,
+    'os.version': facts.os_version,
     'deployment.environment.name': facts.build_env,
     'service.instance.id': installId,
   };

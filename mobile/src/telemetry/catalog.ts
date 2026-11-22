@@ -109,6 +109,21 @@ export const CATALOG = {
     answers: "Are Claude via cloud's requests allowed or denied here?",
     props: ['allow', 'over', 'outcome', 'code'],
   },
+  // File transfer (fleet protocol v8): what the attach / upload / viewer
+  // flows report once they land; never a file name or path.
+  file_attached: {
+    answers: 'Are files attached to messages, of what kind and size?',
+    props: ['source', 'media', 'bytes', 'count', 'outcome', 'code'],
+  },
+  file_uploaded: {
+    answers:
+      'Do uploads to the blob store finish, how fast, in how many chunks?',
+    props: ['bytes', 'chunks', 'ms', 'outcome', 'code', 'retries'],
+  },
+  file_viewed: {
+    answers: 'Are received files opened, and does the download work?',
+    props: ['media', 'bytes', 'ms', 'outcome', 'code'],
+  },
   diagnostics_exported: {
     answers: 'Is the local log exported for a report?',
     props: ['how', 'records'],
