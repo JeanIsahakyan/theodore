@@ -7,6 +7,7 @@ import type {
   AccountSignInStart,
   AccountSignInState,
   AccountStatus,
+  AccountSwitchRequest,
   AddAgentAccountRequest,
   AddProjectRequest,
   AgentAccountRequest,
@@ -573,6 +574,18 @@ export const api = {
    *  without the list the switcher just stays hidden. */
   accountOrganizations: () =>
     call<AccountOrganization[]>('account_organizations', undefined, true),
+  /** Every account signed in here, their organizations listed again
+   *  (docs/cloud.md "Several accounts"). Quiet: the popover shows what it
+   *  has. */
+  accountAccounts: () =>
+    call<AccountStatus>('account_accounts', undefined, true),
+  /** Makes another account active, in one of its organizations. A failure
+   *  is toasted: the popover has no room for it. */
+  accountSwitch: (req: AccountSwitchRequest) =>
+    call<AccountStatus>('account_switch', { req }),
+  /** Signs one account out; the next becomes active. */
+  accountSignOutOf: (userId: string) =>
+    call<AccountStatus>('account_sign_out_of', { userId }),
   /** Brings the window forward after the browser hands the sign-in back.
    *  Cosmetic: a failure is ignored, never toasted. */
   focusWindow: (): Promise<null> =>

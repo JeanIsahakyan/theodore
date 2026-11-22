@@ -12,8 +12,8 @@
  * Yesterday · Previous 7 days · Older
  * ──────────────────────────────
  * ▢ Devices
- * (JI) Jean · Acme            ⚙     account line ─▶ Settings, gear ─▶ Settings
- * ```
+ * (JI) Jean · Acme         ⇅  ⚙     account row ─▶ the Accounts sheet (switch
+ * ```                                account or org, add one, sign out); ⚙ ─▶ Settings
  *
  * No "New space" row: the ✎ button in the main header, on Home and every
  * space, is the one way to start one.
@@ -52,6 +52,9 @@ import { spaceHref } from '../shell/navigate';
 import { useFleetState } from '../state/fleet';
 import { canArchive } from '../ui/archive';
 import { initials, spaceDot, spaceSections, type SpaceDot } from '../ui/drawer';
+import { useAccounts } from './accounts/use-accounts';
+import { useDrawer } from './drawer-context';
+import { useSheet } from './pickers/sheet-host';
 import { UNREACHABLE_TITLE } from '../ui/load';
 import { spaceTitle } from '../ui/logic';
 import { Button } from '../ui/native';
@@ -301,34 +304,45 @@ function SearchField({
   );
 }
 
+/**
+ * "(JI) Jean · Personal  ⇅": the active account and its organization; a
+ * tap opens the Accounts sheet (docs/mobile.md "Several accounts").
+ */
 function AccountLine({ onPress }: { onPress: () => void }) {
   const p = usePalette();
   const { session } = useAuthState();
-  const org = useOrganizationName();
-  const who = session?.name || session?.email || 'Signed in';
+  const accounts = useAccounts();
+  const active = accounts.find((a) => a.active);
+  const fetched = useOrganizationName();
+  const org =
+    fetched ??
+    active?.orgs.find((o) => o.id === session?.organizationId)?.name ??
+    null;
+  const who = active?.label ?? session?.name ?? session?.email ?? 'Signed in';
+  const others = accounts.length - 1;
   return (
     <Pressable
       onPress={onPress}
       accessibilityRole="button"
-      accessibilityLabel={`Account: ${who}${org ? `, ${org}` : ''}. Settings`}
+      accessibilityLabel={`Account: ${who}${org ? `, ${org}` : ''}. ${
+        others > 0 ? `${others} more signed in. ` : ''
+      }Accounts`}
+      testID="drawer-account"
       android_ripple={{ color: p.border, borderless: false }}
       className="flex-1 flex-row items-center gap-2.5 overflow-hidden rounded-full p-1.5 active:opacity-60"
     >
       <View className="h-8 w-8 items-center justify-center rounded-full bg-muted">
         <Text className="text-[13px] font-semibold text-foreground">
-          {initials(session?.name, session?.email)}
+          {active?.initials ?? initials(session?.name, session?.email)}
         </Text>
       </View>
-      <View className="flex-1">
-        <Text numberOfLines={1} className="text-sm text-foreground">
-          {who}
-        </Text>
+      <Text numberOfLines={1} className="flex-1 text-sm text-foreground">
+        {who}
         {org ? (
-          <Text numberOfLines={1} className="text-xs text-muted-foreground">
-            {org}
-          </Text>
+          <Text className="text-sm text-muted-foreground">{` · ${org}`}</Text>
         ) : null}
-      </View>
+      </Text>
+      <SymbolImage name="switch" size={16} color={p.muted} />
     </Pressable>
   );
 }
@@ -344,9 +358,11 @@ export function DrawerContent({
   const p = usePalette();
   const path = usePathname();
   const { fleet } = useServices();
+  const { closeDrawer } = useDrawer();
+  const accountsSheet = useSheet('accounts');
   const spaces = useFleetState((s) => s.spaces);
   const devices = useFleetState((s) => s.devices);
-  const archive = useArchive();
+  const archive = useArchive('drawer');
   const load = useLoadState();
   const [query, setQuery] = useState('');
   const now = useMinute();
@@ -455,7 +471,15 @@ export function DrawerContent({
           testID="drawer-devices"
         />
         <View className="mx-2 flex-row items-center gap-1 pr-1">
-          <AccountLine onPress={() => onNavigate('/settings' as Href)} />
+          <AccountLine
+            onPress={() => {
+              // iOS: the sheet is a route over the stack; the drawer closes
+              // under it. Android and web draw it in place.
+              closeDrawer();
+              accountsSheet.open();
+            }}
+          />
+          {accountsSheet.element}
           <Pressable
             onPress={() => onNavigate('/settings' as Href)}
             accessibilityRole="button"

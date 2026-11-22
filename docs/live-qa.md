@@ -176,7 +176,7 @@ second copy gets its own vault and signs in once on its own:
 
 ```sh
 QA=/tmp/theodore-qa/b _qa_launch THEODORE_KEYCHAIN_SERVICE=app.theodore.secrets.dev.b \
-  THEODORE_WORKOS_CLIENT_ID=<staging client> THEODORE_CLOUD_URL=<staging cloud>
+  THEODORE_WORKOS_CLIENT_ID=<staging client> THEODORE_CLOUD_URL=https://api-staging.theodore.cloud
 ```
 
 Two copies sharing one vault share one refresh token; the first refresh

@@ -41,30 +41,43 @@ no version bump, no tag, no release. `cloud.yml` deploys it on the same
 branch flow, only when the push touches `cloud/**`:
 
 ```
-push staging ─ cloud/** ─▶ theodore-cloud-staging
-push main    ─ cloud/** ─▶ theodore-cloud
+push staging ─ cloud/** ─▶ theodore-cloud-staging ─▶ https://api-staging.theodore.cloud, https://mcp-staging.theodore.cloud
+push main    ─ cloud/** ─▶ theodore-cloud         ─▶ https://api.theodore.cloud, https://mcp.theodore.cloud
 ```
 
-It needs the `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` secrets;
-the WorkOS API key is a Worker secret, never in CI. Setup and details:
-`docs/cloud.md`.
+It needs the `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` secrets
+(the token with Zone: Read, DNS: Edit and Workers Routes: Edit on
+theodore.cloud, since the deploy creates the custom domains); the WorkOS
+API key is a Worker secret, never in CI. The old `workers.dev` URLs keep
+answering. Setup and details: `docs/cloud.md`.
 
 ### Mobile and web
 
 The Expo app in `mobile/` (`docs/mobile.md`) is not part of the app build
-either. `mobile-web.yml` deploys its web build to Cloudflare Pages when the
-push touches `mobile/**`; iOS and Android are EAS builds started by hand
-(`eas build --profile preview|production`), with remote version numbers.
+either. `mobile-web.yml` deploys its web build as a static-assets Worker
+when the push touches `mobile/**`; iOS and Android are EAS builds started
+by hand (`eas build --profile preview|production`), with remote version
+numbers.
 
 ```
-push staging ─ mobile/** ─▶ theodore-web-staging  (static assets Worker)
-push main    ─ mobile/** ─▶ theodore-web
+push staging ─ mobile/** ─▶ theodore-web-staging  ─▶ https://app-staging.theodore.cloud
+push main    ─ mobile/** ─▶ theodore-web          ─▶ https://app.theodore.cloud
 ```
 
 Same `CLOUDFLARE_*` secrets as the Worker, the same `THEODORE_WORKOS_CLIENT_ID[_STAGING]`
 and `THEODORE_CLOUD_URL[_STAGING]` variables as the desktop builds. The web
 origins and `theodore-mobile://callback` also need registering in WorkOS (table
 below); one-time steps: `docs/mobile.md` "Build and release".
+
+Telemetry (docs/telemetry.md "Mobile"): CI must pass the repository's
+`THEODORE_POSTHOG_KEY` / `THEODORE_POSTHOG_HOST` (the variables `build.yml`
+compiles into the desktop) to the mobile builds as
+`EXPO_PUBLIC_THEODORE_POSTHOG_KEY` / `_HOST`: `mobile-web.yml` exports them
+for `expo export`, `release.yml`'s `ios` job writes them into the EAS
+production profile's `env` (eas.json can't read variables itself). Unset,
+the build has no usage sink; error reports go through the cloud relay
+(`POST /v1/telemetry/logs`) and never carry a New Relic key. An EAS build
+started by hand takes them from `eas env:create`.
 
 ## One-time: updater signing key (required before any release works)
 
@@ -121,11 +134,13 @@ compiled in, from `THEODORE_WORKOS_CLIENT_ID` in the build's environment:
   sign-in screen, no account card.
 - At run time the same env var or the `account.workos.client_id` setting
   still wins over the compiled-in id (staging, a test environment).
-- The Theodore cloud URL is baked in the same way, optionally:
-  `THEODORE_CLOUD_URL` (`release.yml`) and `THEODORE_CLOUD_URL_STAGING`
-  (`staging.yml`), passed as `build.yml`'s `cloud-url`. Not a required
-  release key: without it a build has no organizations (docs/cloud.md
-  "App side").
+- The Theodore cloud URL is baked in the same way: `THEODORE_CLOUD_URL`
+  (`release.yml`) and `THEODORE_CLOUD_URL_STAGING` (`staging.yml`), passed
+  as `build.yml`'s `cloud-url`. Not a required release key: unset, the
+  workflows pass the channel's host (`https://api.theodore.cloud`,
+  `https://api-staging.theodore.cloud`), and a production or staging build
+  compiled without any falls back to the same (docs/cloud.md "App side").
+  Set the variables only to point a channel elsewhere.
 
 ## Error reports: New Relic
 
@@ -455,8 +470,11 @@ with an invalid redirect error:
 
 A nightly bakes in whichever client id the shell exported; register
 `theodore-nightly://callback` on the environment it uses. The mobile app adds
-`theodore-mobile://callback` and its web origin's `/callback`
-(`https://theodore-web[-staging].prd-instance.workers.dev`) to each environment.
+`theodore-mobile://callback` and its web origins' `/callback`
+(`https://app[-staging].theodore.cloud`, and the old
+`https://theodore-web[-staging].prd-instance.workers.dev`) to each
+environment; MCP adds `https://mcp[-staging].theodore.cloud/oauth/callback`
+and the old Worker URL's (`docs/cloud.md` "MCP").
 
 ## Build colours
 

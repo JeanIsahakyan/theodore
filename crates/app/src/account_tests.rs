@@ -51,9 +51,11 @@ async fn configured(f: &Fixtures) -> (Core, Receivers) {
     (core, recv)
 }
 
+/// The stored session of the sample user: its own keychain entry (an
+/// older build's single `theodore.account` entry is moved there on load).
 fn stored(f: &Fixtures) -> Option<AccountSession> {
     f.secrets
-        .get(theodore_secrets::THEODORE_ACCOUNT)
+        .get(&theodore_secrets::account_key("user_01"))
         .unwrap()
         .map(|s| serde_json::from_str(&s).unwrap())
 }
@@ -204,6 +206,7 @@ async fn signed_out_until_a_session_exists() {
             user: None,
             session_ended: false,
             organization: None,
+            accounts: Vec::new(),
         }
     );
 }
@@ -793,7 +796,12 @@ async fn a_rejected_refresh_signs_out() {
         .push_refresh(Err(AccountError::Rejected("invalid_grant".into())));
     assert!(core.account_access_token().await.is_err());
     assert!(stored(&f).is_none());
-    assert!(core.account_status().await.unwrap().user.is_none());
+    let status = core.account_status().await.unwrap();
+    assert!(status.user.is_none());
+    assert!(status.session_ended);
+    // The account stays listed, to be signed in to again.
+    assert_eq!(status.accounts.len(), 1);
+    assert!(status.accounts[0].sign_in_required);
     assert!(expect_account_event(&mut recv).await.user.is_none());
 }
 
@@ -822,7 +830,6 @@ fn refresh_retries_double_up_to_ten_minutes() {
 
 #[tokio::test]
 async fn failed_refreshes_in_a_row_are_counted_and_a_success_resets_them() {
-    use std::sync::atomic::Ordering;
     let f = fixtures();
     store_session(&f, &sample_account_session("rt_old", f.clock.now() - 1));
     let (core, _recv) = configured(&f).await;
@@ -835,7 +842,7 @@ async fn failed_refreshes_in_a_row_are_counted_and_a_success_resets_them() {
     for _ in 0..3 {
         assert!(core.account_access_token().await.is_err());
     }
-    let failures = core.0.account.refresh_failures.load(Ordering::SeqCst);
+    let failures = core.account_refresh_failures();
     assert!(failures >= 3, "{failures}");
     assert!(
         crate::usecases::account::refresh_retry_delay(failures)
@@ -847,7 +854,7 @@ async fn failed_refreshes_in_a_row_are_counted_and_a_success_resets_them() {
 
     f.account.push_refresh(Ok(fresh(&f, "rt_new")));
     assert!(core.account_access_token().await.unwrap().is_some());
-    assert_eq!(core.0.account.refresh_failures.load(Ordering::SeqCst), 0);
+    assert_eq!(core.account_refresh_failures(), 0);
 }
 
 #[tokio::test]

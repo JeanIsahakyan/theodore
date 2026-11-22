@@ -177,11 +177,15 @@ impl Core {
                 }
                 Ok(Some(FleetMode::Ask))
             }
-            RemoteOp::SendTo { space, message } => {
+            RemoteOp::SendTo { space, message, .. } => {
                 let row = self.fleet_reach(origin, space).await?;
                 if message.trim().is_empty() {
                     return Err(refuse(codes::INVALID, "empty message"));
                 }
+                // Protocol 8: the attachments within their bounds.
+                req.op
+                    .validate_blobs()
+                    .map_err(|e| crate::usecases::fleet_files::blob_refusal(&e))?;
                 // Queued while it runs, as a send to a hosted space.
                 self.fleet_check_queue(&row).await?;
                 // Its own mode, never changed: what the cap and the yes
@@ -230,6 +234,25 @@ impl Core {
                     return Err(above(FleetMode::Edit));
                 }
                 Ok(Some(FleetMode::Edit))
+            }
+            // Protocol 8 (docs/fleet.md "Files (blobs)"): as `read_space`,
+            // for a space that has a worktree here.
+            RemoteOp::ReadFile { space, .. } => {
+                req.op
+                    .validate_blobs()
+                    .map_err(|e| refuse(codes::INVALID, e.to_string()))?;
+                let local = self.fleet_any_local(origin, space);
+                let row = self
+                    .space_row(&local)
+                    .await
+                    .map_err(|_| refuse(codes::UNKNOWN_SPACE, "no such space on this device"))?;
+                if row.worktree.is_empty() {
+                    return Err(refuse(
+                        codes::INVALID,
+                        "this space has no worktree on this device",
+                    ));
+                }
+                Ok(Some(FleetMode::Ask))
             }
             _ => Err(refuse(codes::INTERNAL, "not an op on any space")),
         }
@@ -282,7 +305,11 @@ impl Core {
                     .map_err(tool_refusal)?;
                 json(serde_json::to_value(asked))?
             }
-            RemoteOp::SendTo { space, message } => {
+            RemoteOp::SendTo {
+                space,
+                message,
+                attachments,
+            } => {
                 let row = self.fleet_reach(origin, &space).await?;
                 // Allowed (and maybe said yes to) in the mode it had then.
                 if mode.is_some_and(|m| fleet_mode(row.mode) > m) {
@@ -291,6 +318,10 @@ impl Core {
                         "the space's mode changed since the request was allowed",
                     ));
                 }
+                // Its files first: none of the turn without all of them.
+                let files = self
+                    .fleet_receive_attachments(std::path::Path::new(&row.worktree), &attachments)
+                    .await?;
                 let from = RemoteQueued {
                     space: row.id.clone(),
                     ..from
@@ -308,6 +339,7 @@ impl Core {
                         mentions: None,
                     },
                     from,
+                    files,
                 )
                 .await?
             }
@@ -336,6 +368,22 @@ impl Core {
                     .map_err(tool_refusal)?;
                 tracing::info!(parent = %p.id, child = %child, origin, "merged a sub-space for another device");
                 json(serde_json::to_value(merged))?
+            }
+            // Protocol 8 (docs/fleet.md "Files (blobs)"): sealed for the key
+            // the request verified against (the origin's pin).
+            RemoteOp::ReadFile {
+                space,
+                path,
+                max_bytes,
+            } => {
+                let local = self.fleet_any_local(origin, &space);
+                let row = self
+                    .space_row(&local)
+                    .await
+                    .map_err(|_| refuse(codes::UNKNOWN_SPACE, "no such space on this device"))?;
+                return self
+                    .fleet_read_file(&row, &from.key, &path, max_bytes)
+                    .await;
             }
             _ => return Err(refuse(codes::INTERNAL, "not an op on any space")),
         };

@@ -251,6 +251,87 @@ describe('discovery', () => {
     expect(as.code_challenge_methods_supported).toEqual(['S256']);
   });
 
+  it('builds every URL from the host it was asked on', async () => {
+    // One Worker, two hosts (mcp.theodore.cloud and the workers.dev URL):
+    // issuer, resource, endpoints and the AuthKit redirect follow the host.
+    const s = setup();
+    const other = 'https://mcp.theodore.cloud';
+    const env = {
+      OAUTH_KV: s.kv as unknown as KVNamespace,
+      MCP_KEY_WRAP: MCP_TEST_SECRET,
+    };
+    const deps = {
+      workos: s.workos,
+      clientId: 'client_01APP',
+      apiBase: API,
+      verify: async () => {
+        throw new CloudError(401, 'cloud.unauthorized', 'bad token');
+      },
+    };
+    const on = (path: string, init: RequestInit = {}) =>
+      mcpFetch(new Request(`${other}${path}`, init), env, ctx(), () => deps);
+    const r = await on('/mcp', { method: 'POST', body: '{}' });
+    expect(r.headers.get('www-authenticate')).toContain(
+      `resource_metadata="${other}/.well-known/oauth-protected-resource/mcp"`,
+    );
+    const pr = (await (
+      await on('/.well-known/oauth-protected-resource/mcp')
+    ).json()) as Record<string, unknown>;
+    expect(pr.resource).toBe(`${other}/mcp`);
+    expect(pr.authorization_servers).toEqual([other]);
+    const as = (await (
+      await on('/.well-known/oauth-authorization-server')
+    ).json()) as Record<string, unknown>;
+    expect(as.issuer).toBe(other);
+    expect(as.authorization_endpoint).toBe(`${other}/oauth/authorize`);
+    expect(as.token_endpoint).toBe(`${other}/oauth/token`);
+    // The old host still answers for itself.
+    const old = (await (
+      await s.call('/.well-known/oauth-authorization-server')
+    ).json()) as Record<string, unknown>;
+    expect(old.issuer).toBe(ORIGIN);
+
+    // The sign-in started on the new host comes back to it.
+    const reg = await on('/oauth/register', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        client_name: 'Claude Code',
+        redirect_uris: [REDIRECT],
+        token_endpoint_auth_method: 'none',
+      }),
+    });
+    const { client_id } = (await reg.json()) as { client_id: string };
+    const { challenge } = await pkce();
+    const q = new URLSearchParams({
+      response_type: 'code',
+      client_id,
+      redirect_uri: REDIRECT,
+      code_challenge: challenge,
+      code_challenge_method: 'S256',
+      state: 'client-state',
+      scope: 'fleet',
+      resource: `${other}/mcp`,
+    });
+    const jar = new Jar();
+    const page = jar.take(await on(`/oauth/authorize?${q}`));
+    expect(page.status).toBe(200);
+    const handle = /name="handle" value="([^"]+)"/.exec(await page.text())![1]!;
+    const allowed = await on('/oauth/authorize', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/x-www-form-urlencoded',
+        cookie: jar.header,
+      },
+      body: new URLSearchParams({ handle, decision: 'allow' }).toString(),
+    });
+    expect(allowed.status).toBe(302);
+    const authkit = new URL(allowed.headers.get('location')!);
+    expect(authkit.searchParams.get('redirect_uri')).toBe(
+      `${other}/oauth/callback`,
+    );
+  });
+
   it('is off without its bindings', async () => {
     const r = await worker.fetch(
       new Request(`${ORIGIN}/.well-known/oauth-authorization-server`),

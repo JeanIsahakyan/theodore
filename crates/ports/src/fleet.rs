@@ -76,6 +76,54 @@ pub struct FleetLink {
     pub inbound: mpsc::UnboundedReceiver<FleetInbound>,
 }
 
+/// The cloud blob store (docs/fleet.md "Files (blobs)"): ciphertext chunks
+/// under `/v1/fleet/blobs/{blob_id}/{i}`, Bearer = the account's access
+/// token. The cloud never reads them; the core seals and opens.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BlobAccess {
+    /// The cloud's base URL (`https://…`), as the link dials it.
+    pub cloud_url: String,
+    pub access_token: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum BlobStoreError {
+    /// No blob store in this mode (fixtures, sandbox, tests by default).
+    #[error("the blob store isn't available here")]
+    Unavailable,
+    /// `fleet.blob_not_found`: the chunk isn't there (fetched already, or
+    /// expired).
+    #[error("blob not found")]
+    NotFound,
+    /// `fleet.too_large`: the cloud refused the chunk's size.
+    #[error("blob too large")]
+    TooLarge,
+    /// `fleet.quota`: the cloud's storage budget for this user.
+    #[error("blob quota")]
+    Quota,
+    /// `fleet.unauthorized`: the token was refused.
+    #[error("unauthorized")]
+    Unauthorized,
+    /// Anything else: a network error, a 5xx, an unreadable answer.
+    #[error("blob store: {0}")]
+    Other(String),
+}
+
+impl BlobStoreError {
+    /// The stable code logged as `error.code` (docs/telemetry.md).
+    pub fn code(&self) -> &'static str {
+        match self {
+            BlobStoreError::Unavailable => "fleet.unavailable",
+            BlobStoreError::NotFound => "fleet.blob_not_found",
+            BlobStoreError::TooLarge => "fleet.too_large",
+            BlobStoreError::Quota => "fleet.quota",
+            BlobStoreError::Unauthorized => "fleet.unauthorized",
+            BlobStoreError::Other(_) => "fleet.blob_store",
+        }
+    }
+}
+
+#[async_trait::async_trait]
 pub trait FleetPort: Send + Sync {
     /// `false`: no fleet in this mode (fixtures, sandbox, tests by default).
     fn enabled(&self) -> bool {
@@ -84,11 +132,43 @@ pub trait FleetPort: Send + Sync {
 
     /// Starts connecting in the background and returns at once.
     fn start(&self, cfg: FleetConnect) -> FleetLink;
+
+    /// `PUT /v1/fleet/blobs/{blob_id}/{i}` with `chunk` as the body and
+    /// `x-theodore-chunks: chunks`. `Unavailable` by default (fakes).
+    async fn put_chunk(
+        &self,
+        access: &BlobAccess,
+        blob_id: &str,
+        i: u32,
+        chunks: u32,
+        chunk: Vec<u8>,
+    ) -> Result<(), BlobStoreError> {
+        let _ = (access, blob_id, i, chunks, chunk);
+        Err(BlobStoreError::Unavailable)
+    }
+
+    /// `GET /v1/fleet/blobs/{blob_id}/{i}`: the chunk's bytes.
+    async fn get_chunk(
+        &self,
+        access: &BlobAccess,
+        blob_id: &str,
+        i: u32,
+    ) -> Result<Vec<u8>, BlobStoreError> {
+        let _ = (access, blob_id, i);
+        Err(BlobStoreError::Unavailable)
+    }
+
+    /// `DELETE /v1/fleet/blobs/{blob_id}`: every chunk of the blob.
+    async fn delete_blob(&self, access: &BlobAccess, blob_id: &str) -> Result<(), BlobStoreError> {
+        let _ = (access, blob_id);
+        Err(BlobStoreError::Unavailable)
+    }
 }
 
 /// No fleet: every link ends at once with `Fatal { code: "fleet.unavailable" }`.
 pub struct NoFleet;
 
+#[async_trait::async_trait]
 impl FleetPort for NoFleet {
     fn enabled(&self) -> bool {
         false

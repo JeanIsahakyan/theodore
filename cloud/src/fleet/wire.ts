@@ -136,10 +136,10 @@ const MCP_AUTOS = ['off', 'edit', 'full'] as const;
 export const V6 = 6;
 /** Protocol 7: ops on any space of a computer, the `sub_space` mirror. */
 export const V7 = 7;
-/** Protocol 8: `archive_space` / `unarchive_space` on a hosted space. */
-export const V8 = 8;
+/** Protocol 9: `archive_space` / `unarchive_space` on a hosted space. */
+export const V9 = 9;
 
-/** Ops on a space the target hosts for the origin that archive it (protocol 8). */
+/** Ops on a space the target hosts for the origin that archive it (protocol 9). */
 export const ARCHIVE_OPS = ['archive_space', 'unarchive_space'] as const;
 export type ArchiveOp = (typeof ARCHIVE_OPS)[number];
 
@@ -166,7 +166,7 @@ export const onAnySpace = (op: string): op is AnySpaceOp =>
 /** The protocol a target needs to take `op`. */
 export function protocolFor(op: string): number {
   if (op === 'confirm' || op === 'set_mcp_auto') return V6;
-  if (archives(op)) return V8;
+  if (archives(op)) return V9;
   return onAnySpace(op) ? V7 : MIN_PROTOCOL_VERSION;
 }
 
@@ -551,7 +551,7 @@ export function peekRequest(body: string): Routing {
     'confirm',
     'set_mcp_auto',
     ...ANY_SPACE_OPS,
-    // Protocol 8: on the `rs_` space, routed like `stop`.
+    // Protocol 9: on the `rs_` space, routed like `stop`.
     ...ARCHIVE_OPS,
   ]);
   // Not read for routing, only bounded: the target checks them against

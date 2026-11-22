@@ -641,6 +641,9 @@ copy on this Mac, re-read after each turn and each project fetch; no
 network). Update merges the base into the space (§6): clean, the space is on
 the new base at once; on conflicts a banner *Resolving conflicts with main:
 a.ts, b.ts* replaces the button and the agent gets a turn to resolve them.
+A turn in which the agent merged the base itself moves the space onto it at
+its end, so the count and the diff follow without an Update (§6 "The agent
+merged the base in").
 
 ```
 ┌ ○ retry-429 ──────── [⎇ Base moved: 3 commits behind · Update] [Review] [Open PR ▾] ┐
@@ -1267,7 +1270,7 @@ configured commands, never a shell of the agent's choosing.
 | `get_space_diff` | the change vs the merge-base with the base, uncommitted edits included; one `file`, or `stat` for +/− per file |
 | `get_review_comments` | drafts, findings and threads on the space's review and its PR: `path:line`, who (you, an agent, a reviewer), state |
 | `add_review_comment` | a finding on a line of the space's review: shows in Review, "Send to agent" sends it back |
-| `set_base` | a new base branch: fetched, the diff is vs the merge-base from then on |
+| `set_base` | a new base branch: fetched, the diff is vs the merge-base with the worktree as it is now from then on; the same branch again re-reads it after a `git merge` of the base (§6 "The agent merged the base in") |
 | `update_progress` | the turn's plan as steps (pending · active · done) above the composer |
 | `ask_user` | asks you 1–3 multiple-choice questions and waits for the answer (§5 Questions) |
 | `report_problem` | drafts a problem report about Theodore from this turn (title, description, scope, logs) and opens the report window on it; you review and send it, never the agent (docs/telemetry.md "Report from a chat") |
@@ -1550,6 +1553,25 @@ and Push. A worktree recreated from the ref (unarchive) starts with `HEAD`
 at the checkpoint. Checkpoints are authored by Theodore and never leave the
 cache; what ships is one squashed commit authored by you (§12 #2).
 
+**The `.context/` folder.** Files another device sends with a message
+(docs/fleet.md "Files (blobs)": a phone's screenshot, a log) are written to
+`<worktree>/.context/<name>` (`name (2).ext` on a clash) before the turn,
+and the prompt lists them ("Attached files (in .context/): …"); images also
+reach the agent as attachments. The folder is the space's to read, never
+Theodore's to commit:
+
+```
+.context/ made ─▶ "/.context/" appended once to the cache's info/exclude
+                  (git rev-parse --git-path info/exclude; shared by its worktrees)
+checkpoint, snapshot, Update's commit ─▶ add -A -- ':(top)' ':(exclude,top).context'
+                  + rm --cached of a tracked .context ─▶ never in the tree, so never shipped
+a deeper `src/.context` is a file like any other
+```
+
+A queued message's files go when it's dropped or cancelled; a turn's files
+stay for later turns (and `git clean` would remove them, as any ignored
+file).
+
 **Worktree guard** (checkpoint, Undo, the busy check, reopen, archive):
 
 ```
@@ -1621,6 +1643,41 @@ Update ─▶ fetch the base ─▶ tip == base_sha? ─▶ "already up to date"
   | Open PR / first Merge locally | parent = the new `base_sha`, tree = the merged checkpoint: one commit vs the new base |
   | Push (PR open) | parents = last push + the base tip merged since (dropped when already in its history), tree = the merged checkpoint: fast-forward, and the host's PR diff (vs the merge base) is still the change alone |
   | Merge locally again | the same second parent |
+
+**The agent merged the base in** (owner, 2026-11-21, after PRs #219 and
+#226 came out conflicting): no Update — the agent ran `git fetch; git
+merge origin/main` in the worktree itself (or you did), so `base_sha` as
+recorded is behind what the worktree really sits on. A squash onto the
+stale base carries the base's own commits as the change: overlapping
+hunks with the base (conflicting), or the base's content shown as the
+PR's.
+
+```
+main    A ── B ── C                              base_sha = A (recorded)
+space   A ── work ── M = merge of C ── more      checkpoint on M
+before  squash(tree) onto A ─▶ X, parent A   ─▶ host: merge-base A, X has B+C ─▶ CONFLICTING
+now     merge-base(C, checkpoint) = C, ahead of A ─▶ base_sha = C
+        Open PR  ─▶ one commit on C
+        Push     ─▶ parents = last push + C (fast-forward; host merge-base ─▶ C)
+        diff     ─▶ C...checkpoint: the space's change alone
+```
+
+Where Theodore re-reads the base (`base_merged_in`): the merge-base of the
+base's tip (as the copy on this Mac has it) and the space's state, taken
+only when it is ahead of `base_sha`.
+
+| When | From | Then |
+| --- | --- | --- |
+| a turn ends (no update resolving) | the checkpoint | `base_sha` moves; the turn's `base_before` is the old base, so Undo of it brings the base back, like an update's |
+| Ship (Open PR, Push, Merge locally, Keep as branch) | the checkpoint being shipped, hand edits included | `base_sha` moves before the squash: the parent (first ship) or the second parent (a push) is the new base; the diff refreshes |
+| `set_base`, a new branch | the worktree as it is now (snapshot), not the last checkpoint | the merge-base with the branch's tip |
+| `set_base`, the same branch | the worktree as it is now | the fork point moves when the worktree has the tip; else "already is the base" |
+
+A base that didn't move, a worktree that never merged it (merge-base =
+`base_sha`), a branch adopted behind its base, or a base reset behind the
+space (merge-base not ahead of `base_sha`) change nothing. History is
+never rewritten and nothing is force-pushed: a push stays a fast-forward
+of the last one.
 
 **Shipping, step by step**
 

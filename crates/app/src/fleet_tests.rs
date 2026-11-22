@@ -333,6 +333,7 @@ fn start_with(
         effort: None,
         parent: parent.map(str::to_string),
         depth,
+        attachments: vec![],
     }
 }
 
@@ -783,6 +784,7 @@ async fn send_and_stop_steer_a_hosted_space() {
             agent: None,
             model: None,
             effort: None,
+            attachments: vec![],
         },
         now(&f),
     );
@@ -800,6 +802,7 @@ async fn send_and_stop_steer_a_hosted_space() {
             agent: None,
             model: None,
             effort: None,
+            attachments: vec![],
         },
     )
     .await;
@@ -1092,6 +1095,7 @@ async fn a_space_started_from_here_is_signed_and_tracked() {
             effort: None,
             parent: None,
             depth: 0,
+            attachments: vec![],
         }
     );
     // Not subscribed yet: the cloud only knows the space once the host
@@ -1373,6 +1377,79 @@ async fn the_link_follows_the_account() {
         !core.fleet_status().await.unwrap().connected
     })
     .await;
+}
+
+/// Another account signs in (device code), its session in `org`.
+async fn sign_in_as(core: &Core, f: &Fixtures, user: &str, refresh: &str, org: &str) {
+    core.account_sign_in_start(theodore_contract::AccountSignInRequest {
+        method: theodore_contract::AccountSignInMethod::DeviceCode,
+        email: None,
+    })
+    .await
+    .unwrap();
+    let mut s = session(f, refresh, org);
+    s.user.id = user.into();
+    s.user.email = format!("{user}@example.com");
+    f.account
+        .push_device_poll(Ok(theodore_ports::DeviceSignInPoll::Done(Box::new(s))));
+    assert!(matches!(
+        core.account_sign_in_poll().await.unwrap(),
+        theodore_contract::AccountSignInState::Done { .. }
+    ));
+}
+
+#[tokio::test]
+async fn the_link_follows_the_active_account() {
+    let f = fixtures();
+    let (core, _recv) = start(&f);
+    core.fleet_set_settings(settings(false)).await.unwrap();
+    wait_until("a link", || f.fleet.starts() == 1).await;
+    assert_eq!(f.fleet.connect(0).access_token, "at-rt_1");
+
+    // A second account signs in: it is the active one, so the link is
+    // its organization's, with its token, as a new device of that hub.
+    sign_in_as(&core, &f, "user_02", "rt_b", "org_b").await;
+    wait_until("a second link", || f.fleet.starts() == 2).await;
+    assert!(commands(&f, 0).contains(&FakeFleetCommand::Close));
+    assert_eq!(f.fleet.connect(1).access_token, "at-rt_b");
+
+    // Back to the first account: its organization's link again, with its
+    // own token; nothing of the other account's is sent on it.
+    core.account_switch(theodore_contract::AccountSwitchRequest {
+        user_id: "user_01".into(),
+        organization_id: None,
+    })
+    .await
+    .unwrap();
+    wait_until("a third link", || f.fleet.starts() == 3).await;
+    assert!(commands(&f, 1).contains(&FakeFleetCommand::Close));
+    assert_eq!(f.fleet.connect(2).access_token, "at-rt_1");
+    assert!(
+        !commands(&f, 1)
+            .iter()
+            .any(|c| matches!(c, FakeFleetCommand::Reauth(t) if t == "at-rt_1")),
+        "another account's token is never a reauth on the old link"
+    );
+
+    // Same organization, another user: a new link, not a reauth.
+    sign_in_as(&core, &f, "user_03", "rt_c", "org_a").await;
+    wait_until("a fourth link", || f.fleet.starts() == 4).await;
+    assert!(commands(&f, 2).contains(&FakeFleetCommand::Close));
+    assert_eq!(f.fleet.connect(3).access_token, "at-rt_c");
+    assert!(
+        !commands(&f, 2)
+            .iter()
+            .any(|c| matches!(c, FakeFleetCommand::Reauth(_))),
+        "{:?}",
+        commands(&f, 2)
+    );
+
+    // Signing the active account out: the next one's link (the first
+    // signed in, in its own organization).
+    core.account_sign_out().await.unwrap();
+    wait_until("a fifth link", || f.fleet.starts() == 5).await;
+    assert!(commands(&f, 3).contains(&FakeFleetCommand::Close));
+    assert_eq!(f.fleet.connect(4).access_token, "at-rt_1");
 }
 
 #[tokio::test]
@@ -2265,6 +2342,7 @@ async fn a_claimed_request_is_checked_again_right_before_it_runs() {
             agent: None,
             model: None,
             effort: None,
+            attachments: vec![],
         },
         now(&f),
     );
@@ -3974,6 +4052,7 @@ async fn remote_picks_are_checked_against_what_the_host_lists_then_applied() {
             effort: effort.map(str::to_string),
             parent: None,
             depth: 0,
+            attachments: vec![],
         }
     };
     for (agent, model, effort, why) in [
@@ -4027,6 +4106,7 @@ async fn remote_picks_are_checked_against_what_the_host_lists_then_applied() {
         agent: agent.map(str::to_string),
         model: model.map(str::to_string),
         effort: effort.map(str::to_string),
+        attachments: vec![],
     };
     // The space's agent keeps its model: codex's gpt-5.5 takes no "max".
     let (id, env) = sealed(&f, &origin, send(None, None, Some("max")), now(&f));
@@ -4094,6 +4174,7 @@ async fn a_signed_out_agent_is_not_offered_and_a_pick_naming_it_says_why() {
         effort: None,
         parent: None,
         depth: 0,
+        attachments: vec![],
     };
     let (id, env) = sealed(&f, &origin, op, now(&f));
     deliver(&f, env);
@@ -4180,6 +4261,7 @@ async fn a_run_that_fails_signed_out_takes_its_agent_off_the_list() {
         effort: None,
         parent: None,
         depth: 0,
+        attachments: vec![],
     };
     let ok = run(&f, &origin, op).await;
     assert!(matches!(ok, ReplyOutcome::Ok { .. }), "{ok:?}");

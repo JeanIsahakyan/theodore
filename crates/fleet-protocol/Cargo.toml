@@ -15,6 +15,14 @@ specta-serde.workspace = true
 specta-util.workspace = true
 ring = "0.17"
 base64 = "0.22"
+# Blob crypto (docs/fleet.md "Files (blobs)"): X25519 from the ed25519 device
+# key, HKDF-SHA256, XChaCha20-Poly1305.
+sha2.workspace = true
+hex.workspace = true
+curve25519-dalek = "4"
+x25519-dalek = { version = "2", features = ["static_secrets"] }
+hkdf = "0.12"
+chacha20poly1305 = "0.10"
 
 [lints]
 workspace = true

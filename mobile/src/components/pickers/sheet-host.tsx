@@ -4,6 +4,7 @@
  */
 import { useState } from 'react';
 import { Modal, Pressable, ScrollView } from 'react-native';
+import { track } from '../../telemetry/log';
 import { usePalette } from '../../ui/theme';
 import { SheetList } from './sheet-list';
 import type { SheetHandle, SheetKind } from './types';
@@ -13,7 +14,10 @@ export function useSheet(kind: SheetKind, space?: string | null): SheetHandle {
   const [open, setOpen] = useState(false);
   const close = () => setOpen(false);
   return {
-    open: () => setOpen(true),
+    open: () => {
+      track('sheet_opened', { kind });
+      setOpen(true);
+    },
     isOpen: open,
     element: (
       <Modal
