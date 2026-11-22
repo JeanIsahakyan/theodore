@@ -6,6 +6,7 @@ export const RELEASES = `${GITHUB}/releases`;
 export const RELEASES_LATEST = `${GITHUB}/releases/latest`;
 export const RELEASES_API = `https://api.github.com/repos/${REPO}/releases/latest`;
 export const LICENSE = `${GITHUB}/blob/main/LICENSE`;
+export const CLOUD_LICENSE = `${GITHUB}/blob/main/cloud/LICENSE.md`;
 export const ISSUES = `${GITHUB}/issues`;
 export const WEB_APP = 'https://app.theodore.cloud';
 export const CONTACT_EMAIL = 'jeanisahakyan@gmail.com';

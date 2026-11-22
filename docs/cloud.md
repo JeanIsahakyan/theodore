@@ -975,3 +975,7 @@ Per environment (staging, production):
       already expire most); Client ID Metadata Documents
       (`clientIdMetadataDocumentEnabled` + the `global_fetch_strictly_public`
       compatibility flag; off now, DCR covers Claude Code and claude.ai).
+
+## License
+
+`cloud/` is licensed under the [Functional Source License 1.1, ALv2 future license](../cloud/LICENSE.md) (FSL-1.1-ALv2), unlike the rest of the repository (MIT). Self-hosting and changes are fine; offering it as a competing commercial service is not. Each version converts to Apache 2.0 two years after its release. Code published before this change stays under MIT.

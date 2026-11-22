@@ -256,9 +256,10 @@ function Open() {
           your own accounts. Theodore has no review server: your code goes only
           where your CLI already sends it.
         </Fact>
-        <Fact title="MIT licensed">
-          The desktop app, the phone app and the cloud are one repository on
-          GitHub. Read it, build it, or run the cloud yourself.
+        <Fact title="Open source">
+          The desktop and phone apps are MIT; the cloud is source-available
+          under FSL and turns Apache 2.0 after two years. Read it, build it, or
+          run the cloud yourself.
         </Fact>
         <Fact title="Honest about data">
           Diagnostics are off until you say yes, and redacted before they leave.

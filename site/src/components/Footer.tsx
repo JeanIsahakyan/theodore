@@ -1,10 +1,11 @@
 import { Link } from '../app/router';
-import { GITHUB, LICENSE } from '../content/links';
+import { CLOUD_LICENSE, GITHUB, LICENSE } from '../content/links';
 import { LogoArt } from '../shared/LogoArt';
 import { Container } from './ui';
 
 const LINKS = [
   { href: LICENSE, label: 'MIT License' },
+  { href: CLOUD_LICENSE, label: 'Cloud license (FSL)' },
   { href: GITHUB, label: 'GitHub' },
   { href: '/privacy', label: 'Privacy' },
   { href: '/terms', label: 'Terms' },

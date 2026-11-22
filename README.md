@@ -484,3 +484,8 @@ Git hooks (`lefthook install` once per clone):
 - A Theodore server: the account sign-in is client-only; billing and sync need one.
 - Spaces: feedback tracked as tasks, a "Drafting" group in My PRs, a per-turn diff view, deleting a
   space, a parallel limit (`docs/spaces.md` §11).
+
+## License
+
+- Desktop app, mobile app, protocol and everything outside `cloud/`: [MIT](LICENSE).
+- The cloud (`cloud/`): [Functional Source License 1.1, Apache 2.0 future license](cloud/LICENSE.md) (FSL-1.1-ALv2). You may read, modify and run it, including for your own team, but not offer it as a competing commercial service. Each version becomes Apache 2.0 two years after it is released.
