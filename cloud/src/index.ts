@@ -15,15 +15,21 @@
  * | GET  /v1/fleet/ws | WebSocket to the org's fleet hub (src/fleet/, docs/fleet.md) |
  * | POST /v1/fleet/request | a one-shot signed fleet request, no socket (a push action) |
  * | POST /mcp, /oauth/*, /.well-known/oauth-* | MCP for Claude, with OAuth (src/mcp/oauth.ts) |
+ * | POST /v1/telemetry/logs | the phone / web app's error log, relayed to New Relic (src/telemetry/relay.ts) |
  *
  * Rate limits (Cloudflare's rate-limiting bindings; 429 `cloud.rate_limited`):
  * the unauthenticated routes (org selection, the fleet upgrade) per client
- * IP, the authenticated ones per user.
+ * IP, the authenticated ones per user, the anonymous telemetry relay per
+ * client IP much tighter (`RL_TELEMETRY`).
  *
  * CORS: only for the web app's origins (`WEB_ORIGINS`), only on the routes
  * it calls (`/v1/orgs*`, `/v1/auth/select-organization`,
- * `/v1/fleet/request`, `/v1/account`); no credentials, `Authorization` and
- * `Content-Type`.
+ * `/v1/fleet/request`, `/v1/account`, `/v1/telemetry/logs`); no
+ * credentials, `Authorization` and `Content-Type`.
+ *
+ * Every request is logged (`http request`: route, status, latency, device
+ * kind) through src/telemetry; the records go to Workers Logs and, with
+ * `THEODORE_OTLP_ENDPOINT` + `THEODORE_OTLP_HEADERS`, to New Relic.
  *
  * ```text
  * app sign-in ─▶ 403 organization_selection_required {pending_authentication_token, organizations}
@@ -44,9 +50,17 @@ import {
 } from './fleet/route';
 import { isMcpPath, mcpFetch, type McpBindings } from './mcp/oauth';
 import { ensurePersonalOrganization, listOrganizations } from './orgs';
+import {
+  telemetryFor,
+  type RelayBatch,
+  type TelemetryEnv,
+} from './telemetry/cloud';
+import { logged, requestRegion } from './telemetry/http';
+import { noopLogger, type Logger } from './telemetry/log';
+import { parseRelay } from './telemetry/relay';
 import { upstream, WorkosClient, WorkosError, type Workos } from './workos';
 
-export interface Env extends McpBindings {
+export interface Env extends McpBindings, TelemetryEnv {
   WORKOS_API_KEY: string;
   WORKOS_CLIENT_ID: string;
   WORKOS_API_BASE?: string;
@@ -55,6 +69,8 @@ export interface Env extends McpBindings {
   RL_PUBLIC?: RateLimit;
   /** Per signed-in user: the org routes and one-shot fleet requests. */
   RL_USER?: RateLimit;
+  /** Per client IP: the telemetry relay without a token (much tighter). */
+  RL_TELEMETRY?: RateLimit;
   /** The web app's origins, comma-separated: CORS and browser sockets. */
   WEB_ORIGINS?: string;
   /** Expo access token (secret), if the Expo project requires one. */
@@ -62,6 +78,9 @@ export interface Env extends McpBindings {
 }
 
 export { OrgHub } from './fleet/org-hub';
+
+/** A rate-limit bucket: which binding counts the key. */
+export type Bucket = 'public' | 'user' | 'telemetry';
 
 export interface Deps {
   workos: Workos;
@@ -72,11 +91,17 @@ export interface Deps {
   /** The org's fleet hub; absent: the fleet route answers cloud.config. */
   hub?: HubFor;
   /** `false`: over the limit for `key` in `bucket`. Absent: no limits. */
-  limit?: (bucket: 'public' | 'user', key: string) => Promise<boolean>;
+  limit?: (bucket: Bucket, key: string) => Promise<boolean>;
   /** Origins of the web app (set by `handle` from its argument). */
   webOrigins?: readonly string[];
   /** The MCP OAuth store (grants revoked on account deletion); absent: none. */
   oauthKv?: KVNamespace;
+  /** The cloud's logger (set by `handle`); absent: nothing is logged. */
+  log?: Logger;
+  /** Keeps work alive past the response (`ctx.waitUntil`); absent: fire and forget. */
+  defer?: (work: Promise<unknown>) => void;
+  /** Forwards a relay batch to New Relic; absent: the relay accepts and drops. */
+  relay?: (batch: RelayBatch) => Promise<void>;
 }
 
 /** `WEB_ORIGINS` as a list: trimmed, empty entries and trailing `/` gone. */
@@ -93,7 +118,8 @@ const corsPath = (path: string) =>
   path.startsWith('/v1/orgs/') ||
   path === '/v1/auth/select-organization' ||
   path === '/v1/fleet/request' ||
-  path === '/v1/account';
+  path === '/v1/account' ||
+  path === '/v1/telemetry/logs';
 
 /** CORS headers for an allowed origin; none for any other. */
 function corsHeaders(
@@ -114,12 +140,10 @@ const PREFLIGHT = {
   'access-control-max-age': '600',
 };
 
-async function within(
-  deps: Deps,
-  bucket: 'public' | 'user',
-  key: string,
-): Promise<void> {
+async function within(deps: Deps, bucket: Bucket, key: string): Promise<void> {
   if (deps.limit && !(await deps.limit(bucket, key))) {
+    // The key is an IP or a user id: the bucket alone says enough.
+    deps.log?.info('rate limited', { bucket });
     throw new CloudError(429, 'cloud.rate_limited', 'too many requests');
   }
 }
@@ -131,12 +155,16 @@ const clientIp = (request: Request) =>
 /** A declared body over this is refused unread; `readJson` caps the rest. */
 const MAX_BODY_BYTES = 64 * 1024;
 
-export function depsFor(env: Env): Deps {
+export function depsFor(
+  env: Env,
+  ctx?: Pick<ExecutionContext, 'waitUntil'>,
+): Deps {
   if (!env.WORKOS_API_KEY || !env.WORKOS_CLIENT_ID) {
     throw new CloudError(500, 'cloud.config', 'cloud is not configured');
   }
   const apiBase = env.WORKOS_API_BASE ?? 'https://api.workos.com';
   const ns = env.ORG_HUB;
+  const telemetry = telemetryFor(env);
   return {
     workos: new WorkosClient(env.WORKOS_API_KEY, apiBase),
     clientId: env.WORKOS_CLIENT_ID,
@@ -145,10 +173,18 @@ export function depsFor(env: Env): Deps {
     hub: ns ? (orgId) => ns.get(ns.idFromName(orgId)) : undefined,
     oauthKv: env.OAUTH_KV,
     limit: async (bucket, key) => {
-      const rl = bucket === 'public' ? env.RL_PUBLIC : env.RL_USER;
+      const rl =
+        bucket === 'public'
+          ? env.RL_PUBLIC
+          : bucket === 'telemetry'
+            ? env.RL_TELEMETRY
+            : env.RL_USER;
       if (!rl) return true;
       return (await rl.limit({ key })).success;
     },
+    log: telemetry.log,
+    defer: ctx ? (work) => ctx.waitUntil(work) : undefined,
+    relay: telemetry.remote ? (batch) => telemetry.relay(batch) : undefined,
   };
 }
 
@@ -197,6 +233,40 @@ const routes: Record<string, Partial<Record<string, Route>>> = {
       return fleetRequest(request.url, caller, body, deps.hub);
     },
   },
+  // The app's error log, on to New Relic (src/telemetry/relay.ts). A token
+  // is optional (errors before sign-in): with one the user's budget counts,
+  // without it the client IP's, much tighter. Always 202: the app never
+  // retries telemetry, and a missing OTLP target just drops the batch.
+  '/v1/telemetry/logs': {
+    POST: async (request, deps) => {
+      let userId: string | undefined;
+      if (request.headers.has('authorization')) {
+        userId = (await deps.verify(bearer(request))).userId;
+        await within(deps, 'user', userId);
+      } else {
+        await within(deps, 'telemetry', clientIp(request));
+      }
+      const body = await readJson(request, MAX_BODY_BYTES);
+      const batch = parseRelay(body, {
+        userId,
+        nowMs: Date.now(),
+        region: requestRegion(request),
+      });
+      deps.log?.info('telemetry relayed', {
+        service: batch.service,
+        records: batch.records.length,
+        dropped: batch.dropped,
+        signed_in: userId !== undefined,
+        forwarded: deps.relay !== undefined,
+      });
+      if (deps.relay && batch.records.length > 0) {
+        const work = deps.relay(batch);
+        if (deps.defer) deps.defer(work);
+        else void work;
+      }
+      return json({ accepted: batch.records.length }, 202);
+    },
+  },
   // No bearer: the user has no session yet. The pending token is the
   // credential (single use, short-lived, issued by WorkOS to this user).
   '/v1/auth/select-organization': {
@@ -237,6 +307,7 @@ export async function handle(
   request: Request,
   deps: () => Deps,
   webOrigins: readonly string[] = [],
+  log: Logger = noopLogger,
 ): Promise<Response> {
   const path = new URL(request.url).pathname;
   const cors = corsHeaders(request, path, webOrigins);
@@ -247,7 +318,9 @@ export async function handle(
       headers: cors ? { ...cors, ...PREFLIGHT } : {},
     });
   }
-  return withCors(await dispatch(request, path, deps, webOrigins), cors);
+  return logged(request, log, webOrigins, async () =>
+    withCors(await dispatch(request, path, deps, webOrigins, log), cors),
+  );
 }
 
 async function dispatch(
@@ -255,6 +328,7 @@ async function dispatch(
   path: string,
   deps: () => Deps,
   webOrigins: readonly string[],
+  log: Logger,
 ): Promise<Response> {
   try {
     const methods = routes[path];
@@ -271,12 +345,30 @@ async function dispatch(
     if (length > MAX_BODY_BYTES) {
       throw new CloudError(413, 'cloud.too_large', 'request body too large');
     }
-    return await handler(request, { ...deps(), webOrigins });
+    return await handler(request, { ...deps(), webOrigins, log });
   } catch (e) {
-    if (e instanceof CloudError) return errorResponse(e);
-    if (e instanceof WorkosError) return errorResponse(upstream(e));
-    // Unexpected: log the kind, never the request (it carries a token).
-    console.error('cloud.internal', e instanceof Error ? e.name : typeof e);
+    const err =
+      e instanceof CloudError
+        ? e
+        : e instanceof WorkosError
+          ? upstream(e)
+          : undefined;
+    if (err) {
+      // Why a caller was turned away (its words are static), and what
+      // failed on our side; a 4xx is only the request line's error.code.
+      if (err.status === 401 || err.status === 403) {
+        log.info('auth failed', { code: err.code, reason: err.message });
+      } else if (err.status >= 500) {
+        log.warn('request failed', {
+          code: err.code,
+          status: err.status,
+          reason: err.message,
+        });
+      }
+      return errorResponse(err);
+    }
+    // Unexpected: the error, never the request (it carries a token).
+    log.exception('internal error', e, { code: 'cloud.internal' });
     return errorResponse(
       new CloudError(500, 'cloud.internal', 'internal error'),
     );
@@ -284,8 +376,18 @@ async function dispatch(
 }
 
 export default {
-  fetch: (request, env, ctx) =>
-    isMcpPath(new URL(request.url).pathname)
-      ? mcpFetch(request, env, ctx, () => depsFor(env))
-      : handle(request, () => depsFor(env), parseOrigins(env.WEB_ORIGINS)),
+  fetch: async (request, env, ctx) => {
+    const telemetry = telemetryFor(env);
+    const webOrigins = parseOrigins(env.WEB_ORIGINS);
+    const deps = () => depsFor(env, ctx);
+    try {
+      return isMcpPath(new URL(request.url).pathname)
+        ? await logged(request, telemetry.log, webOrigins, () =>
+            mcpFetch(request, env, ctx, deps),
+          )
+        : await handle(request, deps, webOrigins, telemetry.log);
+    } finally {
+      ctx.waitUntil(telemetry.flush());
+    }
+  },
 } satisfies ExportedHandler<Env>;
