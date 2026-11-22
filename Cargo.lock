@@ -6113,9 +6113,11 @@ dependencies = [
 name = "theodore-fleet"
 version = "0.1.31"
 dependencies = [
+ "async-trait",
  "fastrand",
  "futures",
  "pretty_assertions",
+ "reqwest",
  "rustls",
  "rustls-platform-verifier",
  "serde_json",

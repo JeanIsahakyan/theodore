@@ -225,7 +225,8 @@ impl GitCli {
 /// alone (`checkpoints`). The caller holds the worktree lock and has run
 /// `verify_root`.
 pub(crate) async fn snapshot(git: &SpaceGit<'_>, id: &str, message: &str) -> GitResult<Sha> {
-    git.run(&["add", "-A"]).await?;
+    // Everything but `.context/` (`checkpoints::CONTEXT_DIR`).
+    git.run(&crate::checkpoints::ADD_ALL).await?;
     // Exit 1 = something is staged.
     let staged = git.run_raw(&["diff", "--cached", "--quiet"]).await?;
     // A resolved merge may stage nothing new over `HEAD`: still a commit.

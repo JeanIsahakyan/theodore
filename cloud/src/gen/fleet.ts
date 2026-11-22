@@ -596,6 +596,7 @@ export const FLEET_CODES = {
 	TOO_LARGE: "fleet.too_large",
 	RATE_LIMITED: "fleet.rate_limited",
 	BLOB_NOT_FOUND: "fleet.blob_not_found",
+	ATTACHMENT_FAILED: "fleet.attachment_failed",
 	QUOTA: "fleet.quota",
 	NOT_YOURS: "fleet.not_yours",
 	BAD_MESSAGE: "fleet.bad_message",

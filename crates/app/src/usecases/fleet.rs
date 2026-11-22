@@ -446,6 +446,15 @@ pub struct FleetState {
     /// Read-modify-write of the settings.
     pub(crate) settings_lock: tokio::sync::Mutex<()>,
     pub(crate) hosted_loaded: tokio::sync::OnceCell<()>,
+    /// Files another device sent with a `start_space`, by the local space
+    /// id, until its worktree exists (`fleet_files`).
+    pub(crate) pending_context: std::sync::Mutex<
+        std::collections::HashMap<String, Vec<crate::usecases::fleet_files::ReceivedFile>>,
+    >,
+    /// `.context/` files written for a space, waiting to ride with its
+    /// next message (`fleet_files`).
+    pub(crate) pending_attachments:
+        std::sync::Mutex<std::collections::HashMap<String, Vec<theodore_contract::Attachment>>>,
     /// The persisted seen requests, read once.
     pub(crate) seen_loaded: tokio::sync::OnceCell<()>,
     /// The mirrored spaces in the store, followed again once.
