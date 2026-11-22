@@ -1688,13 +1688,19 @@ of the last one.
   in the confirm popover, default the goal's first line; after a Continue,
   the round's net-change summary, §3 "Continue"), then the goal when it
   says more, then the trailer `Co-authored-by: Theodore
-  <noreply@theodore.cloud>` after a blank line (joining a trailer block the
-  message already ends with). Every commit Theodore writes carries it,
-  once (`crates/git/src/trailer.rs`): the squash of Open PR and Push, the
-  merge commit of Merge locally and the shipped commit under it, a
-  committed suggestion or an applied fix on a PR, a config file committed
-  or proposed. A space's own checkpoints don't: they never leave the cache
-  as they are.
+  <359906112+theodore-cloud[bot]@users.noreply.github.com>` after a blank
+  line (joining a trailer block the message already ends with). The
+  address is the GitHub App `theodore-cloud[bot]`'s noreply one (App ID
+  5875809, bot user id 359906112): GitHub links co-authors by email, so the
+  commit shows the app's avatar beside yours (owner, 2026-11-22; name and
+  address in one place, `trailer::THEODORE_CO_AUTHOR`). Every commit
+  Theodore writes carries it, once (`crates/git/src/trailer.rs`; a commit
+  that already has it, or the earlier `Theodore <noreply@theodore.cloud>`
+  line, gets no second one): the squash of Open PR and Push, the merge
+  commit of Merge locally and the shipped commit under it, a committed
+  suggestion or an applied fix on a PR, a config file committed or
+  proposed. A space's own checkpoints don't: they never leave the cache as
+  they are.
 - *Open PR*: the commit's parent is the base. If the branch name is
   already taken on the host, nothing is pushed. After the push the outbox
   item `create_space_pr` asks the host for an open PR from that branch
