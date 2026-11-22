@@ -311,9 +311,10 @@ phone / web app ─▶ POST /v1/telemetry/logs ─▶ checked, redacted again �
 ```
 
 Both need `THEODORE_OTLP_ENDPOINT` (a `wrangler.toml` var per environment,
-`https://otlp.nr-data.net`) **and** the secret `THEODORE_OTLP_HEADERS`
-(`api-key=<ingest license key>`; `wrangler secret put THEODORE_OTLP_HEADERS
---env staging|production`). Either missing: nothing leaves the Worker, the
+`https://otlp.nr-data.net`) **and** the Worker secret `THEODORE_OTLP_HEADERS`
+(`api-key=<ingest license key>`; set per environment with `wrangler secret
+put`, or by the deploy steps pending in `docs/cloud.md` "Environments and
+secrets"). Either missing: nothing leaves the Worker, the
 relay still answers `202` and drops, so local dev needs no key. Records are
 batched (at most 200 queued, the oldest dropped) and sent on
 `ctx.waitUntil` after each request, socket message or alarm, coalesced over

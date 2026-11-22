@@ -9,9 +9,9 @@
 # browser sockets), comma-separated, per environment below.
 # Telemetry (docs/telemetry.md "Cloud"): THEODORE_OTLP_ENDPOINT (var, per
 # environment) and the secret THEODORE_OTLP_HEADERS ("api-key=<license key>"):
-#   wrangler secret put THEODORE_OTLP_HEADERS --env staging
-#   wrangler secret put THEODORE_OTLP_HEADERS --env production
-# Without both, nothing leaves the Worker and the relay drops what it gets.
+#   wrangler secret put THEODORE_OTLP_HEADERS --env staging|production
+# (or the deploy steps pending in docs/cloud.md). Without both, nothing
+# leaves the Worker and the relay drops what it gets.
 # THEODORE_ENV names deployment.environment.name.
 name = "theodore-cloud"
 main = "src/index.ts"

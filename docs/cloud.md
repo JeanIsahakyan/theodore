@@ -243,8 +243,8 @@ Stable `area.kind` codes, same form as the app's `error.code`
 | Web app origins (`WEB_ORIGINS` var) | `https://theodore-web-staging.prd-instance.workers.dev` | `https://theodore-web.prd-instance.workers.dev` |
 | Expo access token (optional) | Worker secret `EXPO_ACCESS_TOKEN` | Worker secret `EXPO_ACCESS_TOKEN` |
 | Environment name (`THEODORE_ENV` var; `deployment.environment.name`) | `staging` | `production` |
-| New Relic OTLP endpoint (`THEODORE_OTLP_ENDPOINT` var) | `https://otlp.nr-data.net` | `https://otlp.nr-data.net` |
-| New Relic license key (`THEODORE_OTLP_HEADERS`, `api-key=<key>`) | Worker secret | Worker secret |
+| New Relic OTLP endpoint (`THEODORE_OTLP_ENDPOINT` var) | `https://otlp.nr-data.net` in `wrangler.toml` | same |
+| New Relic license key (`THEODORE_OTLP_HEADERS`, `api-key=<key>`) | Worker secret ("Pending" below) | same |
 | Deployed by | push to `staging` | push to `main` |
 
 - The API key is set by the owner, never in git or CI:
@@ -255,13 +255,93 @@ Stable `area.kind` codes, same form as the app's `error.code`
 - `EXPO_ACCESS_TOKEN` is needed only if the Expo project turns on
   "enhanced push security"; without it pushes go out unauthenticated, as
   Expo allows by default.
-- `THEODORE_OTLP_HEADERS` (`wrangler secret put THEODORE_OTLP_HEADERS
-  --env staging|production`, value `api-key=<New Relic ingest license
-  key>`) turns on the cloud's own logs to New Relic and the telemetry relay
-  (`docs/telemetry.md` "Cloud"). Without it (local dev, a fresh
-  environment) everything stays in Workers Logs and the relay answers
-  `202` and drops. EU accounts: set `THEODORE_OTLP_ENDPOINT` to
-  `https://otlp.eu01.nr-data.net` in `wrangler.toml`.
+- New Relic (`docs/telemetry.md` "Cloud") lives in GitHub only, under the
+  names `build.yml` already uses: the repository secret
+  `THEODORE_OTLP_HEADERS` (`api-key=<ingest license key>`) and variable
+  `THEODORE_OTLP_ENDPOINT`. `cloud.yml` is meant to carry them to each
+  Worker on deploy ("Pending" below); until it does, the Workers have no
+  secret and send nothing: everything stays in Workers Logs and the relay
+  answers `202` and drops, so local dev and a fresh environment work the
+  same. EU accounts: `https://otlp.eu01.nr-data.net`.
+
+### Pending: New Relic secret in the deploy workflow
+
+Not in `.github/workflows/cloud.yml` yet: the tokens at hand lacked the
+`workflow` scope GitHub wants for a push under `.github/workflows`. In the
+`deploy` job, replace the `deploy ${{ env.TARGET }}` step with these two.
+The secret goes **after** the deploy: it can only be put on a Worker that
+exists, and a deploy keeps the previous value meanwhile.
+
+```yaml
+      - name: deploy ${{ env.TARGET }}
+        run: |
+          if [ -n "$THEODORE_OTLP_ENDPOINT" ]; then
+            pnpm -C cloud exec wrangler deploy --env "$TARGET" --var "THEODORE_OTLP_ENDPOINT:$THEODORE_OTLP_ENDPOINT"
+          else
+            pnpm -C cloud deploy:"$TARGET"
+          fi
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          THEODORE_OTLP_ENDPOINT: ${{ vars.THEODORE_OTLP_ENDPOINT }}
+
+      - name: New Relic secret (${{ env.TARGET }})
+        run: |
+          if [ -z "$THEODORE_OTLP_HEADERS" ]; then
+            echo "THEODORE_OTLP_HEADERS not set: the Worker keeps its current value, if any"
+            exit 0
+          fi
+          printf '%s' "$THEODORE_OTLP_HEADERS" | pnpm -C cloud exec wrangler secret put THEODORE_OTLP_HEADERS --env "$TARGET"
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          THEODORE_OTLP_HEADERS: ${{ secrets.THEODORE_OTLP_HEADERS }}
+```
+
+```text
+vars.THEODORE_OTLP_ENDPOINT   ─▶ --var on deploy (unset: the wrangler.toml default)
+secrets.THEODORE_OTLP_HEADERS ─▶ wrangler secret put, after the deploy (empty: skipped)
+```
+
+Meanwhile the owner can set the secret by hand once per environment, in
+`cloud/`: `wrangler secret put THEODORE_OTLP_HEADERS --env staging|production`.
+
+### Pending: the two steps in `cloud.yml`
+
+Not in `.github/workflows/cloud.yml` yet: the GitHub token Theodore pushes
+with lacks the `workflow` scope, so a change under `.github/workflows` is
+refused (`gh auth refresh -s workflow` fixes that). Replace the `deploy`
+step of the `deploy` job with these two:
+
+```yaml
+      - name: deploy ${{ env.TARGET }}
+        run: |
+          if [ -n "$THEODORE_OTLP_ENDPOINT" ]; then
+            pnpm -C cloud exec wrangler deploy --env "$TARGET" --var "THEODORE_OTLP_ENDPOINT:$THEODORE_OTLP_ENDPOINT"
+          else
+            pnpm -C cloud deploy:"$TARGET"
+          fi
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          THEODORE_OTLP_ENDPOINT: ${{ vars.THEODORE_OTLP_ENDPOINT }}
+
+      # After the deploy: a secret can only be put on a Worker that exists,
+      # and the deploy keeps the previous value meanwhile.
+      - name: New Relic secret (${{ env.TARGET }})
+        run: |
+          if [ -z "$THEODORE_OTLP_HEADERS" ]; then
+            echo "THEODORE_OTLP_HEADERS not set: the Worker keeps its current value, if any"
+            exit 0
+          fi
+          printf '%s' "$THEODORE_OTLP_HEADERS" | pnpm -C cloud exec wrangler secret put THEODORE_OTLP_HEADERS --env "$TARGET"
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          THEODORE_OTLP_HEADERS: ${{ secrets.THEODORE_OTLP_HEADERS }}
+```
+
+Until it lands, the Workers have no New Relic secret and send nothing.
 
 ## Local dev
 
@@ -298,9 +378,11 @@ Needed before the first deploy works; none of it is done yet.
 3. GitHub → Settings → Secrets and variables → Actions → **Secrets**:
    `CLOUDFLARE_API_TOKEN` (Workers edit permission) and
    `CLOUDFLARE_ACCOUNT_ID`.
-4. `wrangler secret put THEODORE_OTLP_HEADERS --env staging`, then
-   `--env production`, value `api-key=<New Relic ingest license key>`
-   (optional: without it nothing is sent to New Relic).
+4. Optional: the New Relic key on each Worker, by the deploy steps once
+   they land ("Pending" above) or by hand,
+   `wrangler secret put THEODORE_OTLP_HEADERS --env staging|production`
+   (value `api-key=<ingest license key>`). Without it nothing is sent to
+   New Relic.
 5. Later: a custom domain per Worker (`routes` in `wrangler.toml`). Until
    then the Workers answer on `workers.dev`.
 
