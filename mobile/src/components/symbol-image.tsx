@@ -14,6 +14,10 @@ import {
   ArrowUp,
   ArrowUpDown,
   BadgeCheck,
+  Download,
+  Paperclip,
+  RotateCw,
+  Share,
   Bell,
   Bot,
   Brain,
@@ -102,6 +106,11 @@ export const SYMBOLS = {
     web: ChevronRight,
   },
   more: { sf: 'ellipsis', md: 'more_horiz', web: Ellipsis },
+  // Files (src/components/chat/attach-button.tsx, app/(app)/file/[space].tsx).
+  attach: { sf: 'paperclip', md: 'attach_file', web: Paperclip },
+  retry: { sf: 'arrow.clockwise', md: 'refresh', web: RotateCw },
+  share: { sf: 'square.and.arrow.up', md: 'share', web: Share },
+  download: { sf: 'arrow.down.circle', md: 'download', web: Download },
   // Settings and Devices (src/components/settings/).
   organization: { sf: 'building.2', md: 'corporate_fare', web: Building },
   accounts: { sf: 'person.2', md: 'group', web: Users },

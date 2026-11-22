@@ -587,6 +587,9 @@ pub struct FakeGit {
     /// `abort` with the checkpoint.
     merge_results: Mutex<VecDeque<theodore_ports::SpaceMerge>>,
     pub merge_calls: Mutex<Vec<(&'static str, String, Sha)>>,
+    /// `merge_base`'s answers by `(a, b)` (either order); unset: `a`, as
+    /// if `b` had `a` in its history (the base merged in).
+    merge_bases: Mutex<HashMap<(String, String), Sha>>,
     /// `space_merge` (a sub-space into its parent): what the next
     /// `space_apply` calls return, in order (empty: one file `merged.txt`,
     /// +1 −0, no conflicts), and every call.
@@ -732,6 +735,7 @@ impl FakeGit {
             resets: Mutex::new(Vec::new()),
             merge_results: Mutex::new(VecDeque::new()),
             merge_calls: Mutex::new(Vec::new()),
+            merge_bases: Mutex::new(HashMap::new()),
             apply_results: Mutex::new(VecDeque::new()),
             apply_calls: Mutex::new(Vec::new()),
             reset_heads: Mutex::new(Vec::new()),
@@ -949,6 +953,15 @@ impl FakeGit {
         self.merge_results.lock().unwrap().push_back(r);
     }
 
+    /// `merge_base(a, b)` (and `(b, a)`) answers `mb` from now on: a base
+    /// that moved on without the space merging it in answers the old base.
+    pub fn set_merge_base(&self, a: &str, b: &str, mb: Sha) {
+        self.merge_bases
+            .lock()
+            .unwrap()
+            .insert((a.to_string(), b.to_string()), mb);
+    }
+
     /// The next `space_apply` returns `r`.
     pub fn push_apply_result(&self, r: GitResult<theodore_ports::SpaceApply>) {
         self.apply_results.lock().unwrap().push_back(r);
@@ -1045,8 +1058,13 @@ impl GitPort for FakeGit {
     async fn gc_worktrees(&self, _keep: &[PrRef]) -> GitResult<u32> {
         Ok(0)
     }
-    async fn merge_base(&self, _repo: &Path, a: &Sha, _b: &Sha) -> GitResult<Sha> {
-        Ok(a.clone())
+    async fn merge_base(&self, _repo: &Path, a: &Sha, b: &Sha) -> GitResult<Sha> {
+        let set = self.merge_bases.lock().unwrap();
+        Ok(set
+            .get(&(a.0.clone(), b.0.clone()))
+            .or_else(|| set.get(&(b.0.clone(), a.0.clone())))
+            .cloned()
+            .unwrap_or_else(|| a.clone()))
     }
     async fn diff(
         &self,

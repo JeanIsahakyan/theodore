@@ -1,5 +1,8 @@
 // Adapted from EvanBacon/chat-template (MIT)
+export { AttachButton } from './attach-button';
+export { AttachmentStrip, SentFiles } from './attachment-strip';
 export { ComposerDock } from './composer-dock';
+export { useAttach, type Attach } from './use-attach';
 export {
   Conversation,
   ConversationEmptyState,

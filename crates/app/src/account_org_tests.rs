@@ -53,9 +53,11 @@ async fn start(f: &Fixtures, cloud: bool) -> (Core, Receivers) {
     (core, recv)
 }
 
+/// The stored session of the sample user: its own keychain entry (an
+/// older build's single `theodore.account` entry is moved there on load).
 fn stored(f: &Fixtures) -> Option<AccountSession> {
     f.secrets
-        .get(theodore_secrets::THEODORE_ACCOUNT)
+        .get(&theodore_secrets::account_key("user_01"))
         .unwrap()
         .map(|s| serde_json::from_str(&s).unwrap())
 }

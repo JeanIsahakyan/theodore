@@ -1309,6 +1309,8 @@ pub fn types() -> specta::Types {
         .register::<AccountOrganizationRef>()
         .register::<AccountOrganizationChoice>()
         .register::<AccountOrganization>()
+        .register::<AccountEntry>()
+        .register::<AccountSwitchRequest>()
         .register::<FleetStatus>()
         .register::<FleetSettingsRequest>()
         .register::<FleetTrustRequest>()

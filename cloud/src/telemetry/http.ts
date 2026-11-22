@@ -31,6 +31,7 @@ const ROUTES = new Set([
 /** A known route as itself; anything else is `other` (paths aren't logged). */
 export function routeLabel(path: string): string {
   if (ROUTES.has(path)) return path;
+  if (path.startsWith('/v1/fleet/blobs/')) return '/v1/fleet/blobs/*';
   if (path.startsWith('/mcp/')) return '/mcp/*';
   if (path.startsWith('/oauth/')) return '/oauth/*';
   if (path.startsWith('/.well-known/')) return '/.well-known/*';
