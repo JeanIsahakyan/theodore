@@ -516,6 +516,29 @@ export const mockSubSpaceReads: Record<string, SubSpaceRead> = {
   },
 };
 
+/** Files `readFile` answers with, by path (the demo's file viewer). */
+export const mockFiles: Record<string, { mime: string; bytes: Uint8Array }> = {
+  'ui/AccountCard.tsx': {
+    mime: 'text/typescript',
+    bytes: new TextEncoder().encode(
+      [
+        "import { Card } from './kit';",
+        '',
+        'export function AccountCard({ name }: { name: string }) {',
+        '  return <Card title={name} />;',
+        '}',
+        '',
+      ].join('\n'),
+    ),
+  },
+  'ui/Settings.tsx': {
+    mime: 'text/typescript',
+    bytes: new TextEncoder().encode(
+      "export { AccountCard } from './AccountCard';\n",
+    ),
+  },
+};
+
 export const mockSession: Session = {
   userId: 'user-1',
   email: 'jean@example.com',
@@ -634,8 +657,15 @@ export function createMock(options: MockOptions = {}): Mock {
       useFleetState.setState((s) => ({ spaces: [space, ...s.spaces] }));
       return space;
     },
-    async send(space, text, mode = null, picks) {
-      await call('send', space, text, mode, ...(picks ? [picks] : []));
+    async send(space, text, mode = null, picks, attachments) {
+      await call(
+        'send',
+        space,
+        text,
+        mode,
+        ...(picks ? [picks] : []),
+        ...(attachments?.length ? [attachments] : []),
+      );
       const running = useFleetState
         .getState()
         .spaces.some((s) => s.space === space && s.status === 'running');
@@ -660,6 +690,12 @@ export function createMock(options: MockOptions = {}): Mock {
                   text,
                   at: Date.now(),
                   queued: running ? { seq } : null,
+                  attachments: attachments?.map((a) => ({
+                    id: a.blob_id,
+                    name: a.name,
+                    mime: a.mime,
+                    size: a.size,
+                  })),
                 }),
               },
             },
@@ -733,8 +769,14 @@ export function createMock(options: MockOptions = {}): Mock {
         throw new Error('the other device refused: fleet.unknown_space');
       return read;
     },
-    async sendTo(hostDevice, space, text) {
-      await call('sendTo', hostDevice, space, text);
+    async sendTo(hostDevice, space, text, attachments) {
+      await call(
+        'sendTo',
+        hostDevice,
+        space,
+        text,
+        ...(attachments?.length ? [attachments] : []),
+      );
       const read = mockSubSpaceReads[space];
       counter += 1;
       const message = `sent-${counter}`;
@@ -744,6 +786,60 @@ export function createMock(options: MockOptions = {}): Mock {
     },
     async answerSpace(hostDevice, space, ask, answers) {
       await call('answerSpace', hostDevice, space, ask, answers);
+    },
+    async uploadAttachment(hostDevice, file, onProgress) {
+      await call(
+        'uploadAttachment',
+        hostDevice,
+        file.name,
+        file.mime,
+        file.bytes.length,
+      );
+      onProgress?.(0.5);
+      onProgress?.(1);
+      counter += 1;
+      return {
+        blob_id: counter.toString(16).padStart(32, '0'),
+        name: file.name,
+        mime: file.mime,
+        size: file.bytes.length,
+        chunks: Math.max(1, Math.ceil(file.bytes.length / (4 * 1024 * 1024))),
+        sha256: '0'.repeat(64),
+        eph_pk: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=',
+        nonce_prefix: 'AAAAAAAAAAAAAAAAAAAAAA==',
+      };
+    },
+    async deleteBlob(blobId) {
+      await call('deleteBlob', blobId);
+    },
+    async readFile(hostDevice, space, path, maxBytes) {
+      await call('readFile', hostDevice, space, path, maxBytes);
+      const file = mockFiles[path];
+      if (!file)
+        throw new Error(
+          'the other device refused: fleet.not_found: no such file',
+        );
+      return {
+        blob_id: 'f'.repeat(32),
+        name: path.split('/').pop() ?? 'file',
+        mime: file.mime,
+        size: file.bytes.length,
+        chunks: 1,
+        sha256: '0'.repeat(64),
+        eph_pk: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=',
+        nonce_prefix: 'AAAAAAAAAAAAAAAAAAAAAA==',
+      };
+    },
+    async canOpenBlobs() {
+      return true;
+    },
+    async fetchBlob(ref, onProgress) {
+      await call('fetchBlob', ref.blob_id);
+      onProgress?.(1);
+      const file = Object.values(mockFiles).find(
+        (f) => f.bytes.length === ref.size && f.mime === ref.mime,
+      );
+      return file?.bytes ?? new Uint8Array(ref.size);
     },
     async setMcpAuto(hostDevice, mcpDevice, auto, untilMs) {
       await call('setMcpAuto', hostDevice, mcpDevice, auto, untilMs);

@@ -425,3 +425,159 @@ async fn the_first_ship_after_an_update_sits_on_the_new_base() {
         "b.txt"
     );
 }
+
+/// The shape of #219 / #226: no Update — the agent itself ran `git merge
+/// main` in the worktree after the base moved on twice. The merge-base of
+/// the checkpoint and main's tip is that tip (what the ship records as the
+/// space's base from then on); Open PR squashes onto it, Push adds a commit
+/// with the last push and the tip as parents (a fast-forward), and either
+/// way the host's PR diff vs main is the space's change alone — no
+/// overlapping hunks with main, so no conflict.
+#[tokio::test]
+async fn a_base_the_agent_merged_in_itself_is_the_base_the_ship_sits_on() {
+    let h = host().await;
+    let (wt, turn) = h.space_with("s1", "b.txt", "space\n").await;
+    let branch = "ada/s1";
+    let first = h
+        .git
+        .space_commit(
+            &h.cache,
+            "s1",
+            &SpaceCommit {
+                head: turn.clone(),
+                parent: h.base.clone(),
+                replay_from: None,
+                merge_parent: None,
+                message: "Open".into(),
+                author: me(),
+            },
+        )
+        .await
+        .unwrap();
+    h.git
+        .push_branch(&h.cache, &repo(), &first, branch)
+        .await
+        .unwrap();
+
+    // main: A ── B ── C; the agent merges C in and works on.
+    h.base_moves("c.txt", "base b\n").await;
+    let tip = h
+        .base_moves("a.txt", "one\ntwo\nthree\nfour (base)\n")
+        .await;
+    git(&wt, &["merge", "-q", "--no-edit", "main"]);
+    std::fs::write(wt.join("b.txt"), "space, more\n").unwrap();
+    let head = h
+        .git
+        .space_checkpoint(&wt, "s1", "turn 2")
+        .await
+        .unwrap()
+        .sha;
+    assert_eq!(
+        h.git.merge_base(&h.cache, &tip, &head).await.unwrap(),
+        tip,
+        "the checkpoint has main's tip: the space's base moved to it"
+    );
+    assert_eq!(
+        h.git.merge_base(&h.cache, &h.base, &tip).await.unwrap(),
+        h.base,
+        "and it's ahead of the recorded base"
+    );
+
+    // Push: the last push and the new merge-base as parents.
+    let pushed = h
+        .git
+        .space_commit(
+            &h.cache,
+            "s1",
+            &SpaceCommit {
+                head: head.clone(),
+                parent: first.clone(),
+                replay_from: None,
+                merge_parent: Some(tip.clone()),
+                message: "Push".into(),
+                author: me(),
+            },
+        )
+        .await
+        .unwrap();
+    h.git
+        .push_branch(&h.cache, &repo(), &pushed, branch)
+        .await
+        .expect("a fast-forward of the last push");
+    let remote = format!("refs/heads/{branch}");
+    assert_eq!(
+        parents(&h.bare, &remote),
+        vec![first.0.clone(), tip.0.clone()]
+    );
+    assert_eq!(git(&h.bare, &["merge-base", "main", &remote]), tip.0);
+    assert_eq!(
+        git(
+            &h.bare,
+            &["diff", "--name-only", &format!("main...{remote}")]
+        ),
+        "b.txt",
+        "the PR diff is the space's change alone"
+    );
+    // Nothing of main's is in the change, so merging it back is clean.
+    git(
+        &h.bare,
+        &[
+            "merge-tree",
+            "--write-tree",
+            "--no-messages",
+            "main",
+            &remote,
+        ],
+    );
+
+    // Open PR instead (no push before): one commit on the new merge-base.
+    let opened = h
+        .git
+        .space_commit(
+            &h.cache,
+            "s2",
+            &SpaceCommit {
+                head: head.clone(),
+                parent: tip.clone(),
+                replay_from: None,
+                merge_parent: None,
+                message: "Open".into(),
+                author: me(),
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(parents(&h.cache, &opened.0), vec![tip.0.clone()]);
+    assert_eq!(
+        git(
+            &h.cache,
+            &["diff", "--name-only", &format!("main...{}", opened.0)]
+        ),
+        "b.txt"
+    );
+
+    // What the stale base gave: the squash on A has main's hunks as its own.
+    let stale = h
+        .git
+        .space_commit(
+            &h.cache,
+            "s3",
+            &SpaceCommit {
+                head: head.clone(),
+                parent: h.base.clone(),
+                replay_from: None,
+                merge_parent: None,
+                message: "stale".into(),
+                author: me(),
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        git(
+            &h.cache,
+            &["diff", "--name-only", &format!("main...{}", stale.0)]
+        ),
+        "a.txt\nb.txt\nc.txt"
+    );
+}

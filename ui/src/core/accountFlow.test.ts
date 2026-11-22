@@ -17,6 +17,7 @@ const signedIn: AccountStatus = {
   available: true,
   required: true,
   session_ended: false,
+  accounts: [],
   organization: null,
   user: {
     id: 'user_01',

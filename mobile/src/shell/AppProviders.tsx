@@ -39,6 +39,8 @@ import { setSwitching, useAccountSwitch } from '../state/accounts';
 import { persistPicks, picksStore, restorePicks } from '../state/compose';
 import { useFleetState } from '../state/fleet';
 import { resetPending } from '../state/pending';
+import { resetAttachments } from '../state/attachments';
+import { clearFileCache } from '../fleet/file-cache';
 import { createDemo } from '../dev/demo';
 import { resetFleetState } from '../dev/mock';
 import type { FleetClient } from '../fleet/types';
@@ -208,8 +210,13 @@ export function AppProviders({ children }: { children: ReactNode }) {
   useEffect(() => {
     const prev = lastScope.current;
     lastScope.current = scope;
-    // Another account or org (or none): nothing of the old one is pending.
-    if (prev !== scope) resetPending();
+    // Another account or org (or none): nothing of the old one is pending,
+    // attached, or kept of its files.
+    if (prev !== scope) {
+      resetPending();
+      resetAttachments();
+      clearFileCache();
+    }
     // The last account signed out: its picks go (an account leaving while
     // another stays is the accounts client's hook).
     if (prev && !scope && status === 'signed_out')

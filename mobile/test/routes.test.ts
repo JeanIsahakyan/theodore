@@ -12,12 +12,13 @@ const screens = (dir: string) =>
     .sort();
 
 describe('signed-in routes', () => {
-  it('has Home, a space, its sub-spaces, Devices, Settings, the sheets and the /start redirect', () => {
+  it('has Home, a space, its sub-spaces, its files, Devices, Settings, the sheets and the /start redirect', () => {
     expect(screens(app)).toEqual([
       'accounts-sheet.tsx',
       'activity-sheet.tsx',
       'computer-picker.tsx',
       'devices.tsx',
+      'file/',
       'index.tsx',
       'model-picker.tsx',
       'project-picker.tsx',
@@ -27,6 +28,9 @@ describe('signed-in routes', () => {
       'sub-space/',
     ]);
     expect(readdirSync(join(app, 'space'))).toEqual(['[id].tsx']);
+    // A file of a space on its host: /file/<space>?path=…&host=…, pushed
+    // with Back (docs/mobile.md "Files").
+    expect(readdirSync(join(app, 'file'))).toEqual(['[space].tsx']);
     // A sub-space of a followed space, by its local id on the host:
     // /sub-space/<space>/<child>, pushed with Back.
     expect(readdirSync(join(app, 'sub-space'))).toEqual(['[space]']);
@@ -61,6 +65,7 @@ describe('signed-in routes', () => {
       'activity-sheet',
       'accounts-sheet',
       'sub-space/[space]/[child]',
+      'file/[space]',
     ])
       expect(stack).toContain(`name="${name}"`);
   });
