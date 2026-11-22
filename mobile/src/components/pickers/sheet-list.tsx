@@ -1,6 +1,7 @@
 /** A sheet's React Native content by kind (iOS routes, the web modal). */
 import { ActivitySheet } from '../../ui/ActivitySheet';
 import { AccountsList } from '../accounts/accounts-list';
+import { SelectTextSheet } from '../chat/select-text-sheet';
 import { ModelPickerList } from './model-picker-list';
 import type { SheetKind } from './types';
 import { ComputerPickerList, ProjectPickerList } from './where-picker-list';
@@ -19,6 +20,7 @@ export function SheetList({
   if (kind === 'activity')
     return <ActivitySheet space={space ?? ''} onClose={onClose} />;
   if (kind === 'accounts') return <AccountsList onClose={onClose} />;
+  if (kind === 'text') return <SelectTextSheet onClose={onClose} />;
   if (kind === 'computer') return <ComputerPickerList onClose={onClose} />;
   return <ProjectPickerList onClose={onClose} />;
 }

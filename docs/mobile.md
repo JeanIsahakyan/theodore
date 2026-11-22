@@ -441,11 +441,12 @@ new space (✎, the header) ─▶ dismissTo Home  bell ─▶ the first waiting
 | Chat: `Conversation` (Legend List, keyboard-aware, `ConversationScrollButton`), `Message` (your bubble / the agent's full width), `StreamingMessage` + `Shimmer` (the live turn) | `src/components/chat/` |
 | Markdown: mdast (micromark, GFM tables and strikethrough) ─▶ React Native views; code blocks highlighted (highlight.js, a fixed set of languages, never guessed) | `src/components/markdown/` |
 | A space's header (name, "on host · status") | `src/components/space-header.tsx` (the main header with a subtitle), `space-title.tsx` |
-| A space's steps: compact grey rows that open in place (folding: `src/ui/turnRows.ts`) | `src/ui/Timeline.tsx`, `src/ui/SpaceChat.tsx` |
+| A space's steps: compact grey rows that open in place (folding: `src/ui/turnRows.ts`); an image a step reads drawn under its row ("Files") | `src/ui/Timeline.tsx`, `src/ui/SpaceChat.tsx` |
+| Long press a message: Copy, Select text (a sheet with partial selection; "Select text" below) | `src/components/chat/long-press{.web,}.tsx`, `select-text-sheet.tsx`, rules `src/ui/messageMenu.ts`, route `app/(app)/select-text.tsx` |
 | What you did before the host answered: sends, Approve, answers, a start (rules: `src/ui/pending.ts`) | `src/state/pending.ts`, `PendingRow` in `src/ui/SpaceChat.tsx` |
 | The activity strip above a space's composer and its sheet (rules: `src/ui/activity.ts`) | `src/ui/ActivityStrip.tsx`, `src/ui/ActivitySheet{.android,}.tsx`, route `app/(app)/activity-sheet.tsx` |
 | A sub-space's screen (words: `src/ui/subSpaceScreen.ts`) | `app/(app)/sub-space/[space]/[child].tsx` |
-| Composer chip, Home's where chips and picker sheets (computer + Mode, project, agent · model · effort + a space's Mode) | `src/components/pickers/` (`sheet-chip.*` a chip per platform, `sheet-host.*` opens a sheet per platform, `where-chips.tsx`), routes `app/(app)/model-picker.tsx`, `computer-picker.tsx`, `project-picker.tsx`; logic `src/ui/modelPicker.ts`, `src/ui/homeDraft.ts`, `modeRows` in `src/ui/logic.ts`; picks `src/state/compose.ts` |
+| Composer chip, Home's where chips and picker sheets (computer + Mode, project, agent · model · effort + a space's Mode; the same `useSheet` opens Activity, Accounts and Select text) | `src/components/pickers/` (`sheet-chip.*` a chip per platform, `sheet-host.*` opens a sheet per platform, `where-chips.tsx`), routes `app/(app)/model-picker.tsx`, `computer-picker.tsx`, `project-picker.tsx`; logic `src/ui/modelPicker.ts`, `src/ui/homeDraft.ts`, `modeRows` in `src/ui/logic.ts`; picks `src/state/compose.ts` |
 | Icons: SF Symbols (iOS), Material Symbols (Android), Lucide (web) | `src/components/symbol-image.tsx` |
 | Settings and Devices: rows, sections, account / fingerprint / device cards | `src/components/settings/` (below) |
 
@@ -919,6 +920,22 @@ computer ─▶ phone (a path in a reply, a file chip on your bubble)
     fleet.too_large under 8 MiB ─▶ "Large file · Download anyway" ─▶ again with 50 MiB (the protocol's cap)
     not found / denied / offline / silent ─▶ one line (src/ui/fileViewer.ts errorLine), Retry when it may help
   a file on your bubble (`[screen.png]`) ─▶ .context/screen.png on the host
+
+an image the agent reads (a Read / NotebookRead / read_file step whose target has an
+image extension: png, jpg, jpeg, gif, webp, heic, heif, bmp, avif; SVG is left out)
+  ─▶ a thumbnail under that step's row, in the live turn as soon as the step shows and in the
+     finished reply (src/ui/stepImages.ts imageReadOf, src/components/chat/step-thumbnail.tsx)
+    you sent it (.context/<name>, this phone still has the copy) ─▶ drawn from the local copy, nothing asked
+                                                                   (src/fleet/local-copies.ts, filled on send)
+    else ─▶ fleet.readFile {max_bytes: 2 MiB} ─▶ cached as the viewer's file (the same key: the viewer
+            opens it at once) ─▶ Expo Image (decoded off the JS thread); two fetches at a time, one per file
+    fleet.too_large ─▶ "Large image · Tap to load" ─▶ again with 8 MiB; over that ─▶ nothing more (the viewer's flow on tap)
+    not found / denied / a host older than protocol 8 ─▶ the path as today, no noise (the host is
+                                                         remembered for the session: nothing more asked of it)
+    offline / silent / other ─▶ "Couldn't load image · Retry"
+    tap ─▶ the viewer (pinch-zoom, Save or share)        telemetry: file_viewed{surface: step_thumbnail}
+  the host's `target` is a path's last two segments (80 chars at most): a deeper path can't be
+  fetched and comes back not found; `.context/<name>` always resolves
 ```
 
 | Piece | File |
@@ -927,6 +944,7 @@ computer ─▶ phone (a path in a reply, a file chip on your bubble)
 | Picking and compressing | `src/components/chat/pick-files.ts` |
 | One composer's files: pick ─▶ upload ─▶ ✓ / ↻, ✕, take on send | `src/components/chat/use-attach.ts`, store `src/state/attachments.ts`, rules `src/ui/attachments.ts` |
 | Paths in replies, chips on your bubble ─▶ the viewer | `src/components/chat/file-link.tsx` (`FileLinkProvider` on a space's and a sub-space's screen; the markdown's `inlineCode` rule) |
+| Images the agent reads, under the step's row | `src/components/chat/step-thumbnail.tsx` (in `src/ui/Timeline.tsx`'s `ToolRow`), rules `src/ui/stepImages.ts`, local copies of sent files `src/fleet/local-copies.ts` |
 | The viewer: states `src/ui/fileViewer.ts`, kinds `src/ui/filePaths.ts`, body per kind | `app/(app)/file/[space].tsx`, `src/components/file/file-body{.web,}.tsx`, `text-view.tsx`, `share{.web,}.ts` |
 | Client: `uploadAttachment`, `deleteBlob`, `readFile`, `fetchBlob`, `canOpenBlobs`; `attachments` on `startSpace` / `send` / `sendTo` | `src/fleet/client.ts` |
 
@@ -949,6 +967,37 @@ computer ─▶ phone (a path in a reply, a file chip on your bubble)
 - Not run on a device yet: the pickers, compression, the share sheet and
   the PDF view are wired as their Expo modules document them; the crypto,
   the uploads, the payloads and the viewer's states are tested.
+
+### Select text
+
+React Native's `Text selectable` copies only a whole message on iOS, so a
+message's text isn't selectable on the phone; a long press offers the menu
+instead. On the web the text is plain DOM text (`user-select: text` on every
+selectable Text) and selects as it is; the long-press menu shows on a touch
+screen too, the right-click menu stays the browser's.
+
+```text
+long press  a reply · your bubble · a step's text or output (open) · a history line
+  ─▶ iOS ActionSheetIOS · Android Alert · web a small card    (src/components/chat/long-press{.web,}.tsx)
+     Copy          the whole text on the clipboard (expo-clipboard), a success haptic
+     Select text   ─▶ the sheet (iOS formSheet route /select-text, Android Compose
+                      ModalBottomSheet hosting the field in an RNHostView, web the modal card)
+                      ╭ Reply                       (Copy all) ╮
+                      │ the message as plain text in a         │  TextInput multiline editable={false}
+                      │ read-only field: the system's handles, │  selectTextOnFocus={false},
+                      │ magnifier, Copy / Share on a part      │  contextMenuHidden={false}, scrolls
+                      │ ┃code blocks keep monospace┃           │  (fences off: src/ui/messageMenu.ts
+                      ╰────────────────────────────────────────╯   textSegments), cut at 100 K chars
+     <a row's own actions>                                     (`extras`; none today)
+  the text travels in src/state/selectText.ts (an iOS route can't carry it in its URL)
+```
+
+- Items and the sheet's text: `src/ui/messageMenu.ts` (`messageMenuItems`
+  per kind: reply, mine, step). The wrapper is a `Pressable` with
+  `onLongPress` only: the children keep their taps (a step row opens, a file
+  path opens the viewer). The drawer's pan needs 12 pt of rightward motion
+  and the list scrolls on a vertical move, so a still hold reaches the menu;
+  the drawer's own long press (Archive) is on its rows only.
 
 ## Not in v1
 

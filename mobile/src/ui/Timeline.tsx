@@ -10,15 +10,26 @@
  *           the text being written with a cursor▌, "Thinking" shimmering
  * finished  › 3 tool calls, 5 messages  ▤ ▸_      opens in place
  *           ▸_ Run  cargo test  ⓘ failed           always a row
+ *           ▤ Read  .context/shot.png
+ *             [ 🖼 thumbnail ]                      an image read: shown at once
+ *                                                   (StepThumbnail, stepImages.ts)
  * ```
+ *
+ * A step's text or output (open) long-presses for Copy / Select text.
  */
 import { memo, useMemo, useState, type ReactNode } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { Shimmer, StreamingMessage } from '../components/chat';
+import {
+  LongPressMenu,
+  Shimmer,
+  StepThumbnail,
+  StreamingMessage,
+} from '../components/chat';
 import { ChatMarkdown } from '../components/markdown';
 import { SymbolImage, type SymbolName } from '../components/symbol-image';
 import type { TurnStep } from '../fleet/contract';
 import { Spinner } from './Spinner';
+import { imageReadOf } from './stepImages';
 import { mono, usePalette } from './theme';
 import {
   foldLine,
@@ -45,6 +56,10 @@ export const KIND_ICON: Record<ToolKind, SymbolName> = {
   mcp: 'step.mcp',
   other: 'step.other',
 };
+
+/** The phone's text isn't `selectable`: a long press opens the menu
+ *  (`LongPressMenu`); on the web the DOM text selects as it is. */
+const selectable = process.env.EXPO_OS === 'web';
 
 const NO_STEPS: readonly TurnStep[] = [];
 const NOTHING_UNDER = new Map<string, TurnStep[]>();
@@ -140,18 +155,21 @@ function Failed() {
   );
 }
 
-/** A row that opens: the line, then (open) what's under it. */
+/** A row that opens: the line, what always shows under it (an image the
+ *  step read), then (open) what's under it. */
 function Row({
   line,
   open,
   onToggle,
   label,
+  always,
   children,
 }: {
   line: ReactNode;
   open: boolean;
   onToggle: () => void;
   label: string;
+  always?: ReactNode;
   children?: ReactNode;
 }) {
   return (
@@ -167,24 +185,28 @@ function Row({
       >
         {line}
       </Pressable>
+      {always}
       {open ? children : null}
     </View>
   );
 }
 
+/** A step's text or output: long-press for Copy / Select text. */
 function Detail({ label, text }: { label: string; text: string }) {
   const p = usePalette();
   return (
-    <View style={styles.detail}>
-      <Text style={[styles.detailLabel, { color: p.muted }]}>{label}</Text>
-      <Text
-        selectable
-        style={[mono, styles.detailText, { color: p.text }]}
-        numberOfLines={40}
-      >
-        {text}
-      </Text>
-    </View>
+    <LongPressMenu text={text} kind="step">
+      <View style={styles.detail}>
+        <Text style={[styles.detailLabel, { color: p.muted }]}>{label}</Text>
+        <Text
+          selectable={selectable}
+          style={[mono, styles.detailText, { color: p.text }]}
+          numberOfLines={40}
+        >
+          {text}
+        </Text>
+      </View>
+    </LongPressMenu>
   );
 }
 
@@ -204,11 +226,14 @@ const ToolRow = memo(function ToolRow({
   );
   const waiting = !!step.background && !step.summary;
   const busy = running && (step.ok == null || waiting);
+  // An image the agent read: drawn under the row as soon as the step shows.
+  const image = imageReadOf(step);
   return (
     <Row
       label={`${view.label}${view.chip ? ` ${view.chip}` : ''}`}
       open={open}
       onToggle={() => setOpen(!open)}
+      always={image ? <StepThumbnail path={image} /> : null}
       line={
         <>
           <Icon busy={busy} name={KIND_ICON[view.kind]} />
