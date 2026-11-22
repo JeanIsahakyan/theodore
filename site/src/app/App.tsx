@@ -5,6 +5,8 @@ import { Download } from '../pages/Download';
 import { Home } from '../pages/Home';
 import { NotFound } from '../pages/NotFound';
 import { Privacy } from '../pages/Privacy';
+import { Releases } from '../pages/Releases';
+import { Space } from '../pages/Space';
 import { Terms } from '../pages/Terms';
 import { PageDataContext, type PageData } from './data';
 import { RouterProvider, useRouter } from './router';
@@ -21,10 +23,14 @@ function Page() {
       return <Home />;
     case '/download':
       return <Download />;
+    case '/releases':
+      return <Releases />;
     case '/privacy':
       return <Privacy />;
     case '/terms':
       return <Terms />;
+    case '/s':
+      return <Space />;
     default:
       return <NotFound />;
   }
@@ -40,7 +46,7 @@ export function App({
   return (
     <PageDataContext.Provider value={data}>
       <RouterProvider initialPath={initialPath}>
-        <div className="flex min-h-screen flex-col">
+        <div className="flex min-h-svh flex-col">
           <Nav />
           <main className="flex-1">
             <Page />

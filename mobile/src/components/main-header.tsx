@@ -5,8 +5,8 @@
  *
  * ```text
  * [☰]  New space                       [🔔 3][✎]
- * [☰]  fix the login bug…              [🔔 3][✎][⌸]   a space: two lines,
- *      on mac-A · Running                             then its `actions`
+ * [☰]  fix the login bug…              [🔔 3][✎]   a space: two lines
+ *      on mac-A · Running
  * ```
  */
 import { Stack } from 'expo-router';
@@ -46,12 +46,7 @@ function HeaderButton({
   );
 }
 
-export function MainHeader({
-  title,
-  subtitle,
-  onNewSpace,
-  actions,
-}: MainHeaderProps) {
+export function MainHeader({ title, subtitle, onNewSpace }: MainHeaderProps) {
   const p = usePalette();
   const { openDrawer, newSpace, waiting, openQuestions } =
     useHeaderActions(onNewSpace);
@@ -93,15 +88,6 @@ export function MainHeader({
               onPress={newSpace}
               color={p.text}
             />
-            {actions?.map((a) => (
-              <HeaderButton
-                key={a.label}
-                icon={a.icon}
-                label={a.label}
-                onPress={a.onPress}
-                color={a.destructive ? p.danger : p.text}
-              />
-            ))}
           </View>
         ),
       }}

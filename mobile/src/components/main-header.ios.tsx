@@ -6,8 +6,8 @@
  *
  * ```text
  * [☰]          New space          [🔔][✎]
- * [☰]      fix the login bug…     [🔔][✎][⌸]   a space: two lines, then
- *          on mac-A · Running                  its `actions` (Archive)
+ * [☰]      fix the login bug…     [🔔][✎]   a space: two lines
+ *          on mac-A · Running
  * ```
  */
 import { Stack } from 'expo-router';
@@ -16,17 +16,11 @@ import { liquidGlass } from '../ui/native';
 import { usePalette } from '../ui/theme';
 import { useHeaderActions, type MainHeaderProps } from './header-actions';
 import { TitleStack } from './space-title';
-import { SYMBOLS } from './symbol-image';
 
 /** Room left for the bar's items on both sides. */
 const SIDES = 150;
 
-export function MainHeader({
-  title,
-  subtitle,
-  onNewSpace,
-  actions,
-}: MainHeaderProps) {
+export function MainHeader({ title, subtitle, onNewSpace }: MainHeaderProps) {
   const p = usePalette();
   const { width } = useWindowDimensions();
   const { openDrawer, newSpace, waiting, openQuestions } =
@@ -74,15 +68,6 @@ export function MainHeader({
           tintColor={p.text}
           onPress={newSpace}
         />
-        {actions?.map((a) => (
-          <Stack.Toolbar.Button
-            key={a.label}
-            icon={SYMBOLS[a.icon].sf}
-            accessibilityLabel={a.label}
-            tintColor={a.destructive ? p.danger : p.text}
-            onPress={a.onPress}
-          />
-        ))}
       </Stack.Toolbar>
     </>
   );

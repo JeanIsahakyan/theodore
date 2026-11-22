@@ -206,8 +206,8 @@ function OptionCard({
   return (
     <li
       id={o.id}
-      className={`flex flex-col gap-3 rounded-2xl border bg-surface p-5 ${
-        highlighted ? 'border-accent ring-2 ring-accent/30' : 'border-separator'
+      className={`flex flex-col gap-3 rounded-2xl bg-surface p-5 shadow-card ${
+        highlighted ? 'ring-2 ring-accent/40' : ''
       }`}
     >
       <div className="flex items-center gap-3">
@@ -216,7 +216,7 @@ function OptionCard({
         </span>
         <div className="min-w-0">
           <h2 className="text-base font-semibold">{o.title}</h2>
-          <p className="text-sm text-muted">{o.subtitle}</p>
+          <p className="text-sm text-ink-2">{o.subtitle}</p>
         </div>
         {highlighted && (
           <span className="ms-auto shrink-0 rounded-full bg-accent-soft px-2 py-0.5 text-xs font-medium text-accent">
@@ -249,7 +249,9 @@ function OptionCard({
       {o.soon && (
         <div className="flex flex-col gap-2">
           <p className="text-sm font-medium">{o.soon.title}</p>
-          <p className="text-sm text-muted">{o.soon.text}</p>
+          <p className="text-[15px] leading-relaxed text-ink-2">
+            {o.soon.text}
+          </p>
           {o.soon.cta && (
             <div>
               <ButtonLink
@@ -264,7 +266,7 @@ function OptionCard({
         </div>
       )}
       {o.notes && (
-        <p className="text-sm leading-relaxed text-muted">{o.notes}</p>
+        <p className="text-[15px] leading-relaxed text-ink-2">{o.notes}</p>
       )}
     </li>
   );
@@ -283,10 +285,10 @@ export function Download() {
     <div className="py-14 md:py-20">
       <Container>
         <div className="max-w-3xl">
-          <h1 className="text-4xl font-semibold tracking-tight md:text-6xl">
+          <h1 className="text-[2.5rem] font-semibold leading-[1.05] tracking-[-0.025em] md:text-6xl">
             Download Theodore
           </h1>
-          <p className="mt-4 text-lg text-muted">
+          <p className="mt-4 text-[18px] leading-relaxed text-ink-2 md:text-xl">
             {release ? (
               <>
                 Version{' '}
@@ -311,7 +313,7 @@ export function Download() {
               </>
             )}
           </p>
-          <p className="mt-2 text-sm text-muted">
+          <p className="mt-3 max-w-[60ch] text-[15px] leading-relaxed text-ink-2">
             You need git and at least one agent CLI installed and signed in
             (claude, codex or gemini), and a GitHub account for your pull
             requests.
@@ -327,7 +329,7 @@ export function Download() {
             />
           ))}
         </ul>
-        <div className="mt-10 max-w-3xl text-sm leading-relaxed text-muted">
+        <div className="mt-10 max-w-[70ch] text-[15px] leading-relaxed text-ink-2">
           <p>
             Every release on{' '}
             <Link href={RELEASES} className="underline underline-offset-2">

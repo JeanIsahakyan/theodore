@@ -36,8 +36,20 @@ export function isLabsVisible(store: RootStore): boolean {
 const windowFocused = () =>
   typeof document === 'undefined' || document.hasFocus();
 
-/** A click on a space's notification: the shell brought the window
- *  forward, open the space. `opened` runs after it did. */
+/** What a space link to a space this computer doesn't have says
+ *  (docs/spaces.md §6 "PR body"): the link names a space on another of
+ *  your computers, or one archived and gone. */
+export const SPACE_NOT_HERE =
+  "This space isn't on this computer. Open the link on the computer that runs it, or in the web app.";
+
+/** How long a link that launched the app waits for the first sync to
+ *  bring the space's row before it is called missing. */
+const LAUNCH_LINK_WAIT_MS = 10_000;
+
+/** A click on a space's notification, or a space link (`theodore://space/<id>`,
+ *  the website's `/s/<id>` page): the shell brought the window forward,
+ *  open the space. `opened` runs after it did. A space that isn't here is
+ *  said so, not ignored. */
 export function openSpaceOnClick(
   store: RootStore,
   opened: () => void = () => {},
@@ -49,9 +61,14 @@ export function openSpaceOnClick(
     store.ui.go({ name: 'space', id });
     opened();
   };
+  const notHere = () => store.ephemeral.toast(SPACE_NOT_HERE, 'warn');
   void getTransport()
     .listen<string>(OPEN_SPACE_EVENT, (id) => {
-      if (!store.models.spaces.get(id) || !isBuildMode(store)) return;
+      if (!isBuildMode(store)) return;
+      if (!store.models.spaces.get(id)) {
+        notHere();
+        return;
+      }
       open(id);
     })
     .then((un) => {
@@ -68,7 +85,12 @@ export function openSpaceOnClick(
       offPending = when(
         () => !!store.models.spaces.get(id) && isBuildMode(store),
         () => open(id),
-        { timeout: 60_000, onError: () => {} },
+        {
+          timeout: LAUNCH_LINK_WAIT_MS,
+          onError: () => {
+            if (!cancelled && isBuildMode(store)) notHere();
+          },
+        },
       );
     })
     .catch(() => {});

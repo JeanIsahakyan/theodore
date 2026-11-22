@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { SpaceView } from '../src/fleet/types';
 import {
   dayGroup,
+  drawerClosesOn,
   initials,
   spaceDot,
   spaceSections,
@@ -119,5 +120,28 @@ describe('initials', () => {
     expect(initials('jean')).toBe('JE');
     expect(initials(null, 'ji@vk.com')).toBe('J');
     expect(initials(null)).toBe('?');
+  });
+});
+
+describe('drawerClosesOn', () => {
+  it('a pick that opens a page closes the drawer', () => {
+    expect(drawerClosesOn('/', '/space/rs_1')).toBe(true);
+    expect(drawerClosesOn('/space/rs_1', '/devices')).toBe(true);
+    expect(drawerClosesOn('/', '/settings')).toBe(true);
+  });
+
+  it('a sheet opened from it leaves it open, and so does coming back', () => {
+    expect(drawerClosesOn('/', '/accounts-sheet')).toBe(false);
+    expect(drawerClosesOn('/space/rs_1', '/model-picker?space=rs_1')).toBe(
+      false,
+    );
+    expect(drawerClosesOn('/accounts-sheet', '/')).toBe(false);
+    expect(drawerClosesOn('/activity-sheet?space=rs_1', '/space/rs_1')).toBe(
+      false,
+    );
+  });
+
+  it('the same route: nothing', () => {
+    expect(drawerClosesOn('/', '/')).toBe(false);
   });
 });

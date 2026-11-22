@@ -3,7 +3,8 @@
 //!
 //! ```text
 //! Open PR ─▶ body: the repo's PR template (filled in by the agent, else
-//!            template + goal), or the goal ─▶ footer theodore://space/<id>
+//!            template + goal), or the goal ─▶ "Made with Theodore" ─▶
+//!            footer https://theodore.cloud/s/<id>
 //! Merge   ─▶ merge_space ─▶ merge_info ─▶ method ─▶ merge_pr (now · auto · queue)
 //! merged  ─▶ Continue ─▶ fetch the base ─▶ branch <login>/<slug>-2
 //!            worktree + ref ─▶ the base's new tip (+ turns not pushed, replayed)
@@ -37,8 +38,12 @@ pub(crate) const PR_TEMPLATES: [&str; 4] = [
 
 /// The hidden marker the link-back footer starts with.
 const FOOTER_MARKER: &str = "<!-- theodore-space:";
-/// The scheme a production build registers (`identity::url_scheme`).
-const DEFAULT_SCHEME: &str = "theodore";
+/// The website whose `/s/<id>` page opens a space in Theodore on any
+/// platform (docs/website.md "Space links"); a build may point at its own
+/// (`Core::set_space_link_base`: staging's).
+pub(crate) const DEFAULT_SITE_URL: &str = "https://theodore.cloud";
+/// The one line every PR body Theodore writes ends with, above the footer.
+pub(crate) const MADE_WITH: &str = "Made with [Theodore](https://theodore.cloud)";
 /// How long the agent may take to fill the template in.
 const FILL_TIMEOUT: Duration = Duration::from_secs(60);
 /// Files listed in the fill prompt's diff summary.
@@ -56,32 +61,39 @@ fn pushed_head(space: &Space) -> Option<&Sha> {
 }
 
 impl Core {
-    /// The scheme of the PR footer's link back to the space: this build's
-    /// (`theodore-staging`, …); `None` keeps `theodore`.
-    pub fn set_space_link_scheme(&self, scheme: Option<&str>) {
-        *self.0.space_link_scheme.lock().expect("link scheme lock") = scheme.map(str::to_string);
+    /// The website the PR footer's link back to the space goes through:
+    /// this build's (`https://staging.theodore.cloud`, …); `None` keeps
+    /// `DEFAULT_SITE_URL`.
+    pub fn set_space_link_base(&self, base: Option<&str>) {
+        *self.0.space_link_base.lock().expect("link base lock") =
+            base.map(|b| b.trim_end_matches('/').to_string());
     }
 
-    fn space_link(&self, space: &str) -> String {
-        let scheme = self
+    /// `https://theodore.cloud/s/<id>`: a page that opens the space in
+    /// Theodore on the phone, the desktop or the web app, and shows
+    /// nothing of it otherwise.
+    pub(crate) fn space_link(&self, space: &str) -> String {
+        let base = self
             .0
-            .space_link_scheme
+            .space_link_base
             .lock()
-            .expect("link scheme lock")
+            .expect("link base lock")
             .clone()
-            .unwrap_or_else(|| DEFAULT_SCHEME.into());
-        format!("{scheme}://space/{space}")
+            .unwrap_or_else(|| DEFAULT_SITE_URL.into());
+        space_link(&base, space)
     }
 
     /// The body of a space's new PR: the repo's PR template (filled in by
     /// the agent when it can, else the template with the goal above it),
-    /// or the goal; then the footer linking back to the space.
+    /// or the goal; "Closes #n" for the issue it came from; then the
+    /// "Made with Theodore" line and the footer linking back to the space.
     pub(crate) async fn space_pr_body(
         &self,
         space: &Space,
         repo_path: &Path,
         head: &Sha,
         goal_body: String,
+        closes: Option<u64>,
     ) -> String {
         let body = match self.pr_template(repo_path, head).await {
             None => goal_body,
@@ -90,7 +102,11 @@ impl Core {
                 None => template_with_goal(&template, &space.goal),
             },
         };
-        with_footer(&body, &space.id, &self.space_link(&space.id))
+        with_footer(
+            &with_closes(body, closes),
+            &space.id,
+            &self.space_link(&space.id),
+        )
     }
 
     /// The first PR template the change itself has (`PR_TEMPLATES`).
@@ -566,19 +582,39 @@ fn merge_mode(info: &MergeInfo) -> Result<(bool, bool), String> {
     }
 }
 
-/// `body` ending in the link-back footer, exactly once: an old footer is
-/// replaced, never repeated.
+/// `<base>/s/<space>`.
+pub(crate) fn space_link(base: &str, space: &str) -> String {
+    format!("{}/s/{space}", base.trim_end_matches('/'))
+}
+
+/// `body` ending in the "Made with Theodore" line and the link-back
+/// footer, each exactly once: an old footer (from the marker on, and the
+/// line above it) is replaced, never repeated.
 pub(crate) fn with_footer(body: &str, space: &str, link: &str) -> String {
     let body = match body.find(FOOTER_MARKER) {
         Some(i) => &body[..i],
         None => body,
     }
     .trim_end();
-    let footer = format!("{FOOTER_MARKER}{space} -->\n<sub>From a Theodore space: {link}</sub>");
+    let body = body.strip_suffix(MADE_WITH).unwrap_or(body).trim_end();
+    let footer = format!(
+        "{MADE_WITH}\n\n{FOOTER_MARKER}{space} -->\n<sub>From a Theodore space: {link}</sub>"
+    );
     if body.is_empty() {
         footer
     } else {
         format!("{body}\n\n{footer}")
+    }
+}
+
+/// The PR body, plus "Closes #<n>" when the space started from a host issue
+/// (`Space::issue`, docs/spaces.md §3 "New space from an issue"): the host
+/// closes it itself once the PR merges, same as typing it by hand.
+pub(crate) fn with_closes(body: String, issue: Option<u64>) -> String {
+    match issue {
+        None => body,
+        Some(n) if body.trim().is_empty() => format!("Closes #{n}"),
+        Some(n) => format!("{}\n\nCloses #{n}", body.trim_end()),
     }
 }
 
@@ -659,14 +695,58 @@ mod tests {
 
     #[test]
     fn the_footer_is_added_once() {
-        let link = "theodore://space/abc";
+        let link = "https://theodore.cloud/s/abc";
         let once = with_footer("Fix it", "abc", link);
         assert_eq!(
             once,
-            "Fix it\n\n<!-- theodore-space:abc -->\n<sub>From a Theodore space: theodore://space/abc</sub>"
+            "Fix it\n\n\
+             Made with [Theodore](https://theodore.cloud)\n\n\
+             <!-- theodore-space:abc -->\n\
+             <sub>From a Theodore space: https://theodore.cloud/s/abc</sub>"
         );
-        assert_eq!(with_footer(&once, "abc", link), once);
-        assert!(with_footer("", "abc", link).starts_with(FOOTER_MARKER));
+        assert_eq!(with_footer(&once, "abc", link), once, "not repeated");
+        assert_eq!(
+            with_footer(&once, "abc", "https://staging.theodore.cloud/s/abc"),
+            once.replace(link, "https://staging.theodore.cloud/s/abc"),
+            "replaced, the Made-with line not doubled"
+        );
+        // An old footer (a theodore:// link, no Made-with line) is replaced.
+        let old = "Fix it\n\n<!-- theodore-space:abc -->\n<sub>From a Theodore space: theodore://space/abc</sub>";
+        assert_eq!(with_footer(old, "abc", link), once);
+        assert!(with_footer("", "abc", link).starts_with(MADE_WITH));
+        assert!(with_footer("", "abc", link).contains(FOOTER_MARKER));
+    }
+
+    #[test]
+    fn the_link_is_the_sites_s_page() {
+        assert_eq!(
+            space_link(DEFAULT_SITE_URL, "3f2a9c1b0d4e"),
+            "https://theodore.cloud/s/3f2a9c1b0d4e"
+        );
+        assert_eq!(
+            space_link("https://staging.theodore.cloud/", "abc"),
+            "https://staging.theodore.cloud/s/abc"
+        );
+    }
+
+    #[test]
+    fn closes_is_appended_only_when_the_space_has_an_issue() {
+        assert_eq!(with_closes(String::new(), None), "");
+        assert_eq!(with_closes(String::new(), Some(42)), "Closes #42");
+        assert_eq!(
+            with_closes("Retry\nwith backoff".into(), Some(42)),
+            "Retry\nwith backoff\n\nCloses #42"
+        );
+        // Closes sits above the footer, so the footer stays last.
+        let body = with_footer(
+            &with_closes("Retry".into(), Some(7)),
+            "abc",
+            "https://theodore.cloud/s/abc",
+        );
+        assert!(
+            body.starts_with("Retry\n\nCloses #7\n\nMade with"),
+            "{body}"
+        );
     }
 
     #[test]

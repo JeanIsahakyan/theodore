@@ -5,3 +5,13 @@
   X-Content-Type-Options: nosniff
   Referrer-Policy: strict-origin-when-cross-origin
   X-Frame-Options: DENY
+
+# Universal Links (iOS) and App Links (Android) read these as JSON; the
+# Apple file has no extension, so Pages would serve it as text otherwise.
+/.well-known/apple-app-site-association
+  Content-Type: application/json
+  Cache-Control: public, max-age=3600
+
+/.well-known/assetlinks.json
+  Content-Type: application/json
+  Cache-Control: public, max-age=3600
