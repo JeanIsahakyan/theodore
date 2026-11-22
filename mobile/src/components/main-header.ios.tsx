@@ -6,8 +6,8 @@
  *
  * ```text
  * [☰]          New space          [🔔][✎]
- * [☰]      fix the login bug…     [🔔][✎][⋯]   a space: two lines, ⋯ a
- *          on mac-A · Running                  UIMenu with `menu` items
+ * [☰]      fix the login bug…     [🔔][✎][⌸]   a space: two lines, then
+ *          on mac-A · Running                  its `actions` (Archive)
  * ```
  */
 import { Stack } from 'expo-router';
@@ -16,6 +16,7 @@ import { liquidGlass } from '../ui/native';
 import { usePalette } from '../ui/theme';
 import { useHeaderActions, type MainHeaderProps } from './header-actions';
 import { TitleStack } from './space-title';
+import { SYMBOLS } from './symbol-image';
 
 /** Room left for the bar's items on both sides. */
 const SIDES = 150;
@@ -24,7 +25,7 @@ export function MainHeader({
   title,
   subtitle,
   onNewSpace,
-  menu,
+  actions,
 }: MainHeaderProps) {
   const p = usePalette();
   const { width } = useWindowDimensions();
@@ -73,23 +74,15 @@ export function MainHeader({
           tintColor={p.text}
           onPress={newSpace}
         />
-        {menu?.length ? (
-          <Stack.Toolbar.Menu
-            icon="ellipsis.circle"
-            accessibilityLabel="More"
-            tintColor={p.text}
-          >
-            {menu.map((it) => (
-              <Stack.Toolbar.MenuAction
-                key={it.label}
-                destructive={it.destructive}
-                onPress={it.onPress}
-              >
-                {it.label}
-              </Stack.Toolbar.MenuAction>
-            ))}
-          </Stack.Toolbar.Menu>
-        ) : null}
+        {actions?.map((a) => (
+          <Stack.Toolbar.Button
+            key={a.label}
+            icon={SYMBOLS[a.icon].sf}
+            accessibilityLabel={a.label}
+            tintColor={a.destructive ? p.danger : p.text}
+            onPress={a.onPress}
+          />
+        ))}
       </Stack.Toolbar>
     </>
   );

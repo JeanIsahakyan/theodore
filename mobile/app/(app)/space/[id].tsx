@@ -39,7 +39,7 @@
  *                              "· 1 queued" on the strip's first line meanwhile
  *     refused / silent      ─▶ "Not sent · why" with Retry and Edit (text back)
  * (■) Stop while running, beside Send ─▶ confirm() ─▶ fleet.stopSpace
- * [⋯] Archive in the header (canArchive) ─▶ useArchive ─▶ Home, toast with Undo
+ * [⌸] Archive in the header (canArchive) ─▶ useArchive ─▶ Home, toast with Undo
  * running ─▶ the strip's first line: the plan's active step, else the newest
  *     live step, else (not mirrored) the newest log line, and a timer;
  *     waiting on a question ─▶ "Waiting for your answer ↓" scrolls to the card
@@ -647,11 +647,12 @@ function LiveSpaceScreen({ id }: { id: string }) {
 
   const chips = <ModelChip space={id} />;
 
-  // The header's ⋯: Archive, when this phone may ask the host for it.
-  const menu = canArchive(space, devices)
+  // The header's Archive button, when this phone may ask the host for it.
+  const actions = canArchive(space, devices)
     ? [
         {
-          label: 'Archive',
+          icon: 'archive' as const,
+          label: 'Archive space',
           destructive: true,
           onPress: () => {
             void archive(space).then((done) => {
@@ -667,7 +668,7 @@ function LiveSpaceScreen({ id }: { id: string }) {
       <SpaceHeader
         title={spaceTitle(space)}
         subtitle={`on ${space.hostName} · ${STATUS_LABEL[space.status]} · ${MODE_LABEL[picked]}`}
-        menu={menu}
+        actions={actions}
       />
       {chat ? (
         <Conversation

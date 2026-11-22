@@ -384,9 +384,10 @@ A space is archived on its host as the desktop's Archive does it
 branch and the PR left alone, the row archived. `archive_space` (protocol 8).
 
 ```text
-drawer, iOS / Android   row swiped left ─▶ [ Archive ] (red)
-drawer, web             hover / focus on a row ─▶ [⋯] at its right ─▶ Archive
-a space's header        [⋯] (iOS ellipsis.circle, Android ⋮, web ⋯) ─▶ Archive
+drawer, iOS / Android   row swiped left ─▶ [ ⌸ Archive ] (red; the glyph, its label under it)
+drawer, web             hover / focus on a row ─▶ [⌸] icon button at its right
+a space's header        [⌸] icon button after ✎ ("Archive space"; SF archivebox,
+                        Material archive, Lucide Archive: `archive` in symbol-image.tsx)
         │
         ▼ confirm (system alert / window.confirm)
    Archive “<title>”?                                    title: spaceTitle, else "Untitled space"
@@ -420,8 +421,10 @@ a space's header        [⋯] (iOS ellipsis.circle, Android ⋮, web ⋯) ─▶
   `archived` (archived on the computer) hides it the same way; another
   status lists it again.
 - Flow: `src/ui/useArchive.ts`; toast: `src/state/toast.ts`, `src/ui/Toast.tsx`
-  (mounted once in `app/(app)/_layout.tsx`, over the open drawer too); the web
-  "⋯" menu: `src/ui/MoreMenu.tsx`; the header's menu: `MainHeaderProps.menu`.
+  (mounted once in `app/(app)/_layout.tsx`, over the open drawer too); the
+  header's icon buttons: `MainHeaderProps.actions` (`HeaderAction`: icon,
+  label, onPress, destructive), one `Stack.Toolbar.Button` / Compose
+  `IconButton` / web button each.
 
 ### Activity strip
 

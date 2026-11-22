@@ -19,9 +19,10 @@
  * space, is the one way to start one.
  *
  * Archive (docs/mobile.md "Archive"; `canArchive` in src/ui/archive.ts):
- * iOS / Android, a row swiped left ─▶ a red Archive; web, "⋯" at the row's
- * right edge on hover or focus ─▶ a menu with Archive. Both run
- * `useArchive` (confirm, stop first if running, archive, toast with Undo).
+ * iOS / Android, a row swiped left ─▶ a red Archive (the archive glyph, its
+ * label under it); web, the archive icon button at the row's right edge on
+ * hover or focus. Both run `useArchive` (confirm, stop first if running,
+ * archive, toast with Undo).
  *
  * Before this run's first devices list (src/ui/load.ts) an empty list is
  * skeleton rows, not "Spaces you start or follow show here."; the server
@@ -53,7 +54,6 @@ import { canArchive } from '../ui/archive';
 import { initials, spaceDot, spaceSections, type SpaceDot } from '../ui/drawer';
 import { UNREACHABLE_TITLE } from '../ui/load';
 import { spaceTitle } from '../ui/logic';
-import { MoreMenu } from '../ui/MoreMenu';
 import { Button } from '../ui/native';
 import { SkeletonRows } from '../ui/Skeleton';
 import { subSpaceSummary } from '../ui/subSpaceTree';
@@ -154,17 +154,19 @@ function NavItem({
   );
 }
 
-/** Native: the red Archive revealed by a leftward swipe. */
+/** Native: the red Archive revealed by a leftward swipe: the glyph, its
+ *  label under it. */
 function ArchiveAction({ onPress }: { onPress: () => void }) {
   const p = usePalette();
   return (
     <Pressable
       onPress={onPress}
       accessibilityRole="button"
-      accessibilityLabel="Archive"
+      accessibilityLabel="Archive space"
       style={[styles.archive, { backgroundColor: p.danger }]}
       className={android ? 'mr-3 rounded-full' : 'mr-2 rounded-[10px]'}
     >
+      <SymbolImage name="archive" size={22} color="#FFFFFF" />
       <Text style={[styles.archiveText, { color: '#FFFFFF' }]}>Archive</Text>
     </Pressable>
   );
@@ -228,13 +230,16 @@ function SpaceItem({
         <View className={`h-2 w-2 rounded-full ${DOT_CLASS[dot]}`} />
       ) : null}
       {web && archivable ? (
-        <MoreMenu
-          items={[{ label: 'Archive', onPress: onArchive, destructive: true }]}
-          label={`More, ${title}`}
-          size={16}
-          testID={`space-more-${space.space}`}
+        <Pressable
+          onPress={onArchive}
+          accessibilityRole="button"
+          accessibilityLabel={`Archive space ${title}`}
+          testID={`space-archive-${space.space}`}
+          hitSlop={4}
           className={`-mr-2 h-7 w-7 items-center justify-center rounded-md hover:bg-muted ${hovered || active ? 'opacity-100' : 'opacity-0 focus:opacity-100'}`}
-        />
+        >
+          <SymbolImage name="archive" size={16} color={p.muted} />
+        </Pressable>
       ) : null}
     </Pressable>
   );
@@ -473,6 +478,7 @@ const styles = StyleSheet.create({
     width: ARCHIVE_WIDTH,
     alignItems: 'center',
     justifyContent: 'center',
+    gap: 4,
   },
-  archiveText: { fontSize: 15, fontWeight: '600' },
+  archiveText: { fontSize: 13, fontWeight: '600' },
 });
