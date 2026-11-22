@@ -295,6 +295,111 @@ and network errors, dropped on another 4xx or after 4 attempts.
 Either way, choose "Help improve Theodore" in onboarding or flip the switches in Settings —
 nothing is sent before that.
 
+## Cloud
+
+The Worker in `cloud/` (`docs/cloud.md`) has the same shape in miniature:
+one structured record, one redaction, two sinks. Code: `cloud/src/telemetry/`
+(`log.ts` the logger, `redact.ts` the rules, `otlp.ts` the export,
+`relay.ts` the app's relay, `http.ts` the request line).
+
+```text
+Worker, OrgHub ─▶ log.info / warn / error / exception ─▶ redaction ─┬─▶ console (Workers Logs)   everything, always
+                                                                    └─▶ OTLP ─▶ New Relic        warn, error, and the
+                                                                        service.name theodore-cloud   info events below
+phone / web app ─▶ POST /v1/telemetry/logs ─▶ checked, redacted again ─▶ OTLP ─▶ New Relic
+                                                                        the app's own resource (service.name theodore-mobile)
+```
+
+Both need `THEODORE_OTLP_ENDPOINT` (a `wrangler.toml` var per environment,
+`https://otlp.nr-data.net`) **and** the Worker secret `THEODORE_OTLP_HEADERS`
+(`api-key=<ingest license key>`; set per environment with `wrangler secret
+put`, or by the deploy steps pending in `docs/cloud.md` "Environments and
+secrets"). Either missing: nothing leaves the Worker, the
+relay still answers `202` and drops, so local dev needs no key. Records are
+batched (at most 200 queued, the oldest dropped) and sent on
+`ctx.waitUntil` after each request, socket message or alarm, coalesced over
+500 ms; a failed send is logged locally and not retried.
+`deployment.environment.name` is the `THEODORE_ENV` var (`staging`,
+`production`, `local`); `cloud.region` is the Cloudflare colo that handled a
+relayed request.
+
+### What the cloud logs
+
+Info for the operational picture, warn and error for failures; every line
+lists ids, kinds, codes and numbers, nothing a person wrote.
+
+| Event | Level | Fields | Remote |
+|---|---|---|---|
+| `http request` | info | `route` (a fixed label, `other` for unknown paths), `method`, `status`, `ms`, `device_kind` (`mobile`, `web`, `desktop`, `mcp`, from the origin, user agent or path), `error.code` on a 4xx/5xx | yes |
+| `auth failed` | info | `code`, `reason` (the cloud's own static words) | yes |
+| `rate limited` | info | `bucket` (`public`, `user`, `telemetry`, `fleet`), the connection's ids on `fleet` | yes |
+| `quota hit` | info | `code` (`fleet.too_many_devices`, `fleet.too_many_connections`, `fleet.too_many_spaces`, `fleet.busy`), `op`, the connection's ids | yes |
+| `fleet connected` | info | `user_id`, `org_id`, `device_id`, `device_kind`, `protocol`, `os`, `app_version`, `new_device` | yes |
+| `fleet disconnected` | info | the same ids, `by` (`device` with its `close_code`; `cloud` with `code` and `close_code`), `phase` | yes |
+| `fleet request` | info | `op`, `via` (`ws`, `http`), `outcome` (`routed`, `refused`, `error`), `code`, `origin_kind`, `ms` | yes |
+| `push sent` | info | `provider` (`expo`), `kind` (`ask`, `finished`, `confirm`), `sent`, `ok`, `unregistered`, `failed` | yes |
+| `push failed` | warn / error | `provider`, `count`, `status` or the exception | yes |
+| `telemetry relayed` | info | `service`, `records`, `dropped`, `signed_in`, `forwarded` | yes |
+| `telemetry export failed`, `telemetry relay failed` | warn | `records`, `status`, `kind` (local only for the export: it can't send itself) | — |
+| `request failed` | warn | `code`, `status`, `reason` (a 5xx the cloud answered) | yes |
+| `internal error`, `fleet internal error`, `http request failed` | error | `error.kind`, `error.message`, `error.stack`, `code` | yes |
+
+Only warn, error and the info events marked remote reach New Relic
+(`REMOTE_INFO` in `log.ts`); other info lines stay in Workers Logs.
+
+### Redaction, cloud side
+
+`redact.ts` applies to every record before either sink, and to what the
+relay forwards:
+
+- **Credential fields** (`token`, `*_token`, `secret`, `password`,
+  `authorization`, `cookie`, `nonce`, `signature`, `api_key`, `*_key` but
+  `public_key` / `target_key`) → `[redacted]`.
+- **Content fields** (`body`, `text`, `message`, `goal`, `envelope`,
+  `question(s)`, `answer(s)`, `title`, `description`, `prompt`, `reply`,
+  `content`, `data`, `info`, `name`, `email`, `options`, …) →
+  `[omitted: N bytes]`; `error.message` is kept, redacted.
+- **Secrets in any text** (JWTs, `Bearer …`, GitHub / GitLab / Atlassian /
+  WorkOS / model-provider / AWS / Slack / Google / npm tokens, Expo push
+  tokens, passwords in URLs, `code=` / `token=` / `key=` … pairs, private
+  keys) → `[redacted]`; **emails** → `<email:hash>`; strings cut at 2 KB
+  (stacks 8 KB).
+- **Remote only:** fields naming a user, account or org (`user_id`,
+  `org_id`, `enduser.id`, `sub`) → `h:<FNV-1a 64 hash>`, the same hash for
+  the same id, so one user's lines still group and an operator who knows
+  an id can look it up. Device ids stay. Workers Logs keep the ids.
+
+`test/telemetry-log.test.ts` and `test/telemetry-hub.test.ts` check that a
+token, a nonce, a public key, an email or a goal never reaches a sink.
+
+### The relay: `POST /v1/telemetry/logs`
+
+The phone and web app hold no New Relic key: their error log goes through
+the cloud, which checks every field and never trusts the client.
+
+```text
+{ records: [{ ts (ms), level: warn | error, msg ≤ 2000, attrs: ≤ 30 keys ≤ 64 chars,
+              values string ≤ 2000 | number | boolean }] 1–100,
+  resource: { service.name: theodore-mobile | theodore-web, service.version, os.type,
+              os.version, deployment.environment.name, service.instance.id, enduser.id? } }
+  ≤ 64 KiB, Authorization: Bearer <access JWT> optional
+  ─▶ a token given: verified as for /v1/fleet/request (401 if bad), RL_USER
+     none: RL_TELEMETRY, 10 / min per client IP
+  ─▶ body not an object, no / empty / > 100 records, unknown service.name ─▶ 400 cloud.bad_request
+  ─▶ a record with another level, a non-string msg, not an object ─▶ dropped (counted)
+     ts missing, not a number, > 5 min ahead or > 30 days back ─▶ now
+     unknown record / resource fields, oversized keys or values, non-primitive values ─▶ dropped
+     msg and strings ─▶ the same secret and email redaction as the cloud's own lines
+     enduser.id ─▶ kept only when it equals the token's user (and is a user_… id), else dropped
+  ─▶ + theodore.relay = true, cloud.region = <colo> on every record
+  ─▶ 202 { accepted: N } at once; the batch goes on ctx.waitUntil as OTLP logs under
+     the app's resource (scope theodore-relay); no OTLP target ─▶ dropped
+```
+
+CORS as the other web app routes (`WEB_ORIGINS`). The app never retries: a
+`202` is final, a `4xx` means the batch was malformed. Tests:
+`test/telemetry-relay.test.ts`, `test/telemetry-otlp.test.ts`.
+
 ## The local log
 
 `<data dir>/logs/theodore.jsonl` (`~/.theodore/logs/` in production, `~/.theodore-<env>/logs/` in

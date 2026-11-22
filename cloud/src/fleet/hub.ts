@@ -52,6 +52,7 @@ import type {
   SpaceEventBody,
 } from '../gen/fleet';
 import { CloudError } from '../errors';
+import { noopLogger, type Logger } from '../telemetry/log';
 import {
   ACTIVE_IDLE_MS,
   close,
@@ -197,7 +198,17 @@ export interface HubEnv {
   push?: PushSender;
   /** Keeps work alive past the message (`ctx.waitUntil`); never awaited. */
   defer?(work: Promise<unknown>): void;
+  /** Structured logs (docs/telemetry.md "Cloud"); absent: none. */
+  log?: Logger;
 }
+
+/** Refusals that mean a per-user limit was reached (logged as `quota hit`). */
+const QUOTA_CODES: ReadonlySet<string> = new Set([
+  codes.TOO_MANY_DEVICES,
+  codes.TOO_MANY_CONNECTIONS,
+  codes.TOO_MANY_SPACES,
+  codes.BUSY,
+]);
 
 /** What `POST /v1/fleet/request` answers. */
 export type HttpRequestOutcome =
@@ -229,6 +240,7 @@ type Of<T extends ClientMessage['type']> = Extract<ClientMessage, { type: T }>;
 
 export class Hub {
   readonly store: Store;
+  private readonly log: Logger;
   private chain: Promise<void> = Promise.resolve();
   private buckets = new Map<
     string,
@@ -237,6 +249,7 @@ export class Hub {
 
   constructor(private env: HubEnv) {
     this.store = new Store(env.sql);
+    this.log = env.log ?? noopLogger;
   }
 
   // ── entry points ───────────────────────────────────────────────────────
@@ -372,14 +385,37 @@ export class Hub {
     });
   }
 
-  closed(conn: Conn): Promise<void> {
+  /** The device closed (or lost) the socket; `code` as the runtime saw it. */
+  closed(conn: Conn, code?: number): Promise<void> {
     return this.run(() => {
       const s = conn.state();
       this.buckets.delete(s.id);
       this.store.run('DELETE FROM conns WHERE conn_id = ?', s.id);
-      // `closed`: replaced, or failed (cleaned up then).
+      // `closed`: replaced, or failed (cleaned up then: logged there).
+      if (s.phase !== 'closed') {
+        this.log.info('fleet disconnected', {
+          ...this.connAttrs(s),
+          by: 'device',
+          close_code: code,
+        });
+      }
       if (s.phase === 'ready') this.gone(s);
     });
+  }
+
+  /** What a log line says about a connection: ids and kinds, nothing else. */
+  private connAttrs(s: ConnState | null): Record<string, unknown> {
+    if (!s) return {};
+    const dev = s.device ? this.store.device(s.device) : undefined;
+    return {
+      user_id: s.user,
+      org_id: s.org,
+      device_id: s.device,
+      device_kind: dev ? infoOf(dev).kind : undefined,
+      protocol: s.protocol,
+      phase: s.phase,
+      internal: s.internal === true ? true : undefined,
+    };
   }
 
   /**
@@ -682,6 +718,13 @@ export class Hub {
     conn.save(s);
     this.store.setDeadline(s.id, s.user, s.expMs + REAUTH_LEEWAY_MS);
     this.store.run('DELETE FROM subs WHERE device_id = ?', deviceId);
+    this.log.info('fleet connected', {
+      ...this.connAttrs(s),
+      device_kind: msg.info.kind,
+      os: msg.info.os,
+      app_version: msg.info.app_version,
+      new_device: !dev,
+    });
 
     const resume: Record<string, number> = {};
     for (const sp of this.store.rows<{ space: string; last_seq: number }>(
@@ -809,7 +852,7 @@ export class Hub {
   // ── requests ───────────────────────────────────────────────────────────
 
   private request(r: Ready, msg: Of<'request'>) {
-    const out = this.route(r.state.user, r.state.device, msg.envelope);
+    const out = this.routed(r.state.user, r.state.device, msg.envelope, 'ws');
     if (out.kind === 'error') return this.error(r.conn, out.code, out.message);
     if (out.kind === 'refused') {
       const { req_id, code, message } = out;
@@ -839,7 +882,7 @@ export class Hub {
       const r: RouteOutcome =
         !dev || dev.user_id !== caller.userId || infoOf(dev).kind === 'mcp'
           ? { kind: 'error', code: codes.NOT_YOURS, message: 'no such device' }
-          : this.route(caller.userId, deviceId, envelope);
+          : this.routed(caller.userId, deviceId, envelope, 'http');
       out =
         r.kind === 'routed'
           ? { accepted: true, req_id: r.req_id }
@@ -849,6 +892,38 @@ export class Hub {
               refused: { code: r.code, message: r.message },
             };
     }).then(() => out);
+  }
+
+  /** `route`, with one `fleet request` line: op, outcome, code, latency. */
+  private routed(
+    user: string,
+    sender: string,
+    envelope: SignedEnvelope,
+    via: 'ws' | 'http',
+  ): RouteOutcome {
+    const started = Date.now();
+    const out = this.route(user, sender, envelope);
+    let op: string | undefined;
+    try {
+      op = peekRequest(envelope.body).op;
+    } catch {
+      // not a request: the outcome says so
+    }
+    const origin = this.store.device(sender);
+    const attrs = {
+      user_id: user,
+      op,
+      via,
+      outcome: out.kind,
+      code: out.kind === 'routed' ? undefined : out.code,
+      origin_kind: origin ? infoOf(origin).kind : undefined,
+      ms: Date.now() - started,
+    };
+    this.log.info('fleet request', attrs);
+    if (out.kind === 'refused' && QUOTA_CODES.has(out.code)) {
+      this.log.info('quota hit', { user_id: user, code: out.code, op });
+    }
+    return out;
   }
 
   /** Routes `envelope`, sent by `sender` (one of `user`'s devices). */
@@ -2200,6 +2275,15 @@ export class Hub {
       const dead = msgs
         .filter((_, i) => results[i] === 'unregistered')
         .map((m) => m.to);
+      this.log.info('push sent', {
+        provider: 'expo',
+        kind: msgs[0]?.data.kind,
+        user_id: user,
+        sent: msgs.length,
+        ok: results.filter((r) => r === 'ok').length,
+        unregistered: dead.length,
+        failed: results.filter((r) => r === 'failed').length,
+      });
       if (dead.length === 0) return;
       return this.run(() => {
         for (const token of dead) {
@@ -2258,8 +2342,10 @@ export class Hub {
     const next = this.chain
       .then(fn)
       .catch((e: unknown) => {
-        // The kind only: a message may carry a token or a signed body.
-        console.error('fleet.internal', e instanceof Error ? e.name : typeof e);
+        // The error only: a message may carry a token or a signed body.
+        this.log.exception('fleet internal error', e, {
+          code: codes.INTERNAL,
+        });
       })
       .then(() => this.reschedule())
       .catch(() => {});
@@ -2324,6 +2410,10 @@ export class Hub {
     }
     if (now - b.warned >= 1000) {
       b.warned = now;
+      this.log.info('rate limited', {
+        bucket: 'fleet',
+        ...this.connAttrs(stateOf(conn)),
+      });
       void this.run(() =>
         this.error(conn, codes.RATE_LIMITED, 'too many messages'),
       );
@@ -2398,6 +2488,9 @@ export class Hub {
   }
 
   private error(conn: Conn, code: string, message: string) {
+    if (QUOTA_CODES.has(code)) {
+      this.log.info('quota hit', { code, ...this.connAttrs(stateOf(conn)) });
+    }
     this.send(conn, { type: 'error', code, message });
   }
 
@@ -2407,6 +2500,12 @@ export class Hub {
     this.error(conn, code, message);
     const s = conn.state();
     const wasReady = s.phase === 'ready';
+    this.log.info('fleet disconnected', {
+      ...this.connAttrs(s),
+      by: 'cloud',
+      code,
+      close_code: closeCode,
+    });
     s.phase = 'closed';
     conn.save(s);
     try {
