@@ -27,6 +27,7 @@ import type {
   Organization,
   OrganizationChoice,
   Session,
+  SignInOptions,
   SignInResult,
 } from './types';
 import { AuthError, asAuthError, describe, isAuthError } from './errors';
@@ -81,6 +82,11 @@ export interface AuthDeps {
   /** Serializes refreshes across contexts (browser tabs share the token). */
   crossContextLock?: <T>(fn: () => Promise<T>) => Promise<T>;
   warn?: (message: string) => void;
+  /**
+   * Run the background refresher (default). Off for an account that isn't
+   * the active one: its token is refreshed when something needs it.
+   */
+  autoRefresh?: boolean;
 }
 
 /** A FIFO async mutex. */
@@ -120,12 +126,44 @@ export class AuthKitClient implements AuthClient {
   private readonly now: () => number;
   private readonly timers: Timers;
   private readonly warn: (m: string) => void;
+  private autoRefresh: boolean;
+  private disposed = false;
+  private readonly unsubscribeStore: (() => void) | undefined;
 
   constructor(private readonly deps: AuthDeps) {
     this.now = deps.now ?? Date.now;
     this.timers = deps.timers ?? defaultTimers;
     this.warn = deps.warn ?? (() => {});
-    deps.store.subscribe?.(() => void this.adoptStored());
+    this.autoRefresh = deps.autoRefresh ?? true;
+    this.unsubscribeStore = deps.store.subscribe?.(
+      () => void this.adoptStored(),
+    );
+  }
+
+  /**
+   * Turns the background refresher on (the account became the active one)
+   * or off (it stopped being it). Off, the session is still refreshed when
+   * `current()` or `accessToken()` need a fresh token.
+   */
+  setAutoRefresh(on: boolean): void {
+    if (this.autoRefresh === on) return;
+    this.autoRefresh = on;
+    if (on) this.schedule();
+    else this.cancelTimer();
+  }
+
+  /**
+   * Ends this client: no timers, no listeners, nothing in flight lands
+   * (the account was signed out here, or its session moved to another
+   * client). The store is left as it is.
+   */
+  dispose(): void {
+    this.disposed = true;
+    this.generation += 1;
+    this.cancelTimer();
+    this.listeners.clear();
+    this.pending = null;
+    this.unsubscribeStore?.();
   }
 
   // ── reading ────────────────────────────────────────────────────────────
@@ -160,6 +198,7 @@ export class AuthKitClient implements AuthClient {
   async current(): Promise<Session | null> {
     await this.load();
     const s = this.session;
+    if (this.disposed) return null;
     if (!s || this.fresh(s)) return s;
     try {
       return await this.refreshNow();
@@ -172,7 +211,7 @@ export class AuthKitClient implements AuthClient {
   async accessToken(): Promise<string | null> {
     await this.load();
     const s = this.session;
-    if (!s) return null;
+    if (!s || this.disposed) return null;
     if (this.fresh(s)) return s.accessToken;
     const next = await this.refreshNow();
     return next?.accessToken ?? null;
@@ -303,7 +342,7 @@ export class AuthKitClient implements AuthClient {
   private schedule(delay?: number): void {
     this.cancelTimer();
     const s = this.session;
-    if (!s) return;
+    if (!s || !this.autoRefresh || this.disposed) return;
     const since = this.generation;
     const wait = delay ?? refreshDelay(s.expiresAt, this.now());
     this.timer = this.timers.set(() => {
@@ -345,7 +384,7 @@ export class AuthKitClient implements AuthClient {
 
   // ── sign-in ────────────────────────────────────────────────────────────
 
-  signIn(): Promise<SignInResult> {
+  signIn(opts: SignInOptions = {}): Promise<SignInResult> {
     if (this.signingIn) {
       return Promise.resolve({
         kind: 'failed',
@@ -362,6 +401,7 @@ export class AuthKitClient implements AuthClient {
         clientId: this.deps.clientId,
         redirectUri: this.deps.redirectUri(),
         random: this.deps.random,
+        loginHint: opts.loginHint ?? null,
       });
       opened = this.deps.openBrowser(attempt.url, attempt.redirectUri);
     } catch (e) {

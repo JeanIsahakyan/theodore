@@ -9,5 +9,5 @@ export const LICENSE = `${GITHUB}/blob/main/LICENSE`;
 export const CLOUD_LICENSE = `${GITHUB}/blob/main/cloud/LICENSE.md`;
 export const ISSUES = `${GITHUB}/issues`;
 export const WEB_APP = 'https://app.theodore.cloud';
-export const CONTACT_EMAIL = 'jeanisahakyan@gmail.com';
+export const CONTACT_EMAIL = 'hello@theodore.cloud';
 export const DOC = (file: string) => `${GITHUB}/blob/main/docs/${file}`;

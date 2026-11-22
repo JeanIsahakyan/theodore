@@ -12,6 +12,7 @@ import { useRef, useState } from 'react';
 import { track } from '../../telemetry/log';
 import { ActivitySheet } from '../../ui/ActivitySheet';
 import { useHostTheme } from '../../ui/native/host.android';
+import { AccountsSheet } from '../accounts/accounts-sheet.android';
 import { ModelPickerSheet } from './model-picker-sheet.android';
 import type { SheetHandle, SheetKind } from './types';
 import {
@@ -32,6 +33,7 @@ export function SheetContent({
     return <ModelPickerSheet space={space ?? null} onClose={onClose} />;
   if (kind === 'activity')
     return <ActivitySheet space={space ?? ''} onClose={onClose} />;
+  if (kind === 'accounts') return <AccountsSheet onClose={onClose} />;
   if (kind === 'computer') return <ComputerPickerSheet onClose={onClose} />;
   return <ProjectPickerSheet onClose={onClose} />;
 }
