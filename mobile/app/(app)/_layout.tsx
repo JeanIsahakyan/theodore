@@ -17,6 +17,7 @@
  *                                   as a formSheet
  * space's activity strip (iOS) ─▶ activity-sheet as a formSheet
  * a sub-space row ─▶ push sub-space/[space]/[child] (Back)
+ * a file path in a reply, a file on your bubble ─▶ push file/[space]?path=… (Back)
  * ```
  *
  * Headers: Home's and a space's are `MainHeader` (menu, questions, new
@@ -121,6 +122,7 @@ export default function AppLayout() {
             name="sub-space/[space]/[child]"
             options={pushed('Sub-space')}
           />
+          <Stack.Screen name="file/[space]" options={pushed('File')} />
           <Stack.Screen name="devices" options={pushed('Devices')} />
           <Stack.Screen name="settings/index" options={pushed('Settings')} />
           <Stack.Screen
