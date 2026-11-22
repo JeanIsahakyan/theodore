@@ -26,7 +26,8 @@ import type {
   SpaceLine,
   SubSpaceMessage,
 } from '../fleet/types';
-import type { FleetMode } from '../gen/fleet';
+import type { BlobRef, FleetMode } from '../gen/fleet';
+import type { SentFile } from './attachments';
 import type { Draft } from './logic';
 
 export type PendingSendState = 'sending' | 'queued' | 'sent' | 'failed';
@@ -57,6 +58,10 @@ export interface PendingSend {
   afterSeq: number;
   /** How many times Retry sent it again (telemetry). */
   retries: number;
+  /** The files it carries, for the bubble (thumbnails from the local copy). */
+  files: SentFile[];
+  /** Their blobs, sent again by Retry. */
+  attachments: BlobRef[];
 }
 
 /** A space being started from Home, before the host said which it is. */
@@ -70,6 +75,8 @@ export interface PendingStart {
   goal: string;
   mode: FleetMode;
   picks: AgentPicks;
+  /** The files attached to the goal, for the bubble. */
+  files?: SentFile[];
   at: number;
   state: 'starting' | 'failed';
   /** The real space, once the host's ok (or the wait's end) named it. */
@@ -107,6 +114,8 @@ export interface NewSend {
   mode?: FleetMode | null;
   picks?: AgentPicks;
   afterSeq?: number;
+  files?: SentFile[];
+  attachments?: BlobRef[];
 }
 
 export function newSend(input: NewSend): PendingSend {
@@ -124,6 +133,8 @@ export function newSend(input: NewSend): PendingSend {
     picks: input.picks ?? {},
     afterSeq: input.afterSeq ?? 0,
     retries: 0,
+    files: input.files ?? [],
+    attachments: input.attachments ?? [],
   };
 }
 

@@ -6,12 +6,14 @@
  * | Node | Template | Here |
  * | --- | --- | --- |
  * | link | opens the URL | its words, then the address in muted text; nothing opens |
+ * | inline code | text | text; in a space's chat a file path opens the viewer (`read_file` to the host) |
  * | image | loads it | `[image: alt]`; nothing loads |
  * | raw HTML | (warned, dropped) | shown as text |
  * | anything else / too deep | (warned, dropped) | its plain text |
  */
 import type { Node } from 'mdast';
 import { Text, View, type TextStyle, type ViewStyle } from 'react-native';
+import { InlineCode } from '../chat/file-link';
 import { CodeBlock } from './code-block';
 import { linkNote, plainText } from './parse';
 import type { RenderRules, StyleMap } from './types';
@@ -64,10 +66,13 @@ const renderRules: RenderRules = {
   ),
   text: ({ node }) => node.value,
   break: ({ node }) => <Text key={keyOf(node)}>{'\n'}</Text>,
+  // In a space's chat a file path is a tap to the viewer (`file-link.tsx`).
   inlineCode: ({ node, styles }) => (
-    <Text key={keyOf(node)} style={text(styles, 'inlineCode')}>
-      {node.value}
-    </Text>
+    <InlineCode
+      key={keyOf(node)}
+      value={node.value}
+      style={text(styles, 'inlineCode')}
+    />
   ),
   code: ({ node, styles }) => (
     <CodeBlock

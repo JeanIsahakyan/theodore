@@ -193,7 +193,7 @@ works as before, no organizations.
 | --- | --- |
 | sign-in (code, device), refresh, switch org (`refresh` + `organization_id`) | WorkOS directly |
 | ensure the personal org (after sign-in, at start, while the session has no org) | cloud `POST /v1/orgs/personal` |
-| list orgs (`account_organizations`) | cloud `GET /v1/orgs` |
+| list orgs (`account_organizations`, `account_accounts` for every account) | cloud `GET /v1/orgs` |
 | finish a sign-in that needs an org picked | cloud `POST /v1/auth/select-organization`, then the app validates the session itself: signature always checked (JWKS unreachable ─▶ `account.network`, never skipped), and the session's `organization_id` and the token's `org_id` must both be the org picked (else `account.invalid_token`, nothing stored) |
 
 | Cloud answer | App error |
@@ -208,6 +208,54 @@ the next start; a failed switch returns its error with the session
 untouched. Only the background refresher, which never asks for an org,
 ends a session. The access token and the pending token never land in an
 error or a log.
+
+### Several accounts
+
+Several WorkOS accounts can be signed in at once; one is **active**. The
+sidebar's bottom row names it (`Jean · Personal`) and opens the switcher;
+Settings → Account lists the same accounts with the same actions.
+
+```
+keychain  theodore.account.<user id>   one entry per account: the session as before
+store kv  account.accounts             {active, accounts: [{user (display), organization_id, ended}]}
+                                        no token in it; which keychain entries exist
+upgrade   theodore.account (one session) ─▶ moved to its own entry, the index written:
+          the existing session is the first account, silently
+
+sign-in (any method, "Add another account" too)
+          ─▶ a new account, or that user's replaced ─▶ active ─▶ account_status
+account_switch{user_id, organization_id?}
+          ─▶ active = user ─▶ [refresh(Some(org)) of that session] ─▶ account_status
+             a refused org switch: the account is switched, its session untouched
+account_sign_out_of{user_id} (account_sign_out: the active one)
+          ─▶ its entry gone, its session ended at WorkOS (best effort)
+          ─▶ the next account with a session (sign-in order) is active; none: the gate closes
+refresh   one refresher per account, each session under its own lock (plan "Races")
+          rejected ─▶ that account keeps its row without a session: "Sign in again"
+                      (signing in as that user replaces the row); was it active, the
+                      next one takes over, or the gate closes with "Your session ended"
+account_accounts ─▶ every account's organizations listed again (each with its own
+          token, side by side) ─▶ AccountStatus.accounts[].organizations
+```
+
+What follows the active account: the gate (signed in iff it has a
+session), `account_access_token`, the fleet link (that account's
+organization as this device, with the device id kept per organization;
+another user in the same organization is a new link, never a `reauth`),
+account-scoped views, and telemetry's identity (docs/telemetry.md: the
+active account's `user_…` when consent allows; a switch leaves the old
+account, so it starts a new anonymous id like a sign-out does).
+
+Spaces keep running whoever is active: a space records the account that
+made it (`Space::account`), and the popover says "N running" on another
+account's row. Not per account: the fleet connection. This device is
+connected to one hub, the active account's organization; spaces hosted
+here for another organization keep running, but their events reach their
+origin only once that organization's link is up again (the journal replays
+from the hub's `resume`, as after any reconnect), and requests to this
+device from that organization wait as for an offline device. One link per
+signed-in account is the obvious next step; the core's link state is
+single today.
 
 ## Verified against staging WorkOS
 
@@ -927,3 +975,7 @@ Per environment (staging, production):
       already expire most); Client ID Metadata Documents
       (`clientIdMetadataDocumentEnabled` + the `global_fetch_strictly_public`
       compatibility flag; off now, DCR covers Claude Code and claude.ai).
+
+## License
+
+`cloud/` is licensed under the [Functional Source License 1.1, ALv2 future license](../cloud/LICENSE.md) (FSL-1.1-ALv2), unlike the rest of the repository (MIT). Self-hosting and changes are fine; offering it as a competing commercial service is not. Each version converts to Apache 2.0 two years after its release. Code published before this change stays under MIT.

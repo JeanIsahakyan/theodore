@@ -26,8 +26,9 @@ iPhone / Android / browser                     Theodore cloud            your co
 | Home (new space) | The goal in the composer; under the hint a project chip and a computer chip ("theodore on mac-A", a sheet each; the computer's sheet holds the mode up to its cap), in the composer the model chip (top 4, All models, Effort); last picks remembered (below, "New space"). Before this run's first devices list: skeleton chips and "Connecting to your devices…", typing allowed, Send off; the server unreachable ─▶ "Can't reach the server", Retry (below, "First connection") |
 | Devices | This device's fingerprint (large, copy) to show on the computer; a card per device, computers first (kind, online, OS · mode cap · agents, fingerprint), trust / untrust with the fingerprint confirm; on a computer, its auto mode per Claude via cloud device (Off / Auto Edit / Full auto, for 1 hour, until end of day or until turned off) |
 | Settings | Account card; Organization (switch), Devices, This device (fingerprint, copy), Appearance (Light / Dark / System), Notifications, Privacy (Share usage data, Send error reports, What's collected: docs/telemetry.md "Mobile"), About (version, server, Copy / Share diagnostics); sign out |
-| Space | Its chat (or history lines), send a message any time: your bubble shows at once, "Sending…" over it, and the field clears ("Optimistic sends" below); while a turn runs the host queues it (the bubble reads "Queued", "· 1 queued" on the strip), Stop beside Send; not sent ─▶ "Not sent · why", Retry / Edit; the composer's one chip is the model's, its sheet also holds the next message's mode (shown in the header: "on mac-A · Running · Edit"); the running turn's steps; above the composer the activity strip ("Activity strip" below): what runs now and a timer, the turn's subagents and the space's sub-spaces, a tap opens the activity sheet; Approve / Revise a plan (Approve shows as your message at once), answer its question (the card collapses to "Answered: …" at once); a space started from Home opens here before the host answers ("Starting on mac-A…") |
-| Sub-space | A sub-space of a followed space, read from its host by its local id every 3 s while in front: its last messages, running text, question (answered there), a composer that messages it in its own mode ("Sub-spaces" below) |
+| Space | Its chat (or history lines), send a message any time: your bubble shows at once, "Sending…" over it, and the field clears ("Optimistic sends" below); while a turn runs the host queues it (the bubble reads "Queued", "· 1 queued" on the strip), Stop beside Send; not sent ─▶ "Not sent · why", Retry / Edit; the composer's one chip is the model's, its sheet also holds the next message's mode (shown in the header: "on mac-A · Running · Edit"); 📎 attaches photos and files, previewed above the field, uploaded on pick ("Files" below); the running turn's steps; above the composer the activity strip ("Activity strip" below): what runs now and a timer, the turn's subagents and the space's sub-spaces, a tap opens the activity sheet; Approve / Revise a plan (Approve shows as your message at once), answer its question (the card collapses to "Answered: …" at once); a space started from Home opens here before the host answers ("Starting on mac-A…"); a file path in a reply (`src/app.tsx`) or a file on your bubble opens the file viewer |
+| Sub-space | A sub-space of a followed space, read from its host by its local id every 3 s while in front: its last messages, running text, question (answered there), a composer that messages it in its own mode, with 📎 ("Sub-spaces" below) |
+| File | A file of a space on a computer, pushed with Back: its name, "mac-A · theodore · 340 KB", Save or share; an image pinch-zooms, a PDF pages, text and code are monospace and highlighted ("Files" below) |
 
 Questions and "space finished" arrive as push notifications; a question's
 options are notification buttons (one tap answers it, signed on the phone,
@@ -148,7 +149,8 @@ mobile/
                        space/[id], devices, settings pushed over it; start ─▶ /;
                        model-, computer-, project-picker, activity-sheet: the
                        composer's and the strip's sheets (iOS);
-                       space/[id], sub-space/[space]/[child], devices, settings
+                       space/[id], sub-space/[space]/[child], file/[space] (a file
+                       of a space on its computer), devices, settings
                        (+ settings/organization, device, about) pushed over it;
                        start ─▶ /
   src/components/      the shell and composer, adapted from the chat template (below)
@@ -156,7 +158,8 @@ mobile/
   src/shell/           wiring: AppProviders (auth + fleet clients, auth state, fleet lifecycle)
                        (not src/app: expo-router would take src/app as the routes root)
   src/fleet/           pure TS client: socket, hello, seal/verify (domain tags), pins, journal of lines,
-                       spaces kept across restarts (saved.ts; data.* storage per platform)
+                       spaces kept across restarts (saved.ts; data.* storage per platform),
+                       files: blob.ts (seal/open), blob-store.ts (the cloud's chunks), file-cache.ts
   src/keys/            DeviceKey: secure-store (iOS/Android) | WebCrypto + IndexedDB (web)
   src/push/            expo-notifications: register, categories, background answer
   src/state/           stores (zustand) the screens read
@@ -168,7 +171,9 @@ mobile/
 
 - Crypto: `@noble/ed25519` (pure JS, audited) with the same domain tags as
   Rust; a shared test vector (key, message, signature) produced by Rust keeps
-  both sides honest.
+  both sides honest. Files: `@noble/curves` (X25519 from the ed25519 keys),
+  `@noble/ciphers` (XChaCha20-Poly1305), `@noble/hashes` (HKDF, SHA-256),
+  checked against the Rust blob vectors ("Files" below).
 - Keys never leave secure storage except to sign; on web the private key is a
   non-extractable WebCrypto key in IndexedDB.
 - Redirect URIs to register in WorkOS: `theodore-mobile://callback` (native, per
@@ -354,7 +359,8 @@ new space (✎, the header) ─▶ dismissTo Home  bell ─▶ the first waiting
 | --- | --- |
 | Drawer content (spaces by day, search, Devices, account, Settings) | `src/components/drawer-content.tsx`, groups in `src/ui/drawer.ts` |
 | Home's header | `src/components/main-header{.ios,.android,}.tsx` |
-| Composer: `PromptInput` (field, Send / Stop, `leading` / `trailing` chips) and `ComposerDock` (rides on the keyboard) | `src/components/chat/` |
+| Composer: `PromptInput` (field, Send / Stop, `leading` / `trailing` chips, `above` the field: the attached files) and `ComposerDock` (rides on the keyboard) | `src/components/chat/` |
+| Files: 📎, the previews strip, paths in replies, the viewer ("Files" below) | `src/components/chat/attach-*.tsx`, `use-attach.ts`, `file-link.tsx`, `src/components/file/`, `app/(app)/file/[space].tsx` |
 | Chat: `Conversation` (Legend List, keyboard-aware, `ConversationScrollButton`), `Message` (your bubble / the agent's full width), `StreamingMessage` + `Shimmer` (the live turn) | `src/components/chat/` |
 | Markdown: mdast (micromark, GFM tables and strikethrough) ─▶ React Native views; code blocks highlighted (highlight.js, a fixed set of languages, never guessed) | `src/components/markdown/` |
 | A space's header (name, "on host · status") | `src/components/space-header.tsx` (the main header with a subtitle), `space-title.tsx` |
@@ -692,7 +698,9 @@ Default System. Android 12+ keeps Material You in both schemes
   `react-native-reanimated` + `react-native-worklets`,
   `react-native-gesture-handler`, `react-native-keyboard-controller`,
   `react-native-svg`, `expo-blur`, `expo-haptics`, `expo-image`,
-  `expo-system-ui`; with Settings and Devices, `expo-clipboard`.
+  `expo-system-ui`; with Settings and Devices, `expo-clipboard`; with
+  files, `expo-image-picker`, `expo-document-picker`,
+  `expo-image-manipulator`, `expo-sharing`, `react-native-webview`.
 
 ### Connection banner
 
@@ -749,10 +757,73 @@ for the link. Sign-out and an org switch reset `welcomed`.
 - The core signs/revokes delegations and ignores `mobile`/`web` devices as
   targets.
 
+## Files
+
+Photos and files go to the agent on your computer, and the computer's
+files come to the phone, through the cloud's blob store as ciphertext only
+(docs/fleet.md "Files (blobs)": `theodore-blob-v1`, X25519 from the
+ed25519 device keys already pinned, XChaCha20-Poly1305 per chunk of ≤ 4
+MiB). The TS side is `src/fleet/blob.ts`, checked byte for byte against
+the Rust vectors (`src/gen/fleet-vectors.json` `blobs`); the cloud routes
+are `src/fleet/blob-store.ts`.
+
+```text
+phone ─▶ computer (Home, a space, a sub-space)
+  📎 ─▶ Photo library · Camera · File (expo-image-picker, expo-document-picker)
+    photo ─▶ compressed (expo-image-manipulator): long side ≤ 2048 px, JPEG 0.8;
+             a PNG screenshot ≤ 2 MB stays PNG                      src/ui/attachments.ts planPhoto
+    ─▶ the preview above the field at once (thumbnail, or name · size)
+    ─▶ fleet.uploadAttachment: sealBlob(the computer's pinned key) ─▶ PUT chunks
+       (3 tries each on a network error / 5xx) ─▶ progress bar ─▶ ✓   ─▶ ↻ when it failed
+    ✕ ─▶ gone; its blob DELETEd when it had one
+  Send ─▶ only with words and every file ✓ ─▶ attachments: BlobRef[] on start_space / send / send_to
+       ─▶ your bubble shows the files (local copies) ─▶ the host's mirrored row shows them as chips
+  limits: 10 files per message, 20 MiB each after compression; another computer picked on Home
+          drops the files (they were sealed for the first one) and says so
+
+computer ─▶ phone (a path in a reply, a file chip on your bubble)
+  `src/app.tsx` in a reply ─▶ a tap (src/ui/filePaths.ts filePathOf: relative, no spaces or
+  shell marks, a known extension or a directory) ─▶ /file/<space>?path=…&host=…
+    ─▶ fleet.readFile {space, path, max_bytes: 8 MiB} ─▶ the host seals it for this device ─▶ {blob}
+    ─▶ GET chunks (progress) ─▶ openBlob with this device's key ─▶ DELETE the blob ─▶ shown,
+       cached for the session (src/fleet/file-cache.ts: memory + the app's cache dir)
+    fleet.too_large under 8 MiB ─▶ "Large file · Download anyway" ─▶ again with 50 MiB (the protocol's cap)
+    not found / denied / offline / silent ─▶ one line (src/ui/fileViewer.ts errorLine), Retry when it may help
+  a file on your bubble (`[screen.png]`) ─▶ .context/screen.png on the host
+```
+
+| Piece | File |
+| --- | --- |
+| Composer: 📎 (iOS action sheet, Android alert, web popover), the previews strip above the field (`PromptInput` `above`) | `src/components/chat/attach-button{.web,}.tsx`, `attachment-strip.tsx` |
+| Picking and compressing | `src/components/chat/pick-files.ts` |
+| One composer's files: pick ─▶ upload ─▶ ✓ / ↻, ✕, take on send | `src/components/chat/use-attach.ts`, store `src/state/attachments.ts`, rules `src/ui/attachments.ts` |
+| Paths in replies, chips on your bubble ─▶ the viewer | `src/components/chat/file-link.tsx` (`FileLinkProvider` on a space's and a sub-space's screen; the markdown's `inlineCode` rule) |
+| The viewer: states `src/ui/fileViewer.ts`, kinds `src/ui/filePaths.ts`, body per kind | `app/(app)/file/[space].tsx`, `src/components/file/file-body{.web,}.tsx`, `text-view.tsx`, `share{.web,}.ts` |
+| Client: `uploadAttachment`, `deleteBlob`, `readFile`, `fetchBlob`, `canOpenBlobs`; `attachments` on `startSpace` / `send` / `sendTo` | `src/fleet/client.ts` |
+
+- Opening a blob needs the X25519 secret derived from the ed25519 seed:
+  `DeviceKey.blobOpener` (`src/keys/ed25519.ts`) exposes the X25519 public
+  key and a shared-secret function, never the seed. A web device whose key
+  is a non-extractable WebCrypto key has none: it sends files but the
+  viewer says to use the phone.
+- Send waits for every file: a message never names a blob that isn't in
+  the cloud. Retry of a failed send sends the same references again; Edit
+  takes the text back and the files go (the cloud drops a blob after a
+  day anyway).
+- A photo's EXIF (location) is dropped with the re-encode; a small PNG
+  kept as it is has none to begin with on iOS screenshots.
+- iOS usage strings for the photo library and the camera are the
+  `expo-image-picker` plugin's in `app.json`; `expo-sharing` is the share
+  sheet (Save Image / Save to Files); `react-native-webview` draws PDFs
+  on iOS (Android: Share, its WebView can't; web: an iframe). Native
+  modules: dev builds made before them must be rebuilt.
+- Not run on a device yet: the pickers, compression, the share sheet and
+  the PDF view are wired as their Expo modules document them; the crypto,
+  the uploads, the payloads and the viewer's states are tested.
+
 ## Not in v1
 
-Web push, hosting spaces on the phone, file transfer, tablets' layouts beyond
-"it works".
+Web push, hosting spaces on the phone, tablets' layouts beyond "it works".
 
 ## Build and release
 
@@ -895,9 +966,11 @@ settings ─▶ Sign out ─▶ mock auth: null ─▶ services = real, fleet st
 - App Store Connect: "Theodore Code", Developer Tools, free, all territories,
   iPhone only (`supportsTablet: false`). Text, keywords, age rating, review
   contact and notes are set through the App Store Connect API.
-- Privacy policy: `mobile/public/privacy.html`, served by the web Worker at
-  `https://theodore-web.prd-instance.workers.dev/privacy`, linked in Settings →
-  About. Keep it true when data handling changes (cloud, push payloads,
+- Privacy policy: `https://theodore.cloud/privacy` on the website
+  (`site/src/pages/Privacy.tsx`, docs/website.md), linked in Settings →
+  About (`privacyPolicyUrl` in `src/config.ts`). `mobile/public/privacy.html`
+  is the same text, still served by the web Worker at `/privacy` for older
+  builds. Keep both true when data handling changes (cloud, push payloads,
   telemetry).
 - Account deletion (App Store 5.1.1(v)): Settings → Delete account ─▶
   `DELETE /v1/account` (docs/cloud.md "Account deletion") ─▶ signed out.

@@ -78,8 +78,8 @@ impl Core {
         req: ShipSpaceRequest,
         turn: Option<&str>,
     ) -> AppResult<Space> {
-        let _guard = self.0.ship_lock.lock().await;
-        let space = self.space_row(&req.space).await?;
+        let guard = self.0.ship_lock.lock().await;
+        let mut space = self.space_row(&req.space).await?;
         let own_turn = turn.is_some() && space.run.as_deref() == turn;
         match space.status {
             SpaceStatus::Running if own_turn => {}
@@ -147,11 +147,33 @@ impl Core {
         } else {
             space.head_sha.clone()
         };
+        // The agent (or you) may have merged the base into the worktree
+        // since `base_sha` was recorded, with no Update to tell Theodore:
+        // the squash then sits on that merge-base, not on the stale one,
+        // or the host sees the base's own commits as this change's and
+        // reports conflicts (docs/spaces.md §6 "The agent merged the base
+        // in").
+        let base_moved = self.base_merged_in(&space, &repo_path, &head).await;
+        let mut patch = serde_json::Map::new();
         if head != space.head_sha {
-            self.apply(vec![self.patch(
-                &space.id,
-                serde_json::json!({ "head_sha": head, "worktree_head": worktree_head }),
-            )])
+            patch.insert("head_sha".into(), serde_json::json!(head));
+            patch.insert("worktree_head".into(), serde_json::json!(worktree_head));
+        }
+        if let Some(base) = &base_moved {
+            tracing::info!(
+                space = %space.id,
+                base = %space.base,
+                from = %space.base_sha,
+                to = %base,
+                "the worktree has the base's newer commits: shipping onto them"
+            );
+            patch.insert("base_sha".into(), serde_json::json!(base));
+            space.base_sha = base.clone();
+        }
+        if !patch.is_empty() {
+            self.apply(vec![
+                self.patch(&space.id, serde_json::Value::Object(patch)),
+            ])
             .await?;
         }
         if head == space.base_sha {
@@ -237,7 +259,22 @@ impl Core {
                 .await?;
             }
         }
-        self.space_row(&space.id).await
+        let shipped = self.space_row(&space.id).await?;
+        if base_moved.is_some() {
+            // The space's diff follows the new base: the base's commits
+            // stop showing as this change's.
+            drop(guard);
+            if let Err(e) = self
+                .space_review(theodore_contract::SpaceReviewRequest {
+                    space: space.id.clone(),
+                    group: false,
+                })
+                .await
+            {
+                tracing::warn!(space = %space.id, error = %e, "diff refresh after the ship failed");
+            }
+        }
+        Ok(shipped)
     }
 
     /// The squashed commit pushed to `space.branch`, never forced:
@@ -251,6 +288,11 @@ impl Core {
     /// | `s` | moved to `t` | `t` + the turns since `s.head` (3-way) |
     ///
     /// Nothing new since `s` (a retried Open PR) pushes nothing.
+    /// `space.base_sha` is the base as this ship moved it
+    /// (`base_merged_in`): when the worktree merged the base's newer
+    /// commits in, the new commit gets that merge-base as a second parent
+    /// (`merge_parent`), so the push stays a fast-forward of `s` and the
+    /// host's merge-base moves with it.
     ///
     /// A space adopted from an existing branch or PR (`Space::fork_sha`,
     /// docs/spaces.md §3 "New space from an issue/branch/PR") never has a
@@ -662,9 +704,10 @@ impl Core {
     }
 }
 
-/// After the first ship, the space's base (moved on by Update from base)
-/// as the new commit's second parent: the git port leaves it out when the
-/// shipped history already has it.
+/// After the first ship, the space's base (moved on by Update from base,
+/// or by a merge the worktree made itself) as the new commit's second
+/// parent: the git port leaves it out when the shipped history already has
+/// it, or when the head never merged it.
 fn merge_parent(parent: &Sha, space: &Space) -> Option<Sha> {
     (parent != &space.base_sha).then(|| space.base_sha.clone())
 }

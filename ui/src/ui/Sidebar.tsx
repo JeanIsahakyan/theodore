@@ -1,14 +1,10 @@
 import {
   Archive,
-  ArrowRightFromSquare,
   BranchesRight,
-  ChevronDown,
-  CircleExclamation,
   CircleFill,
   CircleXmark,
   ChevronRight,
   CodePullRequest,
-  Gear,
   LayoutSideContentLeft,
   ListCheck,
   Magnifier,
@@ -22,10 +18,7 @@ import {
 } from '@gravity-ui/icons';
 import {
   Button,
-  Dropdown,
   Header,
-  Kbd,
-  Label,
   ListBox,
   Separator,
   Toolbar,
@@ -38,7 +31,7 @@ import { useRootStore, useUi } from '../stores/context';
 import { sameRoute, type Route, type UiStore } from '../stores/UiStore';
 import { api } from '../core/api';
 import { SpaceMark } from './AgentMark';
-import { Avatar, K, Spinner } from './bits';
+import { K, Spinner } from './bits';
 import { contextMenuHandler, type ContextMenuItem } from './ContextMenu';
 import { ListSearchBar } from './ListSearchBar';
 import { inInbox } from './List';
@@ -46,6 +39,7 @@ import { openPrCount, openPrCountHint } from './prs/filters';
 import { matchesSearch, spaceSearchText } from './search';
 import { sectionsOf, type Section } from '../core/workspaces';
 import { SandboxBadge } from './sandbox/SandboxBadge';
+import { AccountSwitcher } from './AccountSwitcher';
 import { WorkspaceSwitcher } from './WorkspaceSwitcher';
 import { markSpaceUnseen, spaceSeen } from './space/seen';
 import { isBuildMode } from './space/mode';
@@ -344,28 +338,6 @@ export const Sidebar = observer(function Sidebar() {
   const tasksOpen = ws.scopeTasks(
     store.models.tasks.where((t) => t.status !== 'done'),
   ).length;
-  const viewer = store.ephemeral.viewer;
-  // Who is signed in to Theodore; the host login only stands in when the
-  // build has no Theodore account (sandbox, fixtures, a dev build).
-  const user = store.ephemeral.account?.user ?? null;
-  const me = user
-    ? {
-        person: {
-          login: user.email,
-          name: user.name,
-          avatar_url: user.avatar_url,
-        },
-        label: user.name ?? user.email,
-        title: user.email,
-      }
-    : viewer
-      ? {
-          person: viewer,
-          label: viewer.login,
-          title: viewer.name ?? viewer.login,
-        }
-      : null;
-
   const all: Record<Section, NavItem> = {
     inbox: {
       key: routeKey({ name: 'inbox' }),
@@ -792,63 +764,7 @@ export const Sidebar = observer(function Sidebar() {
         aria-label="App"
         className="flex w-full items-center gap-1 px-5 pb-3 pt-2.5"
       >
-        <Dropdown>
-          <Button
-            variant="ghost"
-            size="sm"
-            aria-label="Account and app"
-            className="account-menu -ms-2 h-9 min-w-0 flex-1 justify-start gap-2 rounded-xl px-2"
-          >
-            {me ? (
-              <>
-                <Avatar person={me.person} size={24} />
-                <span className="min-w-0 truncate text-sm" title={me.title}>
-                  {me.label}
-                </span>
-              </>
-            ) : (
-              <span className="min-w-0 truncate text-sm text-muted">
-                Not signed in
-              </span>
-            )}
-            <ChevronDown className="size-3 shrink-0 text-muted" />
-          </Button>
-          <Dropdown.Popover placement="top start">
-            <Dropdown.Menu
-              aria-label="Account and app"
-              onAction={(k) => {
-                if (k === 'settings')
-                  ui.go({ name: 'settings', page: 'account' });
-                else if (k === 'report') ui.openModal('report-problem');
-                else if (k === 'signout')
-                  void api
-                    .accountSignOut()
-                    .then((st) => store.ephemeral.setAccount(st))
-                    .catch(() => {});
-              }}
-            >
-              <Dropdown.Item id="settings" textValue="Settings">
-                <Gear className="size-4" />
-                <Label>Settings</Label>
-                <Kbd className="ms-auto">G S</Kbd>
-              </Dropdown.Item>
-              <Dropdown.Item id="report" textValue="Report a problem">
-                <CircleExclamation className="size-4" />
-                <Label>Report a problem…</Label>
-              </Dropdown.Item>
-              {/* Always listed; a build without a Theodore account (sandbox,
-                  fixtures, a dev build) has no one to sign out. */}
-              <Dropdown.Item
-                id="signout"
-                textValue="Sign out"
-                isDisabled={!store.ephemeral.account?.user}
-              >
-                <ArrowRightFromSquare className="size-4" />
-                <Label>Sign out</Label>
-              </Dropdown.Item>
-            </Dropdown.Menu>
-          </Dropdown.Popover>
-        </Dropdown>
+        <AccountSwitcher />
         <SandboxBadge />
         <IconBtn label="Collapse sidebar  [" onPress={() => ui.toggleSidebar()}>
           <LayoutSideContentLeft className="size-4" />

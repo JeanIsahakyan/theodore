@@ -11,6 +11,6 @@ export const config = {
   cloudUrl:
     process.env.EXPO_PUBLIC_CLOUD_URL ??
     'https://theodore-cloud-staging.prd-instance.workers.dev',
-  /** The privacy policy (mobile/public/privacy.html on the production web app). */
-  privacyPolicyUrl: 'https://theodore-web.prd-instance.workers.dev/privacy',
+  /** The privacy policy on the website (site/src/pages/Privacy.tsx, docs/website.md). */
+  privacyPolicyUrl: 'https://theodore.cloud/privacy',
 };

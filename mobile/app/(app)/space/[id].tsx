@@ -59,14 +59,19 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { StyleSheet, Text, View, type TextInputInstance } from 'react-native';
 import {
+  AttachButton,
+  AttachmentStrip,
   ComposerDock,
   Conversation,
   ConversationScrollButton,
   Message,
   PromptInput,
+  SentFiles,
   Shimmer,
+  useAttach,
   type ConversationHandle,
 } from '../../../src/components/chat';
+import { FileLinkProvider } from '../../../src/components/chat/file-link';
 import { ChatMarkdown } from '../../../src/components/markdown';
 import { ModelChip } from '../../../src/components/pickers/composer-chips';
 import { useSpaceMode } from '../../../src/components/pickers/use-picker';
@@ -79,7 +84,11 @@ import type {
   SpaceLine,
   SpaceView,
 } from '../../../src/fleet/types';
-import type { FleetMode, MirroredSubSpace } from '../../../src/gen/fleet';
+import type {
+  BlobRef,
+  FleetMode,
+  MirroredSubSpace,
+} from '../../../src/gen/fleet';
 import { useServices } from '../../../src/services';
 import { useGlassHeaderInset } from '../../../src/shell/glassHeader';
 import { backHome, spaceHref } from '../../../src/shell/navigate';
@@ -98,6 +107,7 @@ import {
 } from '../../../src/state/pending';
 import { log, track } from '../../../src/telemetry/log';
 import { NO_PICK, sendPicks, spaceOwn } from '../../../src/ui/agents';
+import { canSendWith } from '../../../src/ui/attachments';
 import {
   APPROVED_TEXT,
   buildMode,
@@ -333,7 +343,8 @@ function StartingScreen({ id }: { id: string }) {
   const where = [start.projectName, MODE_LABEL[start.mode]].filter(Boolean);
   const footer = (
     <View style={styles.tail}>
-      <View style={styles.userRow}>
+      <View style={[styles.userRow, styles.userGap]}>
+        {start.files?.length ? <SentFiles files={start.files} /> : null}
         <Message from="user">{start.goal}</Message>
       </View>
       <Message
@@ -409,6 +420,21 @@ function LiveSpaceScreen({ id }: { id: string }) {
   const input = useRef<TextInputInstance>(null);
   const list = useRef<ConversationHandle>(null);
   const top = useGlassHeaderInset();
+  // Files for the space's .context/, sealed for its host and uploaded on
+  // pick (docs/mobile.md "Files").
+  const attach = useAttach(id, space?.hostDevice ?? null);
+  const fileTarget = useMemo(
+    () =>
+      space
+        ? {
+            space: id,
+            hostDevice: space.hostDevice,
+            hostName: space.hostName,
+            spaceName: spaceTitle(space),
+          }
+        : null,
+    [id, space],
+  );
 
   useEffect(() => {
     let live = true;
@@ -499,11 +525,12 @@ function LiveSpaceScreen({ id }: { id: string }) {
     t: string,
     mode: FleetMode | null,
     with_: AgentPicks,
+    attachments: BlobRef[] = [],
     kind: 'send' | 'approve' = 'send',
   ) => {
     const row = () => pending.find((x) => x.key === key);
     fleet
-      .send(id, t, mode, with_)
+      .send(id, t, mode, with_, attachments)
       .then((r) => {
         track('message_sent', {
           surface: 'space',
@@ -536,9 +563,13 @@ function LiveSpaceScreen({ id }: { id: string }) {
       });
   };
 
+  // Send waits for every attached file to be in the cloud.
+  const canSubmit = sendable && canSendWith(text, attach.list);
+
   const send = () => {
     const t = text.trim();
-    if (!t || !sendable) return;
+    if (!t || !canSubmit) return;
+    const { refs, files } = attach.take();
     setText('');
     setRevising(false);
     setError(null);
@@ -550,14 +581,17 @@ function LiveSpaceScreen({ id }: { id: string }) {
       mode,
       picks,
       afterSeq: lines.at(-1)?.seq ?? 0,
+      files,
+      attachments: refs,
     });
     toEnd();
-    dispatch(key, t, mode, picks);
+    dispatch(key, t, mode, picks, refs);
   };
 
   const retry = (key: string) => {
     const again = sendRetried(id, key);
-    if (again) dispatch(key, again.text, again.mode, again.picks);
+    if (again)
+      dispatch(key, again.text, again.mode, again.picks, again.attachments);
   };
 
   const edit = (key: string) => {
@@ -679,78 +713,98 @@ function LiveSpaceScreen({ id }: { id: string }) {
 
   const details = <Details space={space} subs={mirror?.subSpaces} />;
 
-  const chips = <ModelChip space={id} />;
+  const chips = (
+    <>
+      <AttachButton
+        onPick={(s) => void attach.pick(s)}
+        disabled={!sendable}
+        busy={attach.picking}
+        testID="space-attach"
+      />
+      <ModelChip space={id} />
+    </>
+  );
 
   return (
-    <View className="flex-1 bg-background">
-      <SpaceHeader
-        title={spaceTitle(space)}
-        subtitle={`on ${space.hostName} · ${STATUS_LABEL[space.status]} · ${MODE_LABEL[picked]}`}
-      />
-      {chat ? (
-        <Conversation
-          ref={list}
-          data={messages}
-          keyExtractor={messageKey}
-          renderItem={({ item }) => (
-            <Row
-              m={item}
-              chat={chat}
-              plan={chat.planHere === item.id ? plan : null}
-            />
-          )}
-          header={details}
-          footer={footer}
-          empty={empty}
-          composerHeight={dock}
-          topInset={top}
-        >
-          <ConversationScrollButton />
-        </Conversation>
-      ) : (
-        <Conversation
-          ref={list}
-          data={lines}
-          keyExtractor={lineKey}
-          renderItem={({ item }) => (
-            <View style={styles.row}>
-              <Line line={item} />
-            </View>
-          )}
-          header={details}
-          footer={footer}
-          empty={empty}
-          composerHeight={dock}
-          topInset={top}
-        >
-          <ConversationScrollButton />
-        </Conversation>
-      )}
-      <ComposerDock floating onHeight={setDock}>
-        {notes.length > 0 ? (
-          <Glass radius={20} style={styles.notes}>
-            {notes}
-          </Glass>
-        ) : null}
-        <PromptInput
-          value={text}
-          onChangeText={setText}
-          onSubmit={send}
-          placeholder={placeholderFor(space, revising, hosted)}
-          disabled={!running && !sendable}
-          editable={sendable}
-          running={running}
-          onStop={() => void stop()}
-          stopping={stopping}
-          queue={running}
-          canSubmit={sendable && text.trim() !== ''}
-          leading={chips}
-          error={error}
-          inputRef={input}
-          testID="space-composer"
+    <FileLinkProvider target={fileTarget}>
+      <View className="flex-1 bg-background">
+        <SpaceHeader
+          title={spaceTitle(space)}
+          subtitle={`on ${space.hostName} · ${STATUS_LABEL[space.status]} · ${MODE_LABEL[picked]}`}
         />
-      </ComposerDock>
-    </View>
+        {chat ? (
+          <Conversation
+            ref={list}
+            data={messages}
+            keyExtractor={messageKey}
+            renderItem={({ item }) => (
+              <Row
+                m={item}
+                chat={chat}
+                plan={chat.planHere === item.id ? plan : null}
+              />
+            )}
+            header={details}
+            footer={footer}
+            empty={empty}
+            composerHeight={dock}
+            topInset={top}
+          >
+            <ConversationScrollButton />
+          </Conversation>
+        ) : (
+          <Conversation
+            ref={list}
+            data={lines}
+            keyExtractor={lineKey}
+            renderItem={({ item }) => (
+              <View style={styles.row}>
+                <Line line={item} />
+              </View>
+            )}
+            header={details}
+            footer={footer}
+            empty={empty}
+            composerHeight={dock}
+            topInset={top}
+          >
+            <ConversationScrollButton />
+          </Conversation>
+        )}
+        <ComposerDock floating onHeight={setDock}>
+          {notes.length > 0 ? (
+            <Glass radius={20} style={styles.notes}>
+              {notes}
+            </Glass>
+          ) : null}
+          <PromptInput
+            value={text}
+            onChangeText={setText}
+            onSubmit={send}
+            placeholder={placeholderFor(space, revising, hosted)}
+            disabled={!running && !sendable}
+            editable={sendable}
+            running={running}
+            onStop={() => void stop()}
+            stopping={stopping}
+            queue={running}
+            canSubmit={canSubmit}
+            above={
+              <AttachmentStrip
+                list={attach.list}
+                notice={attach.notice}
+                onRetry={attach.retry}
+                onRemove={attach.remove}
+              />
+            }
+            leading={chips}
+            error={error}
+            inputRef={input}
+            testID="space-composer"
+          />
+        </ComposerDock>
+      </View>
+    </FileLinkProvider>
   );
 }
 
@@ -758,6 +812,7 @@ const styles = StyleSheet.create({
   row: { paddingBottom: 18 },
   tail: { gap: 18, paddingBottom: 4 },
   userRow: { alignItems: 'flex-end' },
+  userGap: { gap: 6 },
   status: { flexDirection: 'row', alignItems: 'center', minHeight: 22 },
   details: { gap: 8, paddingBottom: 18, alignItems: 'center' },
   continuous: { borderCurve: 'continuous' },

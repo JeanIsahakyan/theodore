@@ -45,7 +45,13 @@ import {
   View,
   type TextInputInstance,
 } from 'react-native';
-import { ComposerDock, PromptInput } from '../../src/components/chat';
+import {
+  AttachButton,
+  AttachmentStrip,
+  ComposerDock,
+  PromptInput,
+  useAttach,
+} from '../../src/components/chat';
 import { MainHeader } from '../../src/components/main-header';
 import { ModelChip } from '../../src/components/pickers/composer-chips';
 import { useHome } from '../../src/components/pickers/use-picker';
@@ -54,6 +60,7 @@ import { SymbolImage } from '../../src/components/symbol-image';
 import { useServices } from '../../src/services';
 import { useGlassHeaderInset } from '../../src/shell/glassHeader';
 import { spaceHref } from '../../src/shell/navigate';
+import { HOME_COMPOSER } from '../../src/state/attachments';
 import {
   noteStarted,
   requestNewSpace,
@@ -70,6 +77,7 @@ import { useFleetState } from '../../src/state/fleet';
 import { log, track } from '../../src/telemetry/log';
 import { startPicks } from '../../src/ui/agents';
 import { SharingCard } from '../../src/ui/SharingCard';
+import { allUploaded } from '../../src/ui/attachments';
 import { ConnectionBanner } from '../../src/ui/ConnectionBanner';
 import {
   LOADING_TEXT,
@@ -100,6 +108,9 @@ export default function NewSpaceScreen() {
   const [goal, setGoal] = useState('');
   const [error, setError] = useState<string | null>(null);
   const input = useRef<TextInputInstance>(null);
+  // Files for the space's .context/, sealed for the picked computer and
+  // uploaded on pick (docs/mobile.md "Files").
+  const attach = useAttach(HOME_COMPOSER, device?.deviceId ?? null);
 
   // A start the host refused: its goal back in the field, with why. Home
   // is the stack's anchor, mounted before any start: it hears every one.
@@ -128,7 +139,9 @@ export default function NewSpaceScreen() {
     return () => clearTimeout(t);
   }, [fresh]);
 
-  const ready = !!device && !!project && goal.trim() !== '';
+  // Start waits for every attached file to be in the cloud.
+  const ready =
+    !!device && !!project && goal.trim() !== '' && allUploaded(attach.list);
 
   // The space's screen opens at once under a pending id, the goal as your
   // first bubble; the host's ok names the space and the route follows
@@ -137,6 +150,7 @@ export default function NewSpaceScreen() {
     if (!device || !project || !ready) return;
     const text = goal.trim();
     const picks = startPicks(device.agents, pick);
+    const { refs, files } = attach.take();
     setError(null);
     setGoal('');
     const id = addStart({
@@ -147,6 +161,7 @@ export default function NewSpaceScreen() {
       goal: text,
       mode,
       picks,
+      files,
     });
     router.push(spaceHref(id));
     const startedAt = Date.now();
@@ -169,6 +184,7 @@ export default function NewSpaceScreen() {
         goal: text,
         mode,
         ...picks,
+        attachments: refs,
       })
       .then((space) => {
         if (!web)
@@ -204,7 +220,18 @@ export default function NewSpaceScreen() {
   // goes; the field takes typing, Send waits for the devices.
   const settled = load === 'ready' || load === 'empty';
   const chips =
-    device && project ? <ModelChip /> : settled ? null : <SkeletonChip />;
+    device && project ? (
+      <>
+        <AttachButton
+          onPick={(s) => void attach.pick(s)}
+          busy={attach.picking}
+          testID="start-attach"
+        />
+        <ModelChip />
+      </>
+    ) : settled ? null : (
+      <SkeletonChip />
+    );
 
   return (
     <View className="flex-1 bg-background" style={{ paddingTop: top }}>
@@ -280,6 +307,14 @@ export default function NewSpaceScreen() {
           // Loading: the goal can be typed already; Send waits for a computer.
           disabled={settled && (!device || !project)}
           canSubmit={ready}
+          above={
+            <AttachmentStrip
+              list={attach.list}
+              notice={attach.notice}
+              onRetry={attach.retry}
+              onRemove={attach.remove}
+            />
+          }
           leading={chips}
           error={error}
           autoFocus={web}
