@@ -18,6 +18,12 @@
  * No "New space" row: the ✎ button in the main header, on Home and every
  * space, is the one way to start one.
  *
+ * Archive (docs/mobile.md "Archive"; `canArchive` in src/ui/archive.ts):
+ * iOS / Android, a row swiped left ─▶ a red Archive (the archive glyph, its
+ * label under it); web, the archive icon button at the row's right edge on
+ * hover or focus. Both run `useArchive` (confirm, stop first if running,
+ * archive, toast with Undo).
+ *
  * Before this run's first devices list (src/ui/load.ts) an empty list is
  * skeleton rows, not "Spaces you start or follow show here."; the server
  * unreachable ─▶ "Can't reach the server" and Retry under the list (saved
@@ -27,7 +33,7 @@
  * navigation drawer items (full pill, 56 dp, the active one tinted).
  */
 import { usePathname, type Href } from 'expo-router';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Pressable,
   SectionList,
@@ -36,11 +42,15 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import Swipeable, {
+  type SwipeableMethods,
+} from 'react-native-gesture-handler/ReanimatedSwipeable';
 import type { SpaceView } from '../fleet/types';
 import { useServices } from '../services';
 import { useAuthState } from '../shell/AppProviders';
 import { spaceHref } from '../shell/navigate';
 import { useFleetState } from '../state/fleet';
+import { canArchive } from '../ui/archive';
 import { initials, spaceDot, spaceSections, type SpaceDot } from '../ui/drawer';
 import { UNREACHABLE_TITLE } from '../ui/load';
 import { spaceTitle } from '../ui/logic';
@@ -48,11 +58,15 @@ import { Button } from '../ui/native';
 import { SkeletonRows } from '../ui/Skeleton';
 import { subSpaceSummary } from '../ui/subSpaceTree';
 import { usePalette } from '../ui/theme';
+import { useArchive } from '../ui/useArchive';
 import { useLoadState } from '../ui/useLoadState';
 import { SymbolImage, type SymbolName } from './symbol-image';
 import { SafeAreaView } from './tw';
 
 const android = process.env.EXPO_OS === 'android';
+const web = process.env.EXPO_OS === 'web';
+/** The swiped-open Archive action's width. */
+const ARCHIVE_WIDTH = 96;
 
 const DOT_CLASS: Record<SpaceDot, string> = {
   running: 'bg-primary',
@@ -140,26 +154,55 @@ function NavItem({
   );
 }
 
+/** Native: the red Archive revealed by a leftward swipe: the glyph, its
+ *  label under it. */
+function ArchiveAction({ onPress }: { onPress: () => void }) {
+  const p = usePalette();
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel="Archive space"
+      style={[styles.archive, { backgroundColor: p.danger }]}
+      className={android ? 'mr-3 rounded-full' : 'mr-2 rounded-[10px]'}
+    >
+      <SymbolImage name="archive" size={22} color="#FFFFFF" />
+      <Text style={[styles.archiveText, { color: '#FFFFFF' }]}>Archive</Text>
+    </Pressable>
+  );
+}
+
 function SpaceItem({
   space,
   active,
+  archivable,
   onPress,
+  onArchive,
 }: {
   space: SpaceView;
   active: boolean;
+  /** Archive is offered (`canArchive`). */
+  archivable: boolean;
   onPress: () => void;
+  onArchive: () => void;
 }) {
   const p = usePalette();
   const subs = useFleetState((s) => s.mirrors[space.space]?.subSpaces);
   const summary = useMemo(() => subSpaceSummary(subs), [subs]);
+  const swipe = useRef<SwipeableMethods>(null);
+  const [hovered, setHovered] = useState(false);
   const dot = spaceDot(space);
   const title = spaceTitle(space) || 'Untitled space';
   const label = [title, dot ? DOT_LABEL[dot] : null, summary]
     .filter(Boolean)
     .join(', ');
-  return (
+  const row = (
     <Pressable
       onPress={onPress}
+      onHoverIn={web ? () => setHovered(true) : undefined}
+      onHoverOut={web ? () => setHovered(false) : undefined}
+      onFocus={web ? () => setHovered(true) : undefined}
+      onBlur={web ? () => setHovered(false) : undefined}
       accessibilityRole="button"
       accessibilityLabel={label}
       accessibilityState={{ selected: active }}
@@ -186,7 +229,41 @@ function SpaceItem({
       {dot ? (
         <View className={`h-2 w-2 rounded-full ${DOT_CLASS[dot]}`} />
       ) : null}
+      {web && archivable ? (
+        <Pressable
+          onPress={onArchive}
+          accessibilityRole="button"
+          accessibilityLabel={`Archive space ${title}`}
+          testID={`space-archive-${space.space}`}
+          hitSlop={4}
+          className={`-mr-2 h-7 w-7 items-center justify-center rounded-md hover:bg-muted ${hovered || active ? 'opacity-100' : 'opacity-0 focus:opacity-100'}`}
+        >
+          <SymbolImage name="archive" size={16} color={p.muted} />
+        </Pressable>
+      ) : null}
     </Pressable>
+  );
+  if (web || !archivable) return row;
+  return (
+    <Swipeable
+      ref={swipe}
+      friction={2}
+      rightThreshold={40}
+      overshootRight={false}
+      // Under the open drawer's own pan (5 pt either way): the row's
+      // leftward swipe activates first and takes the touch.
+      dragOffsetFromRight={-4}
+      renderRightActions={() => (
+        <ArchiveAction
+          onPress={() => {
+            swipe.current?.close();
+            onArchive();
+          }}
+        />
+      )}
+    >
+      {row}
+    </Swipeable>
   );
 }
 
@@ -268,6 +345,8 @@ export function DrawerContent({
   const path = usePathname();
   const { fleet } = useServices();
   const spaces = useFleetState((s) => s.spaces);
+  const devices = useFleetState((s) => s.devices);
+  const archive = useArchive();
   const load = useLoadState();
   const [query, setQuery] = useState('');
   const now = useMinute();
@@ -320,7 +399,9 @@ export function DrawerContent({
             <SpaceItem
               space={item}
               active={path === href}
+              archivable={canArchive(item, devices)}
               onPress={() => onNavigate(href)}
+              onArchive={() => void archive(item)}
             />
           );
         }}
@@ -391,3 +472,13 @@ export function DrawerContent({
     </SafeAreaView>
   );
 }
+
+const styles = StyleSheet.create({
+  archive: {
+    width: ARCHIVE_WIDTH,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+  },
+  archiveText: { fontSize: 13, fontWeight: '600' },
+});

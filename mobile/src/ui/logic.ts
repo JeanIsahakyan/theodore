@@ -267,11 +267,21 @@ const FLEET_HINTS: Record<string, string> = {
     'That computer doesn’t offer this agent, model or effort any more. Pick another.',
 };
 
+/** A thrown value's words; `null` when it has none. */
+const rawText = (e: unknown): string | null =>
+  e instanceof Error ? e.message : typeof e === 'string' ? e : null;
+
+/** The refusal code (`fleet.busy`) in a thrown value; `null` when none. */
+export function fleetCode(e: unknown): string | null {
+  const raw = rawText(e);
+  return (raw && /\bfleet\.[a-z_]+/.exec(raw)?.[0]) || null;
+}
+
 /** Any thrown value as a sentence; a fleet refusal by what to do about it. */
 export function errorText(e: unknown): string {
-  const raw = e instanceof Error ? e.message : typeof e === 'string' ? e : null;
+  const raw = rawText(e);
   if (raw === null) return 'Something went wrong. Try again.';
-  const code = /\bfleet\.[a-z_]+/.exec(raw)?.[0];
+  const code = fleetCode(raw);
   return (code && FLEET_HINTS[code]) || raw;
 }
 

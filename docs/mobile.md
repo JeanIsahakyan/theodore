@@ -122,6 +122,7 @@ The app speaks protocol 6. Since v4 it also reads:
 | `DeviceInfo.mcp_auto` (v6) | a computer's auto mode per `mcp` device it pins, on its Devices card; changed with a signed `RemoteOp::SetMcpAuto` to that computer (trusted here) |
 | `ServerMessage::Confirm{envelope}` (v6) | `RemoteConfirm`, `Domain::Confirm`, opened with the host's pin, signer = `host_device`; kept until `confirm_dismissed`, its expiry, an answer, or the next welcome (the cloud sends the waiting ones again) |
 | `RemoteOp::Confirm{confirm_id, allow}` (v6) | the card's or the push's Allow / Deny, to the host; a late one (`fleet.invalid`) just drops the card |
+| `RemoteOp::ArchiveSpace{space}` / `UnarchiveSpace{space}` (v8) | Archive from the drawer or a space's header ("Archive" below), routed like a stop; a host below 8 ─▶ `fleet.upgrade_required` from the cloud |
 
 ## Cloud (cloud/)
 
@@ -375,6 +376,55 @@ new space (✎, the header) ─▶ dismissTo Home  bell ─▶ the first waiting
 - Fleet text is untrusted in the markdown too: a link is its words and its
   address in muted text (nothing opens), an image is `[image: alt]`
   (nothing loads), raw HTML is text, nesting deeper than 16 is plain text.
+
+#### Archive
+
+A space is archived on its host as the desktop's Archive does it
+(docs/spaces.md): uncommitted edits checkpointed, the worktree removed, the
+branch and the PR left alone, the row archived. `archive_space` (protocol 8).
+
+```text
+drawer, iOS / Android   row swiped left ─▶ [ ⌸ Archive ] (red; the glyph, its label under it)
+drawer, web             hover / focus on a row ─▶ [⌸] icon button at its right
+a space's header        [⌸] icon button after ✎ ("Archive space"; SF archivebox,
+                        Material archive, Lucide Archive: `archive` in symbol-image.tsx)
+        │
+        ▼ confirm (system alert / window.confirm)
+   Archive “<title>”?                                    title: spaceTitle, else "Untitled space"
+   [The agent is still working: it is stopped first. ]   running ─▶ label "Stop and archive"
+   Its worktree is removed; the branch and PR stay.
+   [ It has changes that were not pushed or merged.]     mirrored row: no pr, no shipped,
+        │                                                head_sha ≠ base_sha (no row: left out)
+        ├─ running ─▶ stop ─▶ archive_space
+        └─ else            ─▶ archive_space
+   ok     ─▶ the space leaves the list (still tracked); header: back Home
+             toast  ╭ Archived                 Undo ╮  6 s; Undo ─▶ unarchive_space
+   refused ─▶ toast with the hint, no action
+```
+
+| Shown when (`canArchive`, `src/ui/archive.ts`) | |
+| --- | --- |
+| the host is listed and trusted here | nothing can be signed to it otherwise |
+| started here, or followed and the host `acceptsRemote` | the host decides for real; its refusal is the hint |
+| status ≠ `starting`, a `hostDevice` set | nothing to archive yet |
+
+| Refusal | Toast |
+| --- | --- |
+| `fleet.busy` (its turn runs) | Stop the space first, then archive it. |
+| `fleet.upgrade_required` (host below protocol 8) | Update Theodore on <host> to archive from here |
+| `fleet.untrusted_device`, others | `errorText`'s hint |
+
+- Client (`src/fleet/client.ts`): `archiveSpace` / `unarchiveSpace`. The host's
+  ok marks the tracked space `archived`: it keeps its lines, mirror,
+  subscription and saved record but leaves `spaces`; Undo clears the mark at
+  once, the host's next row sets the status. A mirrored row saying
+  `archived` (archived on the computer) hides it the same way; another
+  status lists it again.
+- Flow: `src/ui/useArchive.ts`; toast: `src/state/toast.ts`, `src/ui/Toast.tsx`
+  (mounted once in `app/(app)/_layout.tsx`, over the open drawer too); the
+  header's icon buttons: `MainHeaderProps.actions` (`HeaderAction`: icon,
+  label, onPress, destructive), one `Stack.Toolbar.Button` / Compose
+  `IconButton` / web button each.
 
 ### Activity strip
 

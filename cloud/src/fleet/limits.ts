@@ -4,14 +4,15 @@
  * carries types only); the rest are the cloud's own (docs/cloud.md "Fleet").
  */
 
-export const PROTOCOL_VERSION = 7;
+export const PROTOCOL_VERSION = 8;
 /**
  * The oldest protocol still accepted. Protocol-3 connections never see
  * `mobile` / `web` devices (their `DeviceKind` can't read them) nor
  * `delegations`; protocol 3 and 4 never see the cloud's own `mcp` device;
  * below 6, no `confirm` / `confirm_dismissed` frames nor the `confirm` /
  * `set_mcp_auto` ops; below 7, none of the ops on any space of a computer
- * (`list_spaces` … `merge_child`).
+ * (`list_spaces` … `merge_child`); below 8, no `archive_space` /
+ * `unarchive_space`.
  */
 export const MIN_PROTOCOL_VERSION = 3;
 /** A signed request or delegation older or newer than this is stale. */

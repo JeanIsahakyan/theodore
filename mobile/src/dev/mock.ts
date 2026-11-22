@@ -291,6 +291,8 @@ export const mockMirrors: Record<string, SpaceMirror> = {
       goal: 'Tidy the settings page',
       title: 'Tidy the settings page',
       branch: 'agent/tidy-settings',
+      base_sha: 'a1b2c3',
+      head_sha: 'd4e5f6',
       status: 'idle',
       agent: 'claude',
       mode: 'plan',
@@ -592,6 +594,8 @@ export function createMock(options: MockOptions = {}): Mock {
     }));
   /** Messages queued per running space (the mock never drains them). */
   const queuedHere: Record<string, number> = {};
+  /** Spaces archived from here, for Undo. */
+  const archivedHere: Record<string, SpaceView | undefined> = {};
   const appendLine = (id: string, kind: SpaceLine['kind'], text: string) =>
     useFleetState.setState((s) => {
       const lines = s.lines[id] ?? [];
@@ -674,6 +678,22 @@ export function createMock(options: MockOptions = {}): Mock {
     async stopSpace(space) {
       await call('stopSpace', space);
       patchSpace(space, { status: 'stopped' });
+    },
+    async archiveSpace(space) {
+      await call('archiveSpace', space);
+      archivedHere[space] = useFleetState
+        .getState()
+        .spaces.find((s) => s.space === space);
+      useFleetState.setState((s) => ({
+        spaces: s.spaces.filter((x) => x.space !== space),
+      }));
+    },
+    async unarchiveSpace(space) {
+      await call('unarchiveSpace', space);
+      const back = archivedHere[space];
+      delete archivedHere[space];
+      if (back)
+        useFleetState.setState((s) => ({ spaces: [...s.spaces, back] }));
     },
     async answer(space, askId, answers) {
       await call('answer', space, askId, answers);

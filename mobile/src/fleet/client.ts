@@ -42,6 +42,14 @@
  * sign-out, org switch ─▶ the set is removed
  * ```
  *
+ * Archiving (docs/mobile.md "Archive"): `archiveSpace` signs `archive_space`
+ * to the host like a stop. The host's ok marks the tracked space `archived`:
+ * it stays tracked (lines, mirror, subscription, saved record) but leaves
+ * the published list; `unarchiveSpace` clears the mark at once (Undo) and
+ * the host's next row sets the status. A mirrored row saying `archived`
+ * (archived on the computer) hides it the same way; any other status
+ * shows it again.
+ *
  * Following (delegation): when an origin has delegated to this device and
  * an ask (or event) for a space not tracked here verifies against a pinned
  * host, the space is followed: tracked with `startedHere: false` and
@@ -336,10 +344,13 @@ export function createFleetClient(
   // ── publishing ──────────────────────────────────────────────────────────
   const publishSpaces = () =>
     set({
-      spaces: [...tracked.values()].map((x) => ({
-        ...x.view,
-        activeAt: x.mirror.space?.updated_at || x.seenAt,
-      })),
+      // Archived ones stay tracked (Undo) but aren't listed.
+      spaces: [...tracked.values()]
+        .filter((x) => !x.view.archived)
+        .map((x) => ({
+          ...x.view,
+          activeAt: x.mirror.space?.updated_at || x.seenAt,
+        })),
     });
   const publishLines = (space: string) => {
     const x = tracked.get(space);
@@ -1057,6 +1068,9 @@ export function createFleetClient(
       if (row.branch) v.branch = row.branch;
       if (isMode(row.mode)) v.mode = row.mode;
       v.status = mirrorStatus(row);
+      // The host's word on archiving, from here or from the computer.
+      if (row.status === 'archived') v.archived = true;
+      else delete v.archived;
       const q = row.question;
       if (q) {
         v.question = {
@@ -1507,6 +1521,24 @@ export function createFleetClient(
 
     async stopSpace(space) {
       await steer(space, { op: 'stop', space });
+    },
+
+    async archiveSpace(space) {
+      await steer(space, { op: 'archive_space', space });
+      const x = tracked.get(space);
+      if (!x) return;
+      x.view.archived = true;
+      touch(x);
+      publishSpaces();
+    },
+
+    async unarchiveSpace(space) {
+      await steer(space, { op: 'unarchive_space', space });
+      const x = tracked.get(space);
+      if (!x) return;
+      delete x.view.archived;
+      touch(x);
+      publishSpaces();
     },
 
     async answer(space, askId, answers) {

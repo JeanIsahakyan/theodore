@@ -8,8 +8,8 @@
  *
  * ```text
  * [☰]  New space                     [🔔³][✎]
- * [☰]  fix the login bug…            [🔔³][✎]   a space: two lines
- *      on mac-A · Running
+ * [☰]  fix the login bug…            [🔔³][✎][⌸]   a space: two lines, then
+ *      on mac-A · Running                          its `actions` (Archive)
  * ```
  */
 import {
@@ -28,9 +28,33 @@ import { View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useHostTheme } from '../ui/native/host.android';
 import { usePalette } from '../ui/theme';
-import { useHeaderActions, type MainHeaderProps } from './header-actions';
+import {
+  useHeaderActions,
+  type HeaderAction,
+  type MainHeaderProps,
+} from './header-actions';
+import type { SymbolName } from './symbol-image';
 
 const NO_INSETS = {};
+
+/** Vector drawables of the actions a screen may put here (`require` is static). */
+const ACTION_ICONS: Partial<Record<SymbolName, number>> = {
+  archive: require('../../assets/icons/archive.xml'),
+};
+
+function Action({ action }: { action: HeaderAction }) {
+  const p = usePalette();
+  const source = ACTION_ICONS[action.icon];
+  if (!source) return null;
+  return (
+    <IconButton
+      onClick={action.onPress}
+      modifiers={[semantics({ contentDescription: action.label })]}
+    >
+      <Icon source={source} tint={action.destructive ? p.danger : p.muted} />
+    </IconButton>
+  );
+}
 
 function AppBar({
   title,
@@ -39,6 +63,7 @@ function AppBar({
   onMenu,
   onQuestions,
   onNewSpace,
+  actions,
 }: {
   title: string;
   subtitle?: string;
@@ -46,6 +71,7 @@ function AppBar({
   onMenu: () => void;
   onQuestions: () => void;
   onNewSpace: () => void;
+  actions?: HeaderAction[];
 }) {
   const p = usePalette();
   const theme = useHostTheme();
@@ -134,6 +160,9 @@ function AppBar({
             >
               <Icon source={require('../../assets/icons/edit.xml')} />
             </IconButton>
+            {actions?.map((a) => (
+              <Action key={a.label} action={a} />
+            ))}
           </TopAppBar.Actions>
         </TopAppBar>
       </Host>
@@ -141,7 +170,12 @@ function AppBar({
   );
 }
 
-export function MainHeader({ title, subtitle, onNewSpace }: MainHeaderProps) {
+export function MainHeader({
+  title,
+  subtitle,
+  onNewSpace,
+  actions,
+}: MainHeaderProps) {
   const { openDrawer, newSpace, waiting, openQuestions } =
     useHeaderActions(onNewSpace);
   return (
@@ -156,6 +190,7 @@ export function MainHeader({ title, subtitle, onNewSpace }: MainHeaderProps) {
             onMenu={openDrawer}
             onQuestions={openQuestions}
             onNewSpace={newSpace}
+            actions={actions}
           />
         ),
       }}

@@ -776,6 +776,8 @@ pub(crate) fn tool_label(name: &str) -> &str {
         "space_stop" => "stop a sub-space",
         "space_answer" => "answer a space",
         "space_merge" => "merge a sub-space",
+        "space_archive" => "archive a sub-space",
+        "space_unarchive" => "unarchive a sub-space",
         _ => name,
     }
 }

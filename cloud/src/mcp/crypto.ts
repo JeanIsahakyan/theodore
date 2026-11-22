@@ -218,6 +218,10 @@ function opInOrder(op: RemoteOp): RemoteOp {
       };
     case 'merge_child':
       return { op: 'merge_child', parent: op.parent, child: op.child };
+    case 'archive_space':
+      return { op: 'archive_space', space: op.space };
+    case 'unarchive_space':
+      return { op: 'unarchive_space', space: op.space };
   }
 }
 

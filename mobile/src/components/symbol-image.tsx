@@ -11,6 +11,7 @@
 import { SymbolView } from 'expo-symbols';
 import type { AndroidSymbol, SFSymbol } from 'expo-symbols';
 import {
+  Archive,
   ArrowUp,
   BadgeCheck,
   Bell,
@@ -99,6 +100,8 @@ export const SYMBOLS = {
     web: ChevronRight,
   },
   more: { sf: 'ellipsis', md: 'more_horiz', web: Ellipsis },
+  /** Archive a space (a header button, the drawer's swipe action). */
+  archive: { sf: 'archivebox', md: 'archive', web: Archive },
   // Settings and Devices (src/components/settings/).
   organization: { sf: 'building.2', md: 'corporate_fare', web: Building },
   phone: { sf: 'iphone', md: 'smartphone', web: Smartphone },

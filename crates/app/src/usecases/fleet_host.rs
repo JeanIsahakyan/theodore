@@ -631,6 +631,28 @@ impl Core {
                 .fleet_hosted_local(space)
                 .map(|_| ())
                 .ok_or_else(unknown),
+            // Archiving sets a worktree aside: a person's call, never
+            // Claude via the cloud's (its key is the cloud's). The row
+            // archived stays hosted, so an unarchive finds it.
+            RemoteOp::ArchiveSpace { space } | RemoteOp::UnarchiveSpace { space } => {
+                let local = self.fleet_hosted_local(space).ok_or_else(unknown)?;
+                if self.fleet_origin_mcp(pin) {
+                    return Err(refuse(
+                        codes::DENIED,
+                        "Claude via the cloud can't archive spaces on this device",
+                    ));
+                }
+                let row = self.space_row(&local).await.map_err(app_refusal)?;
+                if matches!(req.op, RemoteOp::ArchiveSpace { .. })
+                    && row.status == SpaceStatus::Running
+                {
+                    return Err(refuse(
+                        codes::BUSY,
+                        "the space is still working: stop it first, then archive it",
+                    ));
+                }
+                Ok(())
+            }
             RemoteOp::Answer {
                 space,
                 ask_id,
@@ -873,6 +895,36 @@ impl Core {
                     .space_stop(&local)
                     .await
                     .map(|()| serde_json::json!({}))
+                    .map_err(app_refusal),
+                None => Err(refuse(codes::UNKNOWN_SPACE, "no such space on this device")),
+            },
+            RemoteOp::ArchiveSpace { space } => match self.fleet_hosted_local(&space) {
+                Some(local) => {
+                    // Checked at the gate; a turn started since is this
+                    // refusal from `archive_space` itself.
+                    if self.space_row(&local).await.map_err(app_refusal)?.status
+                        == SpaceStatus::Running
+                    {
+                        return Err(refuse(
+                            codes::BUSY,
+                            "the space is still working: stop it first, then archive it",
+                        ));
+                    }
+                    self.archive_space(&local)
+                        .await
+                        .map(|()| serde_json::json!({}))
+                        .map_err(app_refusal)
+                        .inspect(|_| {
+                            tracing::info!(space = %local, origin = %req.origin_device, "archived a hosted space for its origin");
+                        })
+                }
+                None => Err(refuse(codes::UNKNOWN_SPACE, "no such space on this device")),
+            },
+            RemoteOp::UnarchiveSpace { space } => match self.fleet_hosted_local(&space) {
+                Some(local) => self
+                    .unarchive_space(&local)
+                    .await
+                    .map(|_| serde_json::json!({}))
                     .map_err(app_refusal),
                 None => Err(refuse(codes::UNKNOWN_SPACE, "no such space on this device")),
             },

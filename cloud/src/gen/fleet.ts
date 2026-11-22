@@ -348,7 +348,18 @@ until_ms?: number | null } |
  *  Merges sub-space `child` into its parent `parent`'s worktree
  *  (`space_merge`); counts as Edit.
  */
-{ op: "merge_child"; parent: string; child: string };
+{ op: "merge_child"; parent: string; child: string } |
+/**
+ *  Archives the space as the host's own Archive does: its uncommitted
+ *  edits checkpointed, the worktree removed, the branch and the PR
+ *  left as they are. `fleet.busy` while its turn runs (stop it first).
+ */
+{ op: "archive_space"; space: string } |
+/**
+ *  Brings an archived space back: its worktree recreated from its
+ *  checkpoints.
+ */
+{ op: "unarchive_space"; space: string };
 
 export type RemoteQuestion = {
 	question: string,
