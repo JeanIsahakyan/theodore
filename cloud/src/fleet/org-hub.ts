@@ -6,6 +6,7 @@
  * ```text
  * Worker (verified JWT) ─▶ fetch + x-theodore-fleet-caller ─▶ acceptWebSocket(tag u:<user>)
  *                        └─ POST /v1/fleet/request ─▶ Hub.requestOverHttp ─▶ 202 │ 200 refused
+ *                        └─ POST /v1/fleet/blob-quota {bytes} ─▶ BlobQuota ─▶ 200 │ 429 (a chunk upload)
  * webSocketMessage / webSocketClose / alarm ─▶ Hub ─▶ pushes (Expo) via ctx.waitUntil
  * Worker /mcp (OAuth grant: user, org) ─▶ POST /mcp/call ─▶ McpFleet: the
  *   user's MCP device, connected to the same Hub in process (src/mcp/)
@@ -30,6 +31,7 @@ import {
   type TelemetryEnv,
   type Telemetry,
 } from '../telemetry/cloud';
+import { answerBlobQuota, BlobQuota, QUOTA_PATH } from './blobs';
 import { Hub, type Conn, type ConnState, type FleetCaller } from './hub';
 import { expoSender } from './push';
 import {
@@ -92,8 +94,11 @@ export function readCaller(header: string | null): FleetCaller | null {
 export class OrgHub implements DurableObject {
   private hub: Hub;
   private mcp: McpFleet | null;
+  /** The MCP tables' and the blob counter's side of a purge. */
   private mcpPurge: McpPurge;
   private telemetry: Telemetry;
+  /** Per user per day, what the blob routes uploaded (`src/fleet/blobs.ts`). */
+  private quota: BlobQuota;
   /** The alarm as last set; undefined until read after a wake. */
   private alarmAt: number | null | undefined;
 
@@ -140,9 +145,17 @@ export class OrgHub implements DurableObject {
     });
     // MCP off now doesn't mean its tables never held rows.
     const mcpStore = () => this.mcp?.store ?? new McpStore(sql);
+    this.quota = new BlobQuota(sql, () => Date.now());
     this.mcpPurge = {
-      user: (u) => (this.mcp ? this.mcp.forget(u) : mcpStore().purgeUser(u)),
-      all: () => mcpStore().purgeAll(),
+      user: (u) => {
+        if (this.mcp) this.mcp.forget(u);
+        else mcpStore().purgeUser(u);
+        this.quota.purgeUser(u);
+      },
+      all: () => {
+        mcpStore().purgeAll();
+        this.quota.purgeAll();
+      },
     };
   }
 
@@ -181,6 +194,9 @@ export class OrgHub implements DurableObject {
     }
     if (request.method === 'POST' && path === REQUEST_PATH) {
       return answerRequest(this.hub, caller, request);
+    }
+    if (request.method === 'POST' && path === QUOTA_PATH) {
+      return answerBlobQuota(this.quota, caller, request);
     }
     if (
       request.method === 'POST' &&
