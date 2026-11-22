@@ -12,6 +12,7 @@ export {
   SectionNote,
   SettingsScroll,
 } from './section';
+export { PrivacyRows } from './privacy-rows';
 export { SettingsMenuRow } from './settings-menu-row';
 export { SettingsRow } from './settings-row';
 export { SettingsToggleRow } from './settings-toggle-row';

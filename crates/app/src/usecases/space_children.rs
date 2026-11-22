@@ -26,6 +26,11 @@
 //! space_stop ─▶ own children only
 //! space_wait ─▶ until one of them settles: turn ended or failed, a
 //!               question waits ─ or the timeout
+//! space_archive ─▶ a sub-space under the caller (any depth), settled,
+//!                  merged here or shipped (else `force`) ─▶ archive_space
+//!                  (the UI's Archive: checkpoint, worktree removed, branch
+//!                  and PR kept) ─▶ frees a live-children slot
+//! space_unarchive ─▶ one of those, archived ─▶ unarchive_space
 //! space_merge ─▶ own child, settled, same project, not shipped elsewhere
 //!             ─▶ its change from its fork point (or the last merge) to its
 //!                last checkpoint, three-way into the caller's worktree as
@@ -110,7 +115,9 @@ pub(crate) const SUB_SPACES_PROMPT: &str = "When the work splits into clearly in
      resolve the conflict markers in any files it lists, and check the result. \
      space_send, space_answer and space_stop steer them; space_send and space_answer \
      also reach any other space here (it is told the message is from you). Don't split \
-     small or tightly coupled tasks: do them yourself.";
+     small or tightly coupled tasks: do them yourself. When the user asks to archive or \
+     clean up sub-spaces, call space_archive on each (space_unarchive brings one back); \
+     never archive a sub-space without being asked.";
 
 /// In memory: the running turns' text so far, the lock that keeps two
 /// starts from both passing the children limit, and the one for merges.
@@ -1321,6 +1328,130 @@ impl Core {
             conflicts: applied.conflicts,
             note,
         })
+    }
+
+    /// `target`, when it sits under `caller`: a child, or a child's child
+    /// and so on (`Space::parent` chain).
+    async fn own_descendant(&self, caller: &str, target: &str) -> Result<Space, SpaceToolError> {
+        let row = self
+            .space_row(target)
+            .await
+            .map_err(|_| refuse("unknown", format!("no space {target} here")))?;
+        let mut up = row.parent.as_ref().map(|p| p.space.clone());
+        // Bounded: a parent chain is at most as long as its depth.
+        let mut hops = row.parent.as_ref().map_or(0, |p| p.depth) + 1;
+        while let Some(id) = up {
+            if id == caller {
+                return Ok(row);
+            }
+            hops = hops.saturating_sub(1);
+            if hops == 0 {
+                break;
+            }
+            up = self
+                .space_row(&id)
+                .await
+                .ok()
+                .and_then(|s| s.parent.map(|p| p.space));
+        }
+        Err(refuse(
+            "not_child",
+            format!("{target} wasn't started by this space (nor by one of its sub-spaces)"),
+        ))
+    }
+
+    /// `space_archive`: archives `target`, a sub-space under `caller`, as
+    /// the UI's Archive does (`archive_space`: uncommitted edits
+    /// checkpointed, the worktree removed, the branch and the PR kept, the
+    /// row archived; a live-children slot freed). Refused while it runs,
+    /// and with work neither merged here nor shipped unless `force`.
+    pub async fn sub_space_archive(
+        &self,
+        caller: &str,
+        turn: SpaceMode,
+        target: &str,
+        force: bool,
+    ) -> Result<LocalSpaceItem, SpaceToolError> {
+        let me = self.sub_space_steer(caller, turn).await?;
+        let child = self.own_descendant(caller, target).await?;
+        if child.status == SpaceStatus::Archived {
+            return Ok(item(&child, Some(&me)));
+        }
+        let setting_up = child
+            .setup
+            .as_ref()
+            .is_some_and(|s| matches!(s.status, SetupStatus::Running | SetupStatus::Waiting));
+        if child.status == SpaceStatus::Running || child.run.is_some() || setting_up {
+            return Err(refuse(
+                "running",
+                format!("{target} is still running; space_stop it first, then archive it"),
+            ));
+        }
+        if !force && let Some(lost) = self.unmerged_work(&child).await {
+            return Err(refuse(
+                "unmerged",
+                format!(
+                    "{target} has {lost}, neither merged into this space nor shipped: space_merge \
+                     it first, or pass force: true to archive it anyway (its branch keeps them; \
+                     space_unarchive brings it back)"
+                ),
+            ));
+        }
+        self.archive_space(&child.id).await.map_err(failed)?;
+        tracing::info!(space = %child.id, parent = %me.id, force, "a space archived a sub-space");
+        let row = self.space_row(&child.id).await.map_err(failed)?;
+        Ok(item(&row, Some(&me)))
+    }
+
+    /// What archiving `child` would set aside: its turns since its fork
+    /// (or since the last `space_merge` of it), when it was neither merged
+    /// since nor shipped on its own. In words, for the refusal.
+    async fn unmerged_work(&self, child: &Space) -> Option<String> {
+        let merged = child
+            .shipped
+            .as_ref()
+            .filter(|s| s.how == ShipKind::MergedIntoParent);
+        if child.pr.is_some() || (child.shipped.is_some() && merged.is_none()) {
+            return None;
+        }
+        let from = merged.map_or(&child.base_sha, |s| &s.head);
+        if *from == child.head_sha {
+            return None;
+        }
+        let since = if merged.is_some() {
+            "since the last merge"
+        } else {
+            "since it started"
+        };
+        let stat = match self.diff_stat(child).await {
+            Some(d) if d.files > 0 => format!(
+                "changes {since} ({} file(s), +{} −{}: {})",
+                d.files,
+                d.additions,
+                d.deletions,
+                d.paths.join(", ")
+            ),
+            _ => format!("checkpoints {since}"),
+        };
+        Some(stat)
+    }
+
+    /// `space_unarchive`: brings an archived sub-space under `caller` back
+    /// (`unarchive_space`: its worktree recreated from its checkpoints).
+    pub async fn sub_space_unarchive(
+        &self,
+        caller: &str,
+        turn: SpaceMode,
+        target: &str,
+    ) -> Result<LocalSpaceItem, SpaceToolError> {
+        let me = self.sub_space_steer(caller, turn).await?;
+        let child = self.own_descendant(caller, target).await?;
+        if child.status != SpaceStatus::Archived {
+            return Err(refuse("not_archived", format!("{target} isn't archived")));
+        }
+        let row = self.unarchive_space(&child.id).await.map_err(failed)?;
+        tracing::info!(space = %child.id, parent = %me.id, "a space unarchived a sub-space");
+        Ok(item(&row, Some(&me)))
     }
 
     /// `space_wait`: until one of `targets` (children of `caller`)

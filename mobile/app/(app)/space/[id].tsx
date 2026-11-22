@@ -39,6 +39,7 @@
  *                              "· 1 queued" on the strip's first line meanwhile
  *     refused / silent      ─▶ "Not sent · why" with Retry and Edit (text back)
  * (■) Stop while running, beside Send ─▶ confirm() ─▶ fleet.stopSpace
+ * [⌸] Archive in the header (canArchive) ─▶ useArchive ─▶ Home, toast with Undo
  * running ─▶ the strip's first line: the plan's active step, else the newest
  *     live step, else (not mirrored) the newest log line, and a timer;
  *     waiting on a question ─▶ "Waiting for your answer ↓" scrolls to the card
@@ -59,14 +60,19 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { StyleSheet, Text, View, type TextInputInstance } from 'react-native';
 import {
+  AttachButton,
+  AttachmentStrip,
   ComposerDock,
   Conversation,
   ConversationScrollButton,
   Message,
   PromptInput,
+  SentFiles,
   Shimmer,
+  useAttach,
   type ConversationHandle,
 } from '../../../src/components/chat';
+import { FileLinkProvider } from '../../../src/components/chat/file-link';
 import { ChatMarkdown } from '../../../src/components/markdown';
 import { ModelChip } from '../../../src/components/pickers/composer-chips';
 import { useSpaceMode } from '../../../src/components/pickers/use-picker';
@@ -79,7 +85,11 @@ import type {
   SpaceLine,
   SpaceView,
 } from '../../../src/fleet/types';
-import type { FleetMode, MirroredSubSpace } from '../../../src/gen/fleet';
+import type {
+  BlobRef,
+  FleetMode,
+  MirroredSubSpace,
+} from '../../../src/gen/fleet';
 import { useServices } from '../../../src/services';
 import { useGlassHeaderInset } from '../../../src/shell/glassHeader';
 import { backHome, spaceHref } from '../../../src/shell/navigate';
@@ -96,7 +106,9 @@ import {
   sendSettled,
   usePending,
 } from '../../../src/state/pending';
+import { log, track } from '../../../src/telemetry/log';
 import { NO_PICK, sendPicks, spaceOwn } from '../../../src/ui/agents';
+import { canSendWith } from '../../../src/ui/attachments';
 import {
   APPROVED_TEXT,
   buildMode,
@@ -114,6 +126,7 @@ import {
   errorText,
   mergeLines,
   questionFor,
+  refusalCode,
   spaceTitle,
 } from '../../../src/ui/logic';
 import {
@@ -121,13 +134,16 @@ import {
   isPendingId,
   queuedCount,
   rowOfMessage,
+  sentMs,
   startTitle,
   startingLabel,
   unmatched,
   unmatchedByLines,
 } from '../../../src/ui/pending';
 import { ActivityStrip, useActivityStrip } from '../../../src/ui/ActivityStrip';
+import { canArchive } from '../../../src/ui/archive';
 import { Glass, confirm } from '../../../src/ui/native';
+import { useArchive } from '../../../src/ui/useArchive';
 import { QuestionCard } from '../../../src/ui/QuestionCard';
 import { SubSpaces } from '../../../src/ui/SubSpaces';
 import {
@@ -330,7 +346,8 @@ function StartingScreen({ id }: { id: string }) {
   const where = [start.projectName, MODE_LABEL[start.mode]].filter(Boolean);
   const footer = (
     <View style={styles.tail}>
-      <View style={styles.userRow}>
+      <View style={[styles.userRow, styles.userGap]}>
+        {start.files?.length ? <SentFiles files={start.files} /> : null}
         <Message from="user">{start.goal}</Message>
       </View>
       <Message
@@ -388,6 +405,8 @@ function LiveSpaceScreen({ id }: { id: string }) {
   const host = useFleetState((s) =>
     s.devices.find((d) => d.deviceId === space?.hostDevice),
   );
+  const devices = useFleetState((s) => s.devices);
+  const archive = useArchive('header');
   // Your messages the host hasn't shown yet (src/state/pending.ts).
   const pending = usePending(selectSends(id));
   const [loaded, setLoaded] = useState<SpaceLine[]>(EMPTY_LINES);
@@ -406,6 +425,21 @@ function LiveSpaceScreen({ id }: { id: string }) {
   const input = useRef<TextInputInstance>(null);
   const list = useRef<ConversationHandle>(null);
   const top = useGlassHeaderInset();
+  // Files for the space's .context/, sealed for its host and uploaded on
+  // pick (docs/mobile.md "Files").
+  const attach = useAttach(id, space?.hostDevice ?? null);
+  const fileTarget = useMemo(
+    () =>
+      space
+        ? {
+            space: id,
+            hostDevice: space.hostDevice,
+            hostName: space.hostName,
+            spaceName: spaceTitle(space),
+          }
+        : null,
+    [id, space],
+  );
 
   useEffect(() => {
     let live = true;
@@ -496,16 +530,51 @@ function LiveSpaceScreen({ id }: { id: string }) {
     t: string,
     mode: FleetMode | null,
     with_: AgentPicks,
+    attachments: BlobRef[] = [],
+    kind: 'send' | 'approve' = 'send',
   ) => {
+    const row = () => pending.find((x) => x.key === key);
     fleet
-      .send(id, t, mode, with_)
-      .then((r) => sendSettled(id, key, r))
-      .catch((e: unknown) => sendFailed(id, key, errorText(e)));
+      .send(id, t, mode, with_, attachments)
+      .then((r) => {
+        track('message_sent', {
+          surface: 'space',
+          kind,
+          queued: r.queued,
+          ms: sentMs(row()),
+          retries: row()?.retries ?? 0,
+          outcome: 'ok',
+          code: null,
+        });
+        sendSettled(id, key, r);
+      })
+      .catch((e: unknown) => {
+        const code = refusalCode(e);
+        track('message_sent', {
+          surface: 'space',
+          kind,
+          queued: false,
+          ms: sentMs(row()),
+          retries: row()?.retries ?? 0,
+          outcome: 'failed',
+          code,
+        });
+        log.warn('send failed', {
+          op_id: key,
+          space: id,
+          'error.code': code ?? 'fleet.send_failed',
+        });
+        sendFailed(id, key, errorText(e));
+      });
   };
+
+  // Send waits for every attached file to be in the cloud.
+  const canSubmit = sendable && canSendWith(text, attach.list);
 
   const send = () => {
     const t = text.trim();
-    if (!t || !sendable) return;
+    if (!t || !canSubmit) return;
+    const { refs, files } = attach.take();
     setText('');
     setRevising(false);
     setError(null);
@@ -517,14 +586,17 @@ function LiveSpaceScreen({ id }: { id: string }) {
       mode,
       picks,
       afterSeq: lines.at(-1)?.seq ?? 0,
+      files,
+      attachments: refs,
     });
     toEnd();
-    dispatch(key, t, mode, picks);
+    dispatch(key, t, mode, picks, refs);
   };
 
   const retry = (key: string) => {
     const again = sendRetried(id, key);
-    if (again) dispatch(key, again.text, again.mode, again.picks);
+    if (again)
+      dispatch(key, again.text, again.mode, again.picks, again.attachments);
   };
 
   const edit = (key: string) => {
@@ -549,7 +621,11 @@ function LiveSpaceScreen({ id }: { id: string }) {
     setError(null);
     fleet
       .stopSpace(id)
-      .catch((e: unknown) => setError(errorText(e)))
+      .then(() => track('space_stopped', { outcome: 'ok', code: null }))
+      .catch((e: unknown) => {
+        track('space_stopped', { outcome: 'failed', code: refusalCode(e) });
+        setError(errorText(e));
+      })
       .finally(() => setStopping(false));
   };
 
@@ -568,9 +644,11 @@ function LiveSpaceScreen({ id }: { id: string }) {
         afterSeq: lines.at(-1)?.seq ?? 0,
       });
       toEnd();
-      dispatch(key, APPROVED_TEXT, build, picks);
+      track('plan_decided', { decision: 'approve' });
+      dispatch(key, APPROVED_TEXT, build, picks, [], 'approve');
     },
     onRevise: () => {
+      track('plan_decided', { decision: 'revise' });
       setSpaceMode(id, 'plan');
       setRevising(true);
       input.current?.focus();
@@ -640,78 +718,115 @@ function LiveSpaceScreen({ id }: { id: string }) {
 
   const details = <Details space={space} subs={mirror?.subSpaces} />;
 
-  const chips = <ModelChip space={id} />;
+  const chips = (
+    <>
+      <AttachButton
+        onPick={(s) => void attach.pick(s)}
+        disabled={!sendable}
+        busy={attach.picking}
+        testID="space-attach"
+      />
+      <ModelChip space={id} />
+    </>
+  );
+
+  // The header's Archive button, when this phone may ask the host for it.
+  const actions = canArchive(space, devices)
+    ? [
+        {
+          icon: 'archive' as const,
+          label: 'Archive space',
+          destructive: true,
+          onPress: () => {
+            void archive(space).then((done) => {
+              if (done) backHome();
+            });
+          },
+        },
+      ]
+    : undefined;
 
   return (
-    <View className="flex-1 bg-background">
-      <SpaceHeader
-        title={spaceTitle(space)}
-        subtitle={`on ${space.hostName} · ${STATUS_LABEL[space.status]} · ${MODE_LABEL[picked]}`}
-      />
-      {chat ? (
-        <Conversation
-          ref={list}
-          data={messages}
-          keyExtractor={messageKey}
-          renderItem={({ item }) => (
-            <Row
-              m={item}
-              chat={chat}
-              plan={chat.planHere === item.id ? plan : null}
-            />
-          )}
-          header={details}
-          footer={footer}
-          empty={empty}
-          composerHeight={dock}
-          topInset={top}
-        >
-          <ConversationScrollButton />
-        </Conversation>
-      ) : (
-        <Conversation
-          ref={list}
-          data={lines}
-          keyExtractor={lineKey}
-          renderItem={({ item }) => (
-            <View style={styles.row}>
-              <Line line={item} />
-            </View>
-          )}
-          header={details}
-          footer={footer}
-          empty={empty}
-          composerHeight={dock}
-          topInset={top}
-        >
-          <ConversationScrollButton />
-        </Conversation>
-      )}
-      <ComposerDock floating onHeight={setDock}>
-        {notes.length > 0 ? (
-          <Glass radius={20} style={styles.notes}>
-            {notes}
-          </Glass>
-        ) : null}
-        <PromptInput
-          value={text}
-          onChangeText={setText}
-          onSubmit={send}
-          placeholder={placeholderFor(space, revising, hosted)}
-          disabled={!running && !sendable}
-          editable={sendable}
-          running={running}
-          onStop={() => void stop()}
-          stopping={stopping}
-          queue={running}
-          canSubmit={sendable && text.trim() !== ''}
-          leading={chips}
-          error={error}
-          inputRef={input}
-          testID="space-composer"
+    <FileLinkProvider target={fileTarget}>
+      <View className="flex-1 bg-background">
+        <SpaceHeader
+          title={spaceTitle(space)}
+          subtitle={`on ${space.hostName} · ${STATUS_LABEL[space.status]} · ${MODE_LABEL[picked]}`}
+          actions={actions}
         />
-      </ComposerDock>
-    </View>
+        {chat ? (
+          <Conversation
+            ref={list}
+            data={messages}
+            keyExtractor={messageKey}
+            renderItem={({ item }) => (
+              <Row
+                m={item}
+                chat={chat}
+                plan={chat.planHere === item.id ? plan : null}
+              />
+            )}
+            header={details}
+            footer={footer}
+            empty={empty}
+            composerHeight={dock}
+            topInset={top}
+          >
+            <ConversationScrollButton />
+          </Conversation>
+        ) : (
+          <Conversation
+            ref={list}
+            data={lines}
+            keyExtractor={lineKey}
+            renderItem={({ item }) => (
+              <View style={styles.row}>
+                <Line line={item} />
+              </View>
+            )}
+            header={details}
+            footer={footer}
+            empty={empty}
+            composerHeight={dock}
+            topInset={top}
+          >
+            <ConversationScrollButton />
+          </Conversation>
+        )}
+        <ComposerDock floating onHeight={setDock}>
+          {notes.length > 0 ? (
+            <Glass radius={20} style={styles.notes}>
+              {notes}
+            </Glass>
+          ) : null}
+          <PromptInput
+            value={text}
+            onChangeText={setText}
+            onSubmit={send}
+            placeholder={placeholderFor(space, revising, hosted)}
+            disabled={!running && !sendable}
+            editable={sendable}
+            running={running}
+            onStop={() => void stop()}
+            stopping={stopping}
+            queue={running}
+            canSubmit={canSubmit}
+            above={
+              <AttachmentStrip
+                list={attach.list}
+                notice={attach.notice}
+                onRetry={attach.retry}
+                onRemove={attach.remove}
+              />
+            }
+            leading={chips}
+            error={error}
+            inputRef={input}
+            testID="space-composer"
+          />
+        </ComposerDock>
+      </View>
+    </FileLinkProvider>
   );
 }
 
@@ -719,6 +834,7 @@ const styles = StyleSheet.create({
   row: { paddingBottom: 18 },
   tail: { gap: 18, paddingBottom: 4 },
   userRow: { alignItems: 'flex-end' },
+  userGap: { gap: 6 },
   status: { flexDirection: 'row', alignItems: 'center', minHeight: 22 },
   details: { gap: 8, paddingBottom: 18, alignItems: 'center' },
   continuous: { borderCurve: 'continuous' },

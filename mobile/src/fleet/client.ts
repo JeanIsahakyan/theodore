@@ -39,8 +39,17 @@
  * delegations ─▶ followed: its origin still delegates here ─▶ subscribe{since}
  *                          else ─▶ dropped
  * a change ─▶ saved within a second; the app going to the background ─▶ now
- * sign-out, org switch ─▶ the set is removed
+ * sign-out ─▶ the set is removed; org or account switch ─▶ kept, another listed
+ *   (`forgetSaved` removes an account's sets once it left this device)
  * ```
+ *
+ * Archiving (docs/mobile.md "Archive"): `archiveSpace` signs `archive_space`
+ * to the host like a stop. The host's ok marks the tracked space `archived`:
+ * it stays tracked (lines, mirror, subscription, saved record) but leaves
+ * the published list; `unarchiveSpace` clears the mark at once (Undo) and
+ * the host's next row sets the status. A mirrored row saying `archived`
+ * (archived on the computer) hides it the same way; any other status
+ * shows it again.
  *
  * Following (delegation): when an origin has delegated to this device and
  * an ask (or event) for a space not tracked here verifies against a pinned
@@ -56,6 +65,7 @@
  */
 import { config } from '../config';
 import type {
+  BlobRef,
   ClientMessage,
   DeviceSummary,
   RemoteOp,
@@ -63,6 +73,19 @@ import type {
   ServerMessage,
   SignedEnvelope,
 } from '../gen/fleet';
+import {
+  MAX_ATTACHMENTS,
+  MAX_ATTACHMENT_BYTES,
+  MAX_PATH_CHARS,
+  MAX_READ_FILE_BYTES,
+  isBlobRef,
+  openBlob,
+  randomBytes,
+  sealBlob,
+  validateBlobRef,
+} from './blob';
+import { createBlobStore, type BlobStore } from './blob-store';
+import { FleetError } from './errors';
 import type { AuthClient, Session } from '../auth/types';
 import { wellFormedKey } from '../keys/ed25519';
 import { fingerprint } from '../keys/fingerprint';
@@ -70,6 +93,7 @@ import { createKeyStore } from '../keys/store';
 import { storageKey, type SecretStorage } from '../keys/storage-types';
 import type { DeviceKey, KeyStore } from '../keys/types';
 import { initialFleet, useFleetState } from '../state/fleet';
+import { log, track } from '../telemetry/log';
 import { open, peek, seal, signHello } from './crypto';
 import type { DataStorage } from './data';
 import {
@@ -110,10 +134,14 @@ import type {
   ConfirmView,
   FleetClient,
   FleetDeviceView,
+  FleetSnapshot,
+  PushIdentity,
   QuestionView,
   SpaceLine,
   SpaceView,
 } from './types';
+
+export { FleetError } from './errors';
 
 export const PROTOCOL_VERSION = 6;
 /** Most confirms kept at once (the oldest go first). */
@@ -161,6 +189,9 @@ export interface FleetTiming {
   startWaitMs: number;
   /** A request's reply is still taken this long after it went out. */
   pendingTtlMs: number;
+  /** `read_file` waits this long: the host seals and uploads up to 50 MiB
+   *  before it answers. */
+  readFileWaitMs?: number;
 }
 
 export const DEFAULT_TIMING: FleetTiming = {
@@ -171,6 +202,7 @@ export const DEFAULT_TIMING: FleetTiming = {
   replyWaitMs: 15_000,
   startWaitMs: 30_000,
   pendingTtlMs: 150_000,
+  readFileWaitMs: 120_000,
 };
 
 export interface FleetDeps {
@@ -187,17 +219,22 @@ export interface FleetDeps {
   now: () => number;
   /** In [0, 1): backoff jitter. */
   random: () => number;
+  /**
+   * Where the snapshot is published (defaults to the app's `useFleetState`).
+   * A throwaway store for a short-lived client (registering a push token
+   * in another account's org) keeps it off the screens.
+   */
+  store: FleetStore;
+  /** Random bytes for blob ids, keys and nonces (defaults to `crypto`). */
+  randomBytes: (n: number) => Uint8Array;
+  /** The cloud's blob store (defaults to one over `fetch` and `cloudUrl`). */
+  blobs?: BlobStore;
 }
 
-/** A request that didn't succeed; `code` is a refusal code when there is one. */
-export class FleetError extends Error {
-  constructor(
-    message: string,
-    readonly code: string | null = null,
-  ) {
-    super(message);
-    this.name = 'FleetError';
-  }
+/** The part of the zustand store the client writes. */
+export interface FleetStore {
+  setState: typeof useFleetState.setState;
+  getState: () => FleetSnapshot;
 }
 
 type Answer =
@@ -232,6 +269,13 @@ interface Pending {
   targetKey: string;
   settle: (a: Answer) => void;
   expiry: ReturnType<typeof setTimeout>;
+  /** Telemetry: the request id (its op id), the op, when it went out, the
+   *  target's kind; never the text. */
+  reqId: string;
+  op: string;
+  at: number;
+  targetKind: string;
+  done: boolean;
 }
 
 interface Tracked {
@@ -270,11 +314,17 @@ const wsUrl = (cloud: string) =>
 const isObj = (v: unknown): v is Record<string, unknown> =>
   !!v && typeof v === 'object' && !Array.isArray(v);
 
+/** A fleet client that can also be taken down for good (`dispose`). */
+export interface OwnedFleetClient extends FleetClient {
+  /** Stops it and drops its listeners: nothing of it runs again. */
+  dispose(): void;
+}
+
 export function createFleetClient(
   auth: AuthClient,
   keys: KeyStore = createKeyStore(),
   overrides: Partial<FleetDeps> = {},
-): FleetClient {
+): OwnedFleetClient {
   const platform = overrides.platform ?? defaultPlatform();
   const deps: FleetDeps = {
     platform,
@@ -286,11 +336,22 @@ export function createFleetClient(
     timing: overrides.timing ?? DEFAULT_TIMING,
     now: overrides.now ?? Date.now,
     random: overrides.random ?? Math.random,
+    store: overrides.store ?? useFleetState,
+    randomBytes: overrides.randomBytes ?? randomBytes,
+    blobs: overrides.blobs,
   };
   const t = deps.timing;
   const pins: PinStore = pinStore(deps.storage);
   const saved = savedSpaces(deps.data);
-  const set = useFleetState.setState;
+  const store = deps.store;
+  const set = store.setState;
+  const blobs: BlobStore =
+    deps.blobs ??
+    createBlobStore({
+      cloudUrl: deps.cloudUrl,
+      fetch: deps.fetch,
+      token: () => auth.accessToken(),
+    });
 
   // ── state ───────────────────────────────────────────────────────────────
   let wanted = false;
@@ -332,14 +393,56 @@ export function createFleetClient(
   let saveTimer: ReturnType<typeof setTimeout> | null = null;
   /** Storage writes, one at a time and in order (a clear after a write). */
   let ops: Promise<void> = Promise.resolve();
+  /** Telemetry: when the current dial started, when it was welcomed. */
+  let dialedAt = 0;
+  let welcomedAt = 0;
+  let dialAttempt = 0;
+
+  const kindOf = (deviceId: string): string =>
+    String(devices.find((d) => d.device_id === deviceId)?.info?.kind ?? '');
+
+  /** One `fleet_request` per request, whatever settles it first. */
+  const settledRequest = (p: Pending, a: Answer, over: 'socket' | 'http') => {
+    if (p.done) return;
+    p.done = true;
+    const ms = Math.max(0, deps.now() - p.at);
+    const outcome =
+      a.kind === 'ok' ? 'ok' : a.kind === 'timeout' ? 'timeout' : 'refused';
+    const code = a.kind === 'err' || a.kind === 'refused' ? a.code : null;
+    track('fleet_request', {
+      op: p.op,
+      target_kind: p.targetKind,
+      ms,
+      outcome,
+      code,
+      over,
+    });
+    const fields = {
+      op_id: p.reqId,
+      op: p.op,
+      target_device: p.target,
+      ms,
+      outcome,
+      code,
+    };
+    if (outcome === 'ok') log.info('fleet request done', fields);
+    else
+      log.warn('fleet request failed', {
+        ...fields,
+        'error.code': code ?? `fleet.${outcome}`,
+      });
+  };
 
   // ── publishing ──────────────────────────────────────────────────────────
   const publishSpaces = () =>
     set({
-      spaces: [...tracked.values()].map((x) => ({
-        ...x.view,
-        activeAt: x.mirror.space?.updated_at || x.seenAt,
-      })),
+      // Archived ones stay tracked (Undo) but aren't listed.
+      spaces: [...tracked.values()]
+        .filter((x) => !x.view.archived)
+        .map((x) => ({
+          ...x.view,
+          activeAt: x.mirror.space?.updated_at || x.seenAt,
+        })),
     });
   const publishLines = (space: string) => {
     const x = tracked.get(space);
@@ -432,7 +535,7 @@ export function createFleetClient(
     rawDelegations = [];
     delegators = new Map();
     me = null;
-    set({ ...initialFleet, fingerprint: useFleetState.getState().fingerprint });
+    set({ ...initialFleet, fingerprint: store.getState().fingerprint });
   };
 
   // ── kept across restarts ────────────────────────────────────────────────
@@ -522,7 +625,12 @@ export function createFleetClient(
       leaveScope(false);
       forgetFleet();
     }
+    const restoreStart = deps.now();
     const list = await saved.load(next, device);
+    track('saved_spaces_restored', {
+      count: list.length,
+      ms: Math.max(0, deps.now() - restoreStart),
+    });
     scope = next;
     savedFor = device;
     const lines: Record<string, SpaceLine[]> = {};
@@ -601,9 +709,27 @@ export function createFleetClient(
     }
   };
 
-  const lost = (l: Link) => {
+  const disconnected = (
+    reason:
+      'lost' | 'replaced' | 'fatal' | 'background' | 'stopped' | 'account',
+    code: string | number | null = null,
+  ) => {
+    if (!welcomedAt) return;
+    const connectedMs = Math.max(0, deps.now() - welcomedAt);
+    welcomedAt = 0;
+    const fields = {
+      reason,
+      code: code === null ? null : String(code),
+      connected_ms: connectedMs,
+    };
+    track('fleet_disconnected', fields);
+    log.info('fleet disconnected', fields);
+  };
+
+  const lost = (l: Link, code: number | null = null) => {
     if (link !== l) return;
     closeLink();
+    disconnected('lost', code);
     setConnection('connecting');
     scheduleRedial();
   };
@@ -611,6 +737,8 @@ export function createFleetClient(
   const toFatal = async (l: Link, code: string) => {
     if (link !== l) return;
     closeLink();
+    disconnected('fatal', code);
+    log.warn('the cloud refused this device', { 'error.code': code });
     fatal = { token: l.token };
     if (code === 'fleet.removed') {
       // Gone from the cloud: the next link joins as a new device.
@@ -623,6 +751,7 @@ export function createFleetClient(
   const replaced = (l: Link) => {
     if (link !== l) return;
     closeLink();
+    disconnected('replaced', REPLACED_CLOSE);
     const probe = liveProbe;
     const twin = [...liveLinks].some((p) => p !== probe && p() === l.org);
     if (twin) {
@@ -691,6 +820,9 @@ export function createFleetClient(
       if (mine !== epoch || !wanted || fatal || heldOff || link) return;
       if (background && platform.closeInBackground) return;
       setConnection('connecting');
+      dialedAt = deps.now();
+      dialAttempt = attempt;
+      log.debug('fleet dialing', { attempt });
       const socket = platform.openSocket(wsUrl(deps.cloudUrl), token);
       const l: Link = {
         id: ++linkSeq,
@@ -730,7 +862,7 @@ export function createFleetClient(
               : 'fleet.unauthorized',
           );
         } else {
-          lost(l);
+          lost(l, code);
         }
       };
       socket.onmessage = (ev) => {
@@ -754,6 +886,10 @@ export function createFleetClient(
         }
       };
     } catch (e) {
+      log.warn('the fleet failed to start', {
+        'error.code': 'fleet.start_failed',
+        error: e instanceof Error ? e.message : String(e),
+      });
       setConnection(
         'error',
         e instanceof Error ? e.message : 'the fleet failed to start',
@@ -817,6 +953,23 @@ export function createFleetClient(
       l.handshake = null;
       attempt = 0;
       me = msg.device_id;
+      welcomedAt = deps.now();
+      {
+        const welcomeMs = Math.max(0, welcomedAt - dialedAt);
+        track('fleet_connected', {
+          welcome_ms: welcomeMs,
+          attempts: dialAttempt + 1,
+          protocol: PROTOCOL_VERSION,
+          resumed: tracked.size > 0,
+        });
+        log.info('fleet connected', {
+          welcome_ms: welcomeMs,
+          attempts: dialAttempt + 1,
+          protocol: PROTOCOL_VERSION,
+          device_id: me,
+          spaces: tracked.size,
+        });
+      }
       if (savedFor !== me) {
         // What was kept belongs to another device id: the cloud won't
         // let this one follow it.
@@ -925,6 +1078,7 @@ export function createFleetClient(
     if (!p) return;
     pending.delete(reqId);
     clearTimeout(p.expiry);
+    settledRequest(p, a, 'socket');
     const x = p.start ? tracked.get(p.space) : undefined;
     if (x) {
       if (a.kind === 'ok') {
@@ -1057,6 +1211,9 @@ export function createFleetClient(
       if (row.branch) v.branch = row.branch;
       if (isMode(row.mode)) v.mode = row.mode;
       v.status = mirrorStatus(row);
+      // The host's word on archiving, from here or from the computer.
+      if (row.status === 'archived') v.archived = true;
+      else delete v.archived;
       const q = row.question;
       if (q) {
         v.question = {
@@ -1238,7 +1395,7 @@ export function createFleetClient(
     target: string,
     op: RemoteOp,
     start: boolean,
-  ): Promise<{ answer: Promise<Answer> }> => {
+  ): Promise<{ answer: Promise<Answer>; reqId: string }> => {
     const origin = ready();
     const pin = await pins.get(target);
     if (!pin) {
@@ -1261,27 +1418,57 @@ export function createFleetClient(
     );
     let settle!: (a: Answer) => void;
     const answer = new Promise<Answer>((r) => (settle = r));
-    pending.set(reqId, {
+    const p: Pending = {
       space: 'space' in op ? op.space : '',
       start,
       target,
       targetKey: pin.publicKey,
       settle,
-      expiry: setTimeout(() => pending.delete(reqId), t.pendingTtlMs),
+      expiry: setTimeout(() => {
+        pending.delete(reqId);
+        settledRequest(p, { kind: 'timeout' }, 'socket');
+      }, t.pendingTtlMs),
+      reqId,
+      op: op.op,
+      at: deps.now(),
+      targetKind: kindOf(target),
+      done: false,
+    };
+    pending.set(reqId, p);
+    log.debug('fleet request sent', {
+      op_id: reqId,
+      op: op.op,
+      target_device: target,
     });
     if (!sendMsg({ type: 'request', envelope })) {
-      clearTimeout(pending.get(reqId)!.expiry);
+      clearTimeout(p.expiry);
       pending.delete(reqId);
+      p.done = true;
+      log.warn('fleet request not sent', {
+        op_id: reqId,
+        op: op.op,
+        'error.code': 'fleet.not_connected',
+      });
       throw new FleetError(
         'not connected to the fleet, or the request is too large',
       );
     }
-    return { answer };
+    return { answer, reqId };
   };
 
-  const within = (answer: Promise<Answer>, ms: number): Promise<Answer> =>
+  /** `answer` within `ms`, else a timeout (the request stays pending for
+   *  its TTL: a late reply still lands, and counts once). */
+  const within = (
+    answer: Promise<Answer>,
+    ms: number,
+    reqId?: string,
+  ): Promise<Answer> =>
     new Promise((resolve) => {
-      const timer = setTimeout(() => resolve({ kind: 'timeout' }), ms);
+      const timer = setTimeout(() => {
+        const p = reqId ? pending.get(reqId) : undefined;
+        if (p) settledRequest(p, { kind: 'timeout' }, 'socket');
+        resolve({ kind: 'timeout' });
+      }, ms);
       void answer.then((a) => {
         clearTimeout(timer);
         resolve(a);
@@ -1298,8 +1485,8 @@ export function createFleetClient(
 
   /** A request to `host`: its verified ok value within the wait, or throws. */
   const steerOn = async (host: string, op: RemoteOp): Promise<unknown> => {
-    const { answer } = await request(host, op, false);
-    const a = await within(answer, t.replyWaitMs);
+    const { answer, reqId } = await request(host, op, false);
+    const a = await within(answer, t.replyWaitMs, reqId);
     const err = answerError(a);
     if (err) throw err;
     return a.kind === 'ok' ? a.value : null;
@@ -1319,18 +1506,69 @@ export function createFleetClient(
   };
 
   /**
+   * The attachments of a request as the host checks them (docs/fleet.md
+   * "Files (blobs)"): at most 10, each valid, each ≤ 20 MiB, no id twice.
+   */
+  const checkedAttachments = (list: readonly BlobRef[] = []): BlobRef[] => {
+    if (list.length > MAX_ATTACHMENTS)
+      throw new FleetError(`at most ${MAX_ATTACHMENTS} files per message`);
+    const ids = new Set<string>();
+    for (const r of list) {
+      const bad = validateBlobRef(r);
+      if (bad) throw new FleetError(`attachment ${r?.name ?? ''}: bad ${bad}`);
+      if (r.size > MAX_ATTACHMENT_BYTES)
+        throw new FleetError(`${r.name} is over 20 MiB`);
+      if (ids.has(r.blob_id))
+        throw new FleetError(`${r.name} is attached twice`);
+      ids.add(r.blob_id);
+    }
+    return [...list];
+  };
+
+  /** The pin of `hostDevice`, only while the cloud lists that same key. */
+  const pinnedHost = async (hostDevice: string): Promise<Pin> => {
+    const pin = await pins.get(hostDevice);
+    if (!pin) {
+      throw new FleetError(
+        `device ${hostDevice} isn't trusted on this device: trust it in Devices first`,
+      );
+    }
+    const listed = devices.find((d) => d.device_id === hostDevice);
+    if (listed && listed.public_key !== pin.publicKey) {
+      throw new FleetError(
+        `${pin.name}'s key changed since it was trusted: compare its fingerprint and trust it again`,
+      );
+    }
+    return pin;
+  };
+
+  /**
    * Signs `op` for a pinned `hostDevice` and posts it (`POST
    * /v1/fleet/request`): a notification action, maybe the first thing to
    * run after a cold start, so it loads the session and device id itself.
+   * `as`: another signed-in account's token and org (a push for an
+   * account that isn't the active one), with this device's id in that org.
    * Resolves once the cloud accepted it; the host's word comes later.
    */
-  const overHttp = async (hostDevice: string, op: RemoteOp) => {
-    const s = await auth.current();
-    const token = await auth.accessToken();
-    if (!s || !token) throw new FleetError('not signed in');
-    if (!s.organizationId) throw new FleetError('no organization chosen');
+  const overHttp = async (
+    hostDevice: string,
+    op: RemoteOp,
+    as: PushIdentity | null = null,
+  ) => {
+    let token: string | null;
+    let organizationId: string | null;
+    if (as) {
+      ({ accessToken: token, organizationId } = as);
+    } else {
+      const s = await auth.current();
+      token = await auth.accessToken();
+      if (!s || !token) throw new FleetError('not signed in');
+      organizationId = s.organizationId;
+    }
+    if (!organizationId) throw new FleetError('no organization chosen');
     const origin =
-      me ?? (await deps.storage.get(deviceIdKey(s.organizationId)));
+      (!as || link?.org === organizationId ? me : null) ??
+      (await deps.storage.get(deviceIdKey(organizationId)));
     if (!validDeviceId(origin)) {
       throw new FleetError(
         'this device has not joined the fleet yet: open the app once',
@@ -1340,28 +1578,57 @@ export function createFleetClient(
     if (!pin)
       throw new FleetError(`device ${hostDevice} isn't trusted on this device`);
     const key = await keys.deviceKey();
+    const reqId = `req_${platform.randomUUID()}`;
+    const at = deps.now();
     const envelope = await seal(
       {
-        req_id: `req_${platform.randomUUID()}`,
+        req_id: reqId,
         origin_device: origin,
         target_device: hostDevice,
         target_key: pin.publicKey,
-        issued_at_ms: deps.now(),
+        issued_at_ms: at,
         op,
       },
       key,
     );
-    const res = await deps.fetch(
-      `${deps.cloudUrl.replace(/\/+$/, '')}/v1/fleet/request`,
-      {
-        method: 'POST',
-        headers: {
-          authorization: `Bearer ${token}`,
-          'content-type': 'application/json',
+    log.debug('fleet request posted', {
+      op_id: reqId,
+      op: op.op,
+      target_device: hostDevice,
+    });
+    const httpDone = (outcome: 'ok' | 'refused', code: string | null) => {
+      track('fleet_request', {
+        op: op.op,
+        target_kind: kindOf(hostDevice),
+        ms: Math.max(0, deps.now() - at),
+        outcome,
+        code,
+        over: 'http',
+      });
+      if (outcome !== 'ok')
+        log.warn('fleet request over HTTP refused', {
+          op_id: reqId,
+          op: op.op,
+          'error.code': code ?? 'fleet.refused',
+        });
+    };
+    let res: Response;
+    try {
+      res = await deps.fetch(
+        `${deps.cloudUrl.replace(/\/+$/, '')}/v1/fleet/request`,
+        {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${token}`,
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify({ device_id: origin, envelope }),
         },
-        body: JSON.stringify({ device_id: origin, envelope }),
-      },
-    );
+      );
+    } catch (e) {
+      httpDone('refused', 'fleet.network');
+      throw e;
+    }
     const json: unknown = await res.json().catch(() => null);
     const body = isObj(json) ? json : {};
     const refusal = isObj(body.refused)
@@ -1371,8 +1638,10 @@ export function createFleetClient(
         : null;
     if (!res.ok || refusal || body.accepted === false) {
       const code = safeCode(refusal?.code ?? body.code);
+      httpDone('refused', code);
       throw new FleetError(`refused by the cloud: ${code}`, code);
     }
+    httpDone('ok', null);
   };
 
   const client: FleetClient = {
@@ -1389,6 +1658,7 @@ export function createFleetClient(
       wanted = false;
       heldOff = false;
       closeLink();
+      disconnected('stopped');
       if (superseded) return;
       setConnection('off');
       void flush();
@@ -1446,8 +1716,9 @@ export function createFleetClient(
       tracked.set(space, x);
       publishSpaces();
       let answer: Promise<Answer>;
+      let reqId: string;
       try {
-        ({ answer } = await request(
+        ({ answer, reqId } = await request(
           target.device_id,
           {
             op: 'start_space',
@@ -1460,6 +1731,7 @@ export function createFleetClient(
             model: req.model ?? null,
             effort: req.effort ?? null,
             depth: 0,
+            attachments: checkedAttachments(req.attachments),
           },
           true,
         ));
@@ -1468,15 +1740,16 @@ export function createFleetClient(
         publishSpaces();
         throw e;
       }
-      const a = await within(answer, t.startWaitMs);
+      const a = await within(answer, t.startWaitMs, reqId);
       // A start the host is slow to answer stays `starting`; its reply
       // still lands while the request is pending.
       if (a.kind !== 'ok' && a.kind !== 'timeout') throw answerError(a)!;
       return { ...(tracked.get(space)?.view ?? x.view) };
     },
 
-    async send(space, text, mode = null, picks = {}) {
+    async send(space, text, mode = null, picks = {}, attachments = []) {
       if (!text.trim()) throw new FleetError('empty message');
+      const files = checkedAttachments(attachments);
       const x = tracked.get(space);
       const before = x?.view.status;
       // Running from now: the last turn's idle must not linger.
@@ -1494,6 +1767,7 @@ export function createFleetClient(
           agent: picks.agent ?? null,
           model: picks.model ?? null,
           effort: picks.effort ?? null,
+          attachments: files,
         });
         return sendResult(value);
       } catch (e) {
@@ -1507,6 +1781,24 @@ export function createFleetClient(
 
     async stopSpace(space) {
       await steer(space, { op: 'stop', space });
+    },
+
+    async archiveSpace(space) {
+      await steer(space, { op: 'archive_space', space });
+      const x = tracked.get(space);
+      if (!x) return;
+      x.view.archived = true;
+      touch(x);
+      publishSpaces();
+    },
+
+    async unarchiveSpace(space) {
+      await steer(space, { op: 'unarchive_space', space });
+      const x = tracked.get(space);
+      if (!x) return;
+      delete x.view.archived;
+      touch(x);
+      publishSpaces();
     },
 
     async answer(space, askId, answers) {
@@ -1532,12 +1824,16 @@ export function createFleetClient(
         publicKey,
         name: pinName(String(listed.info?.name ?? '')),
       });
+      track('device_trusted', { trusted: true, kind: kindOf(deviceId) });
+      log.info('device trusted', { device_id: deviceId });
       await verifyDelegations();
       await publishDevices();
     },
 
     async untrust(deviceId) {
       await pins.remove(deviceId);
+      track('device_trusted', { trusted: false, kind: kindOf(deviceId) });
+      log.info('device untrusted', { device_id: deviceId });
       await verifyDelegations();
       await publishDevices();
     },
@@ -1551,37 +1847,51 @@ export function createFleetClient(
       sendMsg({ type: 'register_push', provider: 'expo', token: push.token });
     },
 
-    async answerOverHttp(space, askId, answers, hostDevice) {
-      await overHttp(hostDevice, {
-        op: 'answer',
-        space,
-        ask_id: askId,
-        answers,
-      });
+    async dropPushHere() {
+      // The token itself stays: the next link (another account or org)
+      // registers it again at its welcome.
+      if (push?.token)
+        sendMsg({ type: 'register_push', provider: 'expo', token: '' });
+    },
+
+    async forgetSaved(scopes) {
+      for (const s of scopes) {
+        if (s === scope) leaveScope(true);
+        else await queue(() => saved.clear(s));
+      }
+      await ops;
+    },
+
+    async answerOverHttp(space, askId, answers, hostDevice, as = null) {
+      await overHttp(
+        hostDevice,
+        { op: 'answer', space, ask_id: askId, answers },
+        as,
+      );
       if (questions.delete(askId)) publishQuestions();
     },
 
     async confirm(hostDevice, confirmId, allow) {
-      const { answer } = await request(
+      const { answer, reqId } = await request(
         hostDevice,
         { op: 'confirm', confirm_id: confirmId, allow },
         false,
       );
       // Sent: the card goes, whatever the host says.
       dropConfirm(confirmId);
-      const a = await within(answer, t.replyWaitMs);
+      const a = await within(answer, t.replyWaitMs, reqId);
       // Answered elsewhere first, or too late: nothing to tell.
       if (a.kind === 'err' && a.code === LATE_CONFIRM) return;
       const err = answerError(a);
       if (err) throw err;
     },
 
-    async confirmOverHttp(hostDevice, confirmId, allow) {
-      await overHttp(hostDevice, {
-        op: 'confirm',
-        confirm_id: confirmId,
-        allow,
-      });
+    async confirmOverHttp(hostDevice, confirmId, allow, as = null) {
+      await overHttp(
+        hostDevice,
+        { op: 'confirm', confirm_id: confirmId, allow },
+        as,
+      );
       dropConfirm(confirmId);
     },
 
@@ -1592,12 +1902,12 @@ export function createFleetClient(
         auto === 'off' || untilMs === null || !Number.isFinite(untilMs)
           ? null
           : Math.floor(untilMs);
-      const { answer } = await request(
+      const { answer, reqId } = await request(
         hostDevice,
         { op: 'set_mcp_auto', mcp_device: mcpDevice, auto, until_ms: until },
         false,
       );
-      const err = answerError(await within(answer, t.replyWaitMs));
+      const err = answerError(await within(answer, t.replyWaitMs, reqId));
       if (err) throw err;
     },
 
@@ -1617,15 +1927,102 @@ export function createFleetClient(
       return read;
     },
 
-    async sendTo(hostDevice, space, text) {
+    async sendTo(hostDevice, space, text, attachments = []) {
       const message = text.trim();
       if (!message) throw new FleetError('empty message');
       const value = await steerOn(hostDevice, {
         op: 'send_to',
         space: localSpaceId(space),
         message,
+        attachments: checkedAttachments(attachments),
       });
       return sendResult(value);
+    },
+
+    async uploadAttachment(hostDevice, file, onProgress) {
+      if (file.bytes.length > MAX_ATTACHMENT_BYTES)
+        throw new FleetError(`${file.name} is over 20 MiB`);
+      // Sealed for the key pinned here: the host opens it with its seed.
+      const pin = await pinnedHost(hostDevice);
+      const { ref, chunks } = sealBlob(
+        pin.publicKey,
+        file.bytes,
+        file.name,
+        file.mime,
+        {
+          blobId: [...deps.randomBytes(16)]
+            .map((b) => b.toString(16).padStart(2, '0'))
+            .join(''),
+          ephSk: deps.randomBytes(32),
+          noncePrefix: deps.randomBytes(16),
+        },
+      );
+      await blobs.upload(ref, chunks, (done, total) =>
+        onProgress?.(total ? done / total : 1),
+      );
+      return ref;
+    },
+
+    async deleteBlob(blobId) {
+      if (!/^[0-9a-f]{32}$/.test(blobId)) throw new FleetError('not a blob id');
+      await blobs.remove(blobId);
+    },
+
+    async readFile(hostDevice, space, path, maxBytes = MAX_READ_FILE_BYTES) {
+      const id = localSpaceId(space);
+      if (
+        path === '' ||
+        [...path].length > MAX_PATH_CHARS ||
+        path.includes('\0')
+      )
+        throw new FleetError('not a file path');
+      const cap = Math.max(
+        1,
+        Math.min(MAX_READ_FILE_BYTES, Math.floor(maxBytes)),
+      );
+      const { answer } = await request(
+        hostDevice,
+        { op: 'read_file', space: id, path, max_bytes: cap },
+        false,
+      );
+      const a = await within(answer, t.readFileWaitMs ?? t.replyWaitMs);
+      const err = answerError(a);
+      if (err) throw err;
+      const v = a.kind === 'ok' && isObj(a.value) ? a.value : null;
+      const ref = v?.blob;
+      if (!isBlobRef(ref))
+        throw new FleetError("the host's answer wasn't a file");
+      if (ref.size > cap)
+        throw new FleetError(
+          'the file is larger than asked for',
+          'fleet.too_large',
+        );
+      return ref;
+    },
+
+    async canOpenBlobs() {
+      const key = await keys.deviceKey();
+      return !!key.blobOpener;
+    },
+
+    async fetchBlob(ref, onProgress) {
+      const bad = validateBlobRef(ref);
+      if (bad) throw new FleetError(`not a file reference: bad ${bad}`);
+      const key = await keys.deviceKey();
+      if (!key.blobOpener)
+        throw new FleetError(
+          "this device's key can't open files: use the app on a phone",
+        );
+      try {
+        const chunks = await blobs.download(ref, (done, total) =>
+          onProgress?.(total ? done / total : 1),
+        );
+        return openBlob(key.blobOpener, ref, chunks);
+      } finally {
+        // Read once: the cloud copy goes, opened or not (a retry asks the
+        // host for a fresh one).
+        await blobs.remove(ref.blob_id).catch(() => {});
+      }
     },
 
     async answerSpace(hostDevice, space, ask, answers) {
@@ -1639,7 +2036,7 @@ export function createFleetClient(
   };
 
   // ── account and app lifecycle ───────────────────────────────────────────
-  auth.onChange((s) => {
+  const offAuth = auth.onChange((s) => {
     if (superseded) return;
     const before = session;
     session = s;
@@ -1652,14 +2049,23 @@ export function createFleetClient(
       push = null;
       epoch++;
       closeLink();
+      disconnected('account');
       leaveScope(true);
       forgetFleet();
       return;
     }
     if (!wanted) return;
-    if (before && before.organizationId !== s.organizationId) {
+    if (
+      before &&
+      (before.userId !== s.userId || before.organizationId !== s.organizationId)
+    ) {
+      // Another org, or another account (docs/mobile.md "Several
+      // accounts"): the link is redialed as it; what was listed goes, its
+      // saved set stays for when it is back. Requests in flight are
+      // settled as timed out.
       epoch++;
       closeLink();
+      disconnected('account');
       leaveScope(false);
       forgetFleet();
       fatal = null;
@@ -1688,7 +2094,7 @@ export function createFleetClient(
     // Not welcomed yet: the welcome sends the latest token (`session`).
   });
 
-  platform.onActive((active) => {
+  const offActive = platform.onActive((active) => {
     if (superseded) return;
     background = !active;
     if (!active) {
@@ -1696,6 +2102,7 @@ export function createFleetClient(
       void flush();
       if (platform.closeInBackground && link) {
         closeLink();
+        disconnected('background');
         setConnection('off');
       }
       return;
@@ -1709,7 +2116,16 @@ export function createFleetClient(
     void connect();
   });
 
-  return client;
+  return {
+    ...client,
+    dispose() {
+      client.stop();
+      superseded = true;
+      liveLinks.delete(liveProbe);
+      offAuth();
+      offActive();
+    },
+  };
 }
 
 function fatalText(code: string): string {

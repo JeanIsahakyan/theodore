@@ -11,12 +11,20 @@
 import { SymbolView } from 'expo-symbols';
 import type { AndroidSymbol, SFSymbol } from 'expo-symbols';
 import {
+  Archive,
   ArrowUp,
+  ArrowUpDown,
   BadgeCheck,
+  Download,
+  Paperclip,
+  RotateCw,
+  Share,
   Bell,
   Bot,
   Brain,
+  Bug,
   Building,
+  ChartColumn,
   Check,
   ChevronDown,
   ChevronRight,
@@ -41,6 +49,7 @@ import {
   Pencil,
   Plus,
   Puzzle,
+  ScrollText,
   Search,
   Server,
   Settings,
@@ -50,6 +59,8 @@ import {
   SquarePen,
   SquareTerminal,
   SunMoon,
+  UserPlus,
+  Users,
   X,
   type LucideIcon,
 } from 'lucide-react-native';
@@ -99,8 +110,18 @@ export const SYMBOLS = {
     web: ChevronRight,
   },
   more: { sf: 'ellipsis', md: 'more_horiz', web: Ellipsis },
+  /** Archive a space (a header button, the drawer's swipe action). */
+  archive: { sf: 'archivebox', md: 'archive', web: Archive },
+  // Files (src/components/chat/attach-button.tsx, app/(app)/file/[space].tsx).
+  attach: { sf: 'paperclip', md: 'attach_file', web: Paperclip },
+  retry: { sf: 'arrow.clockwise', md: 'refresh', web: RotateCw },
+  share: { sf: 'square.and.arrow.up', md: 'share', web: Share },
+  download: { sf: 'arrow.down.circle', md: 'download', web: Download },
   // Settings and Devices (src/components/settings/).
   organization: { sf: 'building.2', md: 'corporate_fare', web: Building },
+  accounts: { sf: 'person.2', md: 'group', web: Users },
+  'add-account': { sf: 'person.badge.plus', md: 'person_add', web: UserPlus },
+  switch: { sf: 'arrow.up.arrow.down', md: 'swap_vert', web: ArrowUpDown },
   phone: { sf: 'iphone', md: 'smartphone', web: Smartphone },
   server: { sf: 'server.rack', md: 'dns', web: Server },
   globe: { sf: 'globe', md: 'language', web: Globe },
@@ -120,6 +141,10 @@ export const SYMBOLS = {
   fingerprint: { sf: 'touchid', md: 'fingerprint', web: FingerprintPattern },
   trusted: { sf: 'checkmark.seal.fill', md: 'verified', web: BadgeCheck },
   offline: { sf: 'icloud.slash', md: 'cloud_off', web: CloudOff },
+  // Privacy and diagnostics (docs/telemetry.md "Mobile").
+  chart: { sf: 'chart.bar', md: 'bar_chart', web: ChartColumn },
+  warning: { sf: 'ladybug', md: 'bug_report', web: Bug },
+  list: { sf: 'list.bullet.rectangle', md: 'list_alt', web: ScrollText },
   // A space's steps, by kind of tool (src/ui/Timeline.tsx).
   'step.read': { sf: 'doc.text', md: 'description', web: FileText },
   'step.edit': { sf: 'pencil', md: 'edit', web: Pencil },

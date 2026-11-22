@@ -17,6 +17,9 @@
  * A guard flipping (sign-in, sign-out, a session that ended) moves the
  * user to the other group; deep links into a guarded group land on its
  * anchor.
+ *
+ * An `ErrorBoundary` around everything logs a render crash
+ * (`ui.render_crash`, docs/telemetry.md "Mobile") and offers Try again.
  */
 import '../src/global.css';
 import { Stack, type Href } from 'expo-router';
@@ -31,6 +34,7 @@ import { SafeAreaListener } from 'react-native-safe-area-context';
 import { Uniwind } from 'uniwind';
 import { applyThemeVars } from '../src/components/theme-vars';
 import { AppProviders, useAuthState } from '../src/shell/AppProviders';
+import { ErrorBoundary } from '../src/telemetry/ErrorBoundary';
 import { usePalette, useScheme } from '../src/ui/theme';
 import { initTheme } from '../src/ui/themeSetting';
 
@@ -90,14 +94,18 @@ function SchemeStatusBar() {
 export default function RootLayout() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
-      <SafeAreaListener onChange={({ insets }) => Uniwind.updateInsets(insets)}>
-        <KeyboardProvider>
-          <AppProviders>
-            <SchemeStatusBar />
-            <Gate />
-          </AppProviders>
-        </KeyboardProvider>
-      </SafeAreaListener>
+      <ErrorBoundary>
+        <SafeAreaListener
+          onChange={({ insets }) => Uniwind.updateInsets(insets)}
+        >
+          <KeyboardProvider>
+            <AppProviders>
+              <SchemeStatusBar />
+              <Gate />
+            </AppProviders>
+          </KeyboardProvider>
+        </SafeAreaListener>
+      </ErrorBoundary>
     </GestureHandlerRootView>
   );
 }

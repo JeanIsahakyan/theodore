@@ -13,12 +13,21 @@ name: Mobile web
 # an EAS build the owner starts by hand (docs/mobile.md).
 #
 # Secrets: CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID, the same as
-# cloud.yml (Workers Scripts: Edit). Variables, baked
-# into the bundle at build time (EXPO_PUBLIC_*): the per-environment ones
-# staging.yml and release.yml already use, THEODORE_WORKOS_CLIENT_ID[_STAGING]
-# and THEODORE_CLOUD_URL[_STAGING]. Staging falls back to the app's own
-# staging defaults when they are unset; production refuses to build without
-# them. Manual run: pick the environment; production deploys only from main.
+# cloud.yml (Workers Scripts: Edit; and, for the custom domains in
+# mobile/wrangler.toml, Zone: Read, DNS: Edit and Workers Routes: Edit on
+# theodore.cloud). Variables, baked into the bundle at build time
+# (EXPO_PUBLIC_*): the per-environment ones staging.yml and release.yml
+# already use, THEODORE_WORKOS_CLIENT_ID[_STAGING] and
+# THEODORE_CLOUD_URL[_STAGING]. An unset cloud URL is the channel's
+# api[-staging].theodore.cloud (docs/cloud.md "Environments"). Staging
+# falls back to the app's own staging client id when that is unset;
+# production refuses to build without its client id. Manual run: pick the
+# environment; production deploys only from main.
+# Telemetry (docs/telemetry.md "Mobile"): THEODORE_POSTHOG_KEY / _HOST, the
+# same repository variables build.yml compiles into the desktop, become
+# EXPO_PUBLIC_THEODORE_POSTHOG_KEY / _HOST; unset: the web build has no
+# usage sink (error reports still go through the cloud). Nothing is sent
+# before the user chooses.
 
 on:
   push:
@@ -53,18 +62,25 @@ jobs:
           echo "::error::production deploys only from main (this run is on ${GITHUB_REF_NAME})"
           exit 1
 
-      - name: resolve the Pages project and the build variables
-        # Each Pages project's production branch is set when the owner
-        # creates it, so a deploy always lands on that project's live URL.
+      - name: resolve the build variables
+        # The web app calls the cloud of its own channel: the variable when
+        # set, else the channel's host on theodore.cloud.
         env:
           PROD_CLIENT_ID: ${{ vars.THEODORE_WORKOS_CLIENT_ID }}
-          PROD_CLOUD_URL: ${{ vars.THEODORE_CLOUD_URL }}
+          PROD_CLOUD_URL: ${{ vars.THEODORE_CLOUD_URL || 'https://api.theodore.cloud' }}
           STAGING_CLIENT_ID: ${{ vars.THEODORE_WORKOS_CLIENT_ID_STAGING }}
-          STAGING_CLOUD_URL: ${{ vars.THEODORE_CLOUD_URL_STAGING }}
+          STAGING_CLOUD_URL: ${{ vars.THEODORE_CLOUD_URL_STAGING || 'https://api-staging.theodore.cloud' }}
+          POSTHOG_KEY: ${{ vars.THEODORE_POSTHOG_KEY }}
+          POSTHOG_HOST: ${{ vars.THEODORE_POSTHOG_HOST }}
         run: |
+          {
+            echo "POSTHOG_KEY=$POSTHOG_KEY"
+            echo "POSTHOG_HOST=$POSTHOG_HOST"
+            echo "BUILD_ENV=$TARGET"
+          } >> "$GITHUB_ENV"
           if [ "$TARGET" = production ]; then
-            if [ -z "$PROD_CLIENT_ID" ] || [ -z "$PROD_CLOUD_URL" ]; then
-              echo "::error::set the THEODORE_WORKOS_CLIENT_ID and THEODORE_CLOUD_URL repo variables: a production web build must not fall back to the staging defaults"
+            if [ -z "$PROD_CLIENT_ID" ]; then
+              echo "::error::set the THEODORE_WORKOS_CLIENT_ID repo variable: a production web build must not fall back to the staging client id"
               exit 1
             fi
             {
@@ -113,10 +129,16 @@ jobs:
         run: |
           if [ -n "$WORKOS_CLIENT_ID" ]; then export EXPO_PUBLIC_WORKOS_CLIENT_ID="$WORKOS_CLIENT_ID"; fi
           if [ -n "$CLOUD_URL" ]; then export EXPO_PUBLIC_CLOUD_URL="$CLOUD_URL"; fi
+          if [ -n "$POSTHOG_KEY" ]; then export EXPO_PUBLIC_THEODORE_POSTHOG_KEY="$POSTHOG_KEY"; fi
+          if [ -n "$POSTHOG_HOST" ]; then export EXPO_PUBLIC_THEODORE_POSTHOG_HOST="$POSTHOG_HOST"; fi
+          export EXPO_PUBLIC_THEODORE_BUILD_ENV="$BUILD_ENV"
+          export EXPO_PUBLIC_THEODORE_GIT_SHA="$GITHUB_SHA"
           pnpm -C mobile build:web
 
       # `/callback` and deep routes serve index.html through the Worker's
       # `not_found_handling = "single-page-application"` (mobile/wrangler.toml).
+      # The deploy also creates the environment's custom domain
+      # (app[-staging].theodore.cloud): DNS record and certificate.
       - name: deploy ${{ env.TARGET }}
         working-directory: mobile
         run: pnpm dlx wrangler@4 deploy --env "$TARGET"

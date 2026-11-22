@@ -145,6 +145,7 @@ fn send_to(space: &str, message: &str) -> RemoteOp {
     RemoteOp::SendTo {
         space: space.into(),
         message: message.into(),
+        attachments: vec![],
     }
 }
 
@@ -692,5 +693,155 @@ async fn a_hosted_computers_space_starts_sub_spaces_within_max_mode() {
     assert_eq!(tool_code(r), "sub_spaces.hosted");
 }
 
+// ── archive_space / unarchive_space (protocol 8) ────────────────────────
+
+#[tokio::test]
+async fn the_origin_archives_and_unarchives_a_space_hosted_for_it() {
+    let f = fixtures();
+    let h = host(&f, DeviceKind::Desktop, SpaceMode::Edit).await;
+    f.agents.push_script(done("ok"));
+    run(
+        &f,
+        &h.key,
+        start_with(&h.project.id, "rs_h", FleetMode::Edit, None, 0),
+    )
+    .await;
+    let local = local_of(&f, "rs_h");
+    settled(&f, &local).await;
+
+    // A space it doesn't host.
+    let ghost = run(
+        &f,
+        &h.key,
+        RemoteOp::ArchiveSpace {
+            space: "rs_ghost".into(),
+        },
+    )
+    .await;
+    assert_eq!(err_code(ghost), codes::UNKNOWN_SPACE);
+
+    // Archived as the UI's Archive does: the worktree removed, the row
+    // archived, the branch kept; no person asked (a computer's request).
+    let archived = run(
+        &f,
+        &h.key,
+        RemoteOp::ArchiveSpace {
+            space: "rs_h".into(),
+        },
+    )
+    .await;
+    assert!(matches!(archived, ReplyOutcome::Ok { .. }), "{archived:?}");
+    let row = space(&f, &local);
+    assert_eq!(row.status, SpaceStatus::Archived);
+    assert_eq!(f.git.removed_spaces(), vec![local.clone()]);
+    assert!(!row.branch.is_empty());
+    assert!(h.core.fleet_confirms().is_empty());
+    // Still hosted: the origin's next op finds it.
+    assert!(h.core.fleet_hosts_local(&local).await);
+
+    let back = run(
+        &f,
+        &h.key,
+        RemoteOp::UnarchiveSpace {
+            space: "rs_h".into(),
+        },
+    )
+    .await;
+    assert!(matches!(back, ReplyOutcome::Ok { .. }), "{back:?}");
+    assert_eq!(space(&f, &local).status, SpaceStatus::Idle);
+}
+
+#[tokio::test]
+async fn a_running_hosted_space_is_not_archived_until_stopped() {
+    let f = fixtures();
+    let h = host(&f, DeviceKind::Desktop, SpaceMode::Edit).await;
+    f.agents.hang_next_run();
+    run(
+        &f,
+        &h.key,
+        start_with(&h.project.id, "rs_h", FleetMode::Edit, None, 0),
+    )
+    .await;
+    let local = local_of(&f, "rs_h");
+    wait_until("running", || {
+        space(&f, &local).status == SpaceStatus::Running
+    })
+    .await;
+
+    let busy = run(
+        &f,
+        &h.key,
+        RemoteOp::ArchiveSpace {
+            space: "rs_h".into(),
+        },
+    )
+    .await;
+    assert_eq!(err_code(busy), codes::BUSY);
+    assert!(f.git.removed_spaces().is_empty());
+
+    // Stop, then archive: what the phone's "Stop and archive" sends.
+    let stopped = run(
+        &f,
+        &h.key,
+        RemoteOp::Stop {
+            space: "rs_h".into(),
+        },
+    )
+    .await;
+    assert!(matches!(stopped, ReplyOutcome::Ok { .. }), "{stopped:?}");
+    wait_until("stopped", || {
+        space(&f, &local).status != SpaceStatus::Running
+    })
+    .await;
+    let archived = run(
+        &f,
+        &h.key,
+        RemoteOp::ArchiveSpace {
+            space: "rs_h".into(),
+        },
+    )
+    .await;
+    assert!(matches!(archived, ReplyOutcome::Ok { .. }), "{archived:?}");
+    assert_eq!(space(&f, &local).status, SpaceStatus::Archived);
+}
+
+#[tokio::test]
+async fn claude_via_the_cloud_never_archives_and_a_stranger_is_refused() {
+    let f = fixtures();
+    let h = host(&f, DeviceKind::Mcp, SpaceMode::Edit).await;
+    f.agents.push_script(done("ok"));
+    run(
+        &f,
+        &h.key,
+        start_with(&h.project.id, "rs_h", FleetMode::Plan, None, 0),
+    )
+    .await;
+    let local = local_of(&f, "rs_h");
+    settled(&f, &local).await;
+
+    for op in [
+        RemoteOp::ArchiveSpace {
+            space: "rs_h".into(),
+        },
+        RemoteOp::UnarchiveSpace {
+            space: "rs_h".into(),
+        },
+    ] {
+        let denied = run(&f, &h.key, op.clone()).await;
+        assert_eq!(err_code(denied), codes::DENIED, "{op:?}");
+        assert!(h.core.fleet_confirms().is_empty(), "no prompt either");
+
+        let stranger = DeviceKey::generate().unwrap();
+        let (id, env) = sealed_from(&f, STRANGER, &stranger, op);
+        deliver(&f, env);
+        assert_eq!(refusal(&f, &id).await, codes::UNTRUSTED_DEVICE);
+    }
+    assert_eq!(space(&f, &local).status, SpaceStatus::Idle);
+    assert!(f.git.removed_spaces().is_empty());
+}
+
 #[path = "fleet_queue_tests.rs"]
 mod queue;
+
+#[path = "fleet_files_tests.rs"]
+mod files;

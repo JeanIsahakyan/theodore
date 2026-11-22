@@ -11,8 +11,10 @@
 import type { ReactNode } from 'react';
 import type { SymbolName } from '../symbol-image';
 
-/** `activity`: a space's plan, subagents and sub-spaces (`src/ui/ActivitySheet`). */
-export type SheetKind = 'model' | 'computer' | 'project' | 'activity';
+/** `activity`: a space's plan, subagents and sub-spaces (`src/ui/ActivitySheet`);
+ *  `accounts`: the accounts signed in here (`src/components/accounts`). */
+export type SheetKind =
+  'model' | 'computer' | 'project' | 'activity' | 'accounts';
 
 /** A sheet to open from a chip or a row (`useSheet`, per platform). */
 export interface SheetHandle {

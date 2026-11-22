@@ -27,6 +27,7 @@ import { useServices } from '../services';
 import { useFleetState } from '../state/fleet';
 import { addAnswer, dropAnswer, usePending } from '../state/pending';
 import type { QuestionView } from '../fleet/types';
+import { track } from '../telemetry/log';
 import { ChatField } from './ChatField';
 import { Notice } from './kit';
 import {
@@ -35,6 +36,7 @@ import {
   isAnswered,
   pickOption,
   questionFrom,
+  refusalCode,
   toWireAnswers,
   typeOther,
   type Draft,
@@ -51,6 +53,7 @@ export function QuestionCard({
   glass,
   answer,
   from: fromOverride,
+  surface,
 }: {
   question: QuestionView;
   /** The "Other…" field took focus: the host keeps the card in view. */
@@ -62,6 +65,9 @@ export function QuestionCard({
   answer?: (answers: string[][]) => Promise<void>;
   /** Who asks, when the space isn't followed here (a sub-space). */
   from?: string;
+  /** Where the card is (telemetry): a followed space, Home's banner, a
+   *  sub-space. */
+  surface?: 'space' | 'home' | 'sub_space';
 }) {
   const { fleet } = useServices();
   const p = usePalette();
@@ -82,13 +88,24 @@ export function QuestionCard({
     const wire = toWireAnswers(drafts);
     // Shown as answered at once; the host's word only brings it back.
     addAnswer(question.askId, question.space, answeredLabel(drafts));
-    (answer
-      ? answer(wire)
-      : fleet.answer(question.space, question.askId, wire)
-    ).catch((e: unknown) => {
-      dropAnswer(question.askId);
-      setError(errorText(e));
-    });
+    const facts = {
+      surface: surface ?? 'space',
+      over: 'socket',
+      questions: question.questions.length,
+    };
+    (answer ? answer(wire) : fleet.answer(question.space, question.askId, wire))
+      .then(() =>
+        track('question_answered', { ...facts, outcome: 'ok', code: null }),
+      )
+      .catch((e: unknown) => {
+        track('question_answered', {
+          ...facts,
+          outcome: 'failed',
+          code: refusalCode(e),
+        });
+        dropAnswer(question.askId);
+        setError(errorText(e));
+      });
   };
 
   const content = given ? (

@@ -173,14 +173,19 @@ impl Core {
             .ok_or_else(|| AppError::NotFound(format!("queued message {}", req.message)))?;
         match req.action {
             QueuedAction::Cancel => {
-                self.fleet_queued_take(&message.id);
+                let remote = self.fleet_queued_take(&message.id).is_some();
                 self.apply(vec![NewAction {
                     model: models::CHAT_MESSAGE.into(),
-                    model_id: message.id,
+                    model_id: message.id.clone(),
                     action: SyncActionCode::D,
                     data: None,
                 }])
                 .await?;
+                // Another device's files, for a message that never ran.
+                if remote && let Ok(space) = self.space_row(&req.space).await {
+                    self.fleet_remove_context_files(&space, &message.attachments)
+                        .await;
+                }
             }
             QueuedAction::Edit { text } => {
                 let text = text.trim().to_string();

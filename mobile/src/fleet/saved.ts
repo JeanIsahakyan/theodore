@@ -163,6 +163,7 @@ function cleanView(v: unknown, space: string): SpaceView | null {
     question: cleanQuestion(v.question, space),
     startedHere: v.startedHere === true,
     error: typeof v.error === 'string' ? truncate(v.error, 300) : null,
+    ...(v.archived === true ? { archived: true } : null),
   };
 }
 
@@ -265,6 +266,9 @@ export interface SavedSpaces {
   ): Promise<void>;
   /** Everything of `scope` (sign-out, organization switch). */
   clear(scope: string): Promise<void>;
+  /** The ids in `scope`'s set (whatever device it was written for): which
+   *  account a notification's space belongs to (`src/push/route.ts`). */
+  spacesOf(scope: string): Promise<string[]>;
 }
 
 export function savedSpaces(storage: DataStorage): SavedSpaces {
@@ -331,5 +335,9 @@ export function savedSpaces(storage: DataStorage): SavedSpaces {
     },
 
     clear,
+
+    async spacesOf(scope) {
+      return (await readIndex(scope))?.spaces ?? [];
+    },
   };
 }

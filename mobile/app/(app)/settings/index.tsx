@@ -4,13 +4,19 @@
  * a row with "›" opens its page (docs/mobile.md "Settings and Devices").
  *
  * ```text
- * (JI) Jean · jean@example.com · Acme · Admin
+ * (JI) Jean · jean@example.com · Acme · Admin      the active account
+ * Accounts       2           › ─▶ the Accounts sheet (switch, add, sign out)
  * Organization   Acme        › ─▶ settings/organization (switch)
  * Devices        2 online    › ─▶ devices
  * This device    Jean's iPhone › ─▶ settings/device (fingerprint, copy)
  * ──────────
  * Appearance     System ⌃⌄     native menu ─▶ applied app-wide, kept
  * Notifications  (  ●)         haptic tick
+ * ──────────
+ * Privacy
+ * Share usage data   (  ●)     each switch its own sink (docs/telemetry.md)
+ * Send error reports (  ●)
+ * What's collected            › ─▶ settings/collected (the event catalog)
  * ──────────
  * About          1.0.0       › ─▶ settings/about (version, server)
  * ──────────
@@ -23,6 +29,7 @@ import { useEffect, useMemo, useState } from 'react';
 import type { Href } from 'expo-router';
 import {
   AccountCard,
+  PrivacyRows,
   SectionDivider,
   SectionNote,
   SettingsMenuRow,
@@ -32,6 +39,8 @@ import {
   kindSymbol,
   useOrganizations,
 } from '../../../src/components/settings';
+import { useAccounts } from '../../../src/components/accounts/use-accounts';
+import { useSheet } from '../../../src/components/pickers/sheet-host';
 import { useServices } from '../../../src/services';
 import { useAuthState } from '../../../src/shell/AppProviders';
 import { useFleetState } from '../../../src/state/fleet';
@@ -43,13 +52,19 @@ import {
   pushAvailable,
   setNotificationsEnabled,
 } from '../../../src/ui/pushAdapter';
-import { accountView, devicesSummary } from '../../../src/ui/settingsView';
+import {
+  accountView,
+  accountsDetail,
+  devicesSummary,
+} from '../../../src/ui/settingsView';
 import { setTheme, useThemeSetting } from '../../../src/ui/themeSetting';
 
 export default function SettingsScreen() {
   const { auth, fleet } = useServices();
   const { session } = useAuthState();
   const orgs = useOrganizations();
+  const accounts = useAccounts();
+  const accountsSheet = useSheet('accounts');
   const [notify, setNotify] = useState(false);
   const [notifyError, setNotifyError] = useState<string | null>(null);
   const [signingOut, setSigningOut] = useState(false);
@@ -116,6 +131,14 @@ export default function SettingsScreen() {
       <AccountCard account={account} />
 
       <SettingsRow
+        icon="accounts"
+        label="Accounts"
+        detail={accountsDetail(accounts.length) || undefined}
+        onPress={accountsSheet.open}
+        testID="settings-accounts"
+      />
+      {accountsSheet.element}
+      <SettingsRow
         icon="organization"
         label="Organization"
         detail={
@@ -163,6 +186,10 @@ export default function SettingsScreen() {
         testID="settings-notifications"
       />
       {notifyError ? <SectionNote danger>{notifyError}</SectionNote> : null}
+
+      <SectionDivider />
+
+      <PrivacyRows />
 
       <SectionDivider />
 

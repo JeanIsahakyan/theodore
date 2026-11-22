@@ -2,7 +2,7 @@
   "expo": {
     "name": "Theodore Code",
     "slug": "theodore",
-    "version": "0.1.31",
+    "version": "0.1.32",
     "runtimeVersion": {
       "policy": "appVersion"
     },
@@ -55,7 +55,16 @@
           }
         }
       ],
-      "expo-image"
+      "expo-image",
+      "expo-sharing",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Theodore attaches the photos you pick to messages for the agent on your computer.",
+          "cameraPermission": "Theodore sends the photos you take to the agent on your computer."
+        }
+      ],
+      "expo-document-picker"
     ],
     "scheme": "theodore-mobile",
     "experiments": {

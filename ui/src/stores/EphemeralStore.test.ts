@@ -80,6 +80,7 @@ describe('EphemeralStore account', () => {
         available: true,
         required: true,
         session_ended: false,
+        accounts: [],
         organization: null,
         user: {
           id: 'u',
@@ -97,6 +98,7 @@ describe('EphemeralStore account', () => {
         required: true,
         user: null,
         session_ended: true,
+        accounts: [],
         organization: null,
       },
     });
@@ -110,6 +112,7 @@ describe('EphemeralStore account', () => {
       required: false,
       user: null,
       session_ended: false,
+      accounts: [],
       organization: null,
     });
     expect(e.account?.available).toBe(false);
@@ -123,6 +126,7 @@ describe('EphemeralStore account', () => {
       required: true,
       user: null,
       session_ended: false,
+      accounts: [],
       organization: null,
     };
     e.setAccount(out);

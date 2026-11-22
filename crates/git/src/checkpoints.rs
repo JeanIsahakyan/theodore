@@ -25,6 +25,15 @@ use crate::spaces::validate_space_id;
 /// A gitlink (submodule) entry: never written or removed here.
 const GITLINK: &str = "160000";
 
+/// The space's `.context/` (files other devices sent, docs/spaces.md
+/// "The `.context/` folder"): never part of a checkpoint, a snapshot or
+/// what ships, whatever the excludes say.
+pub(crate) const CONTEXT_DIR: &str = ".context";
+
+/// `add -A` over the whole worktree but [`CONTEXT_DIR`]: the pathspec
+/// anchored at the top, so a `.context` deeper down is a file like any.
+pub(crate) const ADD_ALL: [&str; 5] = ["add", "-A", "--", ":(top)", ":(exclude,top).context"];
+
 /// A temporary index under the worktree's git dir, removed when dropped.
 struct TempIndex(PathBuf);
 
@@ -87,7 +96,23 @@ pub(crate) async fn worktree_tree(git: &SpaceGit<'_>, git_dir: &Path) -> GitResu
     } else {
         git.run_env(&["read-tree", "HEAD"], &index.env()).await?;
     }
-    git.run_env(&["add", "-A"], &index.env()).await?;
+    git.run_env(&ADD_ALL, &index.env()).await?;
+    // Tracked by the agent or a user's commit: still not Theodore's to
+    // checkpoint or ship.
+    git.run_env(
+        &[
+            "rm",
+            "-r",
+            "-q",
+            "-f",
+            "--cached",
+            "--ignore-unmatch",
+            "--",
+            &format!(":(top){CONTEXT_DIR}"),
+        ],
+        &index.env(),
+    )
+    .await?;
     let out = git.run_env(&["write-tree"], &index.env()).await?;
     Ok(String::from_utf8_lossy(&out).trim().to_string())
 }
@@ -376,6 +401,24 @@ impl GitCli {
             return Ok(());
         }
         append_excludes(&git, &lines).await
+    }
+
+    /// `GitPort::space_exclude_pattern`: one gitignore line in the cache's
+    /// `info/exclude`, once.
+    pub(crate) async fn space_exclude_pattern_op(
+        &self,
+        worktree: &Path,
+        pattern: &str,
+    ) -> GitResult<()> {
+        let pattern = pattern.trim();
+        if pattern.is_empty() || pattern.contains(['\n', '\r']) {
+            return Err(GitError::Parse(format!("not an exclude line: {pattern:?}")));
+        }
+        let askpass = self.ensure_askpass()?;
+        let _wt = crate::locks::lock(worktree).await;
+        let git = self.space_git(worktree, &askpass);
+        git.verify_root().await?;
+        append_excludes(&git, &[pattern.to_string()]).await
     }
 
     pub(crate) async fn space_checkpoint_op(

@@ -21,13 +21,15 @@ iPhone / Android / browser                     Theodore cloud            your co
 
 | Screen | Does |
 | --- | --- |
-| Sign in | AuthKit hosted page (PKCE, no secret), org picker when you're in several (through the cloud, like the desktop) |
-| Drawer | Fleet spaces you started from here or follow, newest activity first by day (Today, Yesterday, Previous 7 days, Older), a status dot, search; Devices, Settings, the account and organization. No "New space" row: that is the header's ✎ |
+| Sign in | AuthKit hosted page (PKCE, no secret), org picker when you're in several (through the cloud, like the desktop); several accounts can be signed in at once ("Several accounts" below) |
+| Drawer | Fleet spaces you started from here or follow, newest activity first by day (Today, Yesterday, Previous 7 days, Older), a status dot, search; Devices; the bottom row "(JI) Jean · Personal ⇅ ⚙": the active account and organization, a tap opens the Accounts sheet, ⚙ Settings. No "New space" row: that is the header's ✎ |
 | Home (new space) | The goal in the composer; under the hint a project chip and a computer chip ("theodore on mac-A", a sheet each; the computer's sheet holds the mode up to its cap), in the composer the model chip (top 4, All models, Effort); last picks remembered (below, "New space"). Before this run's first devices list: skeleton chips and "Connecting to your devices…", typing allowed, Send off; the server unreachable ─▶ "Can't reach the server", Retry (below, "First connection") |
 | Devices | This device's fingerprint (large, copy) to show on the computer; a card per device, computers first (kind, online, OS · mode cap · agents, fingerprint), trust / untrust with the fingerprint confirm; on a computer, its auto mode per Claude via cloud device (Off / Auto Edit / Full auto, for 1 hour, until end of day or until turned off) |
-| Settings | Account card; Organization (switch), Devices, This device (fingerprint, copy), Appearance (Light / Dark / System), Notifications, About (version, server); sign out |
-| Space | Its chat (or history lines), send a message any time: your bubble shows at once, "Sending…" over it, and the field clears ("Optimistic sends" below); while a turn runs the host queues it (the bubble reads "Queued", "· 1 queued" on the strip), Stop beside Send; not sent ─▶ "Not sent · why", Retry / Edit; the composer's one chip is the model's, its sheet also holds the next message's mode (shown in the header: "on mac-A · Running · Edit"); the running turn's steps; above the composer the activity strip ("Activity strip" below): what runs now and a timer, the turn's subagents and the space's sub-spaces, a tap opens the activity sheet; Approve / Revise a plan (Approve shows as your message at once), answer its question (the card collapses to "Answered: …" at once); a space started from Home opens here before the host answers ("Starting on mac-A…") |
-| Sub-space | A sub-space of a followed space, read from its host by its local id every 3 s while in front: its last messages, running text, question (answered there), a composer that messages it in its own mode ("Sub-spaces" below) |
+| Settings | Account card (the active account); Accounts (the same sheet as the drawer's: switch account or organization, add one, sign out), Organization (switch), Devices, This device (fingerprint, copy), Appearance (Light / Dark / System), Notifications, About (version, server); sign out (of the active account) |
+| Settings | Account card; Organization (switch), Devices, This device (fingerprint, copy), Appearance (Light / Dark / System), Notifications, Privacy (Share usage data, Send error reports, What's collected: docs/telemetry.md "Mobile"), About (version, server, Copy / Share diagnostics); sign out |
+| Space | Its chat (or history lines), send a message any time: your bubble shows at once, "Sending…" over it, and the field clears ("Optimistic sends" below); while a turn runs the host queues it (the bubble reads "Queued", "· 1 queued" on the strip), Stop beside Send; not sent ─▶ "Not sent · why", Retry / Edit; the composer's one chip is the model's, its sheet also holds the next message's mode (shown in the header: "on mac-A · Running · Edit"); 📎 attaches photos and files, previewed above the field, uploaded on pick ("Files" below); the running turn's steps; above the composer the activity strip ("Activity strip" below): what runs now and a timer, the turn's subagents and the space's sub-spaces, a tap opens the activity sheet; Approve / Revise a plan (Approve shows as your message at once), answer its question (the card collapses to "Answered: …" at once); a space started from Home opens here before the host answers ("Starting on mac-A…"); a file path in a reply (`src/app.tsx`) or a file on your bubble opens the file viewer |
+| Sub-space | A sub-space of a followed space, read from its host by its local id every 3 s while in front: its last messages, running text, question (answered there), a composer that messages it in its own mode, with 📎 ("Sub-spaces" below) |
+| File | A file of a space on a computer, pushed with Back: its name, "mac-A · theodore · 340 KB", Save or share; an image pinch-zooms, a PDF pages, text and code are monospace and highlighted ("Files" below) |
 
 Questions and "space finished" arrive as push notifications; a question's
 options are notification buttons (one tap answers it, signed on the phone,
@@ -77,17 +79,20 @@ requests still need the host's own trust in the phone's key.
 iOS kills a backgrounded app at will; the Spaces list must not come back
 empty. Like the desktop's `fleet.follow:<rs_>` (docs/fleet.md "One space UI:
 mirrored rows"), the app keeps the spaces it started or follows, per account
-and organization (`src/fleet/saved.ts`).
+and organization (`src/fleet/saved.ts`): every account signed in here has
+its own sets, one per organization, and so do Home's last picks
+(`theodore.fleet.picks.<user>.<org>`) and the pending state.
 
 ```
 a change (event, mirror row, start ok, follow) ─▶ saved within 1 s
 app to the background ─▶ saved now
-launch ─▶ session ─▶ saved set of <user>.<org> ─▶ listed at once, last known status
+launch ─▶ the active account's session ─▶ saved set of <user>.<org> ─▶ listed at once, last known status
        ─▶ socket ─▶ welcome
             started here ─▶ subscribe{since: last seq}
             followed     ─▶ delegations: its origin still delegates here ─▶ subscribe{since}
                                          else ─▶ dropped
-sign-out ─▶ the set is removed     org switch ─▶ kept (sets are per org)
+account or org switch ─▶ the shown set goes, its storage is kept (sets are per <user>.<org>)
+sign-out of an account ─▶ its sets (every org) and picks are removed; the others' stay
 ```
 
 | Kept per space | Not kept |
@@ -122,6 +127,7 @@ The app speaks protocol 6. Since v4 it also reads:
 | `DeviceInfo.mcp_auto` (v6) | a computer's auto mode per `mcp` device it pins, on its Devices card; changed with a signed `RemoteOp::SetMcpAuto` to that computer (trusted here) |
 | `ServerMessage::Confirm{envelope}` (v6) | `RemoteConfirm`, `Domain::Confirm`, opened with the host's pin, signer = `host_device`; kept until `confirm_dismissed`, its expiry, an answer, or the next welcome (the cloud sends the waiting ones again) |
 | `RemoteOp::Confirm{confirm_id, allow}` (v6) | the card's or the push's Allow / Deny, to the host; a late one (`fleet.invalid`) just drops the card |
+| `RemoteOp::ArchiveSpace{space}` / `UnarchiveSpace{space}` (v9) | Archive from the drawer or a space's header ("Archive" below), routed like a stop; a host below 9 ─▶ `fleet.upgrade_required` from the cloud |
 
 ## Cloud (cloud/)
 
@@ -136,7 +142,8 @@ The app speaks protocol 6. Since v4 it also reads:
 - `POST /v1/fleet/request` routes like a socket `request`; rate-limited per user.
 - Delegations stored per origin; subscribe/ask routing = origin, host, and the
   origin's live delegates.
-- CORS for the web app's origin only (`https://theodore-web[-staging].<account>.workers.dev` per env).
+- CORS for the web app's origins only (`https://app[-staging].theodore.cloud`
+  and the old `https://theodore-web[-staging].prd-instance.workers.dev`, per env).
 - Requests targeting a `mobile` / `web` device: `refused{fleet.invalid}`.
 
 ## App (mobile/)
@@ -148,25 +155,33 @@ mobile/
                        space/[id], devices, settings pushed over it; start ─▶ /;
                        model-, computer-, project-picker, activity-sheet: the
                        composer's and the strip's sheets (iOS);
-                       space/[id], sub-space/[space]/[child], devices, settings
+                       space/[id], sub-space/[space]/[child], file/[space] (a file
+                       of a space on its computer), devices, settings
                        (+ settings/organization, device, about) pushed over it;
                        start ─▶ /
   src/components/      the shell and composer, adapted from the chat template (below)
-  src/auth/            AuthKit PKCE, session + refresh, org select/switch via cloud, RS256 check
+  src/auth/            AuthKit PKCE, session + refresh, org select/switch via cloud, RS256 check;
+                       several accounts: accounts.ts (index), multi.ts (one client per account)
   src/shell/           wiring: AppProviders (auth + fleet clients, auth state, fleet lifecycle)
                        (not src/app: expo-router would take src/app as the routes root)
   src/fleet/           pure TS client: socket, hello, seal/verify (domain tags), pins, journal of lines,
-                       spaces kept across restarts (saved.ts; data.* storage per platform)
+                       spaces kept across restarts (saved.ts; data.* storage per platform),
+                       files: blob.ts (seal/open), blob-store.ts (the cloud's chunks), file-cache.ts
   src/keys/            DeviceKey: secure-store (iOS/Android) | WebCrypto + IndexedDB (web)
-  src/push/            expo-notifications: register, categories, background answer
+  src/push/            expo-notifications: register, categories, background answer; route.ts
+                       (which account a push is for), sweep.ts (the token in other accounts' orgs)
   src/state/           stores (zustand) the screens read
+  src/telemetry/       the logger, product events, redaction, the choice, the sinks
+                       (docs/telemetry.md "Mobile"); SharingCard on Home asks once
   src/ui/native/       the native kit: SwiftUI (iOS) / Compose (Android) / RN (web) controls
   src/gen/fleet.ts     copied from cloud/src/gen (generated from Rust; never edited)
 ```
 
 - Crypto: `@noble/ed25519` (pure JS, audited) with the same domain tags as
   Rust; a shared test vector (key, message, signature) produced by Rust keeps
-  both sides honest.
+  both sides honest. Files: `@noble/curves` (X25519 from the ed25519 keys),
+  `@noble/ciphers` (XChaCha20-Poly1305), `@noble/hashes` (HKDF, SHA-256),
+  checked against the Rust blob vectors ("Files" below).
 - Keys never leave secure storage except to sign; on web the private key is a
   non-extractable WebCrypto key in IndexedDB.
 - Redirect URIs to register in WorkOS: `theodore-mobile://callback` (native, per
@@ -177,11 +192,13 @@ mobile/
 The desktop's flow (plan §6.12), in TypeScript (`src/auth`):
 
 ```
-Sign in ─▶ PKCE S256 + 256-bit state ─▶ hosted AuthKit page
+Sign in (or "Add another account", "Sign in again" with login_hint = its email)
+ ─▶ PKCE S256 + 256-bit state ─▶ hosted AuthKit page
    native: ASWebAuthenticationSession / Custom Tab ─▶ theodore-mobile://callback
    web:    popup ─▶ <origin>/callback ─▶ root layout posts the URL to the opener
  ─▶ state matches ─▶ POST /user_management/authenticate (code + verifier, no secret)
- ─▶ RS256 vs JWKS, iss, exp (60 s), client_id, sub ─▶ secure store ─▶ (app)
+ ─▶ RS256 vs JWKS, iss, exp (60 s), client_id, sub ─▶ secure store (its own entry; the
+     accounts index names it active, "Several accounts" above) ─▶ (app)
      └─ organization_selection_required ─▶ choose-organization ─▶ cloud select-organization
      └─ no org ─▶ background: cloud POST /v1/orgs/personal ─▶ refresh into it
 refresher: 60 s before exp; offline ─▶ retry 30 s doubling to 10 min; rejected ─▶ signed out
@@ -189,7 +206,7 @@ refresher: 60 s before exp; offline ─▶ retry 30 s doubling to 10 min; reject
 
 | | Native | Web |
 | --- | --- | --- |
-| Session | `expo-secure-store`, Keychain after first unlock (notification actions answer in the background) | `localStorage`: readable by any script on the origin (no third-party scripts ship) |
+| Sessions (one per account) and the accounts index | `expo-secure-store`, Keychain after first unlock (notification actions answer in the background) | `localStorage`: readable by any script on the origin (no third-party scripts ship) |
 | Several instances | one | tabs share one refresh token: refresh under a Web Lock, re-read before and after, adopt another tab's rotation |
 | JWKS fetch | direct | needs WorkOS CORS for the origin; unreachable: a token from WorkOS keeps its claim checks, one from the cloud fails |
 
@@ -197,6 +214,72 @@ refresher: 60 s before exp; offline ─▶ retry 30 s doubling to 10 min; reject
   WebCrypto `subtle`, so `jose` can't run there.
 - The web origin must also be an allowed web origin (CORS) in the WorkOS
   dashboard, or the browser can't read `/user_management/authenticate`.
+
+### Several accounts
+
+Several WorkOS accounts can be signed in at once; the app runs as one of
+them (the active account) in one of its organizations, and switches in
+place (`src/auth/accounts.ts` the index, `src/auth/multi.ts` the client
+over one `AuthKitClient` per account).
+
+```text
+drawer bottom
+ ▢ Devices
+ (JI) Jean · Personal      ⇅  ⚙        tap the row: the Accounts sheet; ⚙: Settings
+
+Accounts (the sheet: iOS formSheet route /accounts-sheet, Android Compose
+          ModalBottomSheet in place, web a modal; Settings › Accounts opens the same)
+  (JI) Jean
+       Personal                         ✓   the account and its orgs; tap an org: switch to it
+       Acme Studio
+  (JA) jean@acme.com
+       Acme Inc
+       Sign in again                        a session that can't refresh: the sign-in, its email as login_hint
+  + Add another account                     the normal WorkOS sign-in (an org pick stays in the sheet);
+  ───                                       the new session joins the list and becomes active
+  Sign out of Jean                          the active account only ─▶ the next one (or the sign-in screen)
+```
+
+| Stored (secure store: Keychain / Keystore / `localStorage`) | What |
+| --- | --- |
+| `theodore.accounts` | the index: active account; per account its user id, name, email (shown only on this device, never sent anywhere), the org it is in, its orgs as the cloud last listed them, stale, when its orgs last got the push token, last used |
+| `theodore.account.<user id>` | that account's session (as before, one `Session` per entry) |
+| `theodore.account` | the single session of older builds, adopted into the index at the first start |
+
+```text
+switch (another org, or another account)
+  ─▶ the active session changes ─▶ the fleet client closes its link, settles requests
+     in flight as timed out, forgets what was shown ─▶ dials as <user>.<org> (its own
+     fleet device id per org, as today) ─▶ that scope's saved spaces listed, its picks read
+  ─▶ "Switching to Acme Inc…" on Home and in the connection banner until the welcome
+     (src/state/accounts.ts; the first-connection skeletons meanwhile)
+refresh rejected (any account) ─▶ its row reads "Sign in again"; the active one ─▶ the
+  next usable account takes over, or the sign-in screen
+inactive accounts ─▶ no background refresher; refreshed when a push or a sweep needs them
+```
+
+Pushes reach every account signed in here:
+
+```text
+account added              ─▶ before it is active: its other orgs get this device's token
+                              (a short-lived fleet client per org: connect, register_push, close;
+                              src/push/sweep.ts); its active org gets it from the main link
+app start                  ─▶ inactive accounts, at most once a day: the same, in every org
+                              they are known to be in
+sign-out of the active one ─▶ the main link sends register_push "" for its org, its other
+                              orgs get "" the same way
+a push arrives (tap)       ─▶ the space is looked up in the saved sets of every <user>.<org>
+                              (src/push/route.ts): another account's ─▶ switch to it, then open
+a push's button / Reply    ─▶ answered as that account: its token in that org, this device's
+                              id there (POST /v1/fleet/request), no switch
+```
+
+- The push payload names the space and its host, not the org or user: the
+  title can't say the org yet (a cloud follow-up: `data.organization_id`
+  and an org name in the title for a device registered from several
+  accounts). A confirm push (no space) is answered as the active account.
+- The active account's other organizations get the token when it switches
+  to them (the main link registers it at every welcome).
 
 ### Native UI
 
@@ -350,9 +433,11 @@ new space (✎, the header) ─▶ dismissTo Home  bell ─▶ the first waiting
 
 | Piece | File |
 | --- | --- |
-| Drawer content (spaces by day, search, Devices, account, Settings) | `src/components/drawer-content.tsx`, groups in `src/ui/drawer.ts` |
+| Drawer content (spaces by day, search, Devices, the account row, Settings) | `src/components/drawer-content.tsx`, groups in `src/ui/drawer.ts` |
+| Accounts sheet (rows: `src/ui/accountsSheet.ts`) | `src/components/accounts/` (`accounts-list.tsx` iOS / web, `accounts-sheet.android.tsx` Compose, `use-accounts.ts`), route `app/(app)/accounts-sheet.tsx` |
 | Home's header | `src/components/main-header{.ios,.android,}.tsx` |
-| Composer: `PromptInput` (field, Send / Stop, `leading` / `trailing` chips) and `ComposerDock` (rides on the keyboard) | `src/components/chat/` |
+| Composer: `PromptInput` (field, Send / Stop, `leading` / `trailing` chips, `above` the field: the attached files) and `ComposerDock` (rides on the keyboard) | `src/components/chat/` |
+| Files: 📎, the previews strip, paths in replies, the viewer ("Files" below) | `src/components/chat/attach-*.tsx`, `use-attach.ts`, `file-link.tsx`, `src/components/file/`, `app/(app)/file/[space].tsx` |
 | Chat: `Conversation` (Legend List, keyboard-aware, `ConversationScrollButton`), `Message` (your bubble / the agent's full width), `StreamingMessage` + `Shimmer` (the live turn) | `src/components/chat/` |
 | Markdown: mdast (micromark, GFM tables and strikethrough) ─▶ React Native views; code blocks highlighted (highlight.js, a fixed set of languages, never guessed) | `src/components/markdown/` |
 | A space's header (name, "on host · status") | `src/components/space-header.tsx` (the main header with a subtitle), `space-title.tsx` |
@@ -375,6 +460,55 @@ new space (✎, the header) ─▶ dismissTo Home  bell ─▶ the first waiting
 - Fleet text is untrusted in the markdown too: a link is its words and its
   address in muted text (nothing opens), an image is `[image: alt]`
   (nothing loads), raw HTML is text, nesting deeper than 16 is plain text.
+
+#### Archive
+
+A space is archived on its host as the desktop's Archive does it
+(docs/spaces.md): uncommitted edits checkpointed, the worktree removed, the
+branch and the PR left alone, the row archived. `archive_space` (protocol 9).
+
+```text
+drawer, iOS / Android   row swiped left ─▶ [ ⌸ Archive ] (red; the glyph, its label under it)
+drawer, web             hover / focus on a row ─▶ [⌸] icon button at its right
+a space's header        [⌸] icon button after ✎ ("Archive space"; SF archivebox,
+                        Material archive, Lucide Archive: `archive` in symbol-image.tsx)
+        │
+        ▼ confirm (system alert / window.confirm)
+   Archive “<title>”?                                    title: spaceTitle, else "Untitled space"
+   [The agent is still working: it is stopped first. ]   running ─▶ label "Stop and archive"
+   Its worktree is removed; the branch and PR stay.
+   [ It has changes that were not pushed or merged.]     mirrored row: no pr, no shipped,
+        │                                                head_sha ≠ base_sha (no row: left out)
+        ├─ running ─▶ stop ─▶ archive_space
+        └─ else            ─▶ archive_space
+   ok     ─▶ the space leaves the list (still tracked); header: back Home
+             toast  ╭ Archived                 Undo ╮  6 s; Undo ─▶ unarchive_space
+   refused ─▶ toast with the hint, no action
+```
+
+| Shown when (`canArchive`, `src/ui/archive.ts`) | |
+| --- | --- |
+| the host is listed and trusted here | nothing can be signed to it otherwise |
+| started here, or followed and the host `acceptsRemote` | the host decides for real; its refusal is the hint |
+| status ≠ `starting`, a `hostDevice` set | nothing to archive yet |
+
+| Refusal | Toast |
+| --- | --- |
+| `fleet.busy` (its turn runs) | Stop the space first, then archive it. |
+| `fleet.upgrade_required` (host below protocol 9) | Update Theodore on <host> to archive from here |
+| `fleet.untrusted_device`, others | `errorText`'s hint |
+
+- Client (`src/fleet/client.ts`): `archiveSpace` / `unarchiveSpace`. The host's
+  ok marks the tracked space `archived`: it keeps its lines, mirror,
+  subscription and saved record but leaves `spaces`; Undo clears the mark at
+  once, the host's next row sets the status. A mirrored row saying
+  `archived` (archived on the computer) hides it the same way; another
+  status lists it again.
+- Flow: `src/ui/useArchive.ts`; toast: `src/state/toast.ts`, `src/ui/Toast.tsx`
+  (mounted once in `app/(app)/_layout.tsx`, over the open drawer too); the
+  header's icon buttons: `MainHeaderProps.actions` (`HeaderAction`: icon,
+  label, onPress, destructive), one `Stack.Toolbar.Button` / Compose
+  `IconButton` / web button each.
 
 ### Activity strip
 
@@ -540,7 +674,7 @@ start   ─▶ /space/pending_<n> at once: the goal as your bubble, "Starting on
 - A row takes at most one bubble (the oldest with its text); an agent's row
   or a failed bubble never match.
 - Push notification actions answer without a card: nothing optimistic there.
-- Sign-out or an org switch clears the store.
+- Sign-out, an org switch or an account switch clears the store.
 
 ### New space: where chips, the model chip and the sheets
 
@@ -610,7 +744,8 @@ opens a page, thin dividers between groups, cards for what you read
 
 ```text
 Settings (/settings)
-  (JI) name · email · ▦ org · role                      AccountCard
+  (JI) name · email · ▦ org · role                      AccountCard (the active account)
+  ⚇ Accounts       2          › ─▶ the Accounts sheet       switch account / org, add, sign out
   ▦ Organization   Acme       › ─▶ /settings/organization   rows, a check on the current
   ▭ Devices        2 online   › ─▶ /devices                 org; tap another ─▶ switch
   ▯ This device    iPhone     › ─▶ /settings/device         FingerprintCard
@@ -618,7 +753,13 @@ Settings (/settings)
   ◐ Appearance     System ⌃⌄    native menu (iOS SwiftUI Menu, Android M3 dropdown)
   🔔 Notifications       (  ●)   haptic tick on change
   ──────
-  ⓘ About          1.0.0      › ─▶ /settings/about          version, server
+  Privacy                        docs/telemetry.md "Mobile"; each switch its own sink
+  ▥ Share usage data     (  ●)   off until chosen; "Not configured in this build" without a key
+  ✖ Send error reports   (  ●)
+  ▤ What's collected          › ─▶ /settings/collected      the event catalog, what is never sent
+  ──────
+  ⓘ About          1.0.0      › ─▶ /settings/about          version, server, Copy / Share diagnostics
+                                                            (the local log, redacted, for a report)
   ──────
   ⇥ Sign out (red)              system confirm ─▶ signed out
 
@@ -684,7 +825,9 @@ Default System. Android 12+ keeps Material You in both schemes
   `react-native-reanimated` + `react-native-worklets`,
   `react-native-gesture-handler`, `react-native-keyboard-controller`,
   `react-native-svg`, `expo-blur`, `expo-haptics`, `expo-image`,
-  `expo-system-ui`; with Settings and Devices, `expo-clipboard`.
+  `expo-system-ui`; with Settings and Devices, `expo-clipboard`; with
+  files, `expo-image-picker`, `expo-document-picker`,
+  `expo-image-manipulator`, `expo-sharing`, `react-native-webview`.
 
 ### Connection banner
 
@@ -732,7 +875,9 @@ drawer:   5 skeleton rows instead of the empty list text
 | error, or still connecting after 10 s | skeletons, "Can't reach the server" + the reason, Retry (`fleet.start()`, the reconnect path) | saved list or "Nothing loaded yet." + Retry |
 
 Once welcomed, a redial keeps the last list; the connection banner speaks
-for the link. Sign-out and an org switch reset `welcomed`.
+for the link. Sign-out, an org switch and an account switch reset
+`welcomed`; a switch says "Switching to <target>…" instead of "Connecting
+to your devices…" ("Several accounts" above).
 
 ## Desktop changes
 
@@ -741,10 +886,73 @@ for the link. Sign-out and an org switch reset `welcomed`.
 - The core signs/revokes delegations and ignores `mobile`/`web` devices as
   targets.
 
+## Files
+
+Photos and files go to the agent on your computer, and the computer's
+files come to the phone, through the cloud's blob store as ciphertext only
+(docs/fleet.md "Files (blobs)": `theodore-blob-v1`, X25519 from the
+ed25519 device keys already pinned, XChaCha20-Poly1305 per chunk of ≤ 4
+MiB). The TS side is `src/fleet/blob.ts`, checked byte for byte against
+the Rust vectors (`src/gen/fleet-vectors.json` `blobs`); the cloud routes
+are `src/fleet/blob-store.ts`.
+
+```text
+phone ─▶ computer (Home, a space, a sub-space)
+  📎 ─▶ Photo library · Camera · File (expo-image-picker, expo-document-picker)
+    photo ─▶ compressed (expo-image-manipulator): long side ≤ 2048 px, JPEG 0.8;
+             a PNG screenshot ≤ 2 MB stays PNG                      src/ui/attachments.ts planPhoto
+    ─▶ the preview above the field at once (thumbnail, or name · size)
+    ─▶ fleet.uploadAttachment: sealBlob(the computer's pinned key) ─▶ PUT chunks
+       (3 tries each on a network error / 5xx) ─▶ progress bar ─▶ ✓   ─▶ ↻ when it failed
+    ✕ ─▶ gone; its blob DELETEd when it had one
+  Send ─▶ only with words and every file ✓ ─▶ attachments: BlobRef[] on start_space / send / send_to
+       ─▶ your bubble shows the files (local copies) ─▶ the host's mirrored row shows them as chips
+  limits: 10 files per message, 20 MiB each after compression; another computer picked on Home
+          drops the files (they were sealed for the first one) and says so
+
+computer ─▶ phone (a path in a reply, a file chip on your bubble)
+  `src/app.tsx` in a reply ─▶ a tap (src/ui/filePaths.ts filePathOf: relative, no spaces or
+  shell marks, a known extension or a directory) ─▶ /file/<space>?path=…&host=…
+    ─▶ fleet.readFile {space, path, max_bytes: 8 MiB} ─▶ the host seals it for this device ─▶ {blob}
+    ─▶ GET chunks (progress) ─▶ openBlob with this device's key ─▶ DELETE the blob ─▶ shown,
+       cached for the session (src/fleet/file-cache.ts: memory + the app's cache dir)
+    fleet.too_large under 8 MiB ─▶ "Large file · Download anyway" ─▶ again with 50 MiB (the protocol's cap)
+    not found / denied / offline / silent ─▶ one line (src/ui/fileViewer.ts errorLine), Retry when it may help
+  a file on your bubble (`[screen.png]`) ─▶ .context/screen.png on the host
+```
+
+| Piece | File |
+| --- | --- |
+| Composer: 📎 (iOS action sheet, Android alert, web popover), the previews strip above the field (`PromptInput` `above`) | `src/components/chat/attach-button{.web,}.tsx`, `attachment-strip.tsx` |
+| Picking and compressing | `src/components/chat/pick-files.ts` |
+| One composer's files: pick ─▶ upload ─▶ ✓ / ↻, ✕, take on send | `src/components/chat/use-attach.ts`, store `src/state/attachments.ts`, rules `src/ui/attachments.ts` |
+| Paths in replies, chips on your bubble ─▶ the viewer | `src/components/chat/file-link.tsx` (`FileLinkProvider` on a space's and a sub-space's screen; the markdown's `inlineCode` rule) |
+| The viewer: states `src/ui/fileViewer.ts`, kinds `src/ui/filePaths.ts`, body per kind | `app/(app)/file/[space].tsx`, `src/components/file/file-body{.web,}.tsx`, `text-view.tsx`, `share{.web,}.ts` |
+| Client: `uploadAttachment`, `deleteBlob`, `readFile`, `fetchBlob`, `canOpenBlobs`; `attachments` on `startSpace` / `send` / `sendTo` | `src/fleet/client.ts` |
+
+- Opening a blob needs the X25519 secret derived from the ed25519 seed:
+  `DeviceKey.blobOpener` (`src/keys/ed25519.ts`) exposes the X25519 public
+  key and a shared-secret function, never the seed. A web device whose key
+  is a non-extractable WebCrypto key has none: it sends files but the
+  viewer says to use the phone.
+- Send waits for every file: a message never names a blob that isn't in
+  the cloud. Retry of a failed send sends the same references again; Edit
+  takes the text back and the files go (the cloud drops a blob after a
+  day anyway).
+- A photo's EXIF (location) is dropped with the re-encode; a small PNG
+  kept as it is has none to begin with on iOS screenshots.
+- iOS usage strings for the photo library and the camera are the
+  `expo-image-picker` plugin's in `app.json`; `expo-sharing` is the share
+  sheet (Save Image / Save to Files); `react-native-webview` draws PDFs
+  on iOS (Android: Share, its WebView can't; web: an iframe). Native
+  modules: dev builds made before them must be rebuilt.
+- Not run on a device yet: the pickers, compression, the share sheet and
+  the PDF view are wired as their Expo modules document them; the crypto,
+  the uploads, the payloads and the viewer's states are tested.
+
 ## Not in v1
 
-Web push, hosting spaces on the phone, file transfer, tablets' layouts beyond
-"it works".
+Web push, hosting spaces on the phone, tablets' layouts beyond "it works".
 
 ## Build and release
 
@@ -753,8 +961,8 @@ release: a new version on `main` builds it on EAS and uploads it to
 TestFlight. Android is an EAS build the owner starts by hand.
 
 ```
-push staging, mobile/** ─▶ mobile-web.yml: checks ─▶ build:web ─▶ Pages theodore-web-staging
-push main,    mobile/** ─▶ mobile-web.yml: checks ─▶ build:web ─▶ Pages theodore-web
+push staging, mobile/** ─▶ mobile-web.yml: checks ─▶ build:web ─▶ Worker theodore-web-staging  (app-staging.theodore.cloud)
+push main,    mobile/** ─▶ mobile-web.yml: checks ─▶ build:web ─▶ Worker theodore-web          (app.theodore.cloud)
 every PR / push          ─▶ ci.yml `mobile`: typecheck, lint, format, test, build:web
 
 new version on main ─▶ release.yml `ios`: eas build --profile production ─▶ eas submit ─▶ TestFlight
@@ -786,24 +994,37 @@ eas build --profile preview    ─▶ internal build (staging cloud) ─▶ Play
   the splash, the sign-in logo and the favicon.
 - Before pushing: `pnpm -C mobile typecheck`, `lint`, `test` (lefthook runs
   them; `format:check` and `build:web` are CI's).
+- Telemetry in dev: every record also goes to the console; set
+  `EXPO_PUBLIC_THEODORE_POSTHOG_KEY` / `_HOST` to try the usage sink against
+  a scratch PostHog project. Nothing is sent before the sharing card is
+  answered (docs/telemetry.md "Mobile").
 
 ### Web
 
-`mobile-web.yml` deploys `mobile/dist` with wrangler (`pages deploy`) and writes
-`_redirects` (`/* /index.html 200`) so `/callback` and deep links serve the
-single-page app. Same checks as CI run first. Env per channel, baked into the
-bundle (`EXPO_PUBLIC_*`) from the repo variables the desktop builds already
-use:
+`mobile-web.yml` deploys `mobile/dist` as a static-assets Worker
+(`mobile/wrangler.toml`, `not_found_handling = "single-page-application"`
+so `/callback` and deep links serve the app). Same checks as CI run first.
+Env per channel, baked into the bundle (`EXPO_PUBLIC_*`) from the repo
+variables the desktop builds already use:
 
-| | Pages project | `EXPO_PUBLIC_WORKOS_CLIENT_ID` | `EXPO_PUBLIC_CLOUD_URL` |
+| | Worker, host | `EXPO_PUBLIC_WORKOS_CLIENT_ID` | `EXPO_PUBLIC_CLOUD_URL` |
 | --- | --- | --- | --- |
-| staging | `theodore-web-staging` | `THEODORE_WORKOS_CLIENT_ID_STAGING` | `THEODORE_CLOUD_URL_STAGING` |
-| production | `theodore-web` | `THEODORE_WORKOS_CLIENT_ID` | `THEODORE_CLOUD_URL` |
+| staging | `theodore-web-staging`, `https://app-staging.theodore.cloud` | `THEODORE_WORKOS_CLIENT_ID_STAGING` | `THEODORE_CLOUD_URL_STAGING`, unset `https://api-staging.theodore.cloud` |
+| production | `theodore-web`, `https://app.theodore.cloud` | `THEODORE_WORKOS_CLIENT_ID` | `THEODORE_CLOUD_URL`, unset `https://api.theodore.cloud` |
 
-Staging falls back to the app's staging defaults when the variables are unset;
-production fails the run instead of building with them. Manual run (Actions →
-Mobile web → Run workflow) picks the environment; production only from `main`.
-The web origin must be in the cloud's CORS list (above).
+Each host is a Workers custom domain in `mobile/wrangler.toml` (`routes`,
+`custom_domain = true`): the deploy creates its DNS record and certificate
+(`docs/cloud.md` "Hosts on theodore.cloud"). The old
+`https://theodore-web[-staging].prd-instance.workers.dev` URLs keep
+answering (`workers_dev = true`). The app served from either host calls
+the cloud baked in at build time: the channel's `api[-staging]` host, so
+web app and cloud sit on one site (no cookies are involved: the bearer
+token is the credential, CORS allows both origins). Staging falls back to
+the app's staging client id when its variable is unset; production fails
+the run instead of building with it. Manual run (Actions → Mobile web →
+Run workflow) picks the environment; production only from `main`. The web
+origins must be in the cloud's CORS list (above) and registered in WorkOS
+(redirect `<origin>/callback`, allowed CORS origin).
 
 ### iOS and Android builds (EAS)
 
@@ -815,6 +1036,13 @@ The web origin must be in the cloud's CORS list (above).
 | `preview` | testers | internal (ad hoc iOS, APK Android) | staging, literal |
 | `production` | stores | store (AAB, App Store) | production, literal |
 | `apk` | installing by link, no store | internal (APK Android) | production, literal |
+
+Every profile's `env` also names `EXPO_PUBLIC_THEODORE_BUILD_ENV`. The PostHog
+key and host (`EXPO_PUBLIC_THEODORE_POSTHOG_KEY` / `_HOST`) are not literal:
+`release.yml` writes them into the production profile from the repository
+variables; a build by hand gets them from `eas env:create` (or the shell for
+a local `expo run`). Without them the build has no usage sink
+(docs/telemetry.md "Mobile").
 
 - The EAS project is `@jean_i/theodore` (id in `app.json`). Production's
   client id and cloud URL are literal in `eas.json`: both are public (the
@@ -876,9 +1104,12 @@ settings ─▶ Sign out ─▶ mock auth: null ─▶ services = real, fleet st
 - App Store Connect: "Theodore Code", Developer Tools, free, all territories,
   iPhone only (`supportsTablet: false`). Text, keywords, age rating, review
   contact and notes are set through the App Store Connect API.
-- Privacy policy: `mobile/public/privacy.html`, served by the web Worker at
-  `https://theodore-web.prd-instance.workers.dev/privacy`, linked in Settings →
-  About. Keep it true when data handling changes (cloud, push payloads,
+- Privacy policy: `https://theodore.cloud/privacy` on the website
+  (`site/src/pages/Privacy.tsx`, docs/website.md), linked in Settings →
+  About (`privacyPolicyUrl` in `src/config.ts`). `mobile/public/privacy.html`
+  is the same text, still served by the web Worker at `/privacy` for older
+  builds (`https://app.theodore.cloud/privacy`, and the old
+  `theodore-web.prd-instance.workers.dev`). Keep both true when data handling changes (cloud, push payloads,
   telemetry).
 - Account deletion (App Store 5.1.1(v)): Settings → Delete account ─▶
   `DELETE /v1/account` (docs/cloud.md "Account deletion") ─▶ signed out.
@@ -944,10 +1175,11 @@ release vX.Y.Z on main ─▶ release.yml `ios` ─▶ build X.Y.Z in App Store 
 | 4 | iOS push key | done (2026-11-20): APNs key TG8NSFRC8T (Sandbox & Production) on EAS for `app.theodore.mobile`; Expo's push service uses it. Replace with `eas credentials` → iOS → Push Notifications. Never commit it |
 | 5 | Google Play Console | pay, create the app `app.theodore.mobile`; make a service account key for `eas submit` (`eas credentials` → Android) |
 | 6 | FCM for Android push | create a Firebase project, add the Android app, download `google-services.json`, point `expo.android.googleServicesFile` at it (upload it as an EAS file env var, not in git), then `eas credentials` → Android → FCM V1 service account key |
-| 7 | WorkOS redirects | add `theodore-mobile://callback` and `https://theodore-web-staging.prd-instance.workers.dev/callback` to the staging environment, `theodore-mobile://callback` and `https://theodore-web.prd-instance.workers.dev/callback` to production (docs/releasing.md "WorkOS redirects to register") |
-| 8 | Pages projects | `wrangler pages project create theodore-web-staging --production-branch staging` and `wrangler pages project create theodore-web --production-branch main` |
-| 9 | Cloud CORS | the two web origins in the Worker's CORS config ("Cloud" above) |
+| 7 | WorkOS redirects | add `theodore-mobile://callback`, `https://app-staging.theodore.cloud/callback` and the old `https://theodore-web-staging.prd-instance.workers.dev/callback` to the staging environment; `theodore-mobile://callback`, `https://app.theodore.cloud/callback` and the old `https://theodore-web.prd-instance.workers.dev/callback` to production (docs/releasing.md "WorkOS redirects to register"); each web origin also as an allowed CORS origin there |
+| 8 | Web Workers' hosts | nothing by hand: `mobile/wrangler.toml` declares `app[-staging].theodore.cloud` as custom domains and the deploy creates them (the zone must be active on the account) |
+| 9 | Cloud CORS | the web origins, new and old, in `WEB_ORIGINS` ("Cloud" above) |
 
-`mobile-web.yml` reuses `CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID`; the
-token must also carry "Cloudflare Pages: Edit". No other secret is added to
-GitHub: EAS holds the Apple, Google and push credentials.
+`mobile-web.yml` reuses `CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID`;
+the token needs Workers Scripts: Edit and, for the custom domains, Zone:
+Read, DNS: Edit and Workers Routes: Edit on theodore.cloud. No other secret
+is added to GitHub: EAS holds the Apple, Google and push credentials.

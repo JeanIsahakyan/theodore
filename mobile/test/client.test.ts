@@ -356,6 +356,56 @@ describe('connect', () => {
     expect(s.of('hello')[0]!.device_id).toBeNull();
   });
 
+  it('switches account: new link as it, the old one’s set kept, requests in flight dropped', async () => {
+    const t = await runningSpace();
+    const { hub, account, sock, client, space } = t;
+    // Going to the background saves now.
+    hub.setActive(false);
+    hub.setActive(true);
+    const end = Date.now() + 1500;
+    while (
+      (await hub.data.get('theodore.fleet.spaces.user_1.org_test')) === null
+    ) {
+      if (Date.now() > end) throw new Error('timed out waiting for the save');
+      await sleep(2);
+    }
+    // A send waits for the host's word when the account changes.
+    const sending = client.send(space, 'hello');
+    await waitFor(() => sock.of('request').length === 2, 'send request');
+    account.emit({ ...session('tok-b', 'org_test'), userId: 'user_2' });
+    expect(sock.closed).not.toBeNull();
+    await expect(sending).rejects.toThrow(/didn't answer in time/);
+    // Nothing of user_1's fleet stays shown; the new link dials with user_2's token.
+    expect(state().spaces).toEqual([]);
+    expect(state().welcomed).toBe(false);
+    await waitFor(() => hub.sockets.length === 2, 'new link');
+    expect(hub.last().token).toBe('tok-b');
+    // user_1's saved set is still there for when it is back.
+    expect(
+      await hub.data.get('theodore.fleet.spaces.user_1.org_test'),
+    ).not.toBeNull();
+    // Until the account itself leaves this device.
+    await client.forgetSaved(['user_1.org_test']);
+    expect(
+      await hub.data.get('theodore.fleet.spaces.user_1.org_test'),
+    ).toBeNull();
+  });
+
+  it('drops the push token in the connected org without forgetting it', async () => {
+    const { hub, account, sock, client } = await connectedWithHost();
+    await client.registerPush('ExponentPushToken[x]');
+    expect(sock.of('register_push').at(-1)?.token).toBe('ExponentPushToken[x]');
+    await client.dropPushHere();
+    expect(sock.of('register_push').at(-1)?.token).toBe('');
+    // The next account's link registers the same token again at its welcome.
+    account.emit({ ...session('tok-b', 'org_test'), userId: 'user_2' });
+    const s2 = await handshake(hub, [], 2);
+    await waitFor(() => s2.of('register_push').length === 1, 'push again');
+    expect(s2.of('register_push').map((m) => m.token)).toEqual([
+      'ExponentPushToken[x]',
+    ]);
+  });
+
   it('refuses to dial without an organization', async () => {
     const { hub, client } = setup({ auth: fakeAuth(session('t', null)) });
     await client.start();
@@ -1171,6 +1221,7 @@ describe('mirrored rows', () => {
       agent: null,
       model: null,
       effort: null,
+      attachments: [],
     });
     sock.deliver({
       type: 'reply',
@@ -1200,6 +1251,7 @@ describe('steering', () => {
       agent: null,
       model: null,
       effort: null,
+      attachments: [],
     });
     sock.deliver({
       type: 'reply',
@@ -1249,12 +1301,104 @@ describe('steering', () => {
       agent: 'codex',
       model: null,
       effort: 'high',
+      attachments: [],
     });
     sock.deliver({
       type: 'reply',
       envelope: await reply(req, { outcome: 'ok', value: null }),
     });
     await sent;
+  });
+
+  it('archives: the op signed to the host, the space hidden, Undo lists it again', async () => {
+    const { client, sock, space } = await runningSpace();
+    sock.deliver({
+      type: 'space_event',
+      envelope: await event(space, 1, { kind: 'status', status: 'idle' }),
+    });
+    await waitFor(() => state().spaces[0]?.status === 'idle', 'idle');
+    const archived = client.archiveSpace(space);
+    await waitFor(() => sock.of('request').length === 2, 'archive');
+    const req = lastRequest(sock);
+    expect(req.target_device).toBe(HOST);
+    expect(req.op).toEqual({ op: 'archive_space', space });
+    // Not before the host's word.
+    expect(state().spaces.map((s) => s.space)).toEqual([space]);
+    sock.deliver({
+      type: 'reply',
+      envelope: await reply(req, { outcome: 'ok', value: null }),
+    });
+    await archived;
+    expect(state().spaces).toEqual([]);
+    // Still tracked: its history stays, and it can come back.
+    expect(state().lines[space]!.map((l) => l.seq)).toEqual([1]);
+
+    const back = client.unarchiveSpace(space);
+    await waitFor(() => sock.of('request').length === 3, 'unarchive');
+    const again = lastRequest(sock);
+    expect(again.op).toEqual({ op: 'unarchive_space', space });
+    sock.deliver({
+      type: 'reply',
+      envelope: await reply(again, { outcome: 'ok', value: null }),
+    });
+    await back;
+    expect(state().spaces.map((s) => s.space)).toEqual([space]);
+  });
+
+  it('a busy refusal of an archive keeps the space listed', async () => {
+    const { client, sock, space } = await runningSpace();
+    const archived = client.archiveSpace(space);
+    await waitFor(() => sock.of('request').length === 2, 'archive');
+    sock.deliver({
+      type: 'reply',
+      envelope: await reply(lastRequest(sock), {
+        outcome: 'err',
+        code: 'fleet.busy',
+        message: 'stop it first',
+      }),
+    });
+    await expect(archived).rejects.toThrow(
+      'the other device refused: fleet.busy: stop it first',
+    );
+    expect(state().spaces.map((s) => s.space)).toEqual([space]);
+  });
+
+  it('a mirrored row saying archived hides the space; another status shows it', async () => {
+    const { sock, space } = await runningSpace();
+    const row = (status: string) => ({
+      id: space,
+      name: 'fix-bug',
+      goal: 'Fix it',
+      branch: 'th/fix',
+      status,
+      agent: 'claude',
+      mode: 'edit',
+      turns: 1,
+      created_at: 1,
+      updated_at: 2,
+    });
+    sock.deliver({
+      type: 'space_event',
+      envelope: await event(space, 1, {
+        kind: 'mirror',
+        model: 'space',
+        id: space,
+        data: row('archived'),
+      }),
+    });
+    await waitFor(() => state().spaces.length === 0, 'hidden');
+    sock.deliver({
+      type: 'space_event',
+      envelope: await event(space, 2, {
+        kind: 'mirror',
+        model: 'space',
+        id: space,
+        data: row('idle'),
+      }),
+    });
+    await waitFor(() => state().spaces.length === 1, 'listed');
+    expect(state().spaces[0]).toMatchObject({ space, status: 'idle' });
+    expect(state().spaces[0]).not.toHaveProperty('archived');
   });
 
   it("times out when the host doesn't answer", async () => {
@@ -1686,6 +1830,37 @@ describe('answer over HTTP', () => {
     });
   });
 
+  it('answers as another signed-in account with its token and that org’s device id', async () => {
+    const calls: { url: string; init: RequestInit }[] = [];
+    const fetchFn = (async (url: string, init: RequestInit) => {
+      calls.push({ url, init });
+      return new Response(JSON.stringify({ accepted: true }), { status: 200 });
+    }) as unknown as typeof fetch;
+    const { client, hub } = setup({ fetch: fetchFn });
+    const OTHER_ME = 'dev_00000000-0000-4000-8000-0000000000e5';
+    await hub.storage.set('theodore.fleet.device_id.org_work', OTHER_ME);
+    await client.start();
+    await handshake(hub, [device(HOST, hostKey)]);
+    await waitFor(() => state().devices.length === 1, 'devices');
+    await client.trust(HOST, hostKey.publicKey);
+    await client.answerOverHttp('rs_9', 'ask_9', [['B']], HOST, {
+      accessToken: 'tok-work',
+      organizationId: 'org_work',
+    });
+    expect(
+      (calls[0]!.init.headers as Record<string, string>).authorization,
+    ).toBe('Bearer tok-work');
+    const sent = JSON.parse(calls[0]!.init.body as string) as {
+      device_id: string;
+      envelope: SignedEnvelope;
+    };
+    expect(sent.device_id).toBe(OTHER_ME);
+    expect(open(sent.envelope, myKey.publicKey, 'request')).toMatchObject({
+      origin_device: OTHER_ME,
+      op: { op: 'answer', space: 'rs_9' },
+    });
+  });
+
   it('throws the refusal code only', async () => {
     const fetchFn = (async () =>
       new Response(
@@ -2092,7 +2267,12 @@ describe('any space on a host (sub-spaces)', () => {
     const sent = client.sendTo(HOST, CHILD, '  go on  ');
     await waitFor(() => sock.of('request').length === 1, 'request');
     const req = lastRequest(sock);
-    expect(req.op).toEqual({ op: 'send_to', space: CHILD, message: 'go on' });
+    expect(req.op).toEqual({
+      op: 'send_to',
+      space: CHILD,
+      message: 'go on',
+      attachments: [],
+    });
     sock.deliver({
       type: 'reply',
       envelope: await reply(req, {

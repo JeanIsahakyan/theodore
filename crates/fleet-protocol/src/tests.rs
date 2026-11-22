@@ -27,6 +27,7 @@ fn req(origin: &str) -> RemoteRequest {
             effort: None,
             parent: None,
             depth: 0,
+            attachments: vec![],
         },
     }
 }
@@ -298,6 +299,7 @@ fn ops_carry_agent_model_and_effort_and_older_bodies_still_read() {
         agent: Some("codex".into()),
         model: Some("gpt-5.5".into()),
         effort: Some("high".into()),
+        attachments: vec![],
     };
     let v = serde_json::to_value(&send).unwrap();
     assert_eq!(v["agent"], "codex");
@@ -454,8 +456,9 @@ fn ops_on_any_space_are_tagged_and_on_no_cloud_space() {
             RemoteOp::SendTo {
                 space: "a1".into(),
                 message: "go".into(),
+                attachments: vec![],
             },
-            serde_json::json!({"op": "send_to", "space": "a1", "message": "go"}),
+            serde_json::json!({"op": "send_to", "space": "a1", "message": "go", "attachments": []}),
         ),
         (
             RemoteOp::AnswerSpace {
@@ -492,6 +495,48 @@ fn ops_on_any_space_are_tagged_and_on_no_cloud_space() {
 }
 
 #[test]
+fn archive_ops_are_on_a_hosted_space_and_need_protocol_9() {
+    let ops = [
+        (
+            RemoteOp::ArchiveSpace {
+                space: "rs_1".into(),
+            },
+            serde_json::json!({"op": "archive_space", "space": "rs_1"}),
+        ),
+        (
+            RemoteOp::UnarchiveSpace {
+                space: "rs_1".into(),
+            },
+            serde_json::json!({"op": "unarchive_space", "space": "rs_1"}),
+        ),
+    ];
+    for (op, json) in ops {
+        assert!(!op.on_any_space(), "{op:?}");
+        assert_eq!(op.space(), "rs_1", "{op:?}");
+        assert_eq!(op.protocol(), 9);
+        assert_eq!(serde_json::to_value(&op).unwrap(), json);
+        assert_eq!(serde_json::from_value::<RemoteOp>(json).unwrap(), op);
+    }
+    assert_eq!(PROTOCOL_VERSION, 9);
+    assert_eq!(
+        RemoteOp::Stop {
+            space: "rs_1".into()
+        }
+        .protocol(),
+        MIN_PROTOCOL_VERSION
+    );
+    assert_eq!(
+        RemoteOp::Confirm {
+            confirm_id: "c".into(),
+            allow: true
+        }
+        .protocol(),
+        6
+    );
+    assert_eq!(RemoteOp::ListSpaces { project: None }.protocol(), 7);
+}
+
+#[test]
 fn a_confirm_is_signed_by_its_host_for_its_own_domain() {
     let key = DeviceKey::generate().unwrap();
     let c = RemoteConfirm {
@@ -516,4 +561,528 @@ fn a_confirm_is_signed_by_its_host_for_its_own_domain() {
         env.open_as::<RemoteConfirm>(&key.public_key(), Domain::Ask),
         Err(EnvelopeError::BadSignature)
     );
+}
+
+// ── files (blobs) ───────────────────────────────────────────────────────────
+
+mod blobs {
+    use super::*;
+    use crate::blob::{
+        self, CHUNK_BYTES, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENTS, MAX_CHUNKS, MAX_NAME_CHARS,
+        SealParams, blob_key, chunk_count, seal_blob_with, x25519_public_from_ed25519,
+        x25519_secret_from_ed25519_seed,
+    };
+    use curve25519_dalek::edwards::CompressedEdwardsY;
+    use sha2::Digest;
+
+    fn hexs(s: &str) -> [u8; 32] {
+        hex::decode(s).unwrap().try_into().unwrap()
+    }
+
+    #[test]
+    fn the_ed25519_basepoint_maps_to_u_9() {
+        // The one conversion everybody agrees on: B = (x, 4/5) ─▶ u = 9,
+        // the X25519 basepoint (RFC 7748 and libsodium's
+        // `crypto_sign_ed25519_pk_to_curve25519`).
+        let b = hexs("5866666666666666666666666666666666666666666666666666666666666666");
+        let mut nine = [0u8; 32];
+        nine[0] = 9;
+        assert_eq!(x25519_public_from_ed25519(&b), Some(nine));
+        // Not a point, or the identity: unusable.
+        assert_eq!(x25519_public_from_ed25519(&not_a_point()), None);
+        let mut identity = [0u8; 32];
+        identity[0] = 1;
+        assert_eq!(x25519_public_from_ed25519(&identity), None);
+    }
+
+    /// 32 bytes that aren't a compressed Edwards point (about half of all
+    /// y values aren't; the first such one).
+    fn not_a_point() -> [u8; 32] {
+        (2u8..)
+            .map(|y| {
+                let mut b = [0u8; 32];
+                b[0] = y;
+                b
+            })
+            .find(|b| CompressedEdwardsY(*b).decompress().is_none())
+            .unwrap()
+    }
+
+    #[test]
+    fn the_derived_secret_matches_the_derived_public_key() {
+        // libsodium's pair is consistent: X25519(sk_to_curve25519(seed), 9)
+        // equals pk_to_curve25519(ed25519_pk(seed)). Checked for the RFC
+        // 8032 test keys and a fresh one.
+        for seed in [
+            hexs("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60"),
+            hexs("4ccd089b28ff96da9db6c346ec114e0f5b8a319f35aba624da8cf6ed4fb8a6fb"),
+            hexs("c5aa8df43f9f837bedb7442f31dcb7b166d38535076f094b85ce3a2e0b4458f7"),
+            [7u8; 32],
+        ] {
+            let key = DeviceKey::from_seed_for_vectors(&seed).unwrap();
+            let pk: [u8; 32] = unb64(&key.public_key()).unwrap().try_into().unwrap();
+            let sk = x25519_secret_from_ed25519_seed(&seed);
+            assert_eq!(sk[0] & 7, 0);
+            assert_eq!(sk[31] & 0xc0, 0x40);
+            let from_sk = x25519_dalek::PublicKey::from(&x25519_dalek::StaticSecret::from(sk));
+            assert_eq!(
+                Some(from_sk.to_bytes()),
+                x25519_public_from_ed25519(&pk),
+                "{}",
+                hex::encode(seed)
+            );
+        }
+        // RFC 8032 test 1's public key, as its seed derives it.
+        let key = DeviceKey::from_seed_for_vectors(&hexs(
+            "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60",
+        ))
+        .unwrap();
+        assert_eq!(
+            hex::encode(unb64(&key.public_key()).unwrap()),
+            "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a"
+        );
+    }
+
+    #[test]
+    fn a_generated_key_exposes_the_seed_it_signs_with() {
+        let key = DeviceKey::generate().unwrap();
+        let again = DeviceKey::from_seed_for_vectors(key.seed()).unwrap();
+        assert_eq!(again.public_key(), key.public_key());
+        let back = DeviceKey::from_secret(key.to_secret()).unwrap();
+        assert_eq!(back.seed(), key.seed());
+    }
+
+    #[test]
+    fn blob_key_is_hkdf_of_the_shared_secret_with_both_public_keys_as_salt() {
+        use hkdf::Hkdf;
+        use sha2::Sha256;
+        let eph_sk = [3u8; 32];
+        let seed = [4u8; 32];
+        let key = DeviceKey::from_seed_for_vectors(&seed).unwrap();
+        let pk: [u8; 32] = unb64(&key.public_key()).unwrap().try_into().unwrap();
+        let rx = x25519_public_from_ed25519(&pk).unwrap();
+        let (eph_pk, k) = blob_key(&eph_sk, &rx);
+        // By hand.
+        let s = x25519_dalek::StaticSecret::from(eph_sk);
+        assert_eq!(x25519_dalek::PublicKey::from(&s).to_bytes(), eph_pk);
+        let shared = s.diffie_hellman(&x25519_dalek::PublicKey::from(rx));
+        let salt = [eph_pk.as_slice(), rx.as_slice()].concat();
+        let mut want = [0u8; 32];
+        Hkdf::<Sha256>::new(Some(&salt), shared.as_bytes())
+            .expand(b"theodore-blob-v1", &mut want)
+            .unwrap();
+        assert_eq!(k, want);
+        // The recipient gets the same key from its side.
+        let rsk = x25519_dalek::StaticSecret::from(x25519_secret_from_ed25519_seed(&seed));
+        assert_eq!(
+            rsk.diffie_hellman(&x25519_dalek::PublicKey::from(eph_pk))
+                .as_bytes(),
+            shared.as_bytes()
+        );
+    }
+
+    fn params(id: u8) -> SealParams {
+        SealParams {
+            blob_id: hex::encode([id; 16]),
+            eph_sk: [id.wrapping_add(1); 32],
+            nonce_prefix: [id.wrapping_add(2); 16],
+        }
+    }
+
+    fn pattern(len: usize) -> Vec<u8> {
+        (0..len).map(|i| ((i * 31) % 251) as u8).collect()
+    }
+
+    #[test]
+    fn seal_then_open_round_trips_for_every_chunk_shape() {
+        let key = DeviceKey::generate().unwrap();
+        for len in [
+            0,
+            1,
+            10,
+            CHUNK_BYTES - 1,
+            CHUNK_BYTES,
+            CHUNK_BYTES + 3,
+            2 * CHUNK_BYTES,
+        ] {
+            let plain = pattern(len);
+            let (r, chunks) = seal_blob(&key.public_key(), &plain, "a.txt", "text/plain").unwrap();
+            assert_eq!(r.size, len as u64);
+            assert_eq!(u64::from(r.chunks), chunk_count(len as u64));
+            assert_eq!(chunks.len(), r.chunks as usize);
+            for (i, c) in chunks.iter().enumerate() {
+                let start = i * CHUNK_BYTES;
+                let want = plain.len().saturating_sub(start).min(CHUNK_BYTES) + 16;
+                assert_eq!(c.len(), want, "chunk {i} of {len}");
+            }
+            assert_eq!(r.sha256, hex::encode(sha2::Sha256::digest(&plain)));
+            assert_eq!(open_blob(key.seed(), &r, &chunks).unwrap(), plain, "{len}");
+        }
+        let (r, _) = seal_blob(&key.public_key(), b"", "x", "").unwrap();
+        assert_eq!(r.chunks, 1, "an empty file is one empty chunk");
+    }
+
+    #[test]
+    fn the_same_inputs_seal_the_same_bytes_and_random_ones_differ() {
+        let key = DeviceKey::from_seed_for_vectors(&[1; 32]).unwrap();
+        let a = seal_blob_with(&params(9), &key.public_key(), b"hello", "h", "t").unwrap();
+        let b = seal_blob_with(&params(9), &key.public_key(), b"hello", "h", "t").unwrap();
+        assert_eq!(a, b);
+        let c = seal_blob(&key.public_key(), b"hello", "h", "t").unwrap();
+        let d = seal_blob(&key.public_key(), b"hello", "h", "t").unwrap();
+        assert_ne!(c.0.blob_id, d.0.blob_id);
+        assert_ne!(c.0.eph_pk, d.0.eph_pk);
+        assert_ne!(c.0.nonce_prefix, d.0.nonce_prefix);
+        assert_ne!(c.1, d.1);
+        assert_eq!(c.0.sha256, d.0.sha256);
+    }
+
+    #[test]
+    fn tampering_anywhere_fails_and_nothing_is_returned() {
+        let key = DeviceKey::generate().unwrap();
+        let plain = pattern(CHUNK_BYTES + 3);
+        let (r, chunks) = seal_blob(&key.public_key(), &plain, "a.bin", "").unwrap();
+        // A flipped ciphertext byte, in each chunk.
+        for i in 0..chunks.len() {
+            let mut t = chunks.clone();
+            t[i][0] ^= 1;
+            assert_eq!(
+                open_blob(key.seed(), &r, &t),
+                Err(BlobError::Tamper(i as u32))
+            );
+            let mut t = chunks.clone();
+            let n = t[i].len();
+            t[i][n - 1] ^= 1;
+            assert_eq!(
+                open_blob(key.seed(), &r, &t),
+                Err(BlobError::Tamper(i as u32))
+            );
+        }
+        // Chunks swapped: the index is in the nonce and the AAD.
+        let swapped = vec![chunks[1].clone(), chunks[0].clone()];
+        assert_eq!(
+            open_blob(key.seed(), &r, &swapped),
+            Err(BlobError::Tamper(0))
+        );
+        // One missing, one extra.
+        assert_eq!(
+            open_blob(key.seed(), &r, &chunks[..1]),
+            Err(BlobError::ChunkCount {
+                expected: 2,
+                got: 1
+            })
+        );
+        // Another blob id (the AAD binds it) or chunk count.
+        let mut other = r.clone();
+        other.blob_id = hex::encode([0xab; 16]);
+        assert_eq!(
+            open_blob(key.seed(), &other, &chunks),
+            Err(BlobError::Tamper(0))
+        );
+        // A changed reference: size or digest.
+        let mut other = r.clone();
+        other.sha256 = "0".repeat(64);
+        assert_eq!(
+            open_blob(key.seed(), &other, &chunks),
+            Err(BlobError::Digest)
+        );
+        let mut other = r.clone();
+        other.size += 1;
+        assert_eq!(
+            open_blob(key.seed(), &other, &chunks),
+            Err(BlobError::Digest)
+        );
+        // Another nonce prefix.
+        let mut other = r.clone();
+        other.nonce_prefix = b64(&[0u8; 16]);
+        assert_eq!(
+            open_blob(key.seed(), &other, &chunks),
+            Err(BlobError::Tamper(0))
+        );
+        // A chunk too long to be one at all isn't even tried.
+        let mut t = chunks.clone();
+        t[0] = vec![0; CHUNK_BYTES + 17];
+        assert_eq!(open_blob(key.seed(), &r, &t), Err(BlobError::Tamper(0)));
+    }
+
+    #[test]
+    fn only_the_recipient_opens_it() {
+        let alice = DeviceKey::generate().unwrap();
+        let bob = DeviceKey::generate().unwrap();
+        let (r, chunks) = seal_blob(&alice.public_key(), b"for alice", "n", "").unwrap();
+        assert_eq!(
+            open_blob(alice.seed(), &r, &chunks).unwrap(),
+            b"for alice".to_vec()
+        );
+        assert_eq!(
+            open_blob(bob.seed(), &r, &chunks),
+            Err(BlobError::Tamper(0))
+        );
+        // A recipient key that isn't one.
+        assert_eq!(
+            seal_blob("nope", b"x", "n", "").unwrap_err(),
+            BlobError::BadRecipientKey
+        );
+        assert_eq!(
+            seal_blob(&b64(&not_a_point()), b"x", "n", "").unwrap_err(),
+            BlobError::BadRecipientKey
+        );
+        assert_eq!(
+            seal_blob(&b64(&[1; 31]), b"x", "n", "").unwrap_err(),
+            BlobError::BadRecipientKey
+        );
+    }
+
+    fn good() -> BlobRef {
+        let key = DeviceKey::from_seed_for_vectors(&[1; 32]).unwrap();
+        seal_blob_with(
+            &params(5),
+            &key.public_key(),
+            b"hello",
+            "notes.md",
+            "text/markdown",
+        )
+        .unwrap()
+        .0
+    }
+
+    #[test]
+    fn validate_checks_every_bound() {
+        let r = good();
+        assert_eq!(r.validate(), Ok(()));
+        let bad = |f: &dyn Fn(&mut BlobRef), field: &'static str| {
+            let mut r = good();
+            f(&mut r);
+            assert_eq!(
+                r.validate(),
+                Err(BlobError::Invalid(field)),
+                "{field}: {r:?}"
+            );
+        };
+        bad(
+            &|r| r.blob_id = "ABCDEF0123456789abcdef0123456789".into(),
+            "blob_id",
+        );
+        bad(&|r| r.blob_id.pop().map(drop).unwrap_or(()), "blob_id");
+        bad(&|r| r.blob_id.push('0'), "blob_id");
+        bad(&|r| r.name = String::new(), "name");
+        bad(&|r| r.name = "x".repeat(MAX_NAME_CHARS + 1), "name");
+        bad(&|r| r.name = "a/b".into(), "name");
+        bad(&|r| r.name = "a\\b".into(), "name");
+        bad(&|r| r.name = "a\0b".into(), "name");
+        bad(&|r| r.mime = "x".repeat(101), "mime");
+        bad(&|r| r.mime = "text/\nplain".into(), "mime");
+        bad(&|r| r.chunks = 0, "chunks");
+        bad(&|r| r.chunks = 2, "chunks");
+        bad(
+            &|r| {
+                r.size = u64::from(MAX_CHUNKS + 1) * CHUNK_BYTES as u64;
+                r.chunks = MAX_CHUNKS + 1;
+            },
+            "chunks",
+        );
+        bad(&|r| r.sha256 = "0".repeat(63), "sha256");
+        bad(&|r| r.sha256 = "G".repeat(64), "sha256");
+        bad(&|r| r.eph_pk = b64(&[0; 31]), "eph_pk");
+        bad(&|r| r.eph_pk = "not base64!".into(), "eph_pk");
+        bad(&|r| r.nonce_prefix = b64(&[0; 15]), "nonce_prefix");
+        // The name may have 200 chars, the mime 100; a big size fits.
+        let mut r = good();
+        r.name = "é".repeat(MAX_NAME_CHARS);
+        r.mime = "m".repeat(100);
+        assert_eq!(r.validate(), Ok(()));
+        let mut r = good();
+        r.size = u64::from(MAX_CHUNKS) * CHUNK_BYTES as u64;
+        r.chunks = MAX_CHUNKS;
+        assert_eq!(r.validate(), Ok(()));
+        // Open refuses what validate refuses, before any crypto.
+        let mut r = good();
+        r.blob_id = "x".into();
+        assert_eq!(
+            open_blob(&[1; 32], &r, &[vec![]]),
+            Err(BlobError::Invalid("blob_id"))
+        );
+        // Sealing more than the chunks allow.
+        assert_eq!(
+            chunk_count(u64::from(MAX_CHUNKS) * CHUNK_BYTES as u64 + 1),
+            u64::from(MAX_CHUNKS) + 1
+        );
+    }
+
+    #[test]
+    fn safe_names_keep_the_file_name_and_its_extension_only() {
+        let s = safe_attachment_name;
+        assert_eq!(s("notes.md"), "notes.md");
+        assert_eq!(s("/etc/passwd"), "passwd");
+        assert_eq!(s("..\\..\\win.ini"), "win.ini");
+        assert_eq!(s("dir/../x.txt"), "x.txt");
+        assert_eq!(s("a/b/"), "b");
+        assert_eq!(s(".."), "file");
+        assert_eq!(s(".hidden"), "hidden");
+        assert_eq!(s(""), "file");
+        assert_eq!(s("   "), "file");
+        assert_eq!(s("/"), "file");
+        assert_eq!(s("ta\0b\u{7}.txt\n"), "tab.txt");
+        assert_eq!(s(" spaced name.pdf "), "spaced name.pdf");
+        assert_eq!(s("рисунок.png"), "рисунок.png");
+        let long = format!("{}.tar.gz", "n".repeat(300));
+        let cut = s(&long);
+        assert_eq!(cut.chars().count(), MAX_NAME_CHARS);
+        assert!(cut.ends_with(".gz"));
+        let no_ext = s(&"n".repeat(300));
+        assert_eq!(no_ext.chars().count(), MAX_NAME_CHARS);
+        // A long "extension" isn't one.
+        let odd = format!("a.{}", "e".repeat(250));
+        assert_eq!(s(&odd).chars().count(), MAX_NAME_CHARS);
+        // Whatever comes out passes validation.
+        for n in ["/etc/passwd", "..", "", &long, "a\0b"] {
+            let mut r = good();
+            r.name = s(n);
+            assert_eq!(r.validate(), Ok(()), "{n:?}");
+        }
+    }
+
+    #[test]
+    fn ops_carry_attachments_and_older_bodies_default_to_none() {
+        let r = good();
+        let op = RemoteOp::Send {
+            space: "rs_1".into(),
+            text: "see the file".into(),
+            mode: None,
+            agent: None,
+            model: None,
+            effort: None,
+            attachments: vec![r.clone()],
+        };
+        let v = serde_json::to_value(&op).unwrap();
+        assert_eq!(
+            v["attachments"][0],
+            serde_json::json!({
+                "blob_id": r.blob_id, "name": "notes.md", "mime": "text/markdown",
+                "size": 5, "chunks": 1, "sha256": r.sha256,
+                "eph_pk": r.eph_pk, "nonce_prefix": r.nonce_prefix,
+            })
+        );
+        assert_eq!(serde_json::from_value::<RemoteOp>(v).unwrap(), op);
+        assert_eq!(op.attachments(), std::slice::from_ref(&r));
+        // Without files: an empty list, written (an older peer ignores it).
+        let none = RemoteOp::Send {
+            space: "rs_1".into(),
+            text: "see the file".into(),
+            mode: None,
+            agent: None,
+            model: None,
+            effort: None,
+            attachments: vec![],
+        };
+        let v = serde_json::to_value(&none).unwrap();
+        assert_eq!(v["attachments"], serde_json::json!([]));
+        assert_eq!(op.validate_blobs(), Ok(()));
+        // v7 bodies: no `attachments` at all.
+        for body in [
+            r#"{"op":"send","space":"rs_1","text":"go"}"#,
+            r#"{"op":"start_space","space":"rs_1","project_id":"p","goal":"g","mode":"edit","depth":0}"#,
+            r#"{"op":"send_to","space":"a1","message":"go"}"#,
+        ] {
+            let op: RemoteOp = serde_json::from_str(body).unwrap();
+            assert!(op.attachments().is_empty(), "{body}");
+            assert_eq!(op.validate_blobs(), Ok(()));
+        }
+        assert!(
+            RemoteOp::Stop {
+                space: "rs_1".into()
+            }
+            .attachments()
+            .is_empty()
+        );
+        // Under the signature like every field.
+        let key = DeviceKey::generate().unwrap();
+        let mut req = req("dev_a");
+        req.op = op;
+        let env = SignedEnvelope::seal(&req, &key);
+        let mut t = env.clone();
+        t.body = t.body.replace(&r.sha256, &"0".repeat(64));
+        assert_eq!(t.open(&key.public_key()), Err(EnvelopeError::BadSignature));
+        assert_eq!(env.open(&key.public_key()).unwrap(), req);
+    }
+
+    #[test]
+    fn validate_blobs_caps_the_list_and_each_size() {
+        let r = good();
+        let with = |list: Vec<BlobRef>| RemoteOp::StartSpace {
+            space: "rs_1".into(),
+            project_id: "p".into(),
+            goal: "g".into(),
+            mode: FleetMode::Edit,
+            agent: None,
+            model: None,
+            effort: None,
+            parent: None,
+            depth: 0,
+            attachments: list,
+        };
+        let distinct = |n: usize| -> Vec<BlobRef> {
+            (0..n)
+                .map(|i| BlobRef {
+                    blob_id: hex::encode([i as u8; 16]),
+                    ..r.clone()
+                })
+                .collect()
+        };
+        assert_eq!(with(distinct(MAX_ATTACHMENTS)).validate_blobs(), Ok(()));
+        assert_eq!(
+            with(distinct(MAX_ATTACHMENTS + 1)).validate_blobs(),
+            Err(BlobError::TooManyAttachments)
+        );
+        assert_eq!(
+            with(vec![r.clone(), r.clone()]).validate_blobs(),
+            Err(BlobError::Invalid("blob id listed twice"))
+        );
+        let mut big = r.clone();
+        big.size = MAX_ATTACHMENT_BYTES + 1;
+        big.chunks = 6;
+        assert_eq!(big.validate(), Ok(()));
+        assert_eq!(with(vec![big]).validate_blobs(), Err(BlobError::TooLarge));
+        let mut bad = r.clone();
+        bad.name = "../x".into();
+        assert_eq!(
+            with(vec![bad]).validate_blobs(),
+            Err(BlobError::Invalid("name"))
+        );
+    }
+
+    #[test]
+    fn read_file_is_an_op_on_any_space_with_a_bounded_path() {
+        let op = RemoteOp::ReadFile {
+            space: "a1".into(),
+            path: "src/main.rs".into(),
+            max_bytes: 1024,
+        };
+        assert!(op.on_any_space());
+        assert_eq!(op.space(), "");
+        assert!(op.attachments().is_empty());
+        assert_eq!(op.validate_blobs(), Ok(()));
+        let json = serde_json::json!({"op": "read_file", "space": "a1", "path": "src/main.rs", "max_bytes": 1024});
+        assert_eq!(serde_json::to_value(&op).unwrap(), json);
+        assert_eq!(serde_json::from_value::<RemoteOp>(json).unwrap(), op);
+        for path in ["", &"p".repeat(blob::MAX_PATH_CHARS + 1), "a\0b"] {
+            let op = RemoteOp::ReadFile {
+                space: "a1".into(),
+                path: path.into(),
+                max_bytes: 1,
+            };
+            assert_eq!(op.validate_blobs(), Err(BlobError::Invalid("path")));
+        }
+        let ok = RemoteOp::ReadFile {
+            space: "a1".into(),
+            path: "p".repeat(blob::MAX_PATH_CHARS),
+            max_bytes: 1,
+        };
+        assert_eq!(ok.validate_blobs(), Ok(()));
+        let v = serde_json::to_value(ReadFileResult { blob: good() }).unwrap();
+        assert_eq!(v["blob"]["name"], "notes.md");
+        assert_eq!(PROTOCOL_VERSION, 9);
+        assert_eq!(codes::BLOB_NOT_FOUND, "fleet.blob_not_found");
+        assert_eq!(codes::QUOTA, "fleet.quota");
+    }
 }

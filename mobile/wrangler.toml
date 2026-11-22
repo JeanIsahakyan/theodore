@@ -1,7 +1,12 @@
 # The web build of the app (docs/mobile.md), served as static assets by a
 # Worker per channel. `expo export --platform web` writes ./dist first.
-#   wrangler deploy --env staging      → theodore-web-staging
-#   wrangler deploy --env production   → theodore-web
+#   wrangler deploy --env staging      → theodore-web-staging  (app-staging.theodore.cloud)
+#   wrangler deploy --env production   → theodore-web          (app.theodore.cloud)
+# Each environment's `routes` entry is a Workers custom domain on the
+# theodore.cloud zone: the deploy creates its DNS record and certificate.
+# `workers_dev` stays on so the old `*.prd-instance.workers.dev` URL keeps
+# working (docs/cloud.md "Environments"). theodore.cloud itself and www are
+# the landing site's (Cloudflare Pages), not this Worker's.
 name = "theodore-web"
 compatibility_date = "2026-11-01"
 workers_dev = true
@@ -13,6 +18,10 @@ not_found_handling = "single-page-application"
 
 [env.staging]
 name = "theodore-web-staging"
+workers_dev = true
+routes = [{ pattern = "app-staging.theodore.cloud", custom_domain = true }]
 
 [env.production]
 name = "theodore-web"
+workers_dev = true
+routes = [{ pattern = "app.theodore.cloud", custom_domain = true }]

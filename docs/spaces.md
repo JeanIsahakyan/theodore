@@ -641,6 +641,9 @@ copy on this Mac, re-read after each turn and each project fetch; no
 network). Update merges the base into the space (§6): clean, the space is on
 the new base at once; on conflicts a banner *Resolving conflicts with main:
 a.ts, b.ts* replaces the button and the agent gets a turn to resolve them.
+A turn in which the agent merged the base itself moves the space onto it at
+its end, so the count and the diff follow without an Update (§6 "The agent
+merged the base in").
 
 ```
 ┌ ○ retry-429 ──────── [⎇ Base moved: 3 commits behind · Update] [Review] [Open PR ▾] ┐
@@ -1267,7 +1270,7 @@ configured commands, never a shell of the agent's choosing.
 | `get_space_diff` | the change vs the merge-base with the base, uncommitted edits included; one `file`, or `stat` for +/− per file |
 | `get_review_comments` | drafts, findings and threads on the space's review and its PR: `path:line`, who (you, an agent, a reviewer), state |
 | `add_review_comment` | a finding on a line of the space's review: shows in Review, "Send to agent" sends it back |
-| `set_base` | a new base branch: fetched, the diff is vs the merge-base from then on |
+| `set_base` | a new base branch: fetched, the diff is vs the merge-base with the worktree as it is now from then on; the same branch again re-reads it after a `git merge` of the base (§6 "The agent merged the base in") |
 | `update_progress` | the turn's plan as steps (pending · active · done) above the composer |
 | `ask_user` | asks you 1–3 multiple-choice questions and waits for the answer (§5 Questions) |
 | `report_problem` | drafts a problem report about Theodore from this turn (title, description, scope, logs) and opens the report window on it; you review and send it, never the agent (docs/telemetry.md "Report from a chat") |
@@ -1276,6 +1279,7 @@ configured commands, never a shell of the agent's choosing.
 | `spaces_list`, `space_read`, `space_ask` | the other spaces on this computer: list, read, ask a question its own agent answers, read only (below, "Sub-spaces"). Never in a space hosted here for another device |
 | `space_send`, `space_answer` | any other space here: a message, an answer to its question, marked as from this space (below). While `spaces.sub_spaces` is on |
 | `space_start`, `space_wait`, `space_stop`, `space_merge` | sub-spaces of this one: start, wait for, stop, bring their work back (below). While `spaces.sub_spaces` is on |
+| `space_archive`, `space_unarchive` | sub-spaces of this one: archive one (as Archive does, §7) when you ask to archive or clean up, bring one back (below). While `spaces.sub_spaces` is on |
 
 ```
 turn ─▶ token for this space ─▶ agent ─▶ run_check ─▶ check ─▶ result ─▶ agent fixes ─▶ …
@@ -1422,10 +1426,12 @@ space_merge {child}   (own child · settled · same project · not shipped on it
 | `space_stop {space}` | stop a child's turn | an Edit or Run turn, `spaces.sub_spaces` on |
 | `space_answer {space, ask, answer}` | answer the question waiting in any other space here; its agent reads `answered_by` | same |
 | `space_merge {space}` | a child's change into this worktree as uncommitted edits, three-way: `from`, `to`, files changed (+/−), `conflicts`, a `note`; the child is then merged into this space | same |
+| `space_archive {space, force?}` | archives a sub-space under this one (a child, or a child's child), as Archive does (§7): edits checkpointed, worktree removed, branch and PR kept, a live-children slot freed. Only when you ask to archive or clean up | same |
+| `space_unarchive {space}` | brings one of those back (§7 Unarchive) | same |
 
 | Rule | Refused with |
 | --- | --- |
-| start, send, stop, answer, merge only from an Edit or Run turn | `sub_spaces.mode` |
+| start, send, stop, answer, merge, archive, unarchive only from an Edit or Run turn | `sub_spaces.mode` |
 | a child's mode ≤ the turn's; a send's ≤ the turn's and ≤ the target's. A mode sticks to a space, so only a parent sets its child's; another space keeps its own, and a send to it is refused when its mode is above the turn's | `sub_spaces.mode` |
 | ask, send, answer: a space of this device's own reaches this device's own spaces, never one hosted here for another device (nor a sub-space of one) | `sub_spaces.hosted` |
 | a space hosted here for another device (or a sub-space of one): sends and answers only that device's spaces here (its sub-spaces, other spaces hosted for it); reads and asks any | `sub_spaces.hosted` |
@@ -1443,7 +1449,11 @@ space_merge {child}   (own child · settled · same project · not shipped on it
 | merge: the child works on this space's project, here (not a mirror) | `sub_spaces.project` |
 | merge: the child wasn't shipped on its own (a PR, Merge locally, Keep as branch) | `sub_spaces.shipped` |
 | merge: the child has changes, or new turns since the last merge | `sub_spaces.nothing_new` |
-| `spaces.sub_spaces` off (default on): the six tools unlisted (`space_ask` stays) | `sub_spaces.off` |
+| archive, unarchive: a space under this one (any depth), never another's or this space itself | `sub_spaces.not_child` |
+| archive: not while its turn or setup runs ("space_stop it first") | `sub_spaces.running` |
+| archive: not with turns neither merged into this space (since its fork, or the last merge) nor shipped on its own, unless `force: true`; the refusal says what is set aside (files, +/−) and that its branch keeps them | `sub_spaces.unmerged` |
+| unarchive: the space is archived | `sub_spaces.not_archived` |
+| `spaces.sub_spaces` off (default on): the eight tools unlisted (`space_ask` stays) | `sub_spaces.off` |
 
 - Another space's words are data: `spaces_list`, `space_read` and
   `space_ask` say so in their `note`, and the system prompt does too: read
@@ -1458,6 +1468,9 @@ space_merge {child}   (own child · settled · same project · not shipped on it
   says to split only clearly independent work (each part's goal says all
   it needs), then wait and read, `space_merge` each child worth keeping,
   resolve the conflicts it lists and check the result; not small tasks.
+  Archiving is never the agent's idea: it calls `space_archive` when you
+  ask to archive or clean up sub-spaces, and `space_unarchive` to bring
+  one back. An archived child is already archived: the call is a no-op.
 - A merge never loses a side: the parent's uncommitted edits are "ours" in
   the three-way merge; a file the parent removed but the child changed
   comes back (listed as a conflict); a binary both changed keeps the
@@ -1540,6 +1553,25 @@ and Push. A worktree recreated from the ref (unarchive) starts with `HEAD`
 at the checkpoint. Checkpoints are authored by Theodore and never leave the
 cache; what ships is one squashed commit authored by you (§12 #2).
 
+**The `.context/` folder.** Files another device sends with a message
+(docs/fleet.md "Files (blobs)": a phone's screenshot, a log) are written to
+`<worktree>/.context/<name>` (`name (2).ext` on a clash) before the turn,
+and the prompt lists them ("Attached files (in .context/): …"); images also
+reach the agent as attachments. The folder is the space's to read, never
+Theodore's to commit:
+
+```
+.context/ made ─▶ "/.context/" appended once to the cache's info/exclude
+                  (git rev-parse --git-path info/exclude; shared by its worktrees)
+checkpoint, snapshot, Update's commit ─▶ add -A -- ':(top)' ':(exclude,top).context'
+                  + rm --cached of a tracked .context ─▶ never in the tree, so never shipped
+a deeper `src/.context` is a file like any other
+```
+
+A queued message's files go when it's dropped or cancelled; a turn's files
+stay for later turns (and `git clean` would remove them, as any ignored
+file).
+
 **Worktree guard** (checkpoint, Undo, the busy check, reopen, archive):
 
 ```
@@ -1611,6 +1643,41 @@ Update ─▶ fetch the base ─▶ tip == base_sha? ─▶ "already up to date"
   | Open PR / first Merge locally | parent = the new `base_sha`, tree = the merged checkpoint: one commit vs the new base |
   | Push (PR open) | parents = last push + the base tip merged since (dropped when already in its history), tree = the merged checkpoint: fast-forward, and the host's PR diff (vs the merge base) is still the change alone |
   | Merge locally again | the same second parent |
+
+**The agent merged the base in** (owner, 2026-11-21, after PRs #219 and
+#226 came out conflicting): no Update — the agent ran `git fetch; git
+merge origin/main` in the worktree itself (or you did), so `base_sha` as
+recorded is behind what the worktree really sits on. A squash onto the
+stale base carries the base's own commits as the change: overlapping
+hunks with the base (conflicting), or the base's content shown as the
+PR's.
+
+```
+main    A ── B ── C                              base_sha = A (recorded)
+space   A ── work ── M = merge of C ── more      checkpoint on M
+before  squash(tree) onto A ─▶ X, parent A   ─▶ host: merge-base A, X has B+C ─▶ CONFLICTING
+now     merge-base(C, checkpoint) = C, ahead of A ─▶ base_sha = C
+        Open PR  ─▶ one commit on C
+        Push     ─▶ parents = last push + C (fast-forward; host merge-base ─▶ C)
+        diff     ─▶ C...checkpoint: the space's change alone
+```
+
+Where Theodore re-reads the base (`base_merged_in`): the merge-base of the
+base's tip (as the copy on this Mac has it) and the space's state, taken
+only when it is ahead of `base_sha`.
+
+| When | From | Then |
+| --- | --- | --- |
+| a turn ends (no update resolving) | the checkpoint | `base_sha` moves; the turn's `base_before` is the old base, so Undo of it brings the base back, like an update's |
+| Ship (Open PR, Push, Merge locally, Keep as branch) | the checkpoint being shipped, hand edits included | `base_sha` moves before the squash: the parent (first ship) or the second parent (a push) is the new base; the diff refreshes |
+| `set_base`, a new branch | the worktree as it is now (snapshot), not the last checkpoint | the merge-base with the branch's tip |
+| `set_base`, the same branch | the worktree as it is now | the fork point moves when the worktree has the tip; else "already is the base" |
+
+A base that didn't move, a worktree that never merged it (merge-base =
+`base_sha`), a branch adopted behind its base, or a base reset behind the
+space (merge-base not ahead of `base_sha`) change nothing. History is
+never rewritten and nothing is force-pushed: a push stays a fast-forward
+of the last one.
 
 **Shipping, step by step**
 
@@ -1786,6 +1853,15 @@ worktree from the ref and reopens the live diff; archived spaces are found
 by searching ⌘K. A done space starts its auto-archive countdown again from
 the unarchive. If the ref is gone the worktree starts over at the base and
 the space says so (`failed`, "the checkpoints were gone").
+
+The same `archive_space` / `unarchive_space` run for the other ways in:
+
+| From | Through | Refused when |
+| --- | --- | --- |
+| the space page, the sidebar row | `archive_space` / `unarchive_space` commands | a turn runs |
+| a parent space's agent, when you ask | `space_archive` / `space_unarchive` (§ "Sub-spaces") | running; work neither merged nor shipped (unless `force`) |
+| the phone or the web app | `RemoteOp::ArchiveSpace` / `UnarchiveSpace` to the host (docs/fleet.md "Archive from another device") | running (`fleet.busy`: the phone offers "Stop and archive"); from Claude via cloud (`fleet.denied`) |
+| the poller | auto-archive below | — |
 **Auto-archive**: once a minute the poller re-fetches each in-review space's
 PR, sets `done_at` when it has merged, and archives spaces done for
 `spaces.auto_archive_days` (default 7, `0` = never; Settings → Spaces). A PR
@@ -1936,8 +2012,8 @@ downloaded to this Mac yet".
 | `save_attachment` | stores a file (≤ 25 MB) for a message; `attachment_data` reads it back as a `data:` URL |
 | `space_skills` | skills `/<id>` can run: `~/.claude/skills` plus the worktree's `.claude/skills`, no built-ins |
 | `space_review` | opens (or refreshes) the space's branch review; `group: true` also groups it |
-| `archive_space` | checkpoint, remove the worktree, keep the ref |
-| `unarchive_space` | recreate the worktree from the ref, reopen the live diff |
+| `archive_space` | checkpoint, remove the worktree, keep the ref (also behind `space_archive` and the fleet's `archive_space`) |
+| `unarchive_space` | recreate the worktree from the ref, reopen the live diff (also behind `space_unarchive` and the fleet's `unarchive_space`) |
 | `undo_space_turn` | worktree and ref back to the last live turn's `before`; the turn is marked undone |
 | `set_space_pinned` | `space.pinned`; pinned spaces sort first (sidebar, ⌘K) — never touches `updated_at` |
 | `rewind_space` | "Back to here": back to right after the turn of `reply`; every later turn undone |

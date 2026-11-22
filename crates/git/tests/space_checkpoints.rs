@@ -467,3 +467,81 @@ async fn build_junk_stays_out_without_a_gitignore_but_tracked_files_stay_tracked
     assert!(files.contains("Cargo.toml"));
     assert!(!files.contains("target/debug/x"), "{files}");
 }
+
+/// Files other devices sent live in `.context/` (docs/spaces.md): never in a
+/// checkpoint, a snapshot or the shipped commit, even without an exclude
+/// line, and even once the agent tracked them.
+#[tokio::test]
+async fn the_context_folder_stays_out_of_checkpoints_snapshots_and_ships() {
+    let s = space().await;
+    s.write(".context/shot.png", "png\n");
+    s.write(".context/notes/log.txt", "log\n");
+    s.write("src/.context", "a file named .context deeper down\n");
+    s.write("c.txt", "kept\n");
+    let cp = s.checkpoint("turn 1").await;
+    let files = git(&s.cache, &["ls-tree", "-r", "--name-only", cp.sha.as_str()]);
+    assert_eq!(files, ".gitignore\na.txt\nb.txt\nc.txt\nsrc/.context");
+    let snap = s.git.space_snapshot(&s.wt).await.unwrap();
+    let files = git(&s.cache, &["ls-tree", "-r", "--name-only", snap.as_str()]);
+    assert!(!files.contains(".context/"), "{files}");
+    assert!(files.contains("c.txt"), "{files}");
+    // The files are still there for the agent.
+    assert_eq!(s.read(".context/shot.png").as_deref(), Some("png\n"));
+
+    // Tracked by the agent itself: still not shipped.
+    git(&s.wt, &["add", "-f", ".context/shot.png"]);
+    commit_all(&s.wt, "agent: oops, tracked a context file");
+    let cp = s.checkpoint("turn 2").await;
+    let files = git(&s.cache, &["ls-tree", "-r", "--name-only", cp.sha.as_str()]);
+    assert!(!files.contains(".context/"), "{files}");
+    let shipped = s
+        .git
+        .space_commit(
+            &s.cache,
+            "s1",
+            &SpaceCommit {
+                head: cp.sha.clone(),
+                parent: s.base.clone(),
+                replay_from: None,
+                merge_parent: None,
+                message: "Ship it".into(),
+                author: Identity {
+                    name: "Ada".into(),
+                    email: "ada@x".into(),
+                },
+            },
+        )
+        .await
+        .unwrap();
+    let files = git(
+        &s.cache,
+        &["ls-tree", "-r", "--name-only", shipped.as_str()],
+    );
+    assert_eq!(files, ".gitignore\na.txt\nb.txt\nc.txt\nsrc/.context");
+}
+
+/// `space_exclude_pattern` writes one line to the cache's `info/exclude`,
+/// once, so git itself leaves `.context/` alone too.
+#[tokio::test]
+async fn an_exclude_pattern_lands_once_in_the_shared_exclude_file() {
+    let s = space().await;
+    s.write(".context/shot.png", "png\n");
+    s.git
+        .space_exclude_pattern(&s.wt, "/.context/")
+        .await
+        .unwrap();
+    s.git
+        .space_exclude_pattern(&s.wt, "/.context/")
+        .await
+        .unwrap();
+    let file = git(&s.wt, &["rev-parse", "--git-path", "info/exclude"]);
+    let file = if Path::new(&file).is_absolute() {
+        PathBuf::from(file)
+    } else {
+        s.wt.join(file)
+    };
+    let text = std::fs::read_to_string(&file).unwrap();
+    assert_eq!(text.matches("/.context/").count(), 1, "{text}");
+    assert_eq!(git(&s.wt, &["status", "--porcelain"]), "");
+    assert!(s.git.space_exclude_pattern(&s.wt, "a\nb").await.is_err());
+}

@@ -681,6 +681,22 @@ pub trait CoreApi: Send + Sync {
     ) -> Result<Vec<theodore_contract::AccountOrganization>, CommandError> {
         Err(not_ready())
     }
+    /// Every account signed in here, their organizations listed again
+    /// (docs/cloud.md "Several accounts").
+    async fn account_accounts(&self) -> Result<AccountStatus, CommandError> {
+        Err(not_ready())
+    }
+    /// Makes another signed-in account active, in one of its organizations.
+    async fn account_switch(
+        &self,
+        _req: theodore_contract::AccountSwitchRequest,
+    ) -> Result<AccountStatus, CommandError> {
+        Err(not_ready())
+    }
+    /// Signs one account out; the next one becomes active.
+    async fn account_sign_out_of(&self, _user_id: String) -> Result<AccountStatus, CommandError> {
+        Err(not_ready())
+    }
     /// A `theodore://callback?…` sign-in redirect the OS opened the app
     /// with. Not a command: the shell's URL-scheme handler calls it. `true`
     /// when it belonged to the sign-in in progress (signed in or failed),

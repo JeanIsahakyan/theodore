@@ -4,8 +4,17 @@
  * `FleetClient` is implemented in `src/fleet/client.ts`; screens read the
  * zustand store in `src/state/fleet.ts` and call the client's methods.
  */
-import type { ConfirmAction, FleetMode, McpAuto } from '../gen/fleet';
+import type { BlobRef, ConfirmAction, FleetMode, McpAuto } from '../gen/fleet';
 import type { SpaceMirror } from './mirror';
+
+export type { BlobRef } from '../gen/fleet';
+
+/** A file to send: its bytes, name and mime type (docs/mobile.md "Files"). */
+export interface FileToSend {
+  bytes: Uint8Array;
+  name: string;
+  mime: string;
+}
 
 export type ConnectionState = 'off' | 'connecting' | 'connected' | 'error';
 
@@ -130,6 +139,12 @@ export interface SpaceView {
   startedHere: boolean;
   error: string | null;
   /**
+   * Archived on the host (its row says so, or `archiveSpace` succeeded):
+   * still tracked, so Undo (`unarchiveSpace`) is instant, but left out of
+   * the published list. Never `true` on a listed space.
+   */
+  archived?: boolean;
+  /**
    * Unix ms of its last activity, for the drawer's "Today / Yesterday"
    * groups: the host's mirrored row's `updated_at`, else when something of
    * it last arrived here. Set when published, never saved.
@@ -225,30 +240,61 @@ export interface FleetSnapshot {
   confirms: ConfirmView[];
 }
 
+/**
+ * Who a one-shot request is signed in as when it isn't the active account
+ * (a notification for another signed-in account): that account's token in
+ * the org the space lives in; this device's id in that org is read here.
+ */
+export interface PushIdentity {
+  accessToken: string;
+  organizationId: string;
+}
+
 export interface FleetClient {
   /** Connects (or reconnects) with the current session; idempotent. */
   start(): Promise<void>;
   stop(): void;
+  /**
+   * Tells the cloud to forget this device's push token in the connected
+   * organization (the active account signs out of this device); the token
+   * itself is kept for the next account's link.
+   */
+  dropPushHere(): Promise<void>;
+  /** Removes the saved sets of these `<user>.<org>` scopes (an account left). */
+  forgetSaved(scopes: readonly string[]): Promise<void>;
   /** `agent` / `model` / `effort`: only what was picked; the host's
-   *  defaults run for the rest. */
+   *  defaults run for the rest. `attachments`: blobs uploaded for that
+   *  computer (`uploadAttachment`), for the space's `.context/`. */
   startSpace(
     req: {
       deviceId: string;
       projectId: string;
       goal: string;
       mode: FleetMode;
+      attachments?: BlobRef[];
     } & AgentPicks,
   ): Promise<SpaceView>;
   /** `mode`: the turn's, when it isn't the space's own; `picks`: an agent,
    *  model or effort from this turn on (none: the space's own). While the
-   *  space runs the host queues it (docs/fleet.md "Sends queue"). */
+   *  space runs the host queues it (docs/fleet.md "Sends queue").
+   *  `attachments`: blobs uploaded for the space's host. */
   send(
     space: string,
     text: string,
     mode?: FleetMode | null,
     picks?: AgentPicks,
+    attachments?: BlobRef[],
   ): Promise<SendResult>;
   stopSpace(space: string): Promise<void>;
+  /**
+   * Archives a space followed here, as the host's own Archive does
+   * (`archive_space`: edits checkpointed, worktree removed, branch and PR
+   * kept). Refused `fleet.busy` while its turn runs. Once the host says ok
+   * the space leaves the list; `unarchiveSpace` brings it back.
+   */
+  archiveSpace(space: string): Promise<void>;
+  /** Undo of `archiveSpace` (`unarchive_space`: the worktree recreated). */
+  unarchiveSpace(space: string): Promise<void>;
   /** One entry per question: chosen options, or one free text. */
   answer(space: string, askId: string, answers: string[][]): Promise<void>;
   /** Pins exactly `publicKey` (refused if the cloud now lists another). */
@@ -256,12 +302,14 @@ export interface FleetClient {
   untrust(deviceId: string): Promise<void>;
   lines(space: string): Promise<SpaceLine[]>;
   registerPush(token: string | null): Promise<void>;
-  /** Signs and sends a request without the socket (notification action). */
+  /** Signs and sends a request without the socket (notification action);
+   *  `as`: for another signed-in account's space. */
   answerOverHttp(
     space: string,
     askId: string,
     answers: string[][],
     hostDevice: string,
+    as?: PushIdentity | null,
   ): Promise<void>;
   /**
    * Allow or Deny a confirm waiting on `hostDevice`. The card goes once
@@ -274,6 +322,7 @@ export interface FleetClient {
     hostDevice: string,
     confirmId: string,
     allow: boolean,
+    as?: PushIdentity | null,
   ): Promise<void>;
   /**
    * Sets a pinned computer's auto mode for an `mcp` device it pins; the new
@@ -297,7 +346,12 @@ export interface FleetClient {
   ): Promise<SubSpaceRead>;
   /** A message as that space's next turn, in its own mode (`send_to`);
    *  queued while it runs. */
-  sendTo(hostDevice: string, space: string, text: string): Promise<SendResult>;
+  sendTo(
+    hostDevice: string,
+    space: string,
+    text: string,
+    attachments?: BlobRef[],
+  ): Promise<SendResult>;
   /** Answers the question set `ask` waiting in that space (`answer_space`). */
   answerSpace(
     hostDevice: string,
@@ -305,4 +359,36 @@ export interface FleetClient {
     ask: string,
     answers: string[][],
   ): Promise<void>;
+  /**
+   * Seals `file` for `hostDevice`'s pinned key and uploads its chunks
+   * (docs/fleet.md "Files (blobs)"): the reference to attach to a start,
+   * send or send_to to that computer. `onProgress` gets 0…1.
+   */
+  uploadAttachment(
+    hostDevice: string,
+    file: FileToSend,
+    onProgress?: (fraction: number) => void,
+  ): Promise<BlobRef>;
+  /** Removes a blob from the cloud (an attachment taken back before sending). */
+  deleteBlob(blobId: string): Promise<void>;
+  /**
+   * Asks `hostDevice` for a file of `space`'s worktree (`read_file`): the
+   * host seals it for this device and uploads it; the reference comes back
+   * (`fetchBlob` reads it). Refused over `maxBytes` (≤ 50 MiB) with
+   * `fleet.too_large`.
+   */
+  readFile(
+    hostDevice: string,
+    space: string,
+    path: string,
+    maxBytes?: number,
+  ): Promise<BlobRef>;
+  /** Whether this device's key can open blobs (not a WebCrypto key). */
+  canOpenBlobs(): Promise<boolean>;
+  /** Downloads a blob's chunks, opens them with this device's key, deletes
+   *  the blob from the cloud: the plaintext. `onProgress` gets 0…1. */
+  fetchBlob(
+    ref: BlobRef,
+    onProgress?: (fraction: number) => void,
+  ): Promise<Uint8Array>;
 }

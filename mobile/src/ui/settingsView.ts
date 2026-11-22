@@ -38,6 +38,11 @@ export function devicesSummary(
   return `${others.filter((d) => d.online).length} online`;
 }
 
+/** The Accounts row's detail: how many are signed in here ("2"), none: "". */
+export function accountsDetail(count: number): string {
+  return count > 1 ? String(count) : '';
+}
+
 export interface AccountView {
   /** The name, else the email. */
   title: string;

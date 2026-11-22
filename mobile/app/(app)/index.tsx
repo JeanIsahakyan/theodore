@@ -45,7 +45,13 @@ import {
   View,
   type TextInputInstance,
 } from 'react-native';
-import { ComposerDock, PromptInput } from '../../src/components/chat';
+import {
+  AttachButton,
+  AttachmentStrip,
+  ComposerDock,
+  PromptInput,
+  useAttach,
+} from '../../src/components/chat';
 import { MainHeader } from '../../src/components/main-header';
 import { ModelChip } from '../../src/components/pickers/composer-chips';
 import { useHome } from '../../src/components/pickers/use-picker';
@@ -54,6 +60,7 @@ import { SymbolImage } from '../../src/components/symbol-image';
 import { useServices } from '../../src/services';
 import { useGlassHeaderInset } from '../../src/shell/glassHeader';
 import { spaceHref } from '../../src/shell/navigate';
+import { HOME_COMPOSER } from '../../src/state/attachments';
 import {
   noteStarted,
   requestNewSpace,
@@ -66,16 +73,20 @@ import {
   takeHomeRestore,
   usePending,
 } from '../../src/state/pending';
+import { useAccountSwitch } from '../../src/state/accounts';
 import { useFleetState } from '../../src/state/fleet';
+import { log, track } from '../../src/telemetry/log';
 import { startPicks } from '../../src/ui/agents';
+import { SharingCard } from '../../src/ui/SharingCard';
+import { allUploaded } from '../../src/ui/attachments';
 import { ConnectionBanner } from '../../src/ui/ConnectionBanner';
 import {
-  LOADING_TEXT,
   UNREACHABLE_TITLE,
   lastPicksPreview,
+  loadingText,
   unreachableHint,
 } from '../../src/ui/load';
-import { RUN_WARNING, errorText } from '../../src/ui/logic';
+import { RUN_WARNING, errorText, refusalCode } from '../../src/ui/logic';
 import { Button, Glass } from '../../src/ui/native';
 import { QuestionsBanner } from '../../src/ui/QuestionsBanner';
 import { SkeletonChip } from '../../src/ui/Skeleton';
@@ -98,6 +109,9 @@ export default function NewSpaceScreen() {
   const [goal, setGoal] = useState('');
   const [error, setError] = useState<string | null>(null);
   const input = useRef<TextInputInstance>(null);
+  // Files for the space's .context/, sealed for the picked computer and
+  // uploaded on pick (docs/mobile.md "Files").
+  const attach = useAttach(HOME_COMPOSER, device?.deviceId ?? null);
 
   // A start the host refused: its goal back in the field, with why. Home
   // is the stack's anchor, mounted before any start: it hears every one.
@@ -126,7 +140,9 @@ export default function NewSpaceScreen() {
     return () => clearTimeout(t);
   }, [fresh]);
 
-  const ready = !!device && !!project && goal.trim() !== '';
+  // Start waits for every attached file to be in the cloud.
+  const ready =
+    !!device && !!project && goal.trim() !== '' && allUploaded(attach.list);
 
   // The space's screen opens at once under a pending id, the goal as your
   // first bubble; the host's ok names the space and the route follows
@@ -135,6 +151,7 @@ export default function NewSpaceScreen() {
     if (!device || !project || !ready) return;
     const text = goal.trim();
     const picks = startPicks(device.agents, pick);
+    const { refs, files } = attach.take();
     setError(null);
     setGoal('');
     const id = addStart({
@@ -145,8 +162,22 @@ export default function NewSpaceScreen() {
       goal: text,
       mode,
       picks,
+      files,
     });
     router.push(spaceHref(id));
+    const startedAt = Date.now();
+    const facts = {
+      computer_kind: device.kind,
+      mode,
+      agent: picks.agent ?? null,
+      model: picks.model ?? null,
+      effort: picks.effort ?? null,
+    };
+    log.info('space start requested', {
+      op_id: id,
+      host_device: device.deviceId,
+      ...facts,
+    });
     fleet
       .startSpace({
         deviceId: device.deviceId,
@@ -154,27 +185,59 @@ export default function NewSpaceScreen() {
         goal: text,
         mode,
         ...picks,
+        attachments: refs,
       })
       .then((space) => {
         if (!web)
           void Haptics.notificationAsync(
             Haptics.NotificationFeedbackType.Success,
           );
+        track('space_started', {
+          ...facts,
+          ms: Date.now() - startedAt,
+          outcome: space.status === 'starting' ? 'timeout' : 'ok',
+          code: null,
+        });
         noteStarted(device.deviceId, project.id);
         startSettled(id, space.space);
       })
-      .catch((e: unknown) => startFailed(id, errorText(e)));
+      .catch((e: unknown) => {
+        const code = refusalCode(e);
+        track('space_started', {
+          ...facts,
+          ms: Date.now() - startedAt,
+          outcome: 'refused',
+          code,
+        });
+        log.warn('space start refused', {
+          op_id: id,
+          'error.code': code ?? 'fleet.refused',
+        });
+        startFailed(id, errorText(e));
+      });
   };
 
   // Loading or unreachable: a chip-sized placeholder where the model chip
   // goes; the field takes typing, Send waits for the devices.
   const settled = load === 'ready' || load === 'empty';
   const chips =
-    device && project ? <ModelChip /> : settled ? null : <SkeletonChip />;
+    device && project ? (
+      <>
+        <AttachButton
+          onPick={(s) => void attach.pick(s)}
+          busy={attach.picking}
+          testID="start-attach"
+        />
+        <ModelChip />
+      </>
+    ) : settled ? null : (
+      <SkeletonChip />
+    );
 
   return (
     <View className="flex-1 bg-background" style={{ paddingTop: top }}>
       <MainHeader title={TITLE} onNewSpace={requestNewSpace} />
+      <SharingCard />
       <QuestionsBanner glass />
       {/* Before the first list, Home itself says what the link does. */}
       {settled ? (
@@ -245,6 +308,14 @@ export default function NewSpaceScreen() {
           // Loading: the goal can be typed already; Send waits for a computer.
           disabled={settled && (!device || !project)}
           canSubmit={ready}
+          above={
+            <AttachmentStrip
+              list={attach.list}
+              notice={attach.notice}
+              onRetry={attach.retry}
+              onRemove={attach.remove}
+            />
+          }
           leading={chips}
           error={error}
           autoFocus={web}
@@ -273,7 +344,9 @@ function FirstConnect({
   const error = useFleetState((s) => s.error);
   const spaces = useFleetState((s) => s.spaces);
   const draft = useCompose((s) => s.home);
+  const switching = useAccountSwitch((s) => s.switching);
   const last = lastPicksPreview(draft, spaces);
+  const loading = loadingText(switching);
   return (
     <>
       <SymbolImage name="chat" size={44} color={p.muted} />
@@ -329,14 +402,12 @@ function FirstConnect({
         <View
           accessible
           accessibilityRole="progressbar"
-          accessibilityLabel={LOADING_TEXT}
+          accessibilityLabel={loading}
           accessibilityLiveRegion="polite"
           className="mt-3 flex-row items-center gap-2"
         >
           <Spinner color={p.muted} />
-          <Text className="text-[13px] text-muted-foreground">
-            {LOADING_TEXT}
-          </Text>
+          <Text className="text-[13px] text-muted-foreground">{loading}</Text>
         </View>
       )}
     </>

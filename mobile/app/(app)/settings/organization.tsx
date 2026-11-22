@@ -18,6 +18,8 @@ import {
 } from '../../../src/components/settings';
 import { useServices } from '../../../src/services';
 import { useAuthState } from '../../../src/shell/AppProviders';
+import { setSwitching as setSwitchingTo } from '../../../src/state/accounts';
+import { log, track } from '../../../src/telemetry/log';
 import { errorText, roleLabel, switchErrorText } from '../../../src/ui/logic';
 import { organizationNote } from '../../../src/ui/settingsView';
 
@@ -34,9 +36,19 @@ export default function OrganizationScreen() {
     if (switching || id === session?.organizationId) return;
     setSwitching(id);
     setError(null);
+    // Home says where it is going while the fleet reconnects.
+    setSwitchingTo(orgs.find((o) => o.id === id)?.name || null);
     auth
       .switchOrganization(id)
-      .catch((e: unknown) => setError(switchErrorText(errorText(e))))
+      .catch((e: unknown) => {
+        setSwitchingTo(null);
+        track('org_switched', { ok: false });
+        log.warn('organization switch failed', {
+          'error.code': 'account.switch_failed',
+          error: e instanceof Error ? e.message : String(e),
+        });
+        setError(switchErrorText(errorText(e)));
+      })
       .finally(() => setSwitching(null));
   };
 

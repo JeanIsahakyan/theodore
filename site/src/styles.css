@@ -1,0 +1,219 @@
+@import 'tailwindcss';
+@import '@heroui/styles';
+@import '@fontsource-variable/geist';
+@import '@fontsource-variable/geist-mono';
+
+/* The desktop app's tokens (ui/src/styles.css): one radius drives HeroUI's
+   whole scale, the production accent is HeroUI's blue, Geist for text and
+   Geist Mono for code. Keep these in step with the app. */
+:root {
+  --radius: 0.25rem;
+  --font-sans: 'Geist Variable', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'Geist Mono Variable', ui-monospace, Menlo, monospace;
+  --diff-add: color-mix(in oklab, var(--success) 9%, transparent);
+  --diff-del: color-mix(in oklab, var(--danger) 9%, transparent);
+  --diff-add-word: color-mix(in oklab, var(--success) 26%, transparent);
+  --diff-del-word: color-mix(in oklab, var(--danger) 24%, transparent);
+  --tk-k: var(--accent);
+  --tk-s: color-mix(in oklab, var(--success) 75%, var(--foreground));
+  --tk-c: var(--muted);
+  --tk-n: color-mix(in oklab, var(--warning) 70%, var(--foreground));
+  --tk-t: color-mix(in oklab, var(--accent) 45%, var(--foreground));
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  scroll-behavior: smooth;
+}
+body {
+  font-family: var(--font-sans);
+  font-feature-settings: 'ss01', 'tnum';
+  -webkit-font-smoothing: antialiased;
+  background: var(--background);
+  color: var(--foreground);
+}
+/* A visible ring for the keyboard, the app's focus colour. */
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* ── the theme toggle: one icon per theme, no script needed to pick ──── */
+.only-dark {
+  display: none;
+}
+.dark .only-dark {
+  display: inline-flex;
+}
+.dark .only-light {
+  display: none;
+}
+
+/* ── product mocks: the desktop's code and diff styles ────────────────── */
+.lines {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 20px;
+}
+.ln {
+  display: grid;
+  grid-template-columns: 36px 36px 16px minmax(0, 1fr);
+}
+.ln.t-add {
+  background: var(--diff-add);
+}
+.ln.t-del {
+  background: var(--diff-del);
+}
+.ln .no {
+  text-align: right;
+  padding-right: 8px;
+  color: var(--muted);
+  opacity: 0.7;
+  user-select: none;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.ln .mark {
+  text-align: center;
+  color: var(--muted);
+  user-select: none;
+}
+.ln .src {
+  white-space: pre;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  tab-size: 4;
+}
+.ln .wd {
+  border-radius: 3px;
+}
+.ln.t-add .wd {
+  background: var(--diff-add-word);
+}
+.ln.t-del .wd {
+  background: var(--diff-del-word);
+}
+.tk-k {
+  color: var(--tk-k);
+}
+.tk-s {
+  color: var(--tk-s);
+}
+.tk-c {
+  color: var(--tk-c);
+  font-style: italic;
+}
+.tk-n {
+  color: var(--tk-n);
+}
+.tk-t {
+  color: var(--tk-t);
+}
+
+/* ── the hero demo ────────────────────────────────────────────────────── */
+/* Rows are laid out from the start and fade in, so the window never grows
+   while the story plays. */
+.demo-step {
+  opacity: 0;
+  transform: translateY(3px);
+  transition:
+    opacity 0.35s ease,
+    transform 0.35s ease;
+}
+.demo-step[data-on='true'] {
+  opacity: 1;
+  transform: none;
+}
+.demo-notif {
+  opacity: 0;
+  transform: translateY(-140%);
+  transition:
+    transform 0.5s cubic-bezier(0.2, 0.9, 0.3, 1.15),
+    opacity 0.3s ease;
+}
+.demo-notif[data-on='true'] {
+  opacity: 1;
+  transform: none;
+}
+.demo-notif[data-gone='true'] {
+  opacity: 0;
+  transform: translateY(-140%);
+}
+.demo-sent {
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+.demo-sent[data-on='true'] {
+  opacity: 1;
+}
+.demo-tap {
+  transition:
+    background-color 0.2s ease,
+    color 0.2s ease;
+}
+
+/* Text that shimmers while an agent works (the desktop's). */
+.shimmer-text {
+  background: linear-gradient(
+    90deg,
+    var(--muted) 0%,
+    var(--foreground) 50%,
+    var(--muted) 100%
+  );
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: shimmer-text 1.8s linear infinite;
+}
+@keyframes shimmer-text {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -100% 0;
+  }
+}
+
+/* The logo's refraction stripes drift through the lenses (the desktop's
+   welcome animation). */
+.welcome-stripes {
+  animation: welcome-drift 4.2s linear infinite;
+}
+.welcome-stripes-late {
+  animation-delay: -2.1s;
+}
+@keyframes welcome-drift {
+  from {
+    transform: translateY(0);
+  }
+  to {
+    transform: translateY(110px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  .demo-step,
+  .demo-notif,
+  .demo-sent,
+  .demo-tap {
+    transition: none;
+  }
+  .shimmer-text {
+    animation: none;
+    color: var(--muted);
+  }
+  .welcome-stripes {
+    animation: none;
+  }
+}
+
+/* Long words in prose (URLs, asset names) wrap instead of overflowing on a
+   360 px screen. */
+.prose-wrap {
+  overflow-wrap: anywhere;
+}
