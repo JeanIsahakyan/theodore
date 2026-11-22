@@ -30,6 +30,7 @@ export function PromptInput({
   stopping,
   queue,
   canSubmit,
+  above,
   leading,
   trailing,
   error,
@@ -79,6 +80,7 @@ export function PromptInput({
         className="w-full rounded-2xl border border-border bg-card"
         style={{ boxShadow: '0 2px 8px rgba(0,0,0,0.06)' }}
       >
+        {above}
         <TextInput
           ref={inputRef}
           nativeID="composer"

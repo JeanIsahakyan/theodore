@@ -34,6 +34,8 @@ export interface PromptInputProps {
   queue?: boolean;
   /** Send allowed; default: the text isn't blank. */
   canSubmit?: boolean;
+  /** Above the field, inside the surface (the attached files' previews). */
+  above?: ReactNode;
   /** Chips on the row under the field, left (agent · model · effort). */
   leading?: ReactNode;
   /** Before the send button. */

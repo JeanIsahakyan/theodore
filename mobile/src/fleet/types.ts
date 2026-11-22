@@ -4,8 +4,17 @@
  * `FleetClient` is implemented in `src/fleet/client.ts`; screens read the
  * zustand store in `src/state/fleet.ts` and call the client's methods.
  */
-import type { ConfirmAction, FleetMode, McpAuto } from '../gen/fleet';
+import type { BlobRef, ConfirmAction, FleetMode, McpAuto } from '../gen/fleet';
 import type { SpaceMirror } from './mirror';
+
+export type { BlobRef } from '../gen/fleet';
+
+/** A file to send: its bytes, name and mime type (docs/mobile.md "Files"). */
+export interface FileToSend {
+  bytes: Uint8Array;
+  name: string;
+  mime: string;
+}
 
 export type ConnectionState = 'off' | 'connecting' | 'connected' | 'error';
 
@@ -230,23 +239,27 @@ export interface FleetClient {
   start(): Promise<void>;
   stop(): void;
   /** `agent` / `model` / `effort`: only what was picked; the host's
-   *  defaults run for the rest. */
+   *  defaults run for the rest. `attachments`: blobs uploaded for that
+   *  computer (`uploadAttachment`), for the space's `.context/`. */
   startSpace(
     req: {
       deviceId: string;
       projectId: string;
       goal: string;
       mode: FleetMode;
+      attachments?: BlobRef[];
     } & AgentPicks,
   ): Promise<SpaceView>;
   /** `mode`: the turn's, when it isn't the space's own; `picks`: an agent,
    *  model or effort from this turn on (none: the space's own). While the
-   *  space runs the host queues it (docs/fleet.md "Sends queue"). */
+   *  space runs the host queues it (docs/fleet.md "Sends queue").
+   *  `attachments`: blobs uploaded for the space's host. */
   send(
     space: string,
     text: string,
     mode?: FleetMode | null,
     picks?: AgentPicks,
+    attachments?: BlobRef[],
   ): Promise<SendResult>;
   stopSpace(space: string): Promise<void>;
   /** One entry per question: chosen options, or one free text. */
@@ -297,7 +310,12 @@ export interface FleetClient {
   ): Promise<SubSpaceRead>;
   /** A message as that space's next turn, in its own mode (`send_to`);
    *  queued while it runs. */
-  sendTo(hostDevice: string, space: string, text: string): Promise<SendResult>;
+  sendTo(
+    hostDevice: string,
+    space: string,
+    text: string,
+    attachments?: BlobRef[],
+  ): Promise<SendResult>;
   /** Answers the question set `ask` waiting in that space (`answer_space`). */
   answerSpace(
     hostDevice: string,
@@ -305,4 +323,36 @@ export interface FleetClient {
     ask: string,
     answers: string[][],
   ): Promise<void>;
+  /**
+   * Seals `file` for `hostDevice`'s pinned key and uploads its chunks
+   * (docs/fleet.md "Files (blobs)"): the reference to attach to a start,
+   * send or send_to to that computer. `onProgress` gets 0…1.
+   */
+  uploadAttachment(
+    hostDevice: string,
+    file: FileToSend,
+    onProgress?: (fraction: number) => void,
+  ): Promise<BlobRef>;
+  /** Removes a blob from the cloud (an attachment taken back before sending). */
+  deleteBlob(blobId: string): Promise<void>;
+  /**
+   * Asks `hostDevice` for a file of `space`'s worktree (`read_file`): the
+   * host seals it for this device and uploads it; the reference comes back
+   * (`fetchBlob` reads it). Refused over `maxBytes` (≤ 50 MiB) with
+   * `fleet.too_large`.
+   */
+  readFile(
+    hostDevice: string,
+    space: string,
+    path: string,
+    maxBytes?: number,
+  ): Promise<BlobRef>;
+  /** Whether this device's key can open blobs (not a WebCrypto key). */
+  canOpenBlobs(): Promise<boolean>;
+  /** Downloads a blob's chunks, opens them with this device's key, deletes
+   *  the blob from the cloud: the plaintext. `onProgress` gets 0…1. */
+  fetchBlob(
+    ref: BlobRef,
+    onProgress?: (fraction: number) => void,
+  ): Promise<Uint8Array>;
 }

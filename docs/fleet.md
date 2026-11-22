@@ -772,6 +772,84 @@ pins down what this doc leaves open:
   sockets per user), `fleet.too_many_spaces` (200 per user),
   `fleet.upgrade_required` (HTTP 426).
 
+## Files (blobs)
+
+Protocol 8. A file goes from one device to another through the cloud,
+which stores it only as ciphertext it can't read: chunks of at most 4 MiB
+plaintext, each encrypted for the recipient's device key and stored under
+a random blob id, fetched and deleted by the recipient. The reference to
+the blob (`BlobRef`) rides inside the signed request or reply, so its
+integrity is that signature's. Rust: `crates/fleet-protocol/src/blob.rs`;
+the TS side is checked against `fleet-vectors.json` (`blobs`).
+
+```
+phone ─▶ computer: attachments (start_space, send, send_to)
+  phone: seal_blob(host's pinned ed25519 pk, file) ─▶ BlobRef + chunks
+    ─▶ PUT /v1/fleet/blobs/{blob_id}/{i} ×chunks ─▶ request{op, attachments:[BlobRef]}, signed
+  host: the gate (pin, target_key, fresh, …) ─▶ BlobRef::validate, ≤ 10, each ≤ 20 MiB
+    ─▶ GET /v1/fleet/blobs/{blob_id}/{i} ×chunks ─▶ open_blob(own seed): every tag, size, sha256
+    ─▶ <worktree>/.context/<safe_attachment_name(name)> ─▶ DELETE /v1/fleet/blobs/{blob_id}
+    ─▶ the turn runs (the agent finds the files in .context/)
+
+computer ─▶ phone: read_file {space, path, max_bytes}
+  phone ─▶ request{op: read_file}, signed (permission as read_space: Ask)
+  host: path within the space's worktree, size ≤ min(max_bytes, 50 MiB) else fleet.too_large
+    ─▶ seal_blob(origin's pinned ed25519 pk, file) ─▶ PUT ×chunks ─▶ reply ok {blob: BlobRef}, signed
+  phone: open the reply with the host's pin ─▶ GET ×chunks ─▶ open_blob ─▶ DELETE ─▶ show / save
+```
+
+### Crypto (`theodore-blob-v1`)
+
+No new key, no new trust: the recipient's encryption key is derived from
+the ed25519 device key the sender already pinned.
+
+```
+recipient  x25519_pk = Edwards ─▶ Montgomery of the ed25519 pk   (u = (1 + y) / (1 − y);
+                       libsodium crypto_sign_ed25519_pk_to_curve25519)
+           x25519_sk = clamp(SHA-512(ed25519 seed)[0..32])       (crypto_sign_ed25519_sk_to_curve25519)
+sender     eph_sk random (per blob) ─▶ eph_pk
+           shared = X25519(eph_sk, x25519_pk)
+           key    = HKDF-SHA256(ikm = shared, salt = eph_pk ‖ x25519_pk, info = "theodore-blob-v1", 32 bytes)
+chunk i    XChaCha20-Poly1305(key)
+           nonce = nonce_prefix (16 random bytes, per blob) ‖ u64 BE i
+           aad   = blob_id (ASCII) ‖ u32 BE i ‖ u32 BE chunks
+           ciphertext = plaintext[i·4 MiB .. (i+1)·4 MiB] ‖ 16-byte tag
+sha256     hex SHA-256 of the whole plaintext; checked by the recipient after every tag opened
+```
+
+| `BlobRef` field | Bound |
+| --- | --- |
+| `blob_id` | 32 lowercase hex (16 random bytes) |
+| `name` | 1 to 200 characters, no `/`, `\` or NUL; written only through `safe_attachment_name` (last path component, control characters and leading dots dropped, extension kept, `file` if nothing is left) |
+| `mime` | ≤ 100 characters |
+| `size` | plaintext bytes; ≤ 20 MiB per attachment, ≤ min(`max_bytes`, 50 MiB) for `read_file` |
+| `chunks` | 1 to 64, `max(1, ceil(size / 4 MiB))`: an empty file is one empty chunk (a tag alone) |
+| `sha256` | 64 hex |
+| `eph_pk` | base64, 32 bytes |
+| `nonce_prefix` | base64, 16 bytes |
+
+`BlobRef::validate` checks every bound; `RemoteOp::validate_blobs` the
+list (≤ 10, no id twice, each ≤ 20 MiB) and a `read_file`'s `path` (≤ 1024
+characters, no NUL). `open_blob` returns nothing unless every chunk's tag
+opens, the count, size and sha256 match: a wrong recipient, a swapped,
+dropped or altered chunk, another blob id or nonce prefix all fail.
+
+| Wire | |
+| --- | --- |
+| `RemoteOp::StartSpace.attachments`, `Send.attachments`, `SendTo.attachments` | `BlobRef[]`, default `[]` (a protocol-7 body has none); encrypted for the target |
+| `RemoteOp::ReadFile {space, path, max_bytes}` | `space` as `read_space` takes it; an op on any space (`on_any_space`), counts as Ask; ok value `{blob: BlobRef}`, encrypted for the origin |
+| Cloud HTTP, Bearer = the account session JWT | `PUT /v1/fleet/blobs/{blob_id}/{i}` body = the chunk (≤ 4 MiB + 16), header `x-theodore-chunks: N` ─▶ 204; `GET …/{blob_id}/{i}` ─▶ 200 bytes; `DELETE …/{blob_id}` ─▶ 204 (all chunks). Same org only |
+| Errors (JSON `{code}`) | `fleet.blob_not_found` 404, `fleet.too_large` 413, `fleet.quota` 429, `fleet.unauthorized` 401 |
+| Older peers | a protocol-7 origin never sends attachments or `read_file`; a protocol-7 host refuses `read_file` as an unknown op, and a host on 8 that doesn't read files yet refuses attachments and `read_file` with `fleet.invalid` |
+
+Test vectors (`cloud/src/gen/fleet-vectors.json` → `blobs`, copied to
+`mobile/src/gen`): a fixed recipient seed with its ed25519 and X25519 keys,
+and three cases (0 bytes, 10 bytes, 4 MiB + 3 bytes as two chunks) with a
+fixed ephemeral secret, nonce prefix and blob id. The plaintext is
+generated, not embedded: byte `i` is `(i × 31) mod 251`. Each case lists
+the expected `eph_pk`, key, `BlobRef`, and every chunk's nonce, AAD and
+ciphertext SHA-256.
+
 ## MCP over the cloud
 
 Claude Code or a claude.ai connector adds Theodore as a remote MCP server
@@ -876,11 +954,13 @@ events and replies a pinned computer signed, refusals as codes
 
 ### On the wire
 
-- Protocol 7 (5 added `mcp`; 6 adds `confirm` / `confirm_resolved` /
+- Protocol 8 (5 added `mcp`; 6 adds `confirm` / `confirm_resolved` /
   `confirm_dismissed`, the `confirm` and `set_mcp_auto` ops and
   `DeviceInfo.mcp_auto`; 7 adds the ops on any space — `list_spaces`,
   `read_space`, `ask_space`, `send_to`, `answer_space`, `merge_child` —,
-  the `sub_space` mirror, `ConfirmAction::Merge` and `fleet.timeout`).
+  the `sub_space` mirror, `ConfirmAction::Merge` and `fleet.timeout`; 8
+  adds files: `attachments` on `start_space` / `send` / `send_to`, the
+  `read_file` op and the blob HTTP routes, "Files (blobs)").
   Hub: protocols 3 to 7; `mcp` hidden from connections below 5
   (`devices`); the confirm frames never sent below 6; the confirm ops to a
   computer below 6, and the ops on any space to one below 7, are
@@ -898,6 +978,6 @@ events and replies a pinned computer signed, refusals as codes
 
 ## Not yet
 
-`theodore daemon` (headless Linux device), file transfer, cross-user
-sharing within an org (v1 routes only between one user's own devices).
+`theodore daemon` (headless Linux device), cross-user sharing within an
+org (v1 routes only between one user's own devices).
 Phone and web: docs/mobile.md.

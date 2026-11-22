@@ -145,6 +145,7 @@ async fn two_devices_through_the_real_hub() {
             effort: None,
             parent: None,
             depth: 0,
+            attachments: vec![],
         },
     };
     let space = req.op.space().to_string();

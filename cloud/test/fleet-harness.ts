@@ -22,6 +22,7 @@ import {
 import { CloudError } from '../src/errors';
 import { PROTOCOL_VERSION } from '../src/fleet/limits';
 import type { PushMessage, PushResult } from '../src/fleet/push';
+import type { Logger } from '../src/telemetry/log';
 import { McpFleet } from '../src/mcp/fleet';
 import { b64, signedBytes, unb64, type Domain } from '../src/fleet/wire';
 
@@ -305,7 +306,13 @@ export class Harness {
 
   constructor(
     db = new DatabaseSync(':memory:'),
-    o: { mcp?: boolean; replyWaitMs?: number; askWaitMs?: number } = {},
+    o: {
+      mcp?: boolean;
+      replyWaitMs?: number;
+      askWaitMs?: number;
+      /** The hub's logger (tests of what it logs); default none. */
+      log?: Logger;
+    } = {},
   ) {
     this.db = db;
     const sql = {
@@ -353,6 +360,7 @@ export class Harness {
       schedule: (at) => {
         this.scheduled.push(at);
       },
+      log: o.log,
     });
   }
 
