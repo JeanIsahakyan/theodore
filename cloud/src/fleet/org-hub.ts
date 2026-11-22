@@ -26,6 +26,11 @@ import { verifierFor } from '../auth';
 import { McpFleet } from '../mcp/fleet';
 import { MCP_CALL_PATH, MCP_ENABLE_PATH, answerMcp } from '../mcp/route';
 import { McpStore } from '../mcp/store';
+import {
+  telemetryFor,
+  type TelemetryEnv,
+  type Telemetry,
+} from '../telemetry/cloud';
 import { answerBlobQuota, BlobQuota, QUOTA_PATH } from './blobs';
 import { Hub, type Conn, type ConnState, type FleetCaller } from './hub';
 import { expoSender } from './push';
@@ -41,7 +46,7 @@ import {
 
 export { CALLER_HEADER };
 
-export interface OrgHubEnv {
+export interface OrgHubEnv extends TelemetryEnv {
   WORKOS_CLIENT_ID: string;
   WORKOS_API_BASE?: string;
   /** Expo's access token, if the project has "enhanced push security" on. */
@@ -91,6 +96,7 @@ export class OrgHub implements DurableObject {
   private mcp: McpFleet | null;
   /** The MCP tables' and the blob counter's side of a purge. */
   private mcpPurge: McpPurge;
+  private telemetry: Telemetry;
   /** Per user per day, what the blob routes uploaded (`src/fleet/blobs.ts`). */
   private quota: BlobQuota;
   /** The alarm as last set; undefined until read after a wake. */
@@ -104,6 +110,8 @@ export class OrgHub implements DurableObject {
       env.WORKOS_API_BASE ?? 'https://api.workos.com',
       env.WORKOS_CLIENT_ID,
     );
+    this.telemetry = telemetryFor(env);
+    const log = this.telemetry.log.child({ component: 'org_hub' });
     const sql = {
       exec: (q: string, ...b: (string | number | null)[]) =>
         ctx.storage.sql.exec(q, ...b).toArray() as Record<string, unknown>[],
@@ -130,8 +138,10 @@ export class OrgHub implements DurableObject {
       push: expoSender(
         (input, init) => fetch(input, init),
         env.EXPO_ACCESS_TOKEN,
+        log,
       ),
       defer: (work) => ctx.waitUntil(work),
+      log,
     });
     // MCP off now doesn't mean its tables never held rows.
     const mcpStore = () => this.mcp?.store ?? new McpStore(sql);
@@ -150,6 +160,19 @@ export class OrgHub implements DurableObject {
   }
 
   async fetch(request: Request): Promise<Response> {
+    try {
+      return await this.serve(request);
+    } finally {
+      this.flushLogs();
+    }
+  }
+
+  /** The cloud's records out, after the work (never awaited here). */
+  private flushLogs() {
+    this.ctx.waitUntil(this.telemetry.flush());
+  }
+
+  private async serve(request: Request): Promise<Response> {
     const caller = readCaller(request.headers.get(CALLER_HEADER));
     if (!caller) return new Response('no caller', { status: 400 });
     const path = new URL(request.url).pathname;
@@ -203,7 +226,11 @@ export class OrgHub implements DurableObject {
   }
 
   async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer) {
-    await this.hub.message(wrap(ws), message);
+    try {
+      await this.hub.message(wrap(ws), message);
+    } finally {
+      this.flushLogs();
+    }
   }
 
   async webSocketClose(ws: WebSocket, code: number) {
@@ -213,16 +240,28 @@ export class OrgHub implements DurableObject {
     } catch {
       // already closed
     }
-    await this.hub.closed(wrap(ws));
+    try {
+      await this.hub.closed(wrap(ws), code);
+    } finally {
+      this.flushLogs();
+    }
   }
 
   async webSocketError(ws: WebSocket) {
-    await this.hub.closed(wrap(ws));
+    try {
+      await this.hub.closed(wrap(ws));
+    } finally {
+      this.flushLogs();
+    }
   }
 
   async alarm() {
     this.alarmAt = null;
-    await this.hub.alarm();
+    try {
+      await this.hub.alarm();
+    } finally {
+      this.flushLogs();
+    }
   }
 
   /** Sets the alarm only when it moves earlier: one write, not one a message. */

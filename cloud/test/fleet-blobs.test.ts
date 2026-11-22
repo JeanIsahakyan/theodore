@@ -16,6 +16,7 @@ import { BLOB_CHUNK_BYTES } from '../src/fleet/limits';
 import { CALLER_HEADER, OrgHub, readCaller } from '../src/fleet/org-hub';
 import { PURGE_PATH } from '../src/fleet/route';
 import { handle, type Deps } from '../src/index';
+import { Logger, type LogRecord } from '../src/telemetry/log';
 import { FakeWorkos } from './fake-workos';
 import { MCP_TEST_SECRET } from './fleet-harness';
 import { API, CLIENT, signer } from './keys';
@@ -137,6 +138,8 @@ async function setup(o: { quota?: BlobQuotaLimits; bucket?: boolean } = {}) {
   return {
     r2,
     db,
+    deps,
+    token,
     quota,
     hubCalls,
     limited,
@@ -404,6 +407,69 @@ describe('the daily quota', () => {
       }),
     );
     expect(await s.codeOf(gone, 401)).toBe('fleet.unauthorized');
+  });
+});
+
+describe('logs', () => {
+  it('records outcomes and quota hits with the ids hashed for the remote', async () => {
+    const s = await setup({ quota: { bytes: 100, chunks: 1000 } });
+    const local: LogRecord[] = [];
+    const remote: LogRecord[] = [];
+    const log = new Logger({
+      local: (r) => local.push(r),
+      remote: (r) => remote.push(r),
+    });
+    const put = async (i: number, n: number) =>
+      handle(
+        new Request(`${ORIGIN}/v1/fleet/blobs/${BLOB}/${i}`, {
+          method: 'PUT',
+          headers: {
+            [CHUNKS_HEADER]: '2',
+            'content-length': String(n),
+            authorization: `Bearer ${await s.token('user_1', 'org_7')}`,
+          },
+          body: bytes(n) as BodyInit,
+        }),
+        () => s.deps,
+        [WEB],
+        log,
+      );
+    expect((await put(0, 60)).status).toBe(204);
+    expect((await put(1, 60)).status).toBe(429);
+    const msgs = local.map((r) => r.msg);
+    expect(msgs).toEqual([
+      'blob put',
+      'http request',
+      'quota hit',
+      'http request',
+    ]);
+    expect(local[0]!.attrs).toMatchObject({
+      component: 'blobs',
+      user_id: 'user_1',
+      org_id: 'org_7',
+      index: 0,
+      chunks: 2,
+      bytes: 60,
+      first: true,
+    });
+    expect(local[1]!.attrs).toMatchObject({
+      route: '/v1/fleet/blobs/*',
+      status: 204,
+    });
+    expect(local[3]!.attrs).toMatchObject({
+      status: 429,
+      'error.code': 'fleet.quota',
+    });
+    // Only the quota hit and the request lines travel, ids hashed.
+    expect(remote.map((r) => r.msg)).toEqual([
+      'http request',
+      'quota hit',
+      'http request',
+    ]);
+    const hit = remote[1]!.attrs;
+    expect(hit['user_id']).toMatch(/^h:/);
+    expect(hit['org_id']).toMatch(/^h:/);
+    expect(JSON.stringify(remote)).not.toContain(BLOB);
   });
 });
 

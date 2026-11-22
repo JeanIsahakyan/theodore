@@ -19,7 +19,8 @@
  * the file-transfer contract says, nested as every other route answers.
  */
 import type { Caller } from '../auth';
-import { CloudError } from '../errors';
+import { CloudError, ERROR_HEADER } from '../errors';
+import { noopLogger, type Logger } from '../telemetry/log';
 import type { FleetCaller } from './hub';
 import {
   BLOB_CHUNK_BYTES,
@@ -55,6 +56,8 @@ export interface BlobDeps {
   hub?: HubFor;
   /** The per-user rate limit (`RL_USER`); throws when over. */
   rateLimit: (userId: string) => Promise<void>;
+  /** The cloud's logger; ids in its records are hashed before they leave. */
+  log?: Logger;
 }
 
 const invalid = (why: string) => new CloudError(400, codes.INVALID, why);
@@ -123,6 +126,7 @@ function errorBody(e: CloudError): Response {
       headers: {
         'content-type': 'application/json',
         'cache-control': 'no-store',
+        [ERROR_HEADER]: e.code,
       },
     },
   );
@@ -158,9 +162,27 @@ export async function blobRoute(
     if (!bucket) {
       throw new CloudError(500, 'cloud.config', 'blobs are not configured');
     }
-    return await handler(request, { blob, index, caller, bucket, deps });
+    const log = (deps.log ?? noopLogger).child({
+      component: 'blobs',
+      user_id: caller.userId,
+      org_id: caller.orgId,
+    });
+    return await handler(request, { blob, index, caller, bucket, deps, log });
   } catch (e) {
-    if (e instanceof CloudError) return errorBody(e);
+    if (e instanceof CloudError) {
+      // Who was turned away and why (static words); the request line
+      // carries the status and code for the rest.
+      if (e.status === 401 || e.status === 403) {
+        deps.log?.info('auth failed', { code: e.code, reason: e.message });
+      } else if (e.status >= 500) {
+        deps.log?.warn('request failed', {
+          code: e.code,
+          status: e.status,
+          reason: e.message,
+        });
+      }
+      return errorBody(e);
+    }
     throw e;
   }
 }
@@ -171,6 +193,8 @@ interface Call {
   caller: FleetCaller;
   bucket: BlobBucket;
   deps: BlobDeps;
+  /** With the caller's (hashed) ids. */
+  log: Logger;
 }
 
 async function putChunk(request: Request, c: Call): Promise<Response> {
@@ -190,7 +214,14 @@ async function putChunk(request: Request, c: Call): Promise<Response> {
       );
     }
   }
-  await reserveBlobQuota(c.deps.hub, request.url, c.caller, length);
+  try {
+    await reserveBlobQuota(c.deps.hub, request.url, c.caller, length);
+  } catch (e) {
+    if (e instanceof CloudError && e.code === codes.QUOTA) {
+      c.log.info('quota hit', { code: e.code, op: 'blob_put', bytes: length });
+    }
+    throw e;
+  }
 
   const customMetadata = {
     uploader: c.caller.userId,
@@ -208,6 +239,7 @@ async function putChunk(request: Request, c: Call): Promise<Response> {
     httpMetadata: { contentType: 'application/octet-stream' },
     customMetadata,
   });
+  c.log.info('blob put', { index: i, chunks, bytes: length, first: !owner });
   return noContent();
 }
 
@@ -216,8 +248,10 @@ async function getChunk(_request: Request, c: Call): Promise<Response> {
   const i = chunkIndex(c.index);
   const object = await c.bucket.get(chunkKey(c.caller.orgId, blob, i));
   if (!object) {
+    c.log.info('blob missing', { index: i });
     throw new CloudError(404, codes.BLOB_NOT_FOUND, 'no such blob chunk');
   }
+  c.log.info('blob get', { index: i, bytes: object.size });
   return new Response(object.body, {
     status: 200,
     headers: {
@@ -237,6 +271,7 @@ async function deleteBlob(_request: Request, c: Call): Promise<Response> {
   const owner = await c.bucket.head(ownerKey(blob));
   if (owner?.customMetadata?.['org_id'] === org) keys.push(ownerKey(blob));
   if (keys.length > 0) await c.bucket.delete(keys);
+  c.log.info('blob delete', { objects: keys.length });
   return noContent();
 }
 
