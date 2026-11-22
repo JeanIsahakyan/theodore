@@ -2,7 +2,7 @@
   "expo": {
     "name": "Theodore Code",
     "slug": "theodore",
-    "version": "0.1.32",
+    "version": "0.1.33",
     "runtimeVersion": {
       "policy": "appVersion"
     },
@@ -14,7 +14,11 @@
       "bundleIdentifier": "app.theodore.mobile",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
-      }
+      },
+      "associatedDomains": [
+        "applinks:theodore.cloud",
+        "applinks:staging.theodore.cloud"
+      ]
     },
     "android": {
       "adaptiveIcon": {
@@ -24,7 +28,22 @@
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false,
-      "package": "app.theodore.mobile"
+      "package": "app.theodore.mobile",
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "data": [
+            { "scheme": "https", "host": "theodore.cloud", "pathPrefix": "/s/" },
+            {
+              "scheme": "https",
+              "host": "staging.theodore.cloud",
+              "pathPrefix": "/s/"
+            }
+          ],
+          "category": ["BROWSABLE", "DEFAULT"]
+        }
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png",

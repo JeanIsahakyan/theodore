@@ -1,0 +1,12 @@
+{
+  "applinks": {
+    "details": [
+      {
+        "appIDs": ["J33CB2C73P.app.theodore.mobile"],
+        "components": [
+          { "/": "/s/*", "comment": "A Theodore space: opens it in Theodore Code" }
+        ]
+      }
+    ]
+  }
+}

@@ -8,6 +8,7 @@ watchSystemTheme();
 
 const data: PageData = window.__THEODORE_DATA__ ?? {
   release: null,
+  stars: null,
   year: new Date().getFullYear(),
 };
 

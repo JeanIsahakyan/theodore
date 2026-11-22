@@ -1,8 +1,8 @@
 /**
- * The latest GitHub release: its version, date and the install assets by
- * name (docs/releasing.md "Linux builds"). Read at build time into the page
- * and again in the browser; without either, every link falls back to the
- * release page itself.
+ * The latest GitHub release: its version, date, notes and the install
+ * assets by name (docs/releasing.md "Linux builds"). Read at build time into
+ * the page and again in the browser; without either, every link falls back
+ * to the release page itself.
  */
 import { RELEASES_API, RELEASES_LATEST } from '../content/links';
 
@@ -20,10 +20,12 @@ export interface Release {
   publishedAt: string;
   /** The release page. */
   url: string;
+  /** The notes, markdown, as written on GitHub. */
+  body: string;
   assets: Partial<Record<AssetKey, { url: string; size: number }>>;
 }
 
-const PATTERNS: Record<AssetKey, RegExp> = {
+export const ASSET_PATTERNS: Record<AssetKey, RegExp> = {
   'mac-arm64-dmg': /^Theodore_.+_aarch64\.dmg$/,
   'linux-x64-appimage': /^Theodore_.+_x86_64\.AppImage$/,
   'linux-x64-deb': /^Theodore_.+_amd64\.deb$/,
@@ -35,6 +37,7 @@ interface ApiRelease {
   tag_name?: string;
   published_at?: string;
   html_url?: string;
+  body?: string | null;
   assets?: { name?: string; browser_download_url?: string; size?: number }[];
 }
 
@@ -51,7 +54,10 @@ export function parseRelease(data: unknown): Release | null {
       typeof a.browser_download_url !== 'string'
     )
       continue;
-    for (const [key, re] of Object.entries(PATTERNS) as [AssetKey, RegExp][]) {
+    for (const [key, re] of Object.entries(ASSET_PATTERNS) as [
+      AssetKey,
+      RegExp,
+    ][]) {
       if (re.test(a.name))
         assets[key] = { url: a.browser_download_url, size: a.size ?? 0 };
     }
@@ -60,6 +66,7 @@ export function parseRelease(data: unknown): Release | null {
     version: r.tag_name.replace(/^v/, ''),
     publishedAt: r.published_at ?? '',
     url: r.html_url ?? RELEASES_LATEST,
+    body: typeof r.body === 'string' ? r.body : '',
     assets,
   };
 }

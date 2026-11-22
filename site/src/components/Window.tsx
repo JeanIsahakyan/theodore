@@ -9,6 +9,7 @@ export function Window({
   tab,
   tabIcon,
   sidebar,
+  aside,
   children,
   className = '',
   label,
@@ -16,6 +17,8 @@ export function Window({
   tab: string;
   tabIcon?: ReactNode;
   sidebar?: ReactNode;
+  /** A pane to the right of the page (the live diff), on wide screens. */
+  aside?: ReactNode;
   children: ReactNode;
   className?: string;
   /** For assistive tech: what this mock shows. */
@@ -25,7 +28,7 @@ export function Window({
     <div
       role="img"
       aria-label={label}
-      className={`window flex flex-col overflow-hidden rounded-2xl border border-separator bg-background text-start shadow-[0_24px_60px_-30px_rgba(0,0,0,0.45)] ${className}`}
+      className={`window flex flex-col overflow-hidden rounded-2xl bg-background text-start text-foreground shadow-float ${className}`}
     >
       <div className="tabbar flex h-11 shrink-0 items-center gap-2 border-b border-separator ps-3 pe-3">
         <span className="me-1 flex gap-1.5" aria-hidden>
@@ -44,11 +47,16 @@ export function Window({
       </div>
       <div className="flex min-h-0 flex-1">
         {sidebar && (
-          <aside className="sidebar hidden w-52 shrink-0 flex-col border-r border-separator md:flex">
+          <aside className="sidebar hidden w-40 shrink-0 flex-col border-r border-separator md:flex">
             {sidebar}
           </aside>
         )}
         <div className="flex min-w-0 flex-1 flex-col">{children}</div>
+        {aside && (
+          <aside className="hidden w-[200px] shrink-0 flex-col border-l border-separator lg:flex">
+            {aside}
+          </aside>
+        )}
       </div>
     </div>
   );
@@ -58,17 +66,24 @@ export function Window({
 export function WindowHeader({
   title,
   chip,
+  chipPop = false,
   right,
 }: {
   title: string;
   chip?: string;
+  /** The chip lands with a pop (a state that just changed). */
+  chipPop?: boolean;
   right?: ReactNode;
 }) {
   return (
     <header className="flex min-h-12 shrink-0 items-center gap-2 border-b border-separator px-4 py-2">
       <span className="min-w-0 truncate text-sm font-semibold">{title}</span>
       {chip && (
-        <span className="shrink-0 rounded-full bg-default px-2 py-0.5 text-xs">
+        <span
+          key={chip}
+          className={`shrink-0 rounded-full px-2 py-0.5 text-xs ${chipPop ? 'demo-pop bg-accent-soft text-accent-soft-foreground' : 'bg-default'}`}
+          data-on={chipPop}
+        >
           {chip}
         </span>
       )}
