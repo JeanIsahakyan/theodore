@@ -106,14 +106,27 @@ impl Core {
         &self,
         req: SpaceSendRequest,
         from: RemoteQueued,
+        files: Vec<theodore_contract::Attachment>,
     ) -> Result<Value, Refusal> {
         let _queue = self.space_queue_lock(&req.space).await;
         let row = self.space_row(&req.space).await.map_err(app_refusal)?;
         let running = row.status == SpaceStatus::Running;
         if running && self.fleet_remote_queued(&row.id).await >= REMOTE_QUEUE_MAX {
+            self.fleet_remove_context_files(&row, &files).await;
             return Err(busy());
         }
-        let id = self.space_send_as(req, None).await.map_err(app_refusal)?;
+        // Written in `.context/` already: they ride with this message
+        // (taken by the send under this lock), whether it runs now or waits.
+        self.fleet_stash_attachments(&row.id, files.clone());
+        let sent = self.space_send_as(req, None).await;
+        let id = match sent {
+            Ok(id) => id,
+            Err(e) => {
+                self.fleet_take_attachments(&row.id);
+                self.fleet_remove_context_files(&row, &files).await;
+                return Err(app_refusal(e));
+            }
+        };
         if !running {
             return Ok(serde_json::json!({ "message": id }));
         }
@@ -223,6 +236,9 @@ impl Core {
         // Not deleted: it stays refused, so it never runs on a lost drop.
         if applied.is_ok() {
             self.fleet_queued_take(&message.id);
+            // Its files came with it: gone with it.
+            self.fleet_remove_context_files(space, &message.attachments)
+                .await;
         }
         false
     }

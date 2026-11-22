@@ -301,6 +301,9 @@ impl Core {
         if let Some(created) = created {
             created(&space);
         }
+        // Files another device sent with the start (docs/fleet.md "Files
+        // (blobs)"): into `.context/` now, with the goal's turn.
+        self.fleet_write_pending_context(&id, &wt.path).await?;
         let setup_status = space.setup.as_ref().map(|s| s.status);
         if setup_status == Some(theodore_contract::SetupStatus::Running) {
             // The goal waits for setup (`goal_pending`).
@@ -429,7 +432,10 @@ impl Core {
         }
         let text = req.text.trim().to_string();
         // Checked before anything is stored: an unknown id fails the send.
-        let attachments = self.resolve_attachments(req.attachments.as_deref()).await?;
+        let mut attachments = self.resolve_attachments(req.attachments.as_deref()).await?;
+        // Files another device sent for this message, in `.context/`
+        // already (docs/fleet.md "Files (blobs)").
+        attachments.extend(self.fleet_take_attachments(&space.id));
         let mentions = self
             .resolve_mentions(&space, req.mentions.as_deref())
             .await?;
@@ -613,7 +619,13 @@ impl Core {
             expand_skill(&text, |id| space_skill_content(id, &wt.path, claude_home))
                 .unwrap_or_else(|| text.clone())
         });
+        // Files another device sent live in the space's own `.context/`:
+        // named by path for the agent, images handed to it like any
+        // attachment (docs/fleet.md "Files (blobs)").
+        let (context_files, attachments) =
+            crate::usecases::fleet_files::split_context(&wt.path, &attachments);
         let ask = with_attachments(ask, &attachments);
+        let ask = crate::usecases::fleet_files::with_context_files(ask, &context_files);
         let ask = self.with_mentions(ask, &message.mentions).await;
         let ask = match &message.from_space {
             Some(from) => from_space_prompt(from, &ask),
@@ -740,7 +752,16 @@ impl Core {
                 )))
                 .unwrap_or_default(),
             env: self.space_agent_env(&space).await,
-            attachments: agent_attachments(&attachments),
+            attachments: {
+                let mut all = agent_attachments(&attachments);
+                let images: Vec<_> = context_files
+                    .iter()
+                    .filter(|a| crate::usecases::fleet_files::is_image(a))
+                    .cloned()
+                    .collect();
+                all.extend(agent_attachments(&images));
+                all
+            },
             cwd: wt.path,
             cancel,
             code,

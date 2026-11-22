@@ -505,6 +505,12 @@ impl Core {
         };
         let unknown = || refuse(codes::UNKNOWN_SPACE, "no such space on this device");
         let req_id = req.req_id.clone();
+        // Protocol 8 (docs/fleet.md "Files (blobs)"): every attachment
+        // within its bounds before anything is claimed; fetched when the
+        // request runs.
+        req.op
+            .validate_blobs()
+            .map_err(|e| crate::usecases::fleet_files::blob_refusal(&e))?;
         match &mut req.op {
             RemoteOp::StartSpace {
                 space,
@@ -516,6 +522,7 @@ impl Core {
                 effort,
                 parent,
                 depth,
+                ..
             } => {
                 if *mode > s.max_mode {
                     return Err(above(*mode));
@@ -599,6 +606,7 @@ impl Core {
                 agent,
                 model,
                 effort,
+                ..
             } => {
                 let local = self.fleet_hosted_local(space).ok_or_else(unknown)?;
                 if text.trim().is_empty() {
@@ -694,7 +702,8 @@ impl Core {
             | RemoteOp::AskSpace { .. }
             | RemoteOp::SendTo { .. }
             | RemoteOp::AnswerSpace { .. }
-            | RemoteOp::MergeChild { .. } => Ok(()),
+            | RemoteOp::MergeChild { .. }
+            | RemoteOp::ReadFile { .. } => Ok(()),
         }
     }
 
@@ -843,10 +852,19 @@ impl Core {
                 agent,
                 model,
                 effort,
+                attachments,
             } => match self.fleet_hosted_local(&space) {
                 // The picks passed the gate: as a local send's, from
                 // this turn on; queued while the space runs.
                 Some(local) => {
+                    let row = self.space_row(&local).await.map_err(app_refusal)?;
+                    // Its files first: none of the turn without all of them.
+                    let files = self
+                        .fleet_receive_attachments(
+                            std::path::Path::new(&row.worktree),
+                            &attachments,
+                        )
+                        .await?;
                     let from = RemoteQueued {
                         space: local.clone(),
                         ..from
@@ -863,6 +881,7 @@ impl Core {
                             mentions: None,
                         },
                         from,
+                        files,
                     )
                     .await
                 }
@@ -914,7 +933,8 @@ impl Core {
             | RemoteOp::AskSpace { .. }
             | RemoteOp::SendTo { .. }
             | RemoteOp::AnswerSpace { .. }
-            | RemoteOp::MergeChild { .. } => Err(refuse(codes::INTERNAL, "not a space op")),
+            | RemoteOp::MergeChild { .. }
+            | RemoteOp::ReadFile { .. } => Err(refuse(codes::INTERNAL, "not a space op")),
         }
     }
 
@@ -945,18 +965,23 @@ impl Core {
             effort,
             parent,
             depth,
+            attachments,
         } = req.op.clone()
         else {
             return Err(refuse(codes::INTERNAL, "not a start"));
         };
         // Checked at the gate (`check_pick`): one this device lists.
         let agent = agent.as_deref().and_then(agent_of);
+        // Its files first, in memory: they go into the worktree once it
+        // exists, before the goal's turn (`fleet_write_pending_context`).
+        let files = self.fleet_fetch_attachments(&attachments).await?;
         // Marked hosted before its first turn starts: that turn's tools
         // must already be a hosted space's.
         let core = self.clone();
         let origin = req.origin_device.clone();
         let mark: crate::usecases::spaces::OnSpaceCreated = Box::new(move |s: &Space| {
             core.fleet().hosting.insert(s.id.clone(), origin);
+            core.fleet_stash_context(&s.id, files);
         });
         let space = self
             .create_space_then(
@@ -975,7 +1000,21 @@ impl Core {
                 Some(mark),
             )
             .await
-            .map_err(|e| refuse(codes::INTERNAL, e.to_string()))?;
+            .map_err(|e| {
+                let text = e.to_string();
+                // The `.context` write failed: its own code, not a vague
+                // internal one.
+                match text
+                    .split_once(crate::usecases::fleet_files::ATTACHMENTS_ERR)
+                    .and_then(|(_, rest)| rest.split_once(": "))
+                {
+                    Some((code, why)) if code == codes::TOO_LARGE => {
+                        refuse(codes::TOO_LARGE, why.to_string())
+                    }
+                    Some((_, why)) => refuse(codes::ATTACHMENT_FAILED, why.to_string()),
+                    None => refuse(codes::INTERNAL, text),
+                }
+            })?;
         let project_name = self
             .fleet_projects()
             .await

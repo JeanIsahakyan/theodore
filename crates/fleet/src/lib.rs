@@ -23,6 +23,7 @@
 //!
 //! Logs carry message types only: never tokens, signatures or bodies.
 
+pub mod blobs;
 mod link;
 
 use std::net::IpAddr;
@@ -30,7 +31,9 @@ use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use theodore_fleet_protocol::codes;
-use theodore_ports::fleet::{FleetConnect, FleetInbound, FleetLink, FleetPort};
+use theodore_ports::fleet::{
+    BlobAccess, BlobStoreError, FleetConnect, FleetInbound, FleetLink, FleetPort,
+};
 use tokio::sync::mpsc;
 use url::{Host, Url};
 
@@ -82,6 +85,8 @@ impl FleetTiming {
 pub struct WsFleet {
     timing: FleetTiming,
     tls: OnceLock<Result<Arc<rustls::ClientConfig>, String>>,
+    /// The blob routes, over plain HTTP (`blobs`).
+    blobs: blobs::Blobs,
 }
 
 impl Default for WsFleet {
@@ -99,6 +104,7 @@ impl WsFleet {
         WsFleet {
             timing,
             tls: OnceLock::new(),
+            blobs: blobs::Blobs::new(),
         }
     }
 
@@ -119,7 +125,32 @@ impl WsFleet {
     }
 }
 
+#[async_trait::async_trait]
 impl FleetPort for WsFleet {
+    async fn put_chunk(
+        &self,
+        access: &BlobAccess,
+        blob_id: &str,
+        i: u32,
+        chunks: u32,
+        chunk: Vec<u8>,
+    ) -> Result<(), BlobStoreError> {
+        self.blobs.put(access, blob_id, i, chunks, chunk).await
+    }
+
+    async fn get_chunk(
+        &self,
+        access: &BlobAccess,
+        blob_id: &str,
+        i: u32,
+    ) -> Result<Vec<u8>, BlobStoreError> {
+        self.blobs.get(access, blob_id, i).await
+    }
+
+    async fn delete_blob(&self, access: &BlobAccess, blob_id: &str) -> Result<(), BlobStoreError> {
+        self.blobs.delete(access, blob_id).await
+    }
+
     /// Must be called inside a tokio runtime: the link is a spawned task.
     fn start(&self, cfg: FleetConnect) -> FleetLink {
         let (commands, commands_rx) = mpsc::unbounded_channel();

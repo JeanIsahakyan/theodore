@@ -1156,6 +1156,14 @@ impl GitPort for FakeGit {
         Ok(())
     }
 
+    async fn space_exclude_pattern(&self, worktree: &Path, pattern: &str) -> GitResult<()> {
+        self.excluded
+            .lock()
+            .unwrap()
+            .push(format!("{}:{pattern}", worktree.display()));
+        Ok(())
+    }
+
     async fn default_branch(&self, _repo: &Path) -> GitResult<Option<String>> {
         Ok(self.default_branch_value.lock().unwrap().clone())
     }
@@ -3940,16 +3948,103 @@ struct FakeFleetLink {
     inbound: tokio::sync::mpsc::UnboundedSender<theodore_ports::FleetInbound>,
 }
 
+/// One blob in the fake cloud store: its chunks by index, and the chunk
+/// count the first `PUT` announced.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct FakeBlob {
+    pub chunks: u32,
+    pub parts: HashMap<u32, Vec<u8>>,
+}
+
+/// What the core asked the fake blob store, in order.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FakeBlobCall {
+    Put {
+        blob_id: String,
+        i: u32,
+        chunks: u32,
+        bytes: usize,
+    },
+    Get {
+        blob_id: String,
+        i: u32,
+    },
+    Delete {
+        blob_id: String,
+    },
+}
+
 /// A scriptable fleet adapter: records every link and the commands sent on
-/// it; tests push inbound events into the latest link.
+/// it; tests push inbound events into the latest link. Its blob store is
+/// in memory: tests seal and `put` what another device would have uploaded,
+/// and read what this device uploaded.
 #[derive(Default)]
 pub struct FakeFleet {
     links: Mutex<Vec<FakeFleetLink>>,
+    blobs: Mutex<HashMap<String, FakeBlob>>,
+    blob_calls: Mutex<Vec<FakeBlobCall>>,
+    /// What every blob call was given (cloud URL, token), last first.
+    blob_access: Mutex<Vec<theodore_ports::BlobAccess>>,
+    /// The next `get_chunk`s fail with these, in order.
+    blob_get_errors: Mutex<VecDeque<theodore_ports::BlobStoreError>>,
+    /// Every `put_chunk` fails with this.
+    blob_put_error: Mutex<Option<theodore_ports::BlobStoreError>>,
 }
 
 impl FakeFleet {
     pub fn new() -> Arc<Self> {
         Arc::new(Self::default())
+    }
+
+    /// Stores `chunks` under `blob_id`, as another device's `PUT`s would.
+    pub fn store_blob(&self, blob_id: &str, chunks: Vec<Vec<u8>>) {
+        let n = chunks.len() as u32;
+        self.blobs.lock().unwrap().insert(
+            blob_id.to_string(),
+            FakeBlob {
+                chunks: n,
+                parts: chunks
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, c)| (i as u32, c))
+                    .collect(),
+            },
+        );
+    }
+
+    /// The blob as stored now (`None` once deleted or never put).
+    pub fn blob(&self, blob_id: &str) -> Option<FakeBlob> {
+        self.blobs.lock().unwrap().get(blob_id).cloned()
+    }
+
+    /// The chunks of `blob_id` in order, as a recipient would `GET` them.
+    pub fn blob_chunks(&self, blob_id: &str) -> Option<Vec<Vec<u8>>> {
+        let b = self.blob(blob_id)?;
+        (0..b.chunks)
+            .map(|i| b.parts.get(&i).cloned())
+            .collect::<Option<Vec<_>>>()
+    }
+
+    pub fn blob_calls(&self) -> Vec<FakeBlobCall> {
+        self.blob_calls.lock().unwrap().clone()
+    }
+
+    /// The access the last blob call came with.
+    pub fn last_blob_access(&self) -> Option<theodore_ports::BlobAccess> {
+        self.blob_access.lock().unwrap().last().cloned()
+    }
+
+    pub fn fail_next_gets(&self, errors: Vec<theodore_ports::BlobStoreError>) {
+        self.blob_get_errors.lock().unwrap().extend(errors);
+    }
+
+    pub fn fail_puts(&self, error: Option<theodore_ports::BlobStoreError>) {
+        *self.blob_put_error.lock().unwrap() = error;
+    }
+
+    fn blob_note(&self, access: &theodore_ports::BlobAccess, call: FakeBlobCall) {
+        self.blob_access.lock().unwrap().push(access.clone());
+        self.blob_calls.lock().unwrap().push(call);
     }
 
     /// Links started so far.
@@ -4001,7 +4096,74 @@ impl FakeFleet {
     }
 }
 
+#[async_trait::async_trait]
 impl theodore_ports::FleetPort for FakeFleet {
+    async fn put_chunk(
+        &self,
+        access: &theodore_ports::BlobAccess,
+        blob_id: &str,
+        i: u32,
+        chunks: u32,
+        chunk: Vec<u8>,
+    ) -> Result<(), theodore_ports::BlobStoreError> {
+        self.blob_note(
+            access,
+            FakeBlobCall::Put {
+                blob_id: blob_id.to_string(),
+                i,
+                chunks,
+                bytes: chunk.len(),
+            },
+        );
+        if let Some(e) = self.blob_put_error.lock().unwrap().clone() {
+            return Err(e);
+        }
+        let mut blobs = self.blobs.lock().unwrap();
+        let b = blobs.entry(blob_id.to_string()).or_default();
+        b.chunks = chunks;
+        b.parts.insert(i, chunk);
+        Ok(())
+    }
+
+    async fn get_chunk(
+        &self,
+        access: &theodore_ports::BlobAccess,
+        blob_id: &str,
+        i: u32,
+    ) -> Result<Vec<u8>, theodore_ports::BlobStoreError> {
+        self.blob_note(
+            access,
+            FakeBlobCall::Get {
+                blob_id: blob_id.to_string(),
+                i,
+            },
+        );
+        if let Some(e) = self.blob_get_errors.lock().unwrap().pop_front() {
+            return Err(e);
+        }
+        self.blobs
+            .lock()
+            .unwrap()
+            .get(blob_id)
+            .and_then(|b| b.parts.get(&i).cloned())
+            .ok_or(theodore_ports::BlobStoreError::NotFound)
+    }
+
+    async fn delete_blob(
+        &self,
+        access: &theodore_ports::BlobAccess,
+        blob_id: &str,
+    ) -> Result<(), theodore_ports::BlobStoreError> {
+        self.blob_note(
+            access,
+            FakeBlobCall::Delete {
+                blob_id: blob_id.to_string(),
+            },
+        );
+        self.blobs.lock().unwrap().remove(blob_id);
+        Ok(())
+    }
+
     fn start(&self, cfg: theodore_ports::FleetConnect) -> theodore_ports::FleetLink {
         let (commands, commands_rx) = tokio::sync::mpsc::unbounded_channel();
         let (inbound_tx, inbound) = tokio::sync::mpsc::unbounded_channel();

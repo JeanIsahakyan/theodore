@@ -71,6 +71,7 @@ fn send(space: &str, text: &str, mode: Option<FleetMode>) -> RemoteOp {
         agent: None,
         model: None,
         effort: None,
+        attachments: vec![],
     }
 }
 

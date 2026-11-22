@@ -145,6 +145,7 @@ fn send_to(space: &str, message: &str) -> RemoteOp {
     RemoteOp::SendTo {
         space: space.into(),
         message: message.into(),
+        attachments: vec![],
     }
 }
 
@@ -694,3 +695,6 @@ async fn a_hosted_computers_space_starts_sub_spaces_within_max_mode() {
 
 #[path = "fleet_queue_tests.rs"]
 mod queue;
+
+#[path = "fleet_files_tests.rs"]
+mod files;
