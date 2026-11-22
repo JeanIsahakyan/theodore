@@ -191,7 +191,8 @@ impl GitCli {
         let name = format!("user.name={}", author.name);
         let email = format!("user.email={}", author.email);
         // Unsigned: Theodore can't answer a passphrase prompt (same as a
-        // shipped space, docs/spaces.md §6).
+        // shipped space, docs/spaces.md §6). Theodore co-authors.
+        let message = crate::trailer::with_co_author(message);
         let sha = proc(
             repo,
             &askpass,
@@ -207,7 +208,7 @@ impl GitCli {
                 "-p",
                 parent.as_str(),
                 "-m",
-                message,
+                &message,
             ],
         )
         .run_text()
@@ -252,8 +253,10 @@ impl GitCli {
         add.extend(paths.iter().map(String::as_str));
         proc(folder, &askpass, &add).run().await?;
         // `commit -- <paths>` commits only those paths, whatever else is
-        // staged; the user's hooks and identity apply as for any commit.
-        let mut commit: Vec<&str> = vec!["commit", "-q", "-m", message, END_OF_OPTIONS];
+        // staged; the user's hooks and identity apply as for any commit,
+        // and Theodore co-authors (`trailer`).
+        let message = crate::trailer::with_co_author(message);
+        let mut commit: Vec<&str> = vec!["commit", "-q", "-m", &message, END_OF_OPTIONS];
         commit.extend(paths.iter().map(String::as_str));
         let out = proc(folder, &askpass, &commit).run_raw().await?;
         if out.status != 0 {

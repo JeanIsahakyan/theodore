@@ -31,6 +31,8 @@ impl GitCli {
     ) -> GitResult<Sha> {
         let name = format!("user.name={}", author.name);
         let email = format!("user.email={}", author.email);
+        // The user is the author; Theodore co-authors (`trailer`).
+        let message = crate::trailer::with_co_author(message);
         let askpass = self.ensure_askpass()?;
         GitProc {
             cwd: worktree,
@@ -44,7 +46,7 @@ impl GitCli {
         GitProc {
             cwd: worktree,
             askpass: &askpass,
-            args: &["-c", &name, "-c", &email, "commit", "-m", message],
+            args: &["-c", &name, "-c", &email, "commit", "-m", &message],
             token: None,
             stdin: None,
         }

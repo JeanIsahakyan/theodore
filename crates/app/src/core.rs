@@ -124,9 +124,9 @@ pub(crate) struct Inner {
     /// Spaces' send queues and the turns "Send now" can steer into.
     pub space_queue: crate::usecases::space_queue::QueueState,
     pub space_tasks: crate::usecases::space_tasks::SpaceTasks,
-    /// The app's URL scheme a space's PR links back with
-    /// (`Core::set_space_link_scheme`).
-    pub space_link_scheme: std::sync::Mutex<Option<String>>,
+    /// The website a space's PR links back through
+    /// (`Core::set_space_link_base`): `https://theodore.cloud/s/<id>`.
+    pub space_link_base: std::sync::Mutex<Option<String>>,
     /// `ask_user` questions waiting for your answer, by question id
     /// (`usecases::space_questions`).
     pub questions:
@@ -197,7 +197,7 @@ impl Core {
             term_rt: std::sync::Mutex::new(HashMap::new()),
             space_queue: Default::default(),
             space_tasks: Default::default(),
-            space_link_scheme: std::sync::Mutex::new(None),
+            space_link_base: std::sync::Mutex::new(None),
             questions: std::sync::Mutex::new(HashMap::new()),
             reports: std::sync::Mutex::new(None),
             report_drafts: Default::default(),

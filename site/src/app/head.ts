@@ -15,6 +15,7 @@ export function headTags(route: RouteMeta): string {
   return [
     `<title>${esc(route.title)}</title>`,
     `<meta name="description" content="${esc(route.description)}" />`,
+    ...(route.noindex ? [`<meta name="robots" content="noindex" />`] : []),
     `<link rel="canonical" href="${url}" />`,
     `<meta property="og:type" content="website" />`,
     `<meta property="og:site_name" content="${SITE_NAME}" />`,

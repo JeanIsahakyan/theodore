@@ -5,6 +5,7 @@ import { Download } from '../pages/Download';
 import { Home } from '../pages/Home';
 import { NotFound } from '../pages/NotFound';
 import { Privacy } from '../pages/Privacy';
+import { Space } from '../pages/Space';
 import { Terms } from '../pages/Terms';
 import { PageDataContext, type PageData } from './data';
 import { RouterProvider, useRouter } from './router';
@@ -25,6 +26,8 @@ function Page() {
       return <Privacy />;
     case '/terms':
       return <Terms />;
+    case '/s':
+      return <Space />;
     default:
       return <NotFound />;
   }
