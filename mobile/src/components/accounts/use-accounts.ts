@@ -4,8 +4,10 @@
  * the Compose sheet (Android).
  *
  * ```text
- * open ─▶ the accounts, the orgs of each listed again (names for the rows)
- * an org tapped ─▶ "Switching to <org>…", the sheet closes, switchTo(user, org)
+ * open ─▶ the accounts, the orgs of each listed again (names for the rows);
+ *   from the drawer's account row the drawer stays open under the sheet
+ * an org tapped ─▶ "Switching to <org>…", the sheet and the drawer close,
+ *   switchTo(user, org)
  *   refused ─▶ the switching state cleared, the error shown
  * Add another account ─▶ the normal sign-in ─▶ joins the list, active, closes
  *   several orgs ─▶ the Organization step: a row per org ─▶ chooseOrganization
@@ -30,6 +32,7 @@ import {
 } from '../../ui/accountsSheet';
 import { errorText, switchErrorText } from '../../ui/logic';
 import { confirm } from '../../ui/native';
+import { useDrawer } from '../drawer-context';
 
 /** The accounts signed in here, kept current. */
 export function useAccounts(): AccountView[] {
@@ -71,6 +74,9 @@ export interface AccountsSheet {
 export function useAccountsSheet(onClose: () => void): AccountsSheet {
   const { auth, accounts } = useServices();
   const { session } = useAuthState();
+  // The sheet opened from the drawer's account row left the drawer open: a
+  // switch is the one pick that closes it.
+  const { closeDrawer } = useDrawer();
   const list = useAccounts();
   const [step, setStep] = useState<AccountsStep>({ kind: 'list' });
   const [busy, setBusy] = useState<string | null>(null);
@@ -92,6 +98,7 @@ export function useAccountsSheet(onClose: () => void): AccountsSheet {
     (r: SignInResult) => {
       switch (r.kind) {
         case 'signed_in':
+          closeDrawer();
           onClose();
           break;
         case 'choose_organization':
@@ -105,7 +112,7 @@ export function useAccountsSheet(onClose: () => void): AccountsSheet {
           setStep({ kind: 'list' });
       }
     },
-    [onClose],
+    [onClose, closeDrawer],
   );
 
   const run = (id: string, task: () => Promise<void>) => {
@@ -129,6 +136,7 @@ export function useAccountsSheet(onClose: () => void): AccountsSheet {
       setSwitching(target);
       setBusy(row.orgId);
       setError(null);
+      closeDrawer();
       accounts
         .switchTo(row.userId, row.orgId)
         .then(() => onClose())
@@ -175,6 +183,7 @@ export function useAccountsSheet(onClose: () => void): AccountsSheet {
         if (!ok) return;
         const next = list.find((a) => !a.active && !a.stale);
         if (next) setSwitching(next.label);
+        closeDrawer();
         await auth.signOut();
         onClose();
       });

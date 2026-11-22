@@ -25,3 +25,24 @@ export function screenOfPath(path: string): string {
 
 /** Routes whose next segment is an id, never reported. */
 const ID_ROUTES = new Set(['space', 's', 'sub-space', 'file']);
+
+/**
+ * The sheets as routes (iOS presents them as form sheets over the stack,
+ * `app/(app)/_layout.tsx`; Android and web open theirs in place). Opening
+ * one from the drawer leaves the drawer open under it (`drawerClosesOn`,
+ * src/ui/drawer.ts).
+ */
+export const SHEET_PATHS = {
+  model: '/model-picker',
+  computer: '/computer-picker',
+  project: '/project-picker',
+  activity: '/activity-sheet',
+  accounts: '/accounts-sheet',
+} as const;
+
+const SHEET_PATH_SET: ReadonlySet<string> = new Set(Object.values(SHEET_PATHS));
+
+/** `/accounts-sheet?x=1` ─▶ true: a sheet route, its query dropped. */
+export function isSheetPath(path: string): boolean {
+  return SHEET_PATH_SET.has(path.replace(/[?#].*$/, ''));
+}
