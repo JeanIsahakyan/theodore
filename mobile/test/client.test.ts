@@ -123,6 +123,7 @@ describe('connect', () => {
     expect(hub.last().url).toBe('wss://cloud.test/v1/fleet/ws');
     expect(hub.last().token).toBe('tok-1');
     expect(state().connection).toBe('connecting');
+    expect(state().welcomed).toBe(false);
     expect(state().fingerprint).toBe(fingerprint(myKey.publicKey));
 
     const sock = await handshake(hub, [
@@ -154,6 +155,8 @@ describe('connect', () => {
     await waitFor(() => state().connection === 'connected', 'connected');
     expect(state().deviceId).toBe(ME);
     await waitFor(() => state().devices.length === 2, 'devices');
+    // The first list of this run: Home and the drawer leave loading.
+    await waitFor(() => state().welcomed, 'welcomed');
     const host = state().devices.find((d) => d.deviceId === HOST)!;
     expect(host.trusted).toBe(false);
     expect(host.fingerprint).toBe(fingerprint(hostKey.publicKey));
