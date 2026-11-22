@@ -10,7 +10,7 @@
 import { usePathname, type Href } from 'expo-router';
 import type { ReactNode } from 'react';
 import { Pressable, View } from 'react-native';
-import { goNewSpace, openFromDrawer } from '../shell/navigate';
+import { openFromDrawer } from '../shell/navigate';
 import { useDrawer } from './drawer-context';
 import { DrawerContent } from './drawer-content';
 
@@ -37,10 +37,6 @@ export function AppShell({ children }: { children: ReactNode }) {
           onNavigate={(href: Href) => {
             closeDrawer();
             openFromDrawer(href, path);
-          }}
-          onNewSpace={() => {
-            closeDrawer();
-            goNewSpace(path);
           }}
         />
       </View>

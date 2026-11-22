@@ -22,7 +22,7 @@ iPhone / Android / browser                     Theodore cloud            your co
 | Screen | Does |
 | --- | --- |
 | Sign in | AuthKit hosted page (PKCE, no secret), org picker when you're in several (through the cloud, like the desktop) |
-| Drawer | Fleet spaces you started from here or follow, newest activity first by day (Today, Yesterday, Previous 7 days, Older), a status dot, search; Devices, Settings, the account and organization |
+| Drawer | Fleet spaces you started from here or follow, newest activity first by day (Today, Yesterday, Previous 7 days, Older), a status dot, search; Devices, Settings, the account and organization. No "New space" row: that is the header's ✎ |
 | Home (new space) | The goal in the composer; under the hint a project chip and a computer chip ("theodore on mac-A", a sheet each; the computer's sheet holds the mode up to its cap), in the composer the model chip (top 4, All models, Effort); last picks remembered (below, "New space") |
 | Devices | This device's fingerprint (large, copy) to show on the computer; a card per device, computers first (kind, online, OS · mode cap · agents, fingerprint), trust / untrust with the fingerprint confirm; on a computer, its auto mode per Claude via cloud device (Off / Auto Edit / Full auto, for 1 hour, until end of day or until turned off) |
 | Settings | Account card; Organization (switch), Devices, This device (fingerprint, copy), Appearance (Light / Dark / System), Notifications, About (version, server); sign out |
@@ -335,12 +335,17 @@ The look follows Evan Bacon's chat template (MIT,
 
 ```text
 iOS / Android  DrawerLayout (src/components/drawer-layout.tsx) ── Stack
-                 pan from the left edge opens it on Home only (elsewhere the
-                 edge is the system's back swipe); Android Back closes it
+                 a rightward swipe anywhere on the content opens it on Home
+                 and a space (src/ui/drawer.ts swipeOpensOn); not on pushed
+                 screens, whose left edge is the system's back swipe. A
+                 vertical or leftward move is the content's, and a horizontal
+                 scroll view under the finger (chips, code block, table) wins:
+                 it starts at its touch slop, under the swipe's 12 pt.
+                 Open: a pan or a tap on the content closes it; Android Back too
 web            sidebar beside the stack (md+), over it with a scrim (narrow)
 
 drawer pick on Home ─▶ push [Home, pick]     elsewhere ─▶ replace [Home, pick]
-new space (✎)      ─▶ dismissTo Home         bell ─▶ the first waiting space
+new space (✎, the header) ─▶ dismissTo Home  bell ─▶ the first waiting space
 ```
 
 | Piece | File |
@@ -583,7 +588,8 @@ shown: resolveHome(startable devices now): a device gone ─▶ the first, its p
 sent:  only what was picked (startPicks / sendPicks), the host's defaults otherwise
 ```
 
-- "New space" (✎, the drawer): Home's goal cleared, the field focused. Not
+- "New space" (✎ in the header, on Home and every space; the drawer has no
+  row for it): Home's goal cleared, the field focused. Not
   at a cold start: the keyboard would cover Home at launch; web focuses it
   on load.
 - Run picked (the computer sheet's Mode, a space's Mode step): the warning

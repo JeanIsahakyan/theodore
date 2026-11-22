@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import type { SpaceView } from '../src/fleet/types';
-import { dayGroup, initials, spaceDot, spaceSections } from '../src/ui/drawer';
+import {
+  dayGroup,
+  initials,
+  spaceDot,
+  spaceSections,
+  swipeOpensOn,
+} from '../src/ui/drawer';
 
 const space = (id: string, over: Partial<SpaceView> = {}): SpaceView => ({
   space: id,
@@ -90,6 +96,19 @@ describe('spaceDot', () => {
     expect(spaceDot(space('a', { status: 'failed' }))).toBe('failed');
     expect(spaceDot(space('a', { status: 'idle' }))).toBeNull();
     expect(spaceDot(space('a', { status: 'stopped' }))).toBeNull();
+  });
+});
+
+describe('swipeOpensOn', () => {
+  it('opens on Home and a space, not on pushed screens', () => {
+    expect(swipeOpensOn('/')).toBe(true);
+    expect(swipeOpensOn('/space/x')).toBe(true);
+    expect(swipeOpensOn('/space/a%20b?x=1')).toBe(true);
+    expect(swipeOpensOn('/devices')).toBe(false);
+    expect(swipeOpensOn('/settings')).toBe(false);
+    expect(swipeOpensOn('/settings/about')).toBe(false);
+    expect(swipeOpensOn('/sub-space/a/b')).toBe(false);
+    expect(swipeOpensOn('/start')).toBe(false);
   });
 });
 

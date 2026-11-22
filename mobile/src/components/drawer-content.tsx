@@ -6,7 +6,6 @@
  * ```text
  * Theodore
  * [⌕ Search spaces            ]
- * ✎ New space
  * Today
  *   Fix the login redirect   ●      ● running (accent) / waiting (warning) / failed (red)
  *   3 sub-spaces, 1 running          its sub-spaces, when it has any
@@ -15,6 +14,9 @@
  * ▢ Devices
  * (JI) Jean · Acme            ⚙     account line ─▶ Settings, gear ─▶ Settings
  * ```
+ *
+ * No "New space" row: the ✎ button in the main header, on Home and every
+ * space, is the one way to start one.
  *
  * iOS: grouped-list look (10 pt rounded highlight). Android: Material 3
  * navigation drawer items (full pill, 56 dp, the active one tinted).
@@ -247,12 +249,10 @@ function AccountLine({ onPress }: { onPress: () => void }) {
 
 export function DrawerContent({
   onNavigate,
-  onNewSpace,
   edges = ['top', 'bottom', 'left'],
 }: {
   /** Opens a page from the drawer (a space, Devices, Settings). */
   onNavigate: (href: Href) => void;
-  onNewSpace: () => void;
   edges?: ('top' | 'bottom' | 'left')[];
 }) {
   const p = usePalette();
@@ -290,15 +290,6 @@ export function DrawerContent({
         keyboardDismissMode="on-drag"
         stickySectionHeadersEnabled={false}
         contentContainerStyle={{ paddingBottom: 8 }}
-        ListHeaderComponent={
-          <NavItem
-            label="New space"
-            icon="compose"
-            active={path === '/'}
-            onPress={onNewSpace}
-            testID="drawer-new-space"
-          />
-        }
         renderSectionHeader={({ section }) => (
           <Text
             accessibilityRole="header"
