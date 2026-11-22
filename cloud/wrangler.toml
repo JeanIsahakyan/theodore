@@ -7,6 +7,14 @@
 # "enhanced push security". MCP: MCP_KEY_WRAP (secret, ≥ 32 chars) and the
 # OAUTH_KV binding below. WEB_ORIGINS: the web app's origins (CORS and
 # browser sockets), comma-separated, per environment below.
+#
+# Hosts (docs/cloud.md "Environments"): each environment's `routes` are
+# Workers custom domains on the theodore.cloud zone (api-* for the app,
+# mcp-* for Claude); the deploy creates the DNS records and certificates.
+# `workers_dev` stays on: installed apps built before the domain keep
+# calling the `*.prd-instance.workers.dev` URL, and everything is built
+# from the request's host, so both answer.
+#
 # Telemetry (docs/telemetry.md "Cloud"): THEODORE_OTLP_ENDPOINT (var, per
 # environment) and the secret THEODORE_OTLP_HEADERS ("api-key=<license key>"):
 #   wrangler secret put THEODORE_OTLP_HEADERS --env staging|production
@@ -57,7 +65,12 @@ new_sqlite_classes = ["OrgHub"]
 
 [env.staging]
 name = "theodore-cloud-staging"
-vars = { WORKOS_CLIENT_ID = "client_01M5RM1W36AHHEGBE37QD3PS6K", WORKOS_API_BASE = "https://api.workos.com", WEB_ORIGINS = "https://theodore-web-staging.prd-instance.workers.dev", THEODORE_ENV = "staging", THEODORE_OTLP_ENDPOINT = "https://otlp.nr-data.net" }
+workers_dev = true
+routes = [
+  { pattern = "api-staging.theodore.cloud", custom_domain = true },
+  { pattern = "mcp-staging.theodore.cloud", custom_domain = true },
+]
+vars = { WORKOS_CLIENT_ID = "client_01M5RM1W36AHHEGBE37QD3PS6K", WORKOS_API_BASE = "https://api.workos.com", WEB_ORIGINS = "https://app-staging.theodore.cloud,https://theodore-web-staging.prd-instance.workers.dev", THEODORE_ENV = "staging", THEODORE_OTLP_ENDPOINT = "https://otlp.nr-data.net" }
 durable_objects.bindings = [{ name = "ORG_HUB", class_name = "OrgHub" }]
 kv_namespaces = [{ binding = "OAUTH_KV", id = "942fd282ce274706bee69d7054122a5e" }]
 r2_buckets = [{ binding = "BLOBS", bucket_name = "theodore-blobs-staging" }]
@@ -69,7 +82,12 @@ ratelimits = [
 
 [env.production]
 name = "theodore-cloud"
-vars = { WORKOS_CLIENT_ID = "client_01M5RMBK860S2JJZNWJDDSH0BM", WORKOS_API_BASE = "https://api.workos.com", WEB_ORIGINS = "https://theodore-web.prd-instance.workers.dev", THEODORE_ENV = "production", THEODORE_OTLP_ENDPOINT = "https://otlp.nr-data.net" }
+workers_dev = true
+routes = [
+  { pattern = "api.theodore.cloud", custom_domain = true },
+  { pattern = "mcp.theodore.cloud", custom_domain = true },
+]
+vars = { WORKOS_CLIENT_ID = "client_01M5RMBK860S2JJZNWJDDSH0BM", WORKOS_API_BASE = "https://api.workos.com", WEB_ORIGINS = "https://app.theodore.cloud,https://theodore-web.prd-instance.workers.dev", THEODORE_ENV = "production", THEODORE_OTLP_ENDPOINT = "https://otlp.nr-data.net" }
 durable_objects.bindings = [{ name = "ORG_HUB", class_name = "OrgHub" }]
 kv_namespaces = [{ binding = "OAUTH_KV", id = "e6b260ade48b4b3283ddd207f2a534ca" }]
 r2_buckets = [{ binding = "BLOBS", bucket_name = "theodore-blobs" }]

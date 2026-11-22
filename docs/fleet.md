@@ -859,15 +859,17 @@ storage, deploy checklist): `docs/cloud.md` "MCP". Host side (the Allow
 prompt): "Requests from Claude via the cloud" above.
 
 ```
-Claude Code:  claude mcp add --transport http theodore https://<cloud>/mcp
+Claude Code:  claude mcp add --transport http theodore https://mcp.theodore.cloud/mcp
               /mcp ─▶ theodore ─▶ Authenticate ─▶ browser: Allow, Theodore sign-in
 claude.ai:    Settings ─▶ Connectors ─▶ Add custom connector
-              ─▶ URL https://<cloud>/mcp ─▶ Connect ─▶ the same sign-in
+              ─▶ URL https://mcp.theodore.cloud/mcp ─▶ Connect ─▶ the same sign-in
 then:         theodore_status ─▶ trust both ways (below) ─▶ space_start …
 ```
 
-`<cloud>` is the channel's Worker (`docs/cloud.md` "Environments"). MCP is
-off there until the checklist in `docs/cloud.md` "MCP" is done.
+Staging is `https://mcp-staging.theodore.cloud/mcp`; a connection added
+with a channel's old `workers.dev` URL keeps working (`docs/cloud.md`
+"Environments"). MCP is off there until the checklist in `docs/cloud.md`
+"MCP" is done.
 
 ### The MCP device
 

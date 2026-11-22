@@ -10,11 +10,14 @@ name: Cloud
 # not part of the app build: no version bump, no tag, no release.
 #
 # Secrets: CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID (Settings →
-# Secrets and variables → Actions), used only by the deploy step. The WorkOS
-# API key is NOT here: it is a Worker secret the owner sets once per
-# environment with `wrangler secret put WORKOS_API_KEY --env <env>`, and a
-# deploy keeps it. Manual run: pick the environment; production deploys
-# only from main.
+# Secrets and variables → Actions), used only by the deploy step. The token
+# needs Workers Scripts: Edit, and for the custom domains in
+# cloud/wrangler.toml (api[-staging] and mcp[-staging].theodore.cloud,
+# created by the deploy) Zone: Read, DNS: Edit and Workers Routes: Edit on
+# the theodore.cloud zone. The WorkOS API key is NOT here: it is a Worker
+# secret the owner sets once per environment with
+# `wrangler secret put WORKOS_API_KEY --env <env>`, and a deploy keeps it.
+# Manual run: pick the environment; production deploys only from main.
 
 on:
   push:

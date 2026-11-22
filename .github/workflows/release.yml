@@ -23,8 +23,8 @@ name: Release
 #
 # Variables: THEODORE_WORKOS_CLIENT_ID, the production account's client id,
 # baked into the build (unset: no account), and THEODORE_CLOUD_URL, the
-# production cloud (optional; unset: no organizations). Secrets and the telemetry
-# variables: build.yml.
+# production cloud (unset: https://api.theodore.cloud, docs/cloud.md
+# "Environments"). Secrets and the telemetry variables: build.yml.
 
 on:
   push:
@@ -43,7 +43,7 @@ jobs:
     with:
       build-env: production
       workos-client-id: ${{ vars.THEODORE_WORKOS_CLIENT_ID }}
-      cloud-url: ${{ vars.THEODORE_CLOUD_URL }}
+      cloud-url: ${{ vars.THEODORE_CLOUD_URL || 'https://api.theodore.cloud' }}
     secrets: inherit
 
   publish:

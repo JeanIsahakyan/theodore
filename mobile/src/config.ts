@@ -9,8 +9,7 @@ export const config = {
     'client_01M5RM1W36AHHEGBE37QD3PS6K',
   workosApiBase: 'https://api.workos.com',
   cloudUrl:
-    process.env.EXPO_PUBLIC_CLOUD_URL ??
-    'https://theodore-cloud-staging.prd-instance.workers.dev',
+    process.env.EXPO_PUBLIC_CLOUD_URL ?? 'https://api-staging.theodore.cloud',
   /** The privacy policy on the website (site/src/pages/Privacy.tsx, docs/website.md). */
   privacyPolicyUrl: 'https://theodore.cloud/privacy',
 };

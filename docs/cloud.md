@@ -38,12 +38,14 @@ Errors: `{ "error": { "code", "message" } }`, the code also in the
 
 The web build of the phone app (`docs/mobile.md`) calls the cloud from a
 browser. Its origins are the Worker var `WEB_ORIGINS` (comma-separated, per
-environment in `wrangler.toml`):
+environment in `wrangler.toml`): the app's host on theodore.cloud and, for
+a browser still on the old URL, its `workers.dev` one ("Environments"
+below).
 
 | | `WEB_ORIGINS` |
 | --- | --- |
-| staging | `https://theodore-web-staging.prd-instance.workers.dev` |
-| production | `https://theodore-web.prd-instance.workers.dev` |
+| staging | `https://app-staging.theodore.cloud`, `https://theodore-web-staging.prd-instance.workers.dev` |
+| production | `https://app.theodore.cloud`, `https://theodore-web.prd-instance.workers.dev` |
 
 ```
 OPTIONS /v1/orgs*, /v1/auth/select-organization, /v1/fleet/request, /v1/account, /v1/telemetry/logs
@@ -185,9 +187,12 @@ handler, and the `OrgHub` shell's refusal after a purge.
 
 The app (`crates/account-workos`, `usecases/account.rs`) calls the cloud
 only with a cloud URL configured (plan §6.12 "Organizations"):
-`THEODORE_CLOUD_URL` env, the `account.cloud_url` setting, or the one
-compiled in per channel (`build.yml` input `cloud-url`). No URL: sign-in
-works as before, no organizations.
+`THEODORE_CLOUD_URL` env, the `account.cloud_url` setting, the one
+compiled in per channel (`build.yml` input `cloud-url`), else the
+channel's own host (`theodore_runtime::default_cloud_url`:
+`https://api.theodore.cloud` for a production build,
+`https://api-staging.theodore.cloud` for staging; a nightly or dev build
+has none). No URL: sign-in works as before, no organizations.
 
 | App call | Goes to |
 | --- | --- |
@@ -301,15 +306,52 @@ Stable `area.kind` codes, same form as the app's `error.code`
 | | Staging | Production |
 | --- | --- | --- |
 | Worker | `theodore-cloud-staging` | `theodore-cloud` |
+| API host (the apps) | `https://api-staging.theodore.cloud` | `https://api.theodore.cloud` |
+| MCP host (Claude) | `https://mcp-staging.theodore.cloud` | `https://mcp.theodore.cloud` |
+| Old URL, kept | `https://theodore-cloud-staging.prd-instance.workers.dev` | `https://theodore-cloud.prd-instance.workers.dev` |
+| Web app (`theodore-web[-staging]`, `docs/mobile.md`) | `https://app-staging.theodore.cloud` (old: `https://theodore-web-staging.prd-instance.workers.dev`) | `https://app.theodore.cloud` (old: `https://theodore-web.prd-instance.workers.dev`) |
 | WorkOS client id (`wrangler.toml` var) | `client_01M5RM1W36AHHEGBE37QD3PS6K` | `client_01M5RMBK860S2JJZNWJDDSH0BM` |
 | WorkOS API key | Worker secret `WORKOS_API_KEY` | Worker secret `WORKOS_API_KEY` |
-| Web app origins (`WEB_ORIGINS` var) | `https://theodore-web-staging.prd-instance.workers.dev` | `https://theodore-web.prd-instance.workers.dev` |
+| Web app origins (`WEB_ORIGINS` var) | `https://app-staging.theodore.cloud,https://theodore-web-staging.prd-instance.workers.dev` | `https://app.theodore.cloud,https://theodore-web.prd-instance.workers.dev` |
 | Expo access token (optional) | Worker secret `EXPO_ACCESS_TOKEN` | Worker secret `EXPO_ACCESS_TOKEN` |
 | Environment name (`THEODORE_ENV` var; `deployment.environment.name`) | `staging` | `production` |
 | New Relic OTLP endpoint (`THEODORE_OTLP_ENDPOINT` var) | `https://otlp.nr-data.net` in `wrangler.toml` | same |
 | New Relic license key (`THEODORE_OTLP_HEADERS`, `api-key=<key>`) | Worker secret ("Pending" below) | same |
 | Blob bucket (`BLOBS` binding, R2) | `theodore-blobs-staging` | `theodore-blobs` |
 | Deployed by | push to `staging` | push to `main` |
+
+### Hosts on theodore.cloud
+
+```
+theodore.cloud, www.          ─▶ the landing site (Cloudflare Pages, not this repo)
+api[-staging].theodore.cloud  ─▶ theodore-cloud[-staging]   the apps' cloud URL
+mcp[-staging].theodore.cloud  ─▶ theodore-cloud[-staging]   claude mcp add … https://mcp.theodore.cloud/mcp
+app[-staging].theodore.cloud  ─▶ theodore-web[-staging]     the web app
+*.prd-instance.workers.dev    ─▶ the same Workers             installed apps built before the domain
+```
+
+- The hosts are **Workers custom domains**: `routes = [{ pattern, custom_domain = true }]`
+  per environment in `cloud/wrangler.toml` and `mobile/wrangler.toml`.
+  The deploy (`cloud.yml`, `mobile-web.yml`) creates the DNS record and
+  the certificate for each; nothing is made by hand in the dashboard. For
+  that the CI token (`CLOUDFLARE_API_TOKEN`) needs, besides Workers
+  Scripts: Edit, **Zone: Read, DNS: Edit and Workers Routes: Edit** on the
+  theodore.cloud zone. A deploy that fails on permissions is missing one
+  of those.
+- `api` and `mcp` are the same Worker: one name for the apps, one for
+  Claude. Nothing in the Worker cares which host it was called on: the
+  OAuth metadata, issuer, resource and the AuthKit redirect are built from
+  the request's origin (`src/mcp/oauth.ts`, one provider per origin), so
+  every host above works for MCP, the old one included.
+- `workers_dev = true` stays in both configs: **the old URLs keep
+  working.** A desktop, phone or web build made before the domain, or a
+  Claude MCP connection added with the old URL, needs no change. New
+  builds and new docs use the theodore.cloud hosts.
+- WorkOS: each environment has the new hosts' redirect URIs
+  (`https://mcp[-staging].theodore.cloud/oauth/callback`,
+  `https://app[-staging].theodore.cloud/callback`) next to the old ones,
+  and the new web origin as an allowed CORS origin ("MCP" checklist,
+  `docs/releasing.md` "WorkOS redirects to register").
 
 - The API key is set by the owner, never in git or CI:
   `wrangler secret put WORKOS_API_KEY --env staging|production`. A deploy
@@ -362,24 +404,29 @@ push main    ─ cloud/** ─▶ cloud.yml: checks ─▶ deploy:production ─�
 `workflow_dispatch` deploys a chosen environment by hand; production only
 from `main`. Deploys per environment queue, never cancel. A push that
 doesn't touch `cloud/` deploys nothing. No version bump or release is
-involved (`docs/releasing.md`).
+involved (`docs/releasing.md`). The first deploy after a `routes` change
+also creates the custom domains ("Hosts on theodore.cloud" above).
 
 ## One-time setup (owner)
 
-Needed before the first deploy works; none of it is done yet.
+Needed before the first deploy works; done.
 
 1. `pnpm -C cloud exec wrangler login`
 2. `wrangler secret put WORKOS_API_KEY --env staging`, then `--env production`
    (run in `cloud/`).
 3. GitHub → Settings → Secrets and variables → Actions → **Secrets**:
-   `CLOUDFLARE_API_TOKEN` (Workers edit permission) and
+   `CLOUDFLARE_API_TOKEN` (Workers Scripts: Edit; Zone: Read, DNS: Edit
+   and Workers Routes: Edit on theodore.cloud for the custom domains) and
    `CLOUDFLARE_ACCOUNT_ID`.
-4. Optional: the New Relic key on each Worker, by the deploy steps once
+4. The theodore.cloud zone active on the same account; the hosts
+   themselves come from the deploy (`routes` in the wrangler configs,
+   "Hosts on theodore.cloud" above).
+5. Optional: the New Relic key on each Worker, by the deploy steps once
    they land ("Pending" above) or by hand,
    `wrangler secret put THEODORE_OTLP_HEADERS --env staging|production`
    (value `api-key=<ingest license key>`). Without it nothing is sent to
    New Relic.
-5. The blob buckets ("Blobs" below), one per environment, and the
+6. The blob buckets ("Blobs" below), one per environment, and the
    lifecycle rule that drops a chunk after a day. **A deploy fails until
    the environment's bucket exists** (`wrangler.toml` binds it), so this
    comes before the first `cloud.yml` run that includes the blob routes:
@@ -396,8 +443,6 @@ Needed before the first deploy works; none of it is done yet.
    The `CLOUDFLARE_API_TOKEN` in CI needs no R2 permission: the deploy only
    binds a bucket that exists. Local `wrangler dev` simulates
    `theodore-blobs-local`; nothing to create.
-6. Later: a custom domain per Worker (`routes` in `wrangler.toml`). Until
-   then the Workers answer on `workers.dev`.
 
 ## Fleet
 
@@ -814,9 +859,17 @@ and a fake clock; the DO shell (`org-hub.ts`) itself runs only in Workers.
 ## MCP
 
 Claude Code or a claude.ai connector adds Theodore as a remote MCP server
-by URL (`https://<cloud>/mcp`); the tools drive the user's computers
-through the fleet, as the phone does. What it means for the fleet and the
-tools: `docs/fleet.md` "MCP over the cloud". Code: `src/mcp/`.
+by URL; the tools drive the user's computers through the fleet, as the
+phone does. What it means for the fleet and the tools: `docs/fleet.md`
+"MCP over the cloud". Code: `src/mcp/`.
+
+```
+claude mcp add --transport http theodore https://mcp.theodore.cloud/mcp
+```
+
+(`https://mcp-staging.theodore.cloud/mcp` for staging. A connection added
+with the old `https://theodore-cloud[-staging].prd-instance.workers.dev/mcp`
+keeps working: "Environments" above.)
 
 ```
 client ─POST /mcp─▶ 401 WWW-Authenticate: Bearer resource_metadata=…
@@ -959,12 +1012,16 @@ Per environment (staging, production):
       wrangler secret put MCP_KEY_WRAP --env <env>`). Never in git. Changing
       it makes every MCP device key unreadable: those devices must be made
       again (and trusted again on the computers).
-- [x] WorkOS staging ─▶ Redirects: `https://theodore-cloud-staging.prd-instance.workers.dev/oauth/callback`
+- [x] WorkOS staging ─▶ Redirects: `https://mcp-staging.theodore.cloud/oauth/callback`
+      and the old `https://theodore-cloud-staging.prd-instance.workers.dev/oauth/callback`
       (added through the WorkOS API: `POST /user_management/redirect_uris`
       with that environment's API key).
-- [x] WorkOS production ─▶ Redirects: `https://theodore-cloud.prd-instance.workers.dev/oauth/callback`
+- [x] WorkOS production ─▶ Redirects: `https://mcp.theodore.cloud/oauth/callback`
+      and the old `https://theodore-cloud.prd-instance.workers.dev/oauth/callback`
       (dashboard). Check: WorkOS's authorize with this URI goes to the
       AuthKit sign-in, an unknown one to `error.workos.com/redirect-uri-invalid`.
+      The callback URI is built from the host the sign-in started on, so
+      each host the Worker answers on needs its own entry.
 - [x] Nothing new for WorkOS keys: the code exchange and refresh use the
       `WORKOS_API_KEY` already set.
 - [ ] Computers on the protocol this build speaks (7): older ones can't

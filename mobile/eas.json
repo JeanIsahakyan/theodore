@@ -12,7 +12,7 @@
       },
       "env": {
         "EXPO_PUBLIC_WORKOS_CLIENT_ID": "client_01M5RM1W36AHHEGBE37QD3PS6K",
-        "EXPO_PUBLIC_CLOUD_URL": "https://theodore-cloud-staging.prd-instance.workers.dev"
+        "EXPO_PUBLIC_CLOUD_URL": "https://api-staging.theodore.cloud"
       }
     },
     "preview": {
@@ -20,7 +20,7 @@
       "environment": "preview",
       "env": {
         "EXPO_PUBLIC_WORKOS_CLIENT_ID": "client_01M5RM1W36AHHEGBE37QD3PS6K",
-        "EXPO_PUBLIC_CLOUD_URL": "https://theodore-cloud-staging.prd-instance.workers.dev"
+        "EXPO_PUBLIC_CLOUD_URL": "https://api-staging.theodore.cloud"
       }
     },
     "production": {
@@ -29,7 +29,7 @@
       "autoIncrement": true,
       "env": {
         "EXPO_PUBLIC_WORKOS_CLIENT_ID": "client_01M5RMBK860S2JJZNWJDDSH0BM",
-        "EXPO_PUBLIC_CLOUD_URL": "https://theodore-cloud.prd-instance.workers.dev"
+        "EXPO_PUBLIC_CLOUD_URL": "https://api.theodore.cloud"
       }
     },
     "apk": {
@@ -40,7 +40,7 @@
       },
       "env": {
         "EXPO_PUBLIC_WORKOS_CLIENT_ID": "client_01M5RMBK860S2JJZNWJDDSH0BM",
-        "EXPO_PUBLIC_CLOUD_URL": "https://theodore-cloud.prd-instance.workers.dev"
+        "EXPO_PUBLIC_CLOUD_URL": "https://api.theodore.cloud"
       }
     }
   },
