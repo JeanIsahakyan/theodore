@@ -12,9 +12,6 @@ name: Website
 #
 # Secrets: CLOUDFLARE_API_TOKEN (with "Cloudflare Pages: Edit") and
 # CLOUDFLARE_ACCOUNT_ID, the same as cloud.yml and mobile-web.yml.
-#
-# This file lives at site/deploy/pages.yml until it is moved to
-# .github/workflows/pages.yml by someone whose token may write workflows.
 
 on:
   push:
