@@ -43,7 +43,12 @@ sign-in         ─▶ PostHog distinct_id = user_…   $identify { $anon_distin
 app start, or sharing turned on, signed in ─▶ $identify again: a new version reaches the person
 sign-out        ─▶ a NEW anon id: later events aren't linked to that person
                    New Relic: no enduser.id
+account switch  ─▶ the active account's user_… (several accounts, docs/cloud.md): leaving
+                   the old one renews the anon id as a sign-out does, then $identify as the new
 ```
+
+With several accounts signed in, only the **active** one is the identity;
+the others' ids never leave the machine.
 
 | | PostHog | New Relic |
 |---|---|---|
