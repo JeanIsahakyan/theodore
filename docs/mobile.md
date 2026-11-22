@@ -23,7 +23,7 @@ iPhone / Android / browser                     Theodore cloud            your co
 | --- | --- |
 | Sign in | AuthKit hosted page (PKCE, no secret), org picker when you're in several (through the cloud, like the desktop) |
 | Drawer | Fleet spaces you started from here or follow, newest activity first by day (Today, Yesterday, Previous 7 days, Older), a status dot, search; Devices, Settings, the account and organization. No "New space" row: that is the header's ✎ |
-| Home (new space) | The goal in the composer; under the hint a project chip and a computer chip ("theodore on mac-A", a sheet each; the computer's sheet holds the mode up to its cap), in the composer the model chip (top 4, All models, Effort); last picks remembered (below, "New space") |
+| Home (new space) | The goal in the composer; under the hint a project chip and a computer chip ("theodore on mac-A", a sheet each; the computer's sheet holds the mode up to its cap), in the composer the model chip (top 4, All models, Effort); last picks remembered (below, "New space"). Before this run's first devices list: skeleton chips and "Connecting to your devices…", typing allowed, Send off; the server unreachable ─▶ "Can't reach the server", Retry (below, "First connection") |
 | Devices | This device's fingerprint (large, copy) to show on the computer; a card per device, computers first (kind, online, OS · mode cap · agents, fingerprint), trust / untrust with the fingerprint confirm; on a computer, its auto mode per Claude via cloud device (Off / Auto Edit / Full auto, for 1 hour, until end of day or until turned off) |
 | Settings | Account card; Organization (switch), Devices, This device (fingerprint, copy), Appearance (Light / Dark / System), Notifications, Privacy (Share usage data, Send error reports, What's collected: docs/telemetry.md "Mobile"), About (version, server, Copy / Share diagnostics); sign out |
 | Space | Its chat (or history lines), send a message any time: your bubble shows at once, "Sending…" over it, and the field clears ("Optimistic sends" below); while a turn runs the host queues it (the bubble reads "Queued", "· 1 queued" on the strip), Stop beside Send; not sent ─▶ "Not sent · why", Retry / Edit; the composer's one chip is the model's, its sheet also holds the next message's mode (shown in the header: "on mac-A · Running · Edit"); the running turn's steps; above the composer the activity strip ("Activity strip" below): what runs now and a timer, the turn's subagents and the space's sub-spaces, a tap opens the activity sheet; Approve / Revise a plan (Approve shows as your message at once), answer its question (the card collapses to "Answered: …" at once); a space started from Home opens here before the host answers ("Starting on mac-A…") |
@@ -708,6 +708,39 @@ close 4000 (a newer connection of this device took over):
 The auth and fleet clients live on `globalThis`, one set per JS runtime:
 Fast Refresh can't start a second fleet client on the same device key.
 Editing `src/fleet` or `src/auth` in dev needs a full reload.
+
+### First connection
+
+Until this run's first `devices` list (sent right after the welcome;
+`welcomed` in the fleet store), an empty list means "not loaded yet": Home
+and the drawer draw skeletons (`src/ui/Skeleton.tsx`, a slow opacity
+breath, still under Reduce Motion), never the empty states
+(`src/ui/load.ts`).
+
+```text
+before the first welcome of this app run, with nothing saved
+
+[☰]        New space          [🔔][✎]
+                  ⌘
+              New space
+        ( ▒▒▒▒▒▒▒▒ ⌄ )  on  ( ▒▒▒▒▒▒ ⌄ )      skeleton chips (the project / computer chips' size)
+          Connecting to your devices…           small spinner + text
+╭──────────────────────────────────────────────╮
+│ What should the agent work on?               │  typing allowed, Send off until ready
+│ (▒▒▒▒▒▒ ⌄)                           (↑)    │  skeleton model chip
+╰──────────────────────────────────────────────╯
+drawer:   5 skeleton rows instead of the empty list text
+```
+
+| State | Home | Drawer |
+| --- | --- | --- |
+| first connect of this run, nothing saved, no welcome yet | skeletons + "Connecting to your devices…" | skeleton rows |
+| spaces saved from the last run | the saved spaces at once; Home's chips show the last picks muted (named from the saved spaces on that computer) until the devices answer | the saved list (as before) |
+| connected (welcome arrived), no computer can take a space | "No computer can take a space right now…" + Devices (as before) | "Spaces you start or follow show here." (as before) |
+| error, or still connecting after 10 s | skeletons, "Can't reach the server" + the reason, Retry (`fleet.start()`, the reconnect path) | saved list or "Nothing loaded yet." + Retry |
+
+Once welcomed, a redial keeps the last list; the connection banner speaks
+for the link. Sign-out and an org switch reset `welcomed`.
 
 ## Desktop changes
 
