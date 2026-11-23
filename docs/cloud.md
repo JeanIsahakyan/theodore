@@ -500,7 +500,12 @@ browser: the OS it runs on). A protocol-3 device gets `linux` for any but
   rest is SQLite, so a woken hub rebuilds nothing.
 - **One alarm** for every deadline (hello due, token expiry + 60 s, 10 s
   grace, 2 min pending, 20 s escalation, a delegation's or a confirm's
-  expiry), set only when it moves earlier.
+  expiry, a deleted user's day), set only when it moves earlier and never
+  sooner than 2 s from now. Each step of the alarm runs on its own and
+  clears its row (deleted or marked) before the work it brings, so one
+  failure is logged and skipped, not left due. Were a row still due after
+  an alarm, the hub would wake again at once, in a loop: it logs
+  `fleet alarm stuck` (the tables) and tries again in 30 s instead.
 - **Heartbeat**: the device pings (WebSocket ping frames); the runtime
   answers without waking the hub. The hub doesn't ping.
 - Messages run one at a time, in arrival order. Everything is scoped to the
