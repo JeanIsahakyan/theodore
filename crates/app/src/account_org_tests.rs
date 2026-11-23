@@ -624,13 +624,17 @@ async fn organizations_come_from_the_cloud_with_the_current_token() {
     let f = fixtures();
     store_session(&f, &in_org(&f, "rt_s", "org_a"));
     let (core, _recv) = start(&f, true).await;
+    // The org step at start lists too, in the background, and may or may
+    // not have seen the cloud setting yet: the answer stands for every
+    // call, so it doesn't matter who asks first.
     f.account
-        .push_organizations(Ok(vec![theodore_ports::AccountOrganization {
+        .organizations_always(Ok(vec![theodore_ports::AccountOrganization {
             id: "org_p".into(),
             name: "Personal (ada@example.com)".into(),
             role: Some("admin".into()),
             personal: true,
         }]));
+    let calls_before = f.account.calls().len();
     assert_eq!(
         core.account_organizations().await.unwrap(),
         vec![AccountOrganization {
@@ -640,7 +644,12 @@ async fn organizations_come_from_the_cloud_with_the_current_token() {
             personal: true,
         }]
     );
-    assert!(called(&f, "organizations:at-rt_s"));
+    // The test's own call, with the stored session's token.
+    assert!(
+        f.account.calls()[calls_before..]
+            .iter()
+            .any(|c| c == "organizations:at-rt_s")
+    );
 }
 
 #[tokio::test]

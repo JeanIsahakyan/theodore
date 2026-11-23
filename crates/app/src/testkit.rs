@@ -3059,6 +3059,9 @@ pub struct FakeAccount {
     device_polls: Mutex<VecDeque<AccountResult<DeviceSignInPoll>>>,
     ensures: Mutex<VecDeque<AccountResult<String>>>,
     org_lists: Mutex<VecDeque<AccountResult<Vec<AccountOrganization>>>>,
+    /// `organizations_always`: what every `organizations` call gets once
+    /// the queue is empty.
+    org_list_standing: Mutex<Option<AccountResult<Vec<AccountOrganization>>>>,
     callbacks: Mutex<Option<tokio::sync::mpsc::Sender<IncomingCallback>>>,
     calls: Mutex<Vec<String>>,
     /// `hold`: the next call starting with the prefix waits for a release.
@@ -3108,6 +3111,7 @@ impl FakeAccount {
             device_polls: Mutex::new(VecDeque::new()),
             ensures: Mutex::new(VecDeque::new()),
             org_lists: Mutex::new(VecDeque::new()),
+            org_list_standing: Mutex::new(None),
             callbacks: Mutex::new(None),
             calls: Mutex::new(Vec::new()),
             holds: Mutex::new(Vec::new()),
@@ -3120,9 +3124,20 @@ impl FakeAccount {
         self.ensures.lock().unwrap().push_back(r);
     }
 
-    /// The cloud's `organizations` answer (default: a network error).
+    /// The cloud's answer to the next `organizations` call, one per push
+    /// (default: a network error). The org step after a sign-in or at
+    /// start lists too, in the background, so a test that calls
+    /// `account_organizations` itself can't tell which call takes a pushed
+    /// answer: it uses `organizations_always` instead.
     pub fn push_organizations(&self, r: AccountResult<Vec<AccountOrganization>>) {
         self.org_lists.lock().unwrap().push_back(r);
+    }
+
+    /// The cloud's `organizations` answer for every call once the pushed
+    /// ones are used up: the same list however many times, and in whatever
+    /// order, the app and the test ask.
+    pub fn organizations_always(&self, r: AccountResult<Vec<AccountOrganization>>) {
+        *self.org_list_standing.lock().unwrap() = Some(r);
     }
 
     /// The next call recorded as starting with `prefix` (e.g.
@@ -3343,10 +3358,9 @@ impl AccountPort for FakeAccount {
         if cfg.cloud_url.is_none() {
             return Err(AccountError::Config("no Theodore cloud configured".into()));
         }
-        self.org_lists
-            .lock()
-            .unwrap()
-            .pop_front()
+        let queued = self.org_lists.lock().unwrap().pop_front();
+        queued
+            .or_else(|| self.org_list_standing.lock().unwrap().clone())
             .unwrap_or_else(|| Err(AccountError::Network("no organizations scripted".into())))
     }
 
