@@ -1,13 +1,12 @@
 /**
  * Long-pressing a message (docs/mobile.md "Select text"): the menu's items
- * per kind of message, and the text the Select text sheet shows, without
- * React. Views: `src/components/chat/long-press{.web,}.tsx`,
- * `select-text-sheet.tsx`.
+ * per kind of message, and the text Select text shows, without React.
+ * Views: `src/components/chat/long-press{.web,}.tsx`, `inline-select.tsx`.
  *
  * ```text
  * long press ─▶ Copy (the whole text) · Select text · <the row's own actions> · Cancel
- * Select text ─▶ a sheet: the message as plain text in a read-only field,
- *                the system's selection handles; code blocks monospace; Copy all
+ * Select text ─▶ in place: the message as plain text the system selects
+ *                (handles, magnifier); code blocks monospace; Copy all · Done
  * ```
  */
 
@@ -24,7 +23,7 @@ export const COPY = { id: 'copy', label: 'Copy' } as const;
 export const SELECT_TEXT = { id: 'select', label: 'Select text' } as const;
 export const CANCEL = { id: 'cancel', label: 'Cancel' } as const;
 
-/** The sheet's and the menu's title per kind. */
+/** The menu's title (and the field's label) per kind. */
 export const KIND_TITLE: Record<MessageKind, string> = {
   reply: 'Reply',
   mine: 'Your message',
@@ -49,7 +48,7 @@ export function messageMenuItems(
   return [...own, ...more];
 }
 
-// ── the sheet's text ────────────────────────────────────────────────────────
+// ── the selectable text ─────────────────────────────────────────────────────
 
 /** A run of the message: prose, or a fenced code block's body. */
 export interface TextSegment {
@@ -78,14 +77,16 @@ export function textSegments(markdown: string): TextSegment[] {
   return out.length ? out : [{ kind: 'text', text: markdown }];
 }
 
-/** Most text the sheet shows (a field this long still scrolls well). */
+/** Most text Select text shows (more is slow to lay out in place). */
 export const SELECT_TEXT_MAX = 100_000;
 
-/** The sheet's text: cut when very long, with a note. */
-export function sheetText(text: string): { text: string; cut: boolean } {
+/** Select text's text: cut when very long, with a note. */
+export function selectableText(text: string): { text: string; cut: boolean } {
   if (text.length <= SELECT_TEXT_MAX) return { text, cut: false };
   return { text: text.slice(0, SELECT_TEXT_MAX), cut: true };
 }
 
 export const COPY_ALL_TEXT = 'Copy all';
 export const COPIED_TEXT = 'Copied';
+export const DONE_TEXT = 'Done';
+export const SELECT_HINT = 'Hold a word to select';

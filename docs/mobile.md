@@ -477,11 +477,11 @@ route change ─▶ to a page: the drawer closes   to or from a sheet route: it 
 | Markdown: mdast (micromark, GFM tables and strikethrough) ─▶ React Native views; code blocks highlighted (highlight.js, a fixed set of languages, never guessed) | `src/components/markdown/` |
 | A space's header (name, "on host · status") | `src/components/space-header.tsx` (the main header with a subtitle), `space-title.tsx` |
 | A space's steps: compact grey rows that open in place (folding: `src/ui/turnRows.ts`); an image a step reads drawn under its row ("Files") | `src/ui/Timeline.tsx`, `src/ui/SpaceChat.tsx` |
-| Long press a message: Copy, Select text (a sheet with partial selection; "Select text" below) | `src/components/chat/long-press{.web,}.tsx`, `select-text-sheet.tsx`, rules `src/ui/messageMenu.ts`, route `app/(app)/select-text.tsx` |
+| Long press a message: Copy, Select text (in place, partial selection; "Select text" below) | `src/components/chat/long-press{.web,}.tsx`, `inline-select.tsx`, rules `src/ui/messageMenu.ts`, state `src/state/selectText.ts` |
 | What you did before the host answered: sends, Approve, answers, a start (rules: `src/ui/pending.ts`) | `src/state/pending.ts`, `PendingRow` in `src/ui/SpaceChat.tsx` |
 | The activity strip above a space's composer and its sheet (rules: `src/ui/activity.ts`) | `src/ui/ActivityStrip.tsx`, `src/ui/ActivitySheet{.android,}.tsx`, route `app/(app)/activity-sheet.tsx` |
 | A sub-space's screen (words: `src/ui/subSpaceScreen.ts`) | `app/(app)/sub-space/[space]/[child].tsx` |
-| Composer chip, Home's where chips and picker sheets (computer + Mode, project, agent · model · effort + a space's Mode; the same `useSheet` opens Activity, Accounts and Select text) | `src/components/pickers/` (`sheet-chip.*` a chip per platform, `sheet-host.*` opens a sheet per platform, `where-chips.tsx`), routes `app/(app)/model-picker.tsx`, `computer-picker.tsx`, `project-picker.tsx`; logic `src/ui/modelPicker.ts`, `src/ui/homeDraft.ts`, `modeRows` in `src/ui/logic.ts`; picks `src/state/compose.ts` |
+| Composer chip, Home's where chips and picker sheets (computer + Mode, project, agent · model · effort + a space's Mode; the same `useSheet` opens Activity and Accounts) | `src/components/pickers/` (`sheet-chip.*` a chip per platform, `sheet-host.*` opens a sheet per platform, `where-chips.tsx`), routes `app/(app)/model-picker.tsx`, `computer-picker.tsx`, `project-picker.tsx`; logic `src/ui/modelPicker.ts`, `src/ui/homeDraft.ts`, `modeRows` in `src/ui/logic.ts`; picks `src/state/compose.ts` |
 | Icons: SF Symbols (iOS), Material Symbols (Android), Lucide (web) | `src/components/symbol-image.tsx` |
 | Settings and Devices: rows, sections, account / fingerprint / device cards | `src/components/settings/` (below) |
 
@@ -1028,24 +1028,28 @@ screen too, the right-click menu stays the browser's.
 long press  a reply · your bubble · a step's text or output (open) · a history line
   ─▶ iOS ActionSheetIOS · Android Alert · web a small card    (src/components/chat/long-press{.web,}.tsx)
      Copy          the whole text on the clipboard (expo-clipboard), a success haptic
-     Select text   ─▶ the sheet (iOS formSheet route /select-text, Android Compose
-                      ModalBottomSheet hosting the field in an RNHostView, web the modal card)
-                      ╭ Reply                       (Copy all) ╮
-                      │ the message as plain text in a         │  TextInput multiline editable={false}
-                      │ read-only field: the system's handles, │  selectTextOnFocus={false},
-                      │ magnifier, Copy / Share on a part      │  contextMenuHidden={false}, scrolls
-                      │ ┃code blocks keep monospace┃           │  (fences off: src/ui/messageMenu.ts
-                      ╰────────────────────────────────────────╯   textSegments), cut at 100 K chars
+     Select text   ─▶ in place, no sheet: the message swaps for its plain text
+                      ╭╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╮  accent dashed border
+                      ┆ the message as plain text: the         ┆  iOS TextInput editable={false}
+                      ┆ system's handles, magnifier,           ┆   (UITextView; grows, no inner scroll)
+                      ┆ Copy / Share on a part                 ┆  Android, web Text selectable
+                      ┆ ┃code blocks keep monospace┃           ┆  (fences off: textSegments),
+                      ┆ Hold a word to select   Copy all  Done ┆  cut at 100 K chars
+                      ╰╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╯   (src/components/chat/inline-select.tsx)
+                      Done ─▶ the message again; one message at a time
+                      (src/state/selectText.ts), scrolling it away ends it
      <a row's own actions>                                     (`extras`; none today)
-  the text travels in src/state/selectText.ts (an iOS route can't carry it in its URL)
 ```
 
-- Items and the sheet's text: `src/ui/messageMenu.ts` (`messageMenuItems`
-  per kind: reply, mine, step). The wrapper is a `Pressable` with
+- Items and the selectable text: `src/ui/messageMenu.ts`
+  (`messageMenuItems` per kind: reply, mine, step; `selectableText`,
+  `textSegments`). The wrapper is a `Pressable` with
   `onLongPress` only: the children keep their taps (a step row opens, a file
   path opens the viewer). The drawer's pan needs 12 pt of rightward motion
   and the list scrolls on a vertical move, so a still hold reaches the menu;
   the drawer's own long press (Archive) is on its rows only.
+- Not run on a device yet: the in-place field's selection on iOS and
+  Android.
 
 ## Not in v1
 

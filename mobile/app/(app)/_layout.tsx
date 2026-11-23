@@ -23,7 +23,6 @@
  * drawer's account row, Settings › Accounts (iOS) ─▶ accounts-sheet as a formSheet
  * a sub-space row ─▶ push sub-space/[space]/[child] (Back)
  * a file path in a reply, a file on your bubble ─▶ push file/[space]?path=… (Back)
- * long press a message › Select text (iOS) ─▶ select-text as a formSheet
  * ```
  *
  * Headers: Home's and a space's are `MainHeader` (menu, questions, new
@@ -159,7 +158,6 @@ export default function AppLayout() {
           <Stack.Screen name="project-picker" options={sheet('Project')} />
           <Stack.Screen name="activity-sheet" options={sheet('Activity')} />
           <Stack.Screen name="accounts-sheet" options={sheet('Accounts')} />
-          <Stack.Screen name="select-text" options={sheet('Select text')} />
         </Stack>
       </AppShell>
       {/* Over the shell, the open drawer included (an archive from a row). */}
