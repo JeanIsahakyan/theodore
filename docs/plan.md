@@ -675,7 +675,9 @@ Settings → Account / Onboarding
   - The loopback stays because a URL scheme only resolves for an installed
     bundle, and AuthKit allows `http://127.0.0.1` redirects in production
     for native clients.
-  - Other `theodore://` hosts stay free for "open PR in Theodore" (§11).
+  - `theodore://space/<id>` opens a space (docs/spaces.md §6 "Space
+    links"; the website's `https://theodore.cloud/s/<id>` tries it); other
+    hosts stay free for "open PR in Theodore" (§11).
 - **CSRF.** Each attempt has a fresh 256-bit `state`. A redirect with a
   missing or different `state` has no effect and the sign-in keeps waiting
   for the real one (the loopback tab gets an "out of date" page). The

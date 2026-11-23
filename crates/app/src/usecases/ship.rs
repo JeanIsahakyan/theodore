@@ -204,10 +204,16 @@ impl Core {
                 ])
                 .await?;
                 // The repo's PR template when it has one, and a link back.
+                let closes = self.issue_to_close(&space, &project.repo).await;
                 let body = self
-                    .space_pr_body(&about, &repo_path, &head, pr_body(&title, &about.goal))
+                    .space_pr_body(
+                        &about,
+                        &repo_path,
+                        &head,
+                        pr_body(&title, &about.goal),
+                        closes,
+                    )
                     .await;
-                let body = with_closes(body, self.issue_to_close(&space, &project.repo).await);
                 let payload = CreateSpacePrPayload {
                     space: space.id.clone(),
                     repo: project.repo.clone(),
@@ -810,17 +816,6 @@ fn pr_body(title: &str, goal: &str) -> String {
     }
 }
 
-/// The PR body, plus "Closes #<n>" when the space started from a host issue
-/// (`Space::issue`, docs/spaces.md §3 "New space from an issue"): the host
-/// closes it itself once the PR merges, same as typing it by hand.
-fn with_closes(body: String, issue: Option<u64>) -> String {
-    match issue {
-        None => body,
-        Some(n) if body.is_empty() => format!("Closes #{n}"),
-        Some(n) => format!("{body}\n\nCloses #{n}"),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -854,15 +849,5 @@ mod tests {
         let round = "Add t3 notes\n\n- Add notes/t3.md.";
         assert_eq!(commit_message("Add t3 notes", round), round);
         assert_eq!(pr_body("Add t3 notes", round), "- Add notes/t3.md.");
-    }
-
-    #[test]
-    fn closes_is_appended_only_when_the_space_has_an_issue() {
-        assert_eq!(with_closes(String::new(), None), "");
-        assert_eq!(with_closes(String::new(), Some(42)), "Closes #42");
-        assert_eq!(
-            with_closes("Retry\nwith backoff".into(), Some(42)),
-            "Retry\nwith backoff\n\nCloses #42"
-        );
     }
 }

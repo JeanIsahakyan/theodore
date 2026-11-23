@@ -75,8 +75,11 @@ fn main() {
     // returns there instead of the loopback (unless a redirect is
     // configured).
     core.set_account_app_redirect(theodore_desktop::deep_link::app_redirect().as_deref());
-    // A space's PR links back to it on this build's scheme.
-    core.set_space_link_scheme(theodore_desktop::deep_link::scheme().as_deref());
+    // A space's PR links back to it through this build's website
+    // (`https://[staging.]theodore.cloud/s/<id>`), which opens the app.
+    core.set_space_link_base(Some(theodore_runtime::identity::site_url(
+        build_info::build_env(),
+    )));
     // "My reports": follows the issues "Report a problem" opens.
     core.follow_reports(issues.clone(), build_info::VERSION);
     // No remote sinks in sandbox or fixture runs, whatever is configured.

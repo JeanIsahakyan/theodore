@@ -10,8 +10,10 @@
 //! browser ─▶ theodore[-<env>]://callback?code=…&state=… ─▶ macOS "Open …?"
 //!   ─▶ on_open_url ─▶ core.account_sign_in_callback ─▶ state check, exchange
 //!        └─ handled ─▶ main window to the front
-//! PR body ─▶ theodore[-<env>]://space/<id> ─▶ main window to the front
+//! PR body ─▶ https://[staging.]theodore.cloud/s/<id> ─▶ the site tries
+//!   theodore[-<env>]://space/<id> ─▶ main window to the front
 //!   ├─ the UI listens ─▶ emit `open-space` <id> ─▶ the UI opens the space
+//!   │                    (not on this computer ─▶ the UI says so, a toast)
 //!   └─ cold start: no listener yet ─▶ kept ─▶ `take_pending_space` once it does
 //! ```
 //!

@@ -152,7 +152,8 @@ The app speaks protocol 6. Since v4 it also reads:
 mobile/
   app/                 expo-router routes: (auth)/sign-in, choose-organization, callback;
                        (app)/ drawer around a stack: index (Home, new space),
-                       space/[id], devices, settings pushed over it; start ─▶ /;
+                       space/[id], s/[id] (a space link, "Space links" below),
+                       devices, settings pushed over it; start ─▶ /;
                        model-, computer-, project-picker, activity-sheet: the
                        composer's and the strip's sheets (iOS);
                        space/[id], sub-space/[space]/[child], file/[space] (a file
@@ -186,6 +187,35 @@ mobile/
   non-extractable WebCrypto key in IndexedDB.
 - Redirect URIs to register in WorkOS: `theodore-mobile://callback` (native, per
   channel scheme) and the web origin's `/callback`.
+
+### Space links
+
+A space's PR footer carries `https://theodore.cloud/s/<id>` (docs/spaces.md
+§6 "PR body"; the page: docs/website.md "Space links"). On a phone with
+Theodore Code installed the OS hands the link to the app; the app also
+takes `theodore-mobile://space/<id>` and the web app's own
+`/space/<id>`. The id in a link is the space's id **on the computer that
+runs it**, while the phone lists spaces by fleet id (`rs_…`), so the app
+resolves it (`src/shell/spaceLink.ts`, tested).
+
+```text
+https://theodore.cloud/s/<id>      iOS: Universal Link (ios.associatedDomains: applinks:theodore.cloud,
+                                        applinks:staging.theodore.cloud; the site serves
+                                        /.well-known/apple-app-site-association for J33CB2C73P.app.theodore.mobile)
+                                   Android: App Link (android.intentFilters, autoVerify, https theodore.cloud
+                                        and staging.theodore.cloud, pathPrefix /s/; the site serves
+                                        /.well-known/assetlinks.json — its fingerprint is a placeholder until
+                                        the owner fills it in, docs/website.md)
+  ─▶ expo-router: /s/<id> (app/(app)/s/[id].tsx, over Home, the anchor; signed out: the sign-in first)
+     a listed space with that fleet id, or whose mirrored row has that id ─▶ replaced with /space/<fleet id>
+     neither, the first connection not done yet ─▶ "Looking for this space…" (up to 8 s)
+     neither ─▶ "This space isn't on your devices" — it runs on a computer you don't follow
+                from here, or was archived; a Home button. Never a crash, never an empty chat.
+/space/<id> with a host's id (the web app, from the site's "Open in the web app") ─▶ the same resolution
+```
+
+`screenOfPath` reports the screen `s`, never the id. The association
+files are checked against `app.json` in `test/routes.test.ts`.
 
 ### Sign-in
 
@@ -1077,7 +1107,8 @@ a local `expo run`). Without them the build has no usage sink
   `expo.version`. Inert until `expo-updates` is added; then an OTA update only
   reaches builds with the same version, so JS that needs a new native module
   ships with a version bump.
-- One identity (`app.theodore.mobile`, scheme `theodore`) for every profile: a
+- One identity (`app.theodore.mobile`, scheme `theodore-mobile`, associated
+  domains `theodore.cloud` and `staging.theodore.cloud`) for every profile: a
   preview build and the store build replace each other on a device. Split per
   channel (`app.config.ts` reading an `APP_VARIANT` env) only if testers need
   both side by side.

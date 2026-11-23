@@ -71,6 +71,9 @@ jobs:
       - name: format
         run: pnpm -C site format:check
 
+      - name: test
+        run: pnpm -C site test
+
       # The build fetches the latest release from GitHub's API to bake the
       # version and download links into /download; a token lifts the
       # anonymous rate limit. Without it the page falls back to the release

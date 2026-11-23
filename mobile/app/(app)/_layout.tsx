@@ -14,6 +14,9 @@
  *      ── Send / drawer ─▶ space/[id]: a fade, no edge swipe back, the main
  *                          header (☰, not Back); Android Back ─▶ Home
  * notification / deep link ─▶ space/[id] over Home (the anchor)
+ * space link https://theodore.cloud/s/<id> (or theodore-mobile://s/<id>)
+ *     ─▶ s/[id]: the space by its id on its host ─▶ replaced with space/[id],
+ *        or "This space isn't on your devices"
  * composer chip / where row (iOS) ─▶ model- | computer- | project-picker
  *                                   as a formSheet
  * space's activity strip (iOS) ─▶ activity-sheet as a formSheet
@@ -123,6 +126,10 @@ export default function AppLayout() {
           <Stack.Screen name="index" options={home} />
           <Stack.Screen
             name="space/[id]"
+            options={{ ...home, title: 'Space', animation: 'fade' }}
+          />
+          <Stack.Screen
+            name="s/[id]"
             options={{ ...home, title: 'Space', animation: 'fade' }}
           />
           <Stack.Screen
