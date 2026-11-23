@@ -91,6 +91,9 @@ export function readCaller(header: string | null): FleetCaller | null {
   }
 }
 
+/** The soonest an alarm may fire after it is set. */
+export const ALARM_FLOOR_MS = 2_000;
+
 export class OrgHub implements DurableObject {
   private hub: Hub;
   private mcp: McpFleet | null;
@@ -267,6 +270,10 @@ export class OrgHub implements DurableObject {
   /** Sets the alarm only when it moves earlier: one write, not one a message. */
   private async schedule(at: number | null) {
     if (at === null) return; // a stale alarm just finds nothing due
+    // Never sooner than ALARM_FLOOR_MS from now: a safety net under the
+    // hub's own guard (`fleet alarm stuck`), so nothing "due" forever can
+    // wake the object in a tight loop and burn the request quota.
+    at = Math.max(at, Date.now() + ALARM_FLOOR_MS);
     if (this.alarmAt === undefined) {
       this.alarmAt = await this.ctx.storage.getAlarm();
     }

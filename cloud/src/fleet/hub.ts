@@ -57,6 +57,7 @@ import { CloudError } from '../errors';
 import { noopLogger, type Logger } from '../telemetry/log';
 import {
   ACTIVE_IDLE_MS,
+  ALARM_RETRY_MS,
   close,
   closeCodeFor,
   codes,
@@ -245,6 +246,8 @@ export class Hub {
   readonly store: Store;
   private readonly log: Logger;
   private chain: Promise<void> = Promise.resolve();
+  /** Set by an alarm that left a row due: no alarm sooner than this. */
+  private alarmRetryAt: number | null = null;
   private buckets = new Map<
     string,
     { tokens: number; at: number; warned: number }
@@ -315,7 +318,19 @@ export class Hub {
         this.fail(conn, codes.TOO_LARGE, 'frame too large'),
       );
     }
-    if (!this.allow(conn)) return Promise.resolve();
+    const st = stateOf(conn);
+    if (!st) {
+      // A socket with no state (never saved, or lost with the attachment):
+      // nothing here can be trusted, so it is closed, and the device redials.
+      return this.run(() => {
+        try {
+          conn.close(close.POLICY, codes.BAD_MESSAGE);
+        } catch {
+          // already closing
+        }
+      });
+    }
+    if (!this.allow(conn, st.id)) return Promise.resolve();
     return this.run(async () => {
       if (!conn.open) return;
       const s = conn.state();
@@ -391,7 +406,8 @@ export class Hub {
   /** The device closed (or lost) the socket; `code` as the runtime saw it. */
   closed(conn: Conn, code?: number): Promise<void> {
     return this.run(() => {
-      const s = conn.state();
+      const s = stateOf(conn);
+      if (!s) return; // never opened: nothing of it anywhere
       this.buckets.delete(s.id);
       this.store.run('DELETE FROM conns WHERE conn_id = ?', s.id);
       // `closed`: replaced, or failed (cleaned up then: logged there).
@@ -578,6 +594,16 @@ export class Hub {
     this.pushDevices(s.user, s.id);
   }
 
+  /**
+   * Everything due by now, each step on its own: a row the hub can't
+   * handle (a socket whose attachment is gone, a stored envelope that
+   * won't parse) is logged and skipped, never left in the way of the rows
+   * after it. Every due row is cleared (deleted or marked) before the work
+   * it brings, so a failure in that work can't keep it due. `reschedule`
+   * then finds the next deadline; were any row still due, the hub would
+   * wake again at once, in a loop: that is logged as `fleet alarm stuck`
+   * and retried after ALARM_RETRY_MS instead.
+   */
   alarm(): Promise<void> {
     return this.run(() => {
       const now = this.env.now();
@@ -586,21 +612,9 @@ export class Hub {
         now,
       )) {
         this.store.run('DELETE FROM conns WHERE conn_id = ?', row.conn_id);
-        const conn = this.env
-          .conns(row.user_id)
-          .find((c) => c.open && c.state().id === row.conn_id);
-        if (!conn) continue;
-        const st = conn.state();
-        if (st.phase === 'challenged') {
-          // Slow, not unauthorized: the device may redial.
-          this.fail(conn, codes.BAD_MESSAGE, 'no hello in time');
-        } else if (st.authUnavailable) {
-          // Its newer token was never checked, through no fault of its own:
-          // it redials, and the Worker checks the token then.
-          this.fail(conn, codes.UNAVAILABLE, 'signing keys unavailable');
-        } else {
-          this.fail(conn, codes.UNAUTHORIZED, 'access token expired');
-        }
+        this.attempt('close expired connection', () =>
+          this.closeExpired(row.user_id, row.conn_id),
+        );
       }
       for (const p of this.store.rows<PendingRow>(
         `SELECT * FROM pending
@@ -609,33 +623,83 @@ export class Hub {
         now,
       )) {
         this.store.run('DELETE FROM pending WHERE req_id = ?', p.req_id);
-        this.deliver(p.user_id, p.origin_device, p.req_id, {
-          type: 'refused',
-          req_id: p.req_id,
-          code: codes.OFFLINE,
-          message: 'the device did not answer in time',
-        });
+        this.attempt('refuse unanswered request', () =>
+          this.deliver(p.user_id, p.origin_device, p.req_id, {
+            type: 'refused',
+            req_id: p.req_id,
+            code: codes.OFFLINE,
+            message: 'the device did not answer in time',
+          }),
+        );
       }
-      this.store.run(
-        'DELETE FROM replies WHERE created_ms <= ?',
-        now - PENDING_TTL_MS,
+      this.attempt('drop old replies', () =>
+        this.store.run(
+          'DELETE FROM replies WHERE created_ms <= ?',
+          now - PENDING_TTL_MS,
+        ),
       );
       for (const a of this.store.rows<AskRow>(
         'SELECT * FROM asks WHERE escalated = 0 AND created_ms <= ?',
         now - ESCALATE_MS,
       )) {
-        this.escalate(a);
+        this.attempt('escalate question', () => this.escalate(a));
       }
       for (const c of this.store.rows<ConfirmRow>(
         'SELECT * FROM confirms WHERE expires_at_ms <= ?',
         now,
       )) {
-        this.dropConfirm(c);
+        this.attempt('drop lapsed confirm', () => this.dropConfirm(c));
       }
-      this.pruneStale(now);
-      this.pruneDelegations(now);
-      this.store.run('DELETE FROM gone_users WHERE until_ms <= ?', now);
+      this.attempt('prune stale spaces', () => this.pruneStale(now));
+      this.attempt('prune delegations', () => this.pruneDelegations(now));
+      this.attempt('forget deleted users', () =>
+        this.store.run('DELETE FROM gone_users WHERE until_ms <= ?', now),
+      );
+      const stuck = this.dueTerms().filter((t) => t.at <= now);
+      if (stuck.length === 0) {
+        this.alarmRetryAt = null;
+        return;
+      }
+      this.log.warn('fleet alarm stuck', {
+        code: codes.INTERNAL,
+        terms: stuck.map((t) => t.term).join(','),
+        late_ms: now - Math.min(...stuck.map((t) => t.at)),
+      });
+      this.alarmRetryAt = now + ALARM_RETRY_MS;
     });
+  }
+
+  /** One step of the alarm; a failure is logged, and the next step runs. */
+  private attempt(step: string, fn: () => void) {
+    try {
+      fn();
+    } catch (e) {
+      // The error only: a row may carry a signed body.
+      this.log.exception('fleet alarm step failed', e, {
+        code: codes.INTERNAL,
+        step,
+      });
+    }
+  }
+
+  /** The socket of a connection past its deadline (its row already gone). */
+  private closeExpired(user: string, connId: string) {
+    // A socket with no state yet (never saved, or lost) is not this one.
+    const conn = this.env
+      .conns(user)
+      .find((c) => c.open && stateOf(c)?.id === connId);
+    if (!conn) return;
+    const st = conn.state();
+    if (st.phase === 'challenged') {
+      // Slow, not unauthorized: the device may redial.
+      this.fail(conn, codes.BAD_MESSAGE, 'no hello in time');
+    } else if (st.authUnavailable) {
+      // Its newer token was never checked, through no fault of its own:
+      // it redials, and the Worker checks the token then.
+      this.fail(conn, codes.UNAVAILABLE, 'signing keys unavailable');
+    } else {
+      this.fail(conn, codes.UNAUTHORIZED, 'access token expired');
+    }
   }
 
   // ── connect ────────────────────────────────────────────────────────────
@@ -1640,6 +1704,11 @@ export class Hub {
    * device), and a push to those away from a screen.
    */
   private escalate(a: AskRow) {
+    // Marked first: a follower it can't be shown to must not keep it due.
+    this.store.run(
+      `UPDATE asks SET escalated = 1, via = 'escalated' WHERE ask_id = ?`,
+      a.ask_id,
+    );
     const shown = shownOn(a);
     for (const d of this.followers(a)) {
       if (shown.includes(d)) continue;
@@ -1650,8 +1719,7 @@ export class Hub {
       }
     }
     this.store.run(
-      `UPDATE asks SET escalated = 1, via = 'escalated', shown_on = ?
-       WHERE ask_id = ?`,
+      'UPDATE asks SET shown_on = ? WHERE ask_id = ?',
       JSON.stringify(shown),
       a.ask_id,
     );
@@ -1814,11 +1882,12 @@ export class Hub {
 
   /** Answered, lapsed or its host gone: dismissed where it showed, dropped. */
   private dropConfirm(c: ConfirmRow) {
+    // Dropped first: a device it can't be dismissed on must not keep it.
+    this.store.run('DELETE FROM confirms WHERE confirm_id = ?', c.confirm_id);
     this.dismissConfirm(c.user_id, c.confirm_id, [
       ...confirmShown(c),
       ...this.confirmDelegates(c),
     ]);
-    this.store.run('DELETE FROM confirms WHERE confirm_id = ?', c.confirm_id);
   }
 
   /** `confirm_dismissed` to those of `devices` online on protocol 6. */
@@ -2049,8 +2118,10 @@ export class Hub {
       now,
     );
     for (const d of expired) {
-      this.endDelegation(d);
-      this.pushDelegations(d.user_id, [d.origin_device, d.delegate_device]);
+      this.attempt('end expired delegation', () => {
+        this.endDelegation(d);
+        this.pushDelegations(d.user_id, [d.origin_device, d.delegate_device]);
+      });
     }
     this.store.run(
       'DELETE FROM delegations WHERE revoked = 1 AND issued_at_ms < ?',
@@ -2371,30 +2442,54 @@ export class Hub {
   }
 
   private async reschedule() {
+    const due = this.dueTerms().map((t) => t.at);
+    let at = due.length ? Math.min(...due) : null;
+    // After an alarm that left a row due (logged there): not before its retry.
+    if (at !== null && this.alarmRetryAt !== null && at < this.alarmRetryAt) {
+      at = this.alarmRetryAt;
+    }
+    await this.env.schedule(at);
+  }
+
+  /**
+   * When each table next needs the alarm (unix ms), those that do. Each
+   * term is exactly what `alarm` clears at that time: a term that stays
+   * due after an alarm is a bug there, not a reason to wake again.
+   */
+  private dueTerms(): { term: string; at: number }[] {
     const s = this.store;
-    const due = [
-      s.num('SELECT MIN(deadline_ms) FROM conns'),
-      s.num('SELECT MIN(grace_until) FROM pending WHERE claimed = 0'),
-      s.num('SELECT MIN(created_ms + ttl_ms) FROM pending'),
-      s.num('SELECT MIN(created_ms) FROM replies'),
-      s.num('SELECT MIN(created_ms) FROM asks WHERE escalated = 0'),
-      s.num(
-        `SELECT MIN(expires_at_ms) FROM delegations
-         WHERE revoked = 0 AND expires_at_ms > 0`,
-      ),
-      s.num('SELECT MIN(expires_at_ms) FROM confirms'),
-      s.num('SELECT MIN(until_ms) FROM gone_users'),
+    const terms: [string, number | null, number][] = [
+      ['conns', s.num('SELECT MIN(deadline_ms) FROM conns'), 0],
+      [
+        'pending_grace',
+        s.num('SELECT MIN(grace_until) FROM pending WHERE claimed = 0'),
+        0,
+      ],
+      ['pending_ttl', s.num('SELECT MIN(created_ms + ttl_ms) FROM pending'), 0],
+      ['replies', s.num('SELECT MIN(created_ms) FROM replies'), PENDING_TTL_MS],
+      [
+        'asks',
+        s.num('SELECT MIN(created_ms) FROM asks WHERE escalated = 0'),
+        ESCALATE_MS,
+      ],
+      [
+        'delegations',
+        s.num(
+          `SELECT MIN(expires_at_ms) FROM delegations
+           WHERE revoked = 0 AND expires_at_ms > 0`,
+        ),
+        0,
+      ],
+      ['confirms', s.num('SELECT MIN(expires_at_ms) FROM confirms'), 0],
+      ['gone_users', s.num('SELECT MIN(until_ms) FROM gone_users'), 0],
     ];
-    const ttl = [0, 0, 0, PENDING_TTL_MS, ESCALATE_MS, 0, 0, 0];
-    const at = due
-      .map((v, i) => (v === null ? null : v + ttl[i]!))
-      .filter((v): v is number => v !== null);
-    await this.env.schedule(at.length ? Math.min(...at) : null);
+    return terms.flatMap(([term, v, ttl]) =>
+      v === null ? [] : [{ term, at: v + ttl }],
+    );
   }
 
   /** Token bucket; over it, the frame is dropped with one error a second. */
-  private allow(conn: Conn): boolean {
-    const id = conn.state().id;
+  private allow(conn: Conn, id: string): boolean {
     const now = this.env.now();
     const b = this.buckets.get(id) ?? {
       tokens: RATE_BURST,
