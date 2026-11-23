@@ -4,11 +4,14 @@
  * a PR. The window is the desktop's space page built from the app's pieces;
  * the phone shows the push as the phone app renders it.
  *
- * Choreography: one sequence, cast as lead (the question, then the push) and
- * support (the tool rows, which fade in as they are reached); the chrome is
- * static. The push is the only thing thrown (a short overshoot); everything
- * else enters with an ease-out. Reduced motion keeps the key frame. The loop
- * pauses while the hero is off screen or the tab is hidden.
+ * Choreography: one sequence, cast as lead (the question, then the push, then
+ * the answer flying back) and support (the tool rows, which rise in as they
+ * are reached); the chrome is static. The push is thrown (a short overshoot)
+ * and the phone buzzes; the tap ripples at the point of touch; the answer
+ * flies to the computer along a measured path; the test result and the PR
+ * chip land with a small pop. Everything else enters with an ease-out.
+ * Reduced motion keeps the key frame. The loop pauses while the hero is off
+ * screen or the tab is hidden.
  */
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Spinner } from '@heroui/react';
@@ -20,9 +23,9 @@ import { Ring } from '../shared/Ring';
 import {
   AgentText,
   QuestionCard,
-  SignalDot,
   ToolRow,
   UserBubble,
+  WaitDot,
 } from '../mocks/chat';
 import { KEY, LOOP, LOOP_MS, reached, statusOf, type Phase } from './timeline';
 
@@ -81,6 +84,51 @@ function usePhase(ref: React.RefObject<HTMLElement | null>): Phase {
   return phase;
 }
 
+/** The answer flies from the tapped option on the phone to the question
+ *  card on the computer: the path is measured when it starts, and the
+ *  flyer is animated on transform only. */
+function useFlight(
+  go: boolean,
+  scene: React.RefObject<HTMLElement | null>,
+  from: React.RefObject<HTMLElement | null>,
+  to: React.RefObject<HTMLElement | null>,
+  flyer: React.RefObject<HTMLElement | null>,
+) {
+  useEffect(() => {
+    if (!go) return;
+    const s = scene.current;
+    const a = from.current?.getBoundingClientRect();
+    const b = to.current?.getBoundingClientRect();
+    const f = flyer.current;
+    if (!s || !a || !b || !f) return;
+    if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const base = s.getBoundingClientRect();
+    // Where it lands, as part of the animation itself (held by `fill`), so
+    // nothing is written to the element outside it.
+    const at = {
+      left: `${b.left - base.left}px`,
+      top: `${b.top - base.top}px`,
+      width: `${a.width}px`,
+    };
+    const dx = a.left - b.left;
+    const dy = a.top - b.top;
+    const anim = f.animate(
+      [
+        { ...at, transform: `translate(${dx}px, ${dy}px)`, opacity: 1 },
+        {
+          ...at,
+          transform: `translate(${dx * 0.3}px, ${dy * 0.3 - 18}px)`,
+          opacity: 1,
+          offset: 0.6,
+        },
+        { ...at, transform: 'translate(0, 0) scale(0.92)', opacity: 0 },
+      ],
+      { duration: 640, easing: 'cubic-bezier(0.23, 1, 0.32, 1)', fill: 'both' },
+    );
+    return () => anim.cancel();
+  }, [go, scene, from, to, flyer]);
+}
+
 /** A chat row that takes no space until it is reached. */
 function Row({ on, children }: { on: boolean; children: ReactNode }) {
   return (
@@ -97,7 +145,7 @@ function Status({ phase }: { phase: Phase }) {
       {s.kind === 'working' && (
         <Spinner size="sm" color="current" className="size-3" />
       )}
-      {s.kind === 'waiting' && <SignalDot />}
+      {s.kind === 'waiting' && <WaitDot />}
       {s.kind === 'done' && (
         <Ring color="var(--success)" check title="Done" size={12} />
       )}
@@ -110,9 +158,13 @@ function Status({ phase }: { phase: Phase }) {
 
 export function HeroDemo() {
   const ref = useRef<HTMLDivElement>(null);
+  const optionRef = useRef<HTMLSpanElement>(null);
+  const cardRef = useRef<HTMLDivElement>(null);
+  const flyerRef = useRef<HTMLDivElement>(null);
   const phase = usePhase(ref);
   const on = (p: Phase) => reached(phase, p);
   const answered = on('answered');
+  useFlight(phase === 'sent', ref, optionRef, cardRef, flyerRef);
   return (
     <div
       ref={ref}
@@ -133,6 +185,7 @@ export function HeroDemo() {
         <WindowHeader
           title="Fix the login redirect"
           chip={on('pr') ? 'In review' : 'Drafting'}
+          chipPop={on('pr')}
           right={<span className="text-xs text-muted">on mac-studio</span>}
         />
         {/* A column-reverse box: new rows push older ones out of the top. */}
@@ -160,14 +213,16 @@ export function HeroDemo() {
                 />
               </Row>
               <Row on={on('ask')}>
-                <QuestionCard
-                  question={QUESTION}
-                  options={OPTIONS}
-                  picked={on('tap') ? OPTIONS[0] : undefined}
-                  answered={answered}
-                  answeredFrom="iPhone"
-                  className="my-1.5"
-                />
+                <div ref={cardRef}>
+                  <QuestionCard
+                    question={QUESTION}
+                    options={OPTIONS}
+                    picked={on('tap') ? OPTIONS[0] : undefined}
+                    answered={answered}
+                    answeredFrom="iPhone"
+                    className="my-1.5"
+                  />
+                </div>
               </Row>
               <Row on={on('edit2')}>
                 <ToolRow
@@ -182,7 +237,21 @@ export function HeroDemo() {
                   icon={Terminal}
                   verb="Run"
                   label="pnpm test"
-                  note={<span className="text-success">214 passed</span>}
+                  busy={!on('pass')}
+                  note={
+                    <span
+                      className="demo-pop inline-flex items-center gap-1 text-success"
+                      data-on={on('pass')}
+                    >
+                      <Ring
+                        color="var(--success)"
+                        check
+                        title="Passed"
+                        size={12}
+                      />
+                      214 passed
+                    </span>
+                  }
                 />
               </Row>
               <Row on={on('pr')}>
@@ -227,11 +296,14 @@ export function HeroDemo() {
             <span className="min-w-0 flex-1 truncate">
               mac-studio · Fix the login redirect
             </span>
-            {!on('sent') && <SignalDot />}
+            {!on('sent') && <WaitDot />}
           </div>
           <p className="mb-2 leading-snug">{QUESTION}</p>
           {on('sent') ? (
-            <div className="flex items-center gap-1.5 rounded-xl bg-default px-2 py-1.5 font-medium">
+            <div
+              className="demo-pop flex items-center gap-1.5 rounded-xl bg-default px-2 py-1.5 font-medium"
+              data-on
+            >
               <Ring color="var(--success)" check title="Sent" size={12} />
               <span className="min-w-0 truncate">{OPTIONS[0]}</span>
             </div>
@@ -240,9 +312,12 @@ export function HeroDemo() {
               {OPTIONS.map((o, i) => (
                 <span
                   key={o}
+                  ref={i === 0 ? optionRef : undefined}
                   data-pressed={i === 0 && on('tap')}
                   className={`demo-tap rounded-xl px-2 py-1.5 text-center font-medium ${
-                    i === 0 && on('tap') ? 'bg-night text-paper' : 'bg-default'
+                    i === 0 && on('tap')
+                      ? 'bg-accent text-accent-foreground'
+                      : 'bg-default'
                   }`}
                 >
                   {o}
@@ -269,6 +344,15 @@ export function HeroDemo() {
           Done · pull request #479 opened
         </div>
       </Phone>
+
+      {/* The answer in flight (positioned and animated by useFlight). */}
+      <div
+        ref={flyerRef}
+        aria-hidden
+        className="demo-flyer rounded-xl bg-accent px-2 py-1.5 text-center text-[11.5px] font-medium text-accent-foreground shadow-card"
+      >
+        {OPTIONS[0]}
+      </div>
     </div>
   );
 }

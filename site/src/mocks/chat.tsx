@@ -101,19 +101,19 @@ export function ToolRow({
   );
 }
 
-/** The signal: the agent is waiting for you. The one place the site's
- *  yellow appears. */
-export function SignalDot({ pulse = false }: { pulse?: boolean }) {
+/** The attention dot: the app's warning tone, as its status ring for a
+ *  task in progress; the agent is waiting for you. */
+export function WaitDot({ pulse = false }: { pulse?: boolean }) {
   return (
     <span
       aria-hidden
-      className={`inline-block size-2 shrink-0 rounded-full bg-signal ${pulse ? 'signal-dot' : ''}`}
+      className={`inline-block size-2 shrink-0 rounded-full bg-warning ${pulse ? 'wait-dot' : ''}`}
     />
   );
 }
 
 /** The card an `ask_user` question shows (SpacePlan.tsx). While it waits it
- *  carries the signal; `answered` collapses it to who answered and what. */
+ *  carries the attention dot; `answered` collapses it to who answered and what. */
 export function QuestionCard({
   question,
   options,
@@ -138,7 +138,7 @@ export function QuestionCard({
           `Answered from ${answeredFrom ?? 'your phone'}`
         ) : (
           <>
-            <SignalDot pulse />
+            <WaitDot pulse />
             Waiting for your answer
           </>
         )}

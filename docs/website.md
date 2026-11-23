@@ -61,14 +61,18 @@ the page then navigate in place; `/releases` reached that way loads
 - The theme is the desktop's rule: `theodore-theme` in localStorage, else
   the system; the `.dark` class HeroUI reads, applied by an inline script
   before the first paint.
-- The look: the desktop's tokens, plus the site's own "night shift"
-  identity in `styles.css`: the deep blue band (`--night`) with paper text,
-  a brand (ink / paper) button, and signal yellow (`--signal`) used only
-  where the agent waits for you. Soft layered shadows instead of borders;
-  body text 17–18 px in `--ink-2`.
-- The hero loop starts at its key frame (the question on the computer, the
-  push on the phone): that is what the server renders and what reduced
-  motion keeps. It pauses off screen and in a hidden tab.
+- The look is the desktop's: HeroUI's tokens (background, surfaces,
+  separators, greys, the accent and its buttons), light or dark. The site
+  adds only `--ink-2` (body text, darker than `--muted`), soft layered
+  shadows instead of borders, and the app's `--warning` as the attention
+  dot where the agent waits for you.
+- Scenes (`src/demo/useScene.ts`): the hero and the three mocks play when
+  scrolled into view and again when they come back, pause off screen and in
+  a hidden tab, and keep their final frame for the server, no JavaScript
+  and reduced motion. The hero loops (~13 s) from its key frame (the
+  question on the computer, the push on the phone). Motion is transform and
+  opacity (plus one progress ring), ease-out entrances, one short overshoot
+  on things that land.
 - Release notes are rendered by `src/releases/markdown.ts`, which escapes
   every string and emits only its own tags; a release whose notes are empty
   or only GitHub's generated "What's Changed" list shows as "Maintenance

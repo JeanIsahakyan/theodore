@@ -30,32 +30,32 @@ import { SpacesMock } from '../mocks/SpacesMock';
 function Hero() {
   const { release } = usePageData();
   return (
-    <div className="bg-night text-paper">
+    <div>
       <Container className="pb-14 pt-14 md:pt-20 lg:pb-20">
         <div className="grid grid-cols-1 items-center gap-12 lg:grid-cols-12 lg:gap-10">
           <div className="lg:col-span-5">
             <h1 className="text-[2.5rem] font-semibold leading-[1.02] tracking-[-0.025em] text-balance sm:text-[3.4rem] lg:text-[3.6rem] xl:text-[4rem]">
               Your coding agents keep working after you leave the desk.
             </h1>
-            <p className="mt-6 max-w-[48ch] text-[18px] leading-relaxed text-paper/80 md:text-[19px]">
+            <p className="mt-6 max-w-[48ch] text-[18px] leading-relaxed text-ink-2 md:text-[19px]">
               Theodore runs Claude Code, Codex and Gemini CLI on your computer,
               each change in its own space. When an agent needs you, your phone
               buzzes. Answer, and it carries on. Then review the result by
               meaning and open the pull request from the same window.
             </p>
             <div className="mt-8 flex flex-wrap items-center gap-3">
-              <ButtonLink href="/download" tone="paper" size="lg">
+              <ButtonLink href="/download" tone="primary" size="lg">
                 Download
               </ButtonLink>
-              <ButtonLink href={WEB_APP} tone="paper-ghost" size="lg">
+              <ButtonLink href={WEB_APP} tone="ghost" size="lg">
                 Open the web app
               </ButtonLink>
             </div>
-            <p className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-1 text-[14px] text-paper/60">
+            <p className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-1 text-[14px] text-ink-2">
               {release && (
                 <Link
                   href={`/releases#v${release.version}`}
-                  className="press rounded text-paper/80 underline decoration-paper/30 underline-offset-[3px] hover:text-paper hover:decoration-paper"
+                  className="press rounded text-foreground underline decoration-foreground/30 underline-offset-[3px] hover:decoration-foreground"
                 >
                   v{release.version} · What's new
                 </Link>
@@ -76,19 +76,19 @@ function Hero() {
 function TrustStrip() {
   const { stars } = usePageData();
   return (
-    <div className="border-t border-paper/10">
-      <Container className="flex flex-wrap items-center gap-x-8 gap-y-2 py-4 text-[14px] text-paper/65">
+    <div className="border-y border-separator bg-surface-secondary">
+      <Container className="flex flex-wrap items-center gap-x-8 gap-y-2 py-4 text-[14px] text-ink-2">
         <span>
           Works with{' '}
-          <span className="font-medium text-paper/85">Claude Code</span> ·{' '}
-          <span className="font-medium text-paper/85">Codex</span> ·{' '}
-          <span className="font-medium text-paper/85">Gemini CLI</span>
+          <span className="font-medium text-foreground">Claude Code</span> ·{' '}
+          <span className="font-medium text-foreground">Codex</span> ·{' '}
+          <span className="font-medium text-foreground">Gemini CLI</span>
         </span>
         <span>Uses the subscriptions you already have</span>
         <span className="inline-flex flex-wrap items-center gap-x-1.5 gap-y-1">
           <Link
             href={GITHUB}
-            className="press inline-flex items-center gap-1.5 rounded text-paper/85 hover:text-paper"
+            className="press inline-flex items-center gap-1.5 rounded text-foreground hover:text-accent"
           >
             <LogoGithub className="size-3.5" aria-hidden />
             Open source
@@ -103,14 +103,14 @@ function TrustStrip() {
             · apps{' '}
             <Link
               href={LICENSE}
-              className="press rounded underline decoration-paper/30 underline-offset-[3px] hover:text-paper"
+              className="press rounded underline decoration-foreground/30 underline-offset-[3px] hover:text-foreground"
             >
               MIT
             </Link>
             , cloud{' '}
             <Link
               href={CLOUD_LICENSE}
-              className="press rounded underline decoration-paper/30 underline-offset-[3px] hover:text-paper"
+              className="press rounded underline decoration-foreground/30 underline-offset-[3px] hover:text-foreground"
             >
               FSL
             </Link>
@@ -186,7 +186,7 @@ function YourPhone() {
     <Feature
       id="phone"
       eyebrow="Your phone"
-      signal
+      attention
       title="Your phone is the remote. Your computers do the work."
       mock={<PhoneMock />}
       points={[
@@ -303,7 +303,7 @@ function Cta() {
     <section
       id="start"
       aria-labelledby="start-h"
-      className="bg-night py-20 text-paper md:py-28"
+      className="border-t border-separator bg-surface-secondary py-20 md:py-28"
     >
       <Container>
         <h2
@@ -313,15 +313,15 @@ function Cta() {
           Start a space, then go for a walk.
         </h2>
         <div className="mt-8 flex flex-wrap gap-3">
-          <ButtonLink href="/download" tone="paper" size="lg">
+          <ButtonLink href="/download" tone="primary" size="lg">
             Download Theodore
           </ButtonLink>
-          <ButtonLink href={WEB_APP} tone="paper-ghost" size="lg">
+          <ButtonLink href={WEB_APP} tone="ghost" size="lg">
             Open the web app
           </ButtonLink>
         </div>
-        <p className="mt-5 flex max-w-[60ch] items-start gap-2 text-[15px] text-paper/65">
-          <TriangleExclamation className="mt-0.5 size-4 shrink-0 text-signal" />
+        <p className="mt-5 flex max-w-[60ch] items-start gap-2 text-[15px] text-ink-2">
+          <TriangleExclamation className="mt-0.5 size-4 shrink-0 text-warning" />
           You need git and at least one agent CLI installed and signed in:
           claude, codex or gemini.
         </p>

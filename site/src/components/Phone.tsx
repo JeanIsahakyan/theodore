@@ -18,7 +18,7 @@ export function Phone({
   const dims =
     size === 'sm'
       ? 'h-[400px] w-[206px] rounded-[34px] p-2.5 pt-9'
-      : 'h-[520px] w-[250px] rounded-[40px] p-3 pt-11';
+      : 'h-[560px] w-[250px] rounded-[40px] p-3 pt-11';
   return (
     <div
       role="img"
