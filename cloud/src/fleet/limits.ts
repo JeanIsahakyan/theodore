@@ -51,6 +51,12 @@ export const ACTIVE_IDLE_MS = 60_000;
 export const REAUTH_LEEWAY_MS = 60_000;
 /** A connection that hasn't said hello by then is closed. */
 export const HELLO_TIMEOUT_MS = 10_000;
+/**
+ * An alarm that left a row due (a row it failed to clear: a bug, logged as
+ * `fleet alarm stuck`) tries again after this, not at once: a row due
+ * forever would otherwise wake the object in a tight loop.
+ */
+export const ALARM_RETRY_MS = 30_000;
 export const MAX_DEVICES_PER_USER = 20;
 export const MAX_PENDING_PER_USER = 100;
 /** Spaces the cloud keeps per user; over it the oldest finished one goes. */

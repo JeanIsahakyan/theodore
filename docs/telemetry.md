@@ -347,6 +347,8 @@ lists ids, kinds, codes and numbers, nothing a person wrote.
 | `telemetry relayed` | info | `service`, `records`, `dropped`, `signed_in`, `forwarded` | yes |
 | `telemetry export failed`, `telemetry relay failed` | warn | `records`, `status`, `kind` (local only for the export: it can't send itself) | — |
 | `request failed` | warn | `code`, `status`, `reason` (a 5xx the cloud answered) | yes |
+| `fleet alarm stuck` | warn | `terms` (the hub tables still due after an alarm, comma-separated), `late_ms`, `code`; the alarm retries in 30 s instead of at once | yes |
+| `fleet alarm step failed` | error | `step` (`close expired connection`, `escalate question`, …), `error.kind`, `error.message`, `error.stack`, `code` | yes |
 | `internal error`, `fleet internal error`, `http request failed` | error | `error.kind`, `error.message`, `error.stack`, `code` | yes |
 
 Only warn, error and the info events marked remote reach New Relic
