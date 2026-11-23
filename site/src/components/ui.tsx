@@ -141,7 +141,6 @@ export function Feature({
   mock,
   flip = false,
   points,
-  attention = false,
   wide = false,
 }: {
   id: string;
@@ -152,8 +151,6 @@ export function Feature({
   flip?: boolean;
   /** Three short facts under the copy. */
   points?: { title: string; text: ReactNode }[];
-  /** The eyebrow with the app's attention dot: here the agent waits for you. */
-  attention?: boolean;
   /** A wider mock (a window with a sidebar and a pane): 8 columns of 12. */
   wide?: boolean;
 }) {
@@ -168,15 +165,7 @@ export function Feature({
       <Container>
         <div className="grid grid-cols-1 items-center gap-10 lg:grid-cols-12 lg:gap-14">
           <div className={`${text} ${flip ? 'lg:order-2' : ''}`}>
-            <p className="mb-3 flex items-center gap-2 text-[15px] font-medium text-ink-2">
-              {attention && (
-                <span
-                  aria-hidden
-                  className="size-2 rounded-full bg-warning ring-2 ring-warning/30"
-                />
-              )}
-              {eyebrow}
-            </p>
+            <p className="mb-3 text-[15px] font-medium text-ink-2">{eyebrow}</p>
             <h2
               id={`${id}-h`}
               className="text-[1.9rem] font-semibold leading-[1.1] tracking-[-0.02em] text-balance md:text-[2.6rem]"

@@ -186,7 +186,6 @@ function YourPhone() {
     <Feature
       id="phone"
       eyebrow="Your phone"
-      attention
       title="Your phone is the remote. Your computers do the work."
       mock={<PhoneMock />}
       points={[
