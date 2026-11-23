@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "app.theodore.mobile",
+      "sha256_cert_fingerprints": [
+        "PLACEHOLDER_ANDROID_SIGNING_CERT_SHA256_REPLACE_ME"
+      ]
+    }
+  }
+]

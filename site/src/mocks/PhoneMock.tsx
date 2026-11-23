@@ -1,10 +1,10 @@
 /**
  * The phone app on a running space (docs/mobile.md "Space", "Activity
- * strip", "Attachments", "Archive"): a question with its options, a photo
- * you attached, the archive action in the header, the activity strip above
- * the composer.
+ * strip", "Attachments"): a question with its options, a photo you
+ * attached, the activity strip above the composer. Archive lives in the
+ * space's long-press menu, so the header shows none of it.
  */
-import { Archive, ChevronRight, Paperclip } from '@gravity-ui/icons';
+import { ChevronRight, Paperclip } from '@gravity-ui/icons';
 import { Phone } from '../components/Phone';
 import { Ring } from '../shared/Ring';
 import { SignalDot } from './chat';
@@ -53,7 +53,7 @@ export function PhoneMock() {
             </span>
             on mac-studio · Waiting
           </span>
-          <Archive className="size-4" aria-label="Archive this space" />
+          <span className="text-base leading-none">✎</span>
         </div>
         <div className="mt-4 flex flex-1 flex-col gap-3 overflow-hidden text-[12px]">
           <div className="flex flex-col items-end gap-1.5">

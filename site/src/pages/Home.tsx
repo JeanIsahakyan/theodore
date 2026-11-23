@@ -21,7 +21,7 @@ import {
   Section,
   TextLink,
 } from '../components/ui';
-import { DOC, GITHUB, LICENSE, WEB_APP } from '../content/links';
+import { CLOUD_LICENSE, DOC, GITHUB, LICENSE, WEB_APP } from '../content/links';
 import { HeroDemo } from '../demo/HeroDemo';
 import { PhoneMock } from '../mocks/PhoneMock';
 import { ReviewMock } from '../mocks/ReviewMock';
@@ -85,19 +85,37 @@ function TrustStrip() {
           <span className="font-medium text-paper/85">Gemini CLI</span>
         </span>
         <span>Uses the subscriptions you already have</span>
-        <Link
-          href={GITHUB}
-          className="press inline-flex items-center gap-1.5 rounded text-paper/85 hover:text-paper"
-        >
-          <LogoGithub className="size-3.5" aria-hidden />
-          Open source, MIT
-          {stars != null && (
-            <span className="ms-1 inline-flex items-center gap-1 tabular-nums">
-              <Star className="size-3" aria-hidden />
-              {stars.toLocaleString('en-US')}
-            </span>
-          )}
-        </Link>
+        <span className="inline-flex flex-wrap items-center gap-x-1.5 gap-y-1">
+          <Link
+            href={GITHUB}
+            className="press inline-flex items-center gap-1.5 rounded text-paper/85 hover:text-paper"
+          >
+            <LogoGithub className="size-3.5" aria-hidden />
+            Open source
+            {stars != null && (
+              <span className="inline-flex items-center gap-1 tabular-nums">
+                <Star className="size-3" aria-hidden />
+                {stars.toLocaleString('en-US')}
+              </span>
+            )}
+          </Link>
+          <span>
+            · apps{' '}
+            <Link
+              href={LICENSE}
+              className="press rounded underline decoration-paper/30 underline-offset-[3px] hover:text-paper"
+            >
+              MIT
+            </Link>
+            , cloud{' '}
+            <Link
+              href={CLOUD_LICENSE}
+              className="press rounded underline decoration-paper/30 underline-offset-[3px] hover:text-paper"
+            >
+              FSL
+            </Link>
+          </span>
+        </span>
       </Container>
     </div>
   );
