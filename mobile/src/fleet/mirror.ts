@@ -179,7 +179,9 @@ export function cleanMessage(v: unknown, space: string): ChatMessage | null {
     at: num(v.at),
     failed: optStr(v.failed, LINE_MAX),
     attachments: cleanAttachments(v.attachments),
-    queued: isObj(v.queued) ? { seq: num(v.queued.seq) } : null,
+    queued: isObj(v.queued)
+      ? { seq: num(v.queued.seq), held: v.queued.held === true }
+      : null,
     from_tasks: strings(v.from_tasks, 20, 500),
     activity,
     duration_ms: optNum(v.duration_ms),

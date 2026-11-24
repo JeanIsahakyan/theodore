@@ -946,7 +946,7 @@ remaining prompts and limits.
 - **Stop** cancels the run (SIGTERM → 5 s → SIGKILL, existing lifecycle), waits
   for the process to go, then checkpoints whatever was edited as "turn N
   (stopped)". Until then the space is still running: Undo and a new turn wait.
-  Nothing is lost; messages queued behind it are held, not sent (§8).
+  Nothing is lost; messages queued behind it run after it (§8).
 - **Resume** = send another message. The space keeps one agent session and
   each turn continues it (below), so the agent still has the files it read,
   the commands it ran and its todo list; a different agent picks up from the
@@ -1206,8 +1206,8 @@ task ends ─▶ FollowUp ─▶ space free?
 | --- | --- |
 | you send while the follow-up runs | queued, as for any running turn; runs on the same process when it ends |
 | Send now while it runs | steered into it |
-| Stop while it runs | see Stop below; the queue is held |
-| follow-up while the queue is held | it runs; held messages stay held (a follow-up never sends one) |
+| Stop while it runs | see Stop below; the queue goes on after it |
+| follow-up while messages are held | it runs; held messages stay held (a follow-up never sends one) |
 | the CLI starts one just as you send | whoever takes the queue lock first wins: yours goes on the same process (the CLI folds them or answers both) or queues behind it |
 | a task ends during your turn | no follow-up: the CLI tells the turn; the row updates |
 
@@ -1943,7 +1943,7 @@ tool payloads);
 | Found on start | Action |
 | --- | --- |
 | `status = running` | → `failed` "interrupted: Theodore was closed" |
-| queued messages | kept, held: each waits for its Send (§8) |
+| queued messages | kept; the turn they waited for is failed by then, so they run on start, in order (§8) |
 | dirty worktree | kept; the next turn (or archive) checkpoints it first |
 | worktree dir missing | recreated from `refs/theodore/spaces/<id>` |
 | dir there, but not the space's worktree (`.git` gone or foreign) | git refuses to run in it (§6 "Worktree guard"); on reopen or archive it is moved to `spaces/.moved-aside/`, never deleted, and recreated from the ref |
@@ -1963,36 +1963,48 @@ worktree as it is then.
 
 ```
 send ─▶ running? ── no ──▶ turn now
-           └─ yes ─▶ queued #n ──▶ turn ends ─┬─ on its own ─▶ #1 runs, then #2 …
-                                              └─ stopped · failed · restart
-                                                   └─▶ held: Send · Edit · Cancel
+           └─ yes ─▶ queued #n ──▶ turn ends (on its own · stopped · failed · restart)
+                                     └─▶ #1 runs, then #2 …
+                                           ├─ #k can't start ─▶ its failed turn; #k+1 runs
+                                           └─ usage limit, left to you ─▶ held: Send · Edit · Cancel
 ```
 
 | Turn ended | The queue |
 | --- | --- |
 | on its own (a failing `check` included: the next turn hears it) | the first waiting message runs as the next turn, then the next |
-| stopped (also during its checkpoint or `check`) | held: nothing is sent, nothing dropped. The agent had already finished there, so its reply stays a whole one, not "stopped"; the note over the queue says you pressed Stop, not that the turn stopped |
-| stopped just as it ended on its own | the first waiting message, if it had already started, is stopped instead; the rest held |
-| failed, its checkpoint skipped, conflicts left, or a queued one couldn't start | held |
-| Theodore restarted | held (§7 Crash recovery) |
+| stopped (also during its checkpoint or `check`) | the same: Stop ends the running turn, not what you queued behind it (Cancel does that). A Stop that lands as the agent finished leaves its reply whole, not "stopped" |
+| stopped just as it ended on its own | the first waiting message, if it had already started, is what Stop stops; the rest run after it |
+| failed, its checkpoint skipped, conflicts left | the same: the next message runs, and its turn clears the space's error |
+| a queued one couldn't start (no worktree, the project's cache gone) | its own failed turn, a reply saying why ("The turn couldn't start: …"); the next message runs |
+| Theodore restarted | the running turn is failed on start (§7 Crash recovery); the messages behind it run then, in order |
+| cut off by a usage limit | waits for what "Usage limits" decides: a continue on another account (then the queue), a pause (then the queue, after the continue), or, with nothing to continue on and `auto_continue` off or Cancel pressed, **held** |
 
 - **Edit** changes a queued message's text, **Cancel** deletes it; both
   only while it is queued.
-- **Send** on a held message runs it now when the space is free; while a
-  turn runs it goes back in line. Held ones never send on their own, and a
-  new message while some are held runs at once.
+- **Held** means waiting for your Send: a message a usage limit left to
+  you (above), or, from another device, one that was held there. **Send**
+  on a held message runs it now when the space is free; while a turn runs
+  it goes back in line. Held ones never send on their own, and a new
+  message while some are held runs at once; the rest of the queue goes on
+  past them.
 - A queued message's picks win over the space's when it runs; `None` means
   whatever the space has then. Its turn is a normal one: undo, session
   resume and the replayed transcript treat it like any other.
 - **Undo** and **Archive** leave the queue as it is. An archived space sends
-  nothing (Send is refused); after Unarchive the held messages can be sent.
+  nothing (Send is refused); after Unarchive the queued messages wait for
+  the next turn's end, or your Send.
 - A per-space lock covers "send now or queue" and "turn ends → next queued
-  starts", so a send never slips in between and the order holds.
+  starts", so a send never slips in between and the order holds; one drain
+  at a time per space. The lock is held for the claim only — the message
+  stored and the space marked `running` — never while the turn's worktree,
+  prompt or agent are prepared (that happens in the turn's own task), so a
+  send from a phone is answered at once even while a turn starts behind a
+  slow git operation (`start_turn` / `prepare_turn`).
 - A send from another of your devices queues here too, up to 5 at once,
   and is checked against that device's trust again when its turn comes:
   no longer allowed, it's dropped with a notice row (docs/fleet.md "Sends
   queue"). A mirrored space's queue is its host's: shown here, changed
-  there.
+  there; a phone changes it through `queued_message` (Send now / Remove).
 
 **Send now (steer).** For a Claude Code turn the composer also offers
 *Send now* (⌘⏎; ⏎ still queues): the message goes into the running turn and
@@ -2045,7 +2057,7 @@ downloaded to this Mac yet".
 | `space_send` | chat row, then a turn in the worktree; checkpoint; refresh the diff. While a turn runs: a queued chat row (§8) |
 | `space_send_now` | into the running Claude turn when it can take it (§8 "Send now"), else as `space_send` |
 | `space_queued` | `send` · `cancel` · `edit` one queued message |
-| `space_stop` | cancels the running turn; the queue is held |
+| `space_stop` | cancels the running turn; the queue goes on after it |
 | `space_pause_continue` | "Continue now" on a space paused for usage limits: the pause ends, the continue message goes out ("Usage limits") |
 | `space_pause_cancel` | "Cancel" on that pause: nothing continues by itself; the queue is held |
 | `save_attachment` | stores a file (≤ 25 MB) for a message; `attachment_data` reads it back as a `data:` URL |

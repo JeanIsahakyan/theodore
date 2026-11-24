@@ -673,6 +673,7 @@ send ─▶ your bubble at once ("Sending…"), sendTo: "Queued" while it runs; 
 | --- | --- | --- | --- |
 | `readSpace(host, space, messages ≤ 50)` | `read_space` | the host's pin | `SubSpaceRead`: title, status, mode, goal, progress, messages `{from, at, text, truncated}`, live, question `{ask, questions}`, error; refused unless it names that space |
 | `sendTo(host, space, text)` | `send_to` | same | `{message, queued, position}` as a send's |
+| `queuedMessage(host, space, message, send \| cancel)` | `queued_message` (protocol 10) | same | — ; `fleet.unknown_space` once it isn't queued, `fleet.upgrade_required` from an older computer |
 | `answerSpace(host, space, ask, answers)` | `answer_space` | same | — |
 
 - `from` is `user`, `space:<id>` (its parent's agent: "From its parent
@@ -702,12 +703,20 @@ send ─▶ the field cleared, your bubble at once        Sending…  ╭ and th
   │                                    text, close in time (read_space has no ids)
   ├─ host: ok {queued, position}   ─▶ "Queued" ("Queued · 3 in line"), counted
   │                                    on the strip; the mirrored queued row
-  │                                    replaces it
-  └─ refused / no answer in 15 s   ─▶ Not sent · <why>  ╭ and the tests ╮
-                                                            (Retry) (Edit)
-                                       Retry sends it again as new (same mode
-                                       and picks); Edit puts the text back in
-                                       the field; nothing is lost silently
+  │                                    replaces it ("Queued", or "Held · hold to
+  │                                    send or remove" when the host holds it);
+  │                                    a long press on it: Send now · Remove
+  │                                    (queued_message; a refusal shows over
+  │                                    the composer)
+  ├─ refused (fleet.busy: the queue holds 5 from other devices, …)
+  │                                 ─▶ Not sent · <why>  ╭ and the tests ╮
+  │                                                          (Retry) (Edit)
+  │                                    Retry sends it again as new (same mode
+  │                                    and picks); Edit puts the text back in
+  │                                    the field; nothing is lost silently
+  └─ no answer in 15 s             ─▶ the same, but the host may have taken it:
+                                       its row, if it shows up, drops the bubble
+                                       (so Retry never makes a second copy)
 Approve ─▶ "Plan approved, implement it." as your bubble at once, in the
            build mode: the same rules; Approve is busy meanwhile
 answer  ─▶ the card collapses to "◌ Answered: SQLite" at once; the host's row
@@ -721,7 +730,7 @@ start   ─▶ /space/pending_<n> at once: the goal as your bubble, "Starting on
 - The send's reply carries the row's id (`{message, queued?, position?}`,
   `fleet_queue.rs`); `sendResult` keeps it (`SendResult.message`).
 - A row takes at most one bubble (the oldest with its text); an agent's row
-  or a failed bubble never match.
+  never matches, nor a refused bubble; one that timed out still does.
 - Push notification actions answer without a card: nothing optimistic there.
 - Sign-out, an org switch or an account switch clears the store.
 

@@ -260,7 +260,7 @@ const FLEET_HINTS: Record<string, string> = {
   'fleet.offline':
     'That computer is offline. Open Theodore on it and try again.',
   'fleet.busy':
-    "The space's queue is full, or its computer can't queue messages yet. Wait until it settles, then send.",
+    "The space's queue already holds 5 messages from other devices (or its computer can't queue messages yet). Wait until it settles, or remove one, then send.",
   'fleet.unknown_project': 'That project isn’t on that computer anymore.',
   'fleet.unknown_space': 'That space isn’t on that computer anymore.',
   'fleet.agent_unavailable':

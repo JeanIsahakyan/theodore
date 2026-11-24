@@ -130,6 +130,8 @@ function oneOf<T extends string>(o: Obj, k: string, allowed: readonly T[]): T {
 }
 
 const MODES = ['ask', 'plan', 'edit', 'run'] as const;
+/** `QueuedMessageAction`. */
+const QUEUED_ACTIONS = ['send', 'cancel'] as const;
 const MCP_AUTOS = ['off', 'edit', 'full'] as const;
 
 /** Protocol 6: confirms and auto mode (frames, ops, `mcp_auto`). */
@@ -138,6 +140,8 @@ export const V6 = 6;
 export const V7 = 7;
 /** Protocol 9: `archive_space` / `unarchive_space` on a hosted space. */
 export const V9 = 9;
+/** Protocol 10: `queued_message` (Send now / Remove on a queued message). */
+export const V10 = 10;
 
 /** Ops on a space the target hosts for the origin that archive it (protocol 9). */
 export const ARCHIVE_OPS = ['archive_space', 'unarchive_space'] as const;
@@ -157,6 +161,7 @@ export const ANY_SPACE_OPS = [
   'send_to',
   'answer_space',
   'merge_child',
+  'queued_message',
 ] as const;
 export type AnySpaceOp = (typeof ANY_SPACE_OPS)[number];
 
@@ -167,6 +172,7 @@ export const onAnySpace = (op: string): op is AnySpaceOp =>
 export function protocolFor(op: string): number {
   if (op === 'confirm' || op === 'set_mcp_auto') return V6;
   if (archives(op)) return V9;
+  if (op === 'queued_message') return V10;
   return onAnySpace(op) ? V7 : MIN_PROTOCOL_VERSION;
 }
 
@@ -628,6 +634,11 @@ function anySpaceFields(op: Obj, kind: AnySpaceOp) {
     case 'merge_child':
       id('parent');
       id('child');
+      return;
+    case 'queued_message':
+      id('space');
+      str(op, 'message', MAX_ANY_SPACE_ID_CHARS);
+      oneOf(op, 'action', QUEUED_ACTIONS);
       return;
   }
 }

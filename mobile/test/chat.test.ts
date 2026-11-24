@@ -16,6 +16,8 @@ import {
 } from '../src/ui/chat';
 import { mockMirrors } from '../src/dev/mock';
 import { foldLine, toolView, turnItems } from '../src/ui/turnRows';
+import { messageMenuItems } from '../src/ui/messageMenu';
+import { QUEUED_ACTIONS, queuedLabel } from '../src/ui/queued';
 import type { ChatMessage, TurnStep } from '../src/fleet/contract';
 
 const SP = 'rs_abc';
@@ -267,5 +269,32 @@ describe('turn rows (the desktop rules)', () => {
     expect(toolView(tool('ask you', { ok: null }) as never, true).label).toBe(
       'Waiting for your answer',
     );
+  });
+});
+
+describe('a queued bubble', () => {
+  it('reads Queued, or Held with how to act on it', () => {
+    expect(queuedLabel({ queued: { seq: 1 } })).toBe('Queued');
+    expect(queuedLabel({ queued: { seq: 1, held: false } })).toBe('Queued');
+    expect(queuedLabel({ queued: { seq: 1, held: true } })).toBe(
+      'Held · hold to send or remove',
+    );
+  });
+
+  it('offers Send now and Remove on a long press, Remove destructive', () => {
+    const items = messageMenuItems('mine', 'later', QUEUED_ACTIONS);
+    expect(items.map((a) => a.id)).toEqual([
+      'copy',
+      'select',
+      'send_now',
+      'remove',
+    ]);
+    expect(items.map((a) => a.label)).toEqual([
+      'Copy',
+      'Select text',
+      'Send now',
+      'Remove',
+    ]);
+    expect(items[3]!.destructive).toBe(true);
   });
 });

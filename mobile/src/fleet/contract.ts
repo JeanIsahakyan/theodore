@@ -52,8 +52,9 @@ export interface ChatMessage {
   at: number;
   failed?: string | null;
   attachments?: Attachment[];
-  /** A space message waiting for its turn. */
-  queued?: { seq: number } | null;
+  /** A space message waiting for its turn; `held`: it waits for a Send
+   *  instead of running when its turn comes (docs/spaces.md §8). */
+  queued?: { seq: number; held?: boolean } | null;
   from_tasks?: string[];
   activity?: TurnStep[];
   duration_ms?: number | null;

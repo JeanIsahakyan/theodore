@@ -570,23 +570,36 @@ async fn a_running_space_queues_a_second_message_and_stops_cleanly() {
     // Its turn reaches the agent on its own task; the queue is checked below.
     wait_until(|| f.agents.requests().len() == 1).await;
 
+    f.agents.push_script(done("another done", 0.0));
     core.space_stop(&s.id).await.unwrap();
+    // Stop ends the running turn; the queued message runs after it
+    // (docs/spaces.md §8).
+    wait_until(|| f.agents.requests().len() == 2).await;
     let s = idle(&f, &s.id).await;
     assert_eq!(s.status, SpaceStatus::Idle);
     assert_eq!(s.error, None);
     let chat = transcript(&f, &s.id);
-    let reply = chat.iter().find(|m| m.author != Author::Me).unwrap();
-    assert_eq!(reply.failed.as_deref(), Some("stopped"));
-    // Stop holds the queue: it waits for you, nothing runs on its own.
-    // Written right after the space goes idle.
-    wait_until(|| {
-        transcript(&f, &s.id)
+    let replies: Vec<&ChatMessage> = chat.iter().filter(|m| m.author != Author::Me).collect();
+    assert_eq!(replies.len(), 2);
+    assert!(
+        replies
             .iter()
+            .any(|m| m.failed.as_deref() == Some("stopped")),
+        "the first turn's reply is the stopped one"
+    );
+    assert!(
+        chat.iter()
             .find(|m| m.id == queued_id)
-            .is_some_and(|m| m.queued.as_ref().is_some_and(|q| q.held))
-    })
-    .await;
-    assert_eq!(f.agents.requests().len(), 1);
+            .is_some_and(|m| m.queued.is_none()),
+        "the queued message ran"
+    );
+    assert!(
+        f.agents
+            .last_request()
+            .unwrap()
+            .prompt
+            .ends_with("and another")
+    );
     // Edits made before the stop are still checkpointed.
     assert!(
         f.git.checkpoints.lock().unwrap()[0]

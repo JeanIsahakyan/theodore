@@ -571,6 +571,10 @@ pub struct FakeGit {
     pub checkpoints: Mutex<Vec<(String, String)>>,
     /// The next `space_checkpoint` waits for this once it is recorded.
     checkpoint_gate: Mutex<Option<tokio::sync::oneshot::Receiver<()>>>,
+    /// The next `space_worktree` waits for this (a turn preparing).
+    worktree_gate: Mutex<Option<tokio::sync::oneshot::Receiver<()>>>,
+    /// Errors the next `space_worktree` calls fail with.
+    worktree_errors: Mutex<VecDeque<GitError>>,
     /// What `numstat` answers; none: it fails.
     numstats: Mutex<Option<Vec<theodore_ports::FileStat>>>,
     /// `(from, to)` of every `numstat`.
@@ -726,6 +730,8 @@ impl FakeGit {
             checkpoint_heads: Mutex::new(VecDeque::new()),
             checkpoint_errors: Mutex::new(VecDeque::new()),
             checkpoint_gate: Mutex::new(None),
+            worktree_gate: Mutex::new(None),
+            worktree_errors: Mutex::new(VecDeque::new()),
             checkpoints: Mutex::new(Vec::new()),
             numstats: Mutex::new(None),
             numstat_calls: Mutex::new(Vec::new()),
@@ -946,6 +952,19 @@ impl FakeGit {
     /// The next `space_checkpoint` fails with `e`.
     pub fn push_checkpoint_error(&self, e: GitError) {
         self.checkpoint_errors.lock().unwrap().push_back(e);
+    }
+
+    /// The next `space_worktree` (a turn preparing) waits until the
+    /// returned sender fires.
+    pub fn pause_next_worktree(&self) -> tokio::sync::oneshot::Sender<()> {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        *self.worktree_gate.lock().unwrap() = Some(rx);
+        tx
+    }
+
+    /// The next `space_worktree` fails with `e`.
+    pub fn push_worktree_error(&self, e: GitError) {
+        self.worktree_errors.lock().unwrap().push_back(e);
     }
 
     /// The next `space_merge` / `space_merge_finish` returns `r`.
@@ -1272,6 +1291,13 @@ impl GitPort for FakeGit {
     }
 
     async fn space_worktree(&self, _repo: &Path, space: &str, base: &Sha) -> GitResult<Worktree> {
+        let gate = self.worktree_gate.lock().unwrap().take();
+        if let Some(gate) = gate {
+            let _ = gate.await;
+        }
+        if let Some(e) = self.worktree_errors.lock().unwrap().pop_front() {
+            return Err(e);
+        }
         let refname = theodore_ports::space_ref(space);
         let head = {
             let mut refs = self.resolve_refs.lock().unwrap();

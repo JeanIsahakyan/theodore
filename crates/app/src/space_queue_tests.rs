@@ -1,6 +1,8 @@
 //! Sending while a space's agent works (docs/spaces.md §8): the queue,
-//! its drain, held queues after Stop / a failure / a restart, and "Send
-//! now" steering — against `Core` + `testkit` fakes.
+//! its drain after every kind of turn end (done, Stop, a failure, a
+//! restart), held messages (one that couldn't start, a usage limit left to
+//! you), the queue lock staying free while a turn prepares, and "Send now"
+//! steering — against `Core` + `testkit` fakes.
 
 use std::time::Duration;
 
@@ -257,52 +259,61 @@ async fn a_queued_message_can_be_edited_or_cancelled_before_it_runs() {
     assert!(matches!(err, AppError::NotFound(_)), "{err:?}");
 }
 
+/// The queued messages ran, in order, each as its own turn.
+async fn ran_in_order(f: &Fixtures, id: &str, ids: &[&str], turns: usize) {
+    wait_until(|| {
+        f.agents.requests().len() == turns && space(f, id).status != SpaceStatus::Running
+    })
+    .await;
+    let s = space(f, id);
+    let order: Vec<&str> = s.turn_log.iter().map(|t| t.message.as_str()).collect();
+    assert!(order.ends_with(ids), "{order:?} should end with {ids:?}");
+    for m in ids {
+        assert!(message(f, m).unwrap().queued.is_none(), "{m} ran");
+    }
+}
+
+/// Stop ends the running turn only: what you queued behind it still runs.
 #[tokio::test]
-async fn stop_holds_the_queue_until_you_send_it() {
+async fn stop_lets_the_queue_go_on() {
     let f = fixtures();
     let (core, _recv, project) = started(&f).await;
     f.agents.hang_next_run();
     let s = core.create_space(request(&project, "Long")).await.unwrap();
     let a = core.space_send(send(&s.id, "next")).await.unwrap();
     let b = core.space_send(send(&s.id, "after that")).await.unwrap();
+    f.agents.push_script(done("did next"));
+    f.agents.push_script(done("did after that"));
 
     core.space_stop(&s.id).await.unwrap();
-    idle(&f, &s.id).await;
-    tokio::time::sleep(Duration::from_millis(30)).await;
-    assert_eq!(f.agents.requests().len(), 1, "nothing ran on its own");
-    assert!(held(&f, &a) && held(&f, &b));
-
-    // "Send" on a held one runs it now; the other one stays held.
-    f.agents.push_script(done("did next"));
-    core.space_queued(queued(&s.id, &a, QueuedAction::Send))
-        .await
-        .unwrap();
-    assert!(message(&f, &a).unwrap().queued.is_none());
-    idle(&f, &s.id).await;
-    tokio::time::sleep(Duration::from_millis(30)).await;
-    assert_eq!(f.agents.requests().len(), 2);
-    assert!(held(&f, &b), "held ones wait even after a good turn");
-
-    // A new message while one is held runs at once.
-    core.space_send(send(&s.id, "fresh")).await.unwrap();
-    wait_until(|| f.agents.requests().len() == 3).await;
-    idle(&f, &s.id).await;
-    assert!(held(&f, &b));
+    ran_in_order(&f, &s.id, &[&a, &b], 3).await;
+    let s = space(&f, &s.id);
+    assert_eq!(s.status, SpaceStatus::Idle);
+    assert!(s.turn_log[0].stopped, "the first turn was the stopped one");
+    assert!(f.agents.requests()[1].prompt.ends_with("next"));
+    assert!(f.agents.requests()[2].prompt.ends_with("after that"));
 }
 
+/// A held message (its own turn couldn't start, a usage limit left to
+/// you) waits for your Send; while a turn runs, Send puts it back in line.
 #[tokio::test]
 async fn send_on_a_held_message_while_running_puts_it_back_in_line() {
     let f = fixtures();
     let (core, _recv, project) = started(&f).await;
-    f.agents.hang_next_run();
-    let s = core.create_space(request(&project, "Long")).await.unwrap();
+    let (s, release) = running(&f, &core, &project).await;
     let a = core.space_send(send(&s.id, "next")).await.unwrap();
-    core.space_stop(&s.id).await.unwrap();
-    idle(&f, &s.id).await;
+    core.hold_queue(&s.id, "test").await;
     assert!(held(&f, &a));
+    release();
+    idle(&f, &s.id).await;
+    tokio::time::sleep(Duration::from_millis(30)).await;
+    assert_eq!(f.agents.requests().len(), 1, "held: nothing ran on its own");
 
+    // A new message while one is held runs at once…
     let go = f.agents.pause_next_run();
     core.space_send(send(&s.id, "first")).await.unwrap();
+    wait_until(|| f.agents.requests().len() == 2).await;
+    // …and Send on the held one, while that runs, releases it to the queue.
     core.space_queued(queued(&s.id, &a, QueuedAction::Send))
         .await
         .unwrap();
@@ -312,8 +323,29 @@ async fn send_on_a_held_message_while_running_puts_it_back_in_line() {
     assert!(f.agents.last_request().unwrap().prompt.ends_with("next"));
 }
 
+/// Send on a held message while the space is idle runs it now.
 #[tokio::test]
-async fn a_failed_turn_holds_the_queue() {
+async fn send_on_a_held_message_runs_it_now() {
+    let f = fixtures();
+    let (core, _recv, project) = started(&f).await;
+    let (s, release) = running(&f, &core, &project).await;
+    let a = core.space_send(send(&s.id, "next")).await.unwrap();
+    core.hold_queue(&s.id, "test").await;
+    release();
+    idle(&f, &s.id).await;
+    f.agents.push_script(done("did next"));
+    core.space_queued(queued(&s.id, &a, QueuedAction::Send))
+        .await
+        .unwrap();
+    assert!(message(&f, &a).unwrap().queued.is_none());
+    wait_until(|| f.agents.requests().len() == 2).await;
+    assert!(f.agents.last_request().unwrap().prompt.ends_with("next"));
+}
+
+/// A failed turn doesn't hold what you queued: the next message runs, and
+/// its turn clears the failure.
+#[tokio::test]
+async fn a_failed_turn_lets_the_queue_go_on() {
     let f = fixtures();
     let (core, _recv, project) = started(&f).await;
     f.agents.push_script(vec![AgentEvent::Error {
@@ -322,18 +354,27 @@ async fn a_failed_turn_holds_the_queue() {
     }]);
     let (s, release) = running(&f, &core, &project).await;
     let a = core.space_send(send(&s.id, "next")).await.unwrap();
+    f.agents.push_script(done("recovered"));
     release();
-    let s = idle(&f, &s.id).await;
-    assert_eq!(s.status, SpaceStatus::Failed);
-    tokio::time::sleep(Duration::from_millis(30)).await;
-    assert_eq!(f.agents.requests().len(), 1);
-    assert!(held(&f, &a));
+    ran_in_order(&f, &s.id, &[&a], 2).await;
+    let s = space(&f, &s.id);
+    assert_eq!(s.status, SpaceStatus::Idle);
+    assert_eq!(s.error, None);
+    let first = replies(&f, &s.id)
+        .into_iter()
+        .find(|m| m.failed.is_some())
+        .expect("the failed reply");
+    assert_eq!(
+        first.failed.as_deref(),
+        Some("boom"),
+        "the failure stays in the chat"
+    );
 }
 
-/// `failed` with no agent error: the reason lives in `skipped`, and the
-/// next queued message would clear it.
+/// `failed` with no agent error: the reason lives in `skipped`; the queue
+/// still goes on, and the next turn's start clears it.
 #[tokio::test]
-async fn a_skipped_checkpoint_holds_the_queue_and_keeps_its_error() {
+async fn a_skipped_checkpoint_lets_the_queue_go_on() {
     let f = fixtures();
     let (core, _recv, project) = started(&f).await;
     f.agents.push_script(done("ok"));
@@ -341,20 +382,90 @@ async fn a_skipped_checkpoint_holds_the_queue_and_keeps_its_error() {
         .push_checkpoint_error(GitError::Busy(WorktreeBusy::Rebase));
     let (s, release) = running(&f, &core, &project).await;
     let a = core.space_send(send(&s.id, "next")).await.unwrap();
+    f.agents.push_script(done("next done"));
     release();
-    let s = idle(&f, &s.id).await;
-    tokio::time::sleep(Duration::from_millis(30)).await;
-    assert_eq!(f.agents.requests().len(), 1, "the queue waits for you");
-    assert!(held(&f, &a));
-    assert_eq!(s.status, SpaceStatus::Failed);
-    let s = space(&f, &s.id);
+    ran_in_order(&f, &s.id, &[&a], 2).await;
+    assert_eq!(space(&f, &s.id).status, SpaceStatus::Idle);
+}
+
+/// A queued message whose turn can't start (its worktree can't be made)
+/// is a failed turn of its own, and the one behind it runs.
+#[tokio::test]
+async fn a_queued_message_whose_turn_cant_start_fails_and_the_next_one_runs() {
+    let f = fixtures();
+    let (core, _recv, project) = started(&f).await;
+    let (s, release) = running(&f, &core, &project).await;
+    let a = core.space_send(send(&s.id, "doomed")).await.unwrap();
+    let b = core.space_send(send(&s.id, "fine")).await.unwrap();
+    f.git.push_worktree_error(GitError::Command {
+        args: "worktree add".into(),
+        code: 128,
+        stderr: "disk full".into(),
+    });
+    f.agents.push_script(done("fine done"));
+    release();
+    // "doomed" never reached the agent; "fine" did.
+    wait_until(|| {
+        f.agents.requests().len() == 2 && space(&f, &s.id).status != SpaceStatus::Running
+    })
+    .await;
+    assert!(f.agents.last_request().unwrap().prompt.ends_with("fine"));
+    assert!(message(&f, &a).unwrap().queued.is_none(), "it was sent");
+    assert!(message(&f, &b).unwrap().queued.is_none());
+    let failed: Vec<ChatMessage> = replies(&f, &s.id)
+        .into_iter()
+        .filter(|m| m.failed.is_some())
+        .collect();
+    assert_eq!(failed.len(), 1);
     assert!(
-        s.error
+        failed[0]
+            .failed
             .as_deref()
-            .is_some_and(|e| e.contains("checkpoint skipped")),
+            .unwrap()
+            .contains("couldn't start"),
         "{:?}",
-        s.error
+        failed[0].failed
     );
+    assert!(failed[0].failed.as_deref().unwrap().contains("disk full"));
+    assert_eq!(space(&f, &s.id).status, SpaceStatus::Idle);
+}
+
+/// The queue lock covers the claim of a turn, not its preparation: a send
+/// to the space (another device's, say) is answered while the worktree is
+/// still being made.
+#[tokio::test]
+async fn the_queue_lock_is_free_while_a_turn_prepares() {
+    let f = fixtures();
+    let (core, _recv, project) = started(&f).await;
+    f.agents.push_script(done("one"));
+    let s = core.create_space(request(&project, "First")).await.unwrap();
+    idle(&f, &s.id).await;
+
+    let go = f.git.pause_next_worktree();
+    let a = core.space_send(send(&s.id, "slow start")).await.unwrap();
+    assert_eq!(
+        space(&f, &s.id).status,
+        SpaceStatus::Running,
+        "claimed at once"
+    );
+    assert_eq!(
+        f.agents.requests().len(),
+        1,
+        "the agent waits for the worktree"
+    );
+    // Another send doesn't wait for the worktree: queued behind the turn.
+    let queued = tokio::time::timeout(
+        Duration::from_secs(5),
+        core.space_send(send(&s.id, "meanwhile")),
+    )
+    .await
+    .expect("the send answers while the turn prepares")
+    .unwrap();
+    assert!(message(&f, &queued).unwrap().queued.is_some());
+    f.agents.push_script(done("two"));
+    f.agents.push_script(done("three"));
+    go.send(()).unwrap();
+    ran_in_order(&f, &s.id, &[&a, &queued], 3).await;
 }
 
 /// The agent's replies in the space, oldest first.
@@ -368,19 +479,21 @@ fn replies(f: &Fixtures, id: &str) -> Vec<ChatMessage> {
 }
 
 /// A Stop that lands once the agent is done (its checkpoint being written,
-/// or the run just about let go) holds the queue, but doesn't make the
-/// reply a stopped one: it's whole, and says so. The note over the queue
-/// says you pressed Stop, not that the turn stopped (`ui/.../queue.ts`).
-fn assert_reply_whole(f: &Fixtures, id: &str) {
-    let reply = replies(f, id).pop().expect("the turn's reply");
-    assert_eq!(reply.text, "ok", "everything the agent wrote");
+/// or the run just about let go) doesn't make the reply a stopped one:
+/// it's whole, and says so.
+fn assert_first_reply_whole(f: &Fixtures, id: &str) {
+    // Replies may share a clock tick in the fakes: by text, not by time.
+    let reply = replies(f, id)
+        .into_iter()
+        .find(|m| m.text == "ok")
+        .expect("everything the agent wrote");
     assert_eq!(reply.failed, None, "the agent had finished: not stopped");
-    assert_eq!(space(f, id).error, None);
 }
 
-/// Stop lands after the agent finished, while its checkpoint is written.
+/// Stop lands after the agent finished, while its checkpoint is written:
+/// the reply is whole, and the queue goes on.
 #[tokio::test]
-async fn stop_during_the_checkpoint_holds_the_queue() {
+async fn stop_during_the_checkpoint_lets_the_queue_go_on() {
     let f = fixtures();
     let (core, _recv, project) = started(&f).await;
     f.agents.push_script(done("ok"));
@@ -390,18 +503,17 @@ async fn stop_during_the_checkpoint_holds_the_queue() {
     release();
     wait_until(|| !f.git.checkpoints.lock().unwrap().is_empty()).await;
     core.space_stop(&s.id).await.unwrap();
+    f.agents.push_script(done("next done"));
     go.send(()).unwrap();
-    idle(&f, &s.id).await;
-    tokio::time::sleep(Duration::from_millis(30)).await;
-    assert_eq!(f.agents.requests().len(), 1, "nothing ran on its own");
-    assert!(held(&f, &a));
-    assert_reply_whole(&f, &s.id);
+    ran_in_order(&f, &s.id, &[&a], 2).await;
+    assert_first_reply_whole(&f, &s.id);
+    assert_eq!(space(&f, &s.id).error, None);
 }
 
 /// Stop takes the run after the turn last looked for a stop, just before
-/// the turn lets go of it: a stop all the same.
+/// the turn lets go of it: a stop all the same, and the queue goes on.
 #[tokio::test]
-async fn stop_as_the_turn_ends_on_its_own_holds_the_queue() {
+async fn stop_as_the_turn_ends_on_its_own_lets_the_queue_go_on() {
     let f = fixtures();
     let (core, _recv, project) = started(&f).await;
     f.agents.push_script(done("ok"));
@@ -413,16 +525,16 @@ async fn stop_as_the_turn_ends_on_its_own_holds_the_queue() {
     // Stop's first step, its cancel not landed yet.
     let run = space(&f, &s.id).run.unwrap();
     assert!(core.0.runs.write().await.remove(&run).is_some());
+    f.agents.push_script(done("next done"));
     go.send(()).unwrap();
-    idle(&f, &s.id).await;
-    tokio::time::sleep(Duration::from_millis(30)).await;
-    assert_eq!(f.agents.requests().len(), 1, "nothing ran on its own");
-    assert!(held(&f, &a));
-    assert_reply_whole(&f, &s.id);
+    ran_in_order(&f, &s.id, &[&a], 2).await;
+    assert_first_reply_whole(&f, &s.id);
+    assert_eq!(space(&f, &s.id).error, None);
 }
 
 /// Stop lands once the turn let go of its run, before the next queued
-/// message starts: that next one is what it stops.
+/// message starts: that next one is what it stops, and the one behind it
+/// runs.
 #[tokio::test]
 async fn stop_while_the_turn_hands_over_stops_the_next_one() {
     let f = fixtures();
@@ -443,42 +555,75 @@ async fn stop_while_the_turn_hands_over_stops_the_next_one() {
     tokio::time::sleep(Duration::from_millis(30)).await;
     assert!(!stop.is_finished(), "Stop waits for the handover");
     f.agents.hang_next_run();
+    f.agents.push_script(done("after that done"));
     drop(queue);
     stop.await.unwrap().unwrap();
-    let s = idle(&f, &s.id).await;
-    assert_eq!(f.agents.requests().len(), 2, "the next one started");
-    assert!(f.agents.last_request().unwrap().prompt.ends_with("next"));
-    assert!(message(&f, &a).unwrap().queued.is_none());
+    ran_in_order(&f, &s.id, &[&a, &b], 3).await;
+    assert!(f.agents.requests()[1].prompt.ends_with("next"));
+    assert!(f.agents.requests()[2].prompt.ends_with("after that"));
+    let s = space(&f, &s.id);
     assert_eq!(s.error, None, "stopped, not failed");
-    assert!(held(&f, &b));
+    assert!(s.turn_log[1].stopped, "the next one was what Stop stopped");
+    assert!(!s.turn_log[2].stopped);
 }
 
+/// A restart fails the turn that was running (docs/spaces.md §7); what
+/// waited behind it runs on start, as after any turn.
 #[tokio::test]
-async fn queued_messages_survive_a_restart_held_with_send() {
+async fn queued_messages_run_after_a_restart() {
     let f = fixtures();
     let (core, _recv, project) = started(&f).await;
     let (s, _release) = running(&f, &core, &project).await;
     let a = core.space_send(send(&s.id, "after restart")).await.unwrap();
+    let b = core.space_send(send(&s.id, "and then")).await.unwrap();
     core.shutdown();
+    let runs = f.agents.requests().len();
+
+    f.agents.push_script(done("done"));
+    f.agents.push_script(done("done too"));
+    let (_core, _recv) = Core::start(f.deps());
+    wait_until(|| f.agents.requests().len() == runs + 2).await;
+    let prompts: Vec<String> = f.agents.requests().into_iter().map(|r| r.prompt).collect();
+    assert!(
+        prompts[runs].ends_with("after restart"),
+        "{}",
+        prompts[runs]
+    );
+    assert!(prompts[runs + 1].ends_with("and then"));
+    idle(&f, &s.id).await;
+    assert!(message(&f, &a).unwrap().queued.is_none());
+    assert!(message(&f, &b).unwrap().queued.is_none());
+    let s = space(&f, &s.id);
+    assert_eq!(s.status, SpaceStatus::Idle);
+    assert!(
+        s.turn_log.len() >= 2,
+        "both ran as turns: {:?}",
+        s.turn_log.len()
+    );
+}
+
+/// A held message stays held across a restart: it waits for your Send.
+#[tokio::test]
+async fn a_held_message_stays_held_across_a_restart() {
+    let f = fixtures();
+    let (core, _recv, project) = started(&f).await;
+    let (s, _release) = running(&f, &core, &project).await;
+    let a = core.space_send(send(&s.id, "later")).await.unwrap();
+    core.hold_queue(&s.id, "test").await;
+    core.shutdown();
+    let runs = f.agents.requests().len();
 
     let (core, _recv) = Core::start(f.deps());
     wait_until(|| space(&f, &s.id).status == SpaceStatus::Failed).await;
-    wait_until(|| held(&f, &a)).await;
-    let runs = f.agents.requests().len();
-    assert_eq!(message(&f, &a).unwrap().text, "after restart");
-
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert_eq!(f.agents.requests().len(), runs, "held: nothing ran");
+    assert!(held(&f, &a));
     f.agents.push_script(done("done"));
     core.space_queued(queued(&s.id, &a, QueuedAction::Send))
         .await
         .unwrap();
     wait_until(|| f.agents.requests().len() == runs + 1).await;
-    assert!(
-        f.agents
-            .last_request()
-            .unwrap()
-            .prompt
-            .contains("after restart")
-    );
+    assert!(f.agents.last_request().unwrap().prompt.ends_with("later"));
 }
 
 #[tokio::test]
@@ -492,6 +637,7 @@ async fn undo_and_archive_keep_a_held_queue() {
     f.agents.hang_next_run();
     core.space_send(send(&s.id, "long")).await.unwrap();
     let a = core.space_send(send(&s.id, "queued")).await.unwrap();
+    core.hold_queue(&s.id, "test").await;
     core.space_stop(&s.id).await.unwrap();
     idle(&f, &s.id).await;
     assert!(held(&f, &a));

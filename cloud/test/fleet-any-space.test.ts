@@ -60,6 +60,12 @@ const OPS: RemoteRequest['op'][] = [
   { op: 'merge_child', parent: SPACE, child: CHILD },
 ];
 
+/** Protocol 10: Send now / Remove on a queued message. */
+const QUEUED: RemoteRequest['op'][] = [
+  { op: 'queued_message', space: SPACE, message: 'm1', action: 'send' },
+  { op: 'queued_message', space: `rs_1`, message: 'm1', action: 'cancel' },
+];
+
 /** The cloud's own MCP device, in process: hello as kind `mcp`. */
 async function mcpDevice(h: Harness): Promise<Device> {
   const d = await h.device('user_1', 'Claude');
@@ -113,6 +119,23 @@ describe('wire', () => {
     }
     expect(protocolFor('confirm')).toBe(6);
     expect(protocolFor('send')).toBe(3);
+  });
+
+  it('reads queued_message on no cloud space, needing protocol 10', () => {
+    for (const op of QUEUED) {
+      const r = peekRequest(requestBody(op));
+      expect(r).toMatchObject({ op: 'queued_message', space: '', ask_id: null });
+      expect(protocolFor(r.op)).toBe(10);
+    }
+    for (const op of [
+      { op: 'queued_message', space: SPACE, message: 'm1' },
+      { op: 'queued_message', space: SPACE, message: 'm1', action: 'edit' },
+      { op: 'queued_message', space: SPACE, message: '', action: 'send' },
+      { op: 'queued_message', space: SPACE, message: 'm'.repeat(65), action: 'send' },
+      { op: 'queued_message', message: 'm1', action: 'send' },
+    ]) {
+      expect(code(() => peekRequest(requestBody(op)))).toBe('fleet.bad_message');
+    }
   });
 
   it('bounds their fields', () => {

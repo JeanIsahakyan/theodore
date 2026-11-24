@@ -34,7 +34,15 @@ import {
   type LiveTurn,
 } from './chat';
 import { MODE_LABEL } from './logic';
+import type { MenuAction } from './messageMenu';
 import { pendingLabel, type PendingSend } from './pending';
+import {
+  QUEUED_ACTIONS,
+  QUEUED_HINT,
+  REMOVE,
+  SEND_NOW,
+  queuedLabel,
+} from './queued';
 import { mono, usePalette } from './theme';
 import { fileChips, formatDuration } from './turnRows';
 import type { FleetMode } from '../gen/fleet';
@@ -56,31 +64,45 @@ function UserBubble({
   m,
   queued,
   undone,
+  extras,
+  onExtra,
 }: {
   m: ChatMessage;
   queued?: boolean;
   undone?: boolean;
+  /** The row's own long-press actions (a queued one's Send now / Remove). */
+  extras?: readonly MenuAction[];
+  onExtra?: (id: string) => void;
 }) {
   const p = usePalette();
+  const label = queued ? queuedLabel(m) : null;
   return (
     <View
       style={[styles.userRow, (queued || undone) && styles.dim]}
-      accessibilityLabel={queued ? 'Queued message' : 'Your message'}
+      accessibilityLabel={queued ? `${label} message` : 'Your message'}
+      accessibilityHint={queued ? QUEUED_HINT : undefined}
     >
-      {queued ? (
-        <Text style={[styles.small, { color: p.muted }]}>Queued</Text>
+      {label ? (
+        <Text style={[styles.small, { color: p.muted }]}>{label}</Text>
       ) : null}
       {m.attachments?.length ? (
         <AttachmentChips attachments={m.attachments} />
       ) : null}
       {m.text || !m.attachments?.length ? (
-        <LongPressMenu text={m.text} kind="mine">
+        <LongPressMenu
+          text={m.text}
+          kind="mine"
+          extras={extras}
+          onExtra={onExtra}
+        >
           <Message from="user">{m.text}</Message>
         </LongPressMenu>
       ) : null}
     </View>
   );
 }
+
+// A queued bubble's words and actions: `src/ui/queued.ts`.
 
 /** What Copy and Select text take of a reply: its text, else the words its
  *  steps hold (a reply whose text is in its steps). */
@@ -257,8 +279,27 @@ export const MessageRow = memo(function MessageRow({
   );
 });
 
-export function QueuedRow({ m }: { m: ChatMessage }) {
-  return <UserBubble m={m} queued />;
+/**
+ * A message of yours waiting in the host's queue (docs/spaces.md §8):
+ * "Queued" while it waits its turn, "Held" when it waits for a Send. A long
+ * press offers Send now (runs it now, or back in line while a turn runs)
+ * and Remove, both the host's (`queued_message`).
+ */
+export function QueuedRow({
+  m,
+  onSendNow,
+  onRemove,
+}: {
+  m: ChatMessage;
+  onSendNow?: () => void;
+  onRemove?: () => void;
+}) {
+  const extras = onSendNow && onRemove ? QUEUED_ACTIONS : undefined;
+  const onExtra = (id: string) => {
+    if (id === SEND_NOW.id) onSendNow?.();
+    else if (id === REMOVE.id) onRemove?.();
+  };
+  return <UserBubble m={m} queued extras={extras} onExtra={onExtra} />;
 }
 
 /**

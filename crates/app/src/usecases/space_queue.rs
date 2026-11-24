@@ -5,10 +5,14 @@
 //!
 //! ```text
 //! send ─▶ running? ── no ──▶ turn now
-//!            └─ yes ─▶ queued (seq n) ──▶ turn ends ─┬─ ok ─────────▶ next queued runs
-//!                                                    └─ stopped / failed / restart
-//!                                                          └─▶ held: "Send" or Cancel
+//!            └─ yes ─▶ queued (seq n) ──▶ turn ends (ok · stopped · failed · restart)
+//!                                             └─▶ next queued runs, then the next …
+//!                                                   ├─ it can't start ─▶ that one held, the rest go on
+//!                                                   └─ usage limit, you decide ─▶ held: "Send" or Cancel
 //! ```
+//!
+//! One drain at a time per space: every drain runs under the space's queue
+//! lock, from the end of a turn or from the app's start.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -51,8 +55,8 @@ struct Steered {
 pub(crate) enum TurnEnd {
     /// Finished on its own: the next queued message runs.
     Done,
-    /// Stopped or failed: the queue is held for you, for this reason
-    /// (`ProductEvent::QueueHeld`).
+    /// Stopped or failed, for this reason: the next queued message runs
+    /// all the same (what you queued still stands; Cancel drops it).
     Interrupted(&'static str),
     /// Cut off by its account's usage limit: the queue waits, unheld,
     /// for what comes next (`space_limits::after_limit`): a turn on another
@@ -269,9 +273,11 @@ impl Core {
     }
 
     /// A turn ended: its final space patch, then the queue — the next
-    /// message runs, or the queue is held for you. `park`: the turn's CLI,
-    /// kept for its background tasks, parked once its reply is stored. One
-    /// step under the space's queue lock, so no send slips in between.
+    /// message runs, whether the turn finished, was stopped or failed.
+    /// `park`: the turn's CLI, kept for its background tasks, parked once
+    /// its reply is stored. One step under the space's queue lock, so no
+    /// send slips in between. Cut off by a usage limit, the queue waits for
+    /// what `space_limits::after_limit` decides instead.
     pub(crate) async fn end_turn(
         &self,
         space: &str,
@@ -287,25 +293,28 @@ impl Core {
             action: SyncActionCode::C,
             data: Some(serde_json::json!({ "attention_at": now, "updated_at": now })),
         });
-        // Held in the same write that ends the turn: the space never reads
-        // as stopped with its queue still set to go.
-        let mut held = None;
-        if let TurnEnd::Interrupted(reason) = end {
-            let hold = self.hold_actions(space).await;
-            held = Some((reason, hold.len()));
-            actions.extend(hold);
-        }
         let _ = self.apply(actions).await;
         if let Some(live) = park {
             self.park_cli(space, live);
         }
-        if let Some((reason, messages)) = held {
-            crate::usecases::telemetry::queue_held(space, reason, messages);
-        }
         // Already written by the CLI: it goes before anything queued.
         self.start_follow_up_boxed(space).await;
-        if end == TurnEnd::Done {
-            self.drain_queue(space).await;
+        match end {
+            TurnEnd::Done => self.drain_queue(space).await,
+            TurnEnd::Interrupted(reason) => {
+                if let Ok(queue) = self.queued_messages(space).await
+                    && !queue.is_empty()
+                {
+                    tracing::info!(
+                        space,
+                        reason,
+                        queued = queue.len(),
+                        "the turn didn't finish on its own; the queue goes on"
+                    );
+                }
+                self.drain_queue(space).await;
+            }
+            TurnEnd::Limited => {}
         }
     }
 
@@ -320,9 +329,10 @@ impl Core {
             .and_then(|s| s.steer.clone())
     }
 
-    /// Runs the first waiting message, if the space is free for it; one
-    /// from another device no longer allowed is dropped, and the next one
-    /// tried.
+    /// Runs the first waiting message, if the space is free for it. One
+    /// from another device no longer allowed is dropped, and one whose turn
+    /// can't start is held (you decide about it); either way the next one
+    /// is tried. Caller holds the space's queue lock: one drain at a time.
     async fn drain_queue(&self, space_id: &str) {
         let Ok(space) = self.space_row(space_id).await else {
             return;
@@ -330,8 +340,19 @@ impl Core {
         if !matches!(space.status, SpaceStatus::Idle | SpaceStatus::Failed) {
             return;
         }
-        let mut dropped = Vec::new();
-        let next = loop {
+        // A pause for usage limits (`space_limits`) owns what comes next.
+        if space.paused.is_some() {
+            return;
+        }
+        if self.check_setup_done(&space).is_err() {
+            // Still setting up: the setup's end sends the goal, and the
+            // queue goes after that turn.
+            return;
+        }
+        // Tried and left in place (a drop the store refused, a start that
+        // failed): never twice in one drain.
+        let mut skipped = Vec::new();
+        loop {
             let Ok(queue) = self.queued_messages(space_id).await else {
                 return;
             };
@@ -341,35 +362,47 @@ impl Core {
             else {
                 return;
             };
-            // Dropped, yet still there (the store failed): it stays put.
-            if dropped.contains(&next.id) {
+            if skipped.contains(&next.id) {
                 return;
             }
-            if self.fleet_queued_may_run(&space, &next).await {
-                break next;
+            skipped.push(next.id.clone());
+            if !self.fleet_queued_may_run(&space, &next).await {
+                continue;
             }
-            dropped.push(next.id);
-        };
-        let name = space.name.clone();
-        if let Err(e) = self.start_queued_boxed(space, next).await {
-            // It can't start (agent gone, worktree trouble): you decide.
-            tracing::warn!(
-                space = space_id,
-                error.code = e.code(),
-                error = %e,
-                "the queued message didn't start"
-            );
-            self.hold_queue(space_id, "start_failed").await;
-            self.emit(Ephemeral::Toast {
-                level: ToastLevel::Warn,
-                text: format!("{name}: the queued message didn't start: {e}"),
-            });
+            let id = next.id.clone();
+            match self.start_queued_boxed(space.clone(), next).await {
+                Ok(_) => return,
+                Err(e) => {
+                    // It can't start (agent gone, worktree trouble): held
+                    // for you to send again or drop; the rest go on.
+                    tracing::warn!(
+                        space = space_id,
+                        message = %id,
+                        error.code = e.code(),
+                        error = %e,
+                        "the queued message didn't start"
+                    );
+                    self.hold_message(space_id, &id, "start_failed").await;
+                    self.emit(Ephemeral::Toast {
+                        level: ToastLevel::Warn,
+                        text: format!("{}: a queued message didn't start: {e}", space.name),
+                    });
+                }
+            }
         }
     }
 
-    /// Every queued message of the space waits for your "Send".
+    /// Every queued message of the space waits for your "Send": a usage
+    /// limit left the space without an account to run them on, and you
+    /// chose not to continue by itself (`space_limits`).
     pub(crate) async fn hold_queue(&self, space: &str, reason: &str) {
-        let actions = self.hold_actions(space).await;
+        let Ok(queue) = self.queued_messages(space).await else {
+            return;
+        };
+        let actions: Vec<NewAction> = queue
+            .into_iter()
+            .filter_map(|m| hold_action(m.id, m.queued?))
+            .collect();
         if !actions.is_empty() {
             let messages = actions.len();
             let _ = self.apply(actions).await;
@@ -377,33 +410,36 @@ impl Core {
         }
     }
 
-    /// The writes that hold every queued message not held yet.
-    async fn hold_actions(&self, space: &str) -> Vec<NewAction> {
+    /// One queued message waits for your "Send": its turn couldn't start.
+    async fn hold_message(&self, space: &str, message: &str, reason: &str) {
         let Ok(queue) = self.queued_messages(space).await else {
-            return Vec::new();
+            return;
         };
-        queue
+        let action = queue
             .into_iter()
-            .filter_map(|m| {
-                let mut q = m.queued?;
-                (!q.held).then(|| {
-                    q.held = true;
-                    NewAction {
-                        model: models::CHAT_MESSAGE.into(),
-                        model_id: m.id,
-                        action: SyncActionCode::C,
-                        data: Some(serde_json::json!({ "queued": q })),
-                    }
-                })
-            })
-            .collect()
+            .find(|m| m.id == message)
+            .and_then(|m| hold_action(m.id, m.queued?));
+        if let Some(action) = action {
+            let _ = self.apply(vec![action]).await;
+            crate::usecases::telemetry::queue_held(space, reason, 1);
+        }
     }
 
-    /// On start: the turns those messages waited for never finished, so
-    /// nothing is sent on its own; each waits for your "Send".
-    pub(crate) async fn hold_queues_after_restart(&self, spaces: &[Space]) {
+    /// On start: a turn left running by the last process is failed by now
+    /// (docs/spaces.md §7 "Crash recovery"), and whatever waited behind it
+    /// runs, as after any turn.
+    pub(crate) async fn drain_queues_after_restart(&self, spaces: &[Space]) {
         for s in spaces {
-            self.hold_queue(&s.id, "restart").await;
+            let has_queue = self
+                .queued_messages(&s.id)
+                .await
+                .is_ok_and(|q| q.iter().any(|m| m.queued.as_ref().is_some_and(|x| !x.held)));
+            if !has_queue {
+                continue;
+            }
+            tracing::info!(space = %s.id, "queued messages found on start; the queue goes on");
+            let _queue = self.space_queue_lock(&s.id).await;
+            self.drain_queue(&s.id).await;
         }
     }
 
@@ -559,6 +595,19 @@ impl Core {
 /// Queued messages are left out of the transcript a turn replays.
 pub(crate) fn is_queued(m: &ChatMessage) -> bool {
     m.queued.is_some()
+}
+
+/// The write that holds a queued message, if it isn't held yet.
+fn hold_action(id: String, mut q: QueuedSend) -> Option<NewAction> {
+    (!q.held).then(|| {
+        q.held = true;
+        NewAction {
+            model: models::CHAT_MESSAGE.into(),
+            model_id: id,
+            action: SyncActionCode::C,
+            data: Some(serde_json::json!({ "queued": q })),
+        }
+    })
 }
 
 fn to_json<T: serde::Serialize>(v: &T) -> AppResult<serde_json::Value> {

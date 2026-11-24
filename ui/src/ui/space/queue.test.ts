@@ -36,11 +36,11 @@ describe('the queue', () => {
     expect(heldReason({ status: 'archived' }, held)).toMatch(/Unarchive/);
   });
 
-  it("doesn't claim the turn stopped: a late Stop holds a finished reply's queue", () => {
+  it("names what holds a message: a start that failed or a limit, never Stop (Stop doesn't hold)", () => {
     const held = [msg('a', 1, { seq: 1, held: true })];
     const why = heldReason({ status: 'idle' }, held)!;
-    expect(why).toMatch(/you pressed Stop/);
-    expect(why).not.toMatch(/turn before them stopped/);
+    expect(why).toMatch(/couldn't start|usage limit/);
+    expect(why).not.toMatch(/Stop|restarted/);
   });
 });
 

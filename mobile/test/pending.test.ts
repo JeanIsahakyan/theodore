@@ -190,6 +190,30 @@ describe('a mirrored row replaces the bubble', () => {
     ).toBe(true);
   });
 
+  it('a send the host never answered may still land: its row takes the bubble', () => {
+    const unsure = failSend(
+      sent(),
+      "the other device didn't answer in time",
+      true,
+    );
+    expect(unsure).toMatchObject({ state: 'failed', unsure: true });
+    expect(pendingLabel(unsure)).toBe('Not sent');
+    expect(matchesRow(unsure, rowOfMessage(mine('r1', 'and the tests')))).toBe(
+      true,
+    );
+    expect(
+      matchesRow(unsure, rowOfMessage(mine('r1', 'and the tests', T, true))),
+    ).toBe(true);
+    // Refused: it never reached the host.
+    const refused = failSend(sent(), 'the other device refused: fleet.busy');
+    expect(refused.unsure).toBe(false);
+    expect(matchesRow(refused, rowOfMessage(mine('r1', 'and the tests')))).toBe(
+      false,
+    );
+    // Retry starts over, sure again.
+    expect(retrySend(unsure, T + 1).unsure).toBe(false);
+  });
+
   it('a queued mirrored row stands for a queued bubble', () => {
     const q = settleSend(sent(), { message: 'q1', queued: true, position: 1 });
     const left = unmatched(
