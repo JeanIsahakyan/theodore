@@ -72,12 +72,11 @@ impl Core {
 
         let run_id = format!("fix:{}", uuid::Uuid::new_v4());
         let cancel = CancellationToken::new();
-        self.0.runs.write().await.insert(
-            run_id.clone(),
-            RunHandle {
-                cancel: cancel.clone(),
-            },
-        );
+        self.0
+            .runs
+            .write()
+            .await
+            .insert(run_id.clone(), RunHandle::new(cancel.clone()));
 
         theodore_telemetry::product(theodore_telemetry::ProductEvent::TaskDelegated {
             agent: agent.as_str().into(),

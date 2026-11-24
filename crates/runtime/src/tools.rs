@@ -16,8 +16,8 @@ use theodore_mcp::{
     CodeToolsBackend, FileSummary, FleetTools, GroupSummary, GroupWithHunks, LogKind, LogTail,
     McpHandle, McpServer, NewFinding, NewPatch, NewReviewComment, PrContext, ProgressStep,
     ReportRequest, ReportScope, ReviewItem, ReviewToolsBackend, RunContext, ShipOutcome,
-    ShipToolAction, SpaceDiff, SpaceInfo, SpaceToolError, SpaceToolsBackend, TerminalTail, ToolSet,
-    TurnMode,
+    ShipToolAction, SpaceDiff, SpaceInfo, SpaceToolError, SpaceToolsBackend, TerminalTail,
+    TheodoreVersion, ToolSet, TurnMode, UpdateStart,
 };
 use theodore_ports::{
     Answer, CodeHit, CodeSymbol, CodeSymbolKind, Diagnostic, LanguageStatus, McpEndpoint, Position,
@@ -327,6 +327,20 @@ impl SpaceToolsBackend for CoreTools {
     ) -> Result<Vec<UserAnswer>, SpaceToolError> {
         self.space_core()?
             .space_tool_ask(space, &run_id.0, questions)
+            .await
+    }
+
+    async fn theodore_version(&self, space: &str) -> Result<TheodoreVersion, SpaceToolError> {
+        self.space_core()?.space_tool_theodore_version(space).await
+    }
+
+    async fn theodore_update(
+        &self,
+        space: &str,
+        run_id: &RunId,
+    ) -> Result<UpdateStart, SpaceToolError> {
+        self.space_core()?
+            .space_tool_theodore_update(space, &run_id.0)
             .await
     }
 

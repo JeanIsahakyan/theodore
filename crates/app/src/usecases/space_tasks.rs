@@ -158,7 +158,7 @@ impl Core {
         });
     }
 
-    #[cfg(test)]
+    /// Whether a process is kept for `space` between turns.
     pub(crate) fn has_parked(&self, space: &str) -> bool {
         self.parked().contains_key(space)
     }

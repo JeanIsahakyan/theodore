@@ -1,8 +1,9 @@
 //! Updater (plan §11.1): `tauri-plugin-updater` + `tauri-plugin-process`.
 //! Checks on launch and every 6 h, downloads and installs in the background,
 //! emits `update` (`downloaded: false` as the download starts, `true` once
-//! installed). The actual restart is gated by `CoreApi::is_idle` and only
-//! happens when the UI calls the `install_update` command; never forced.
+//! installed). The restart happens when the UI calls `install_update`, or
+//! an agent calls `theodore_update` for the user: running turns are paused
+//! and resumed after it (`restart`), never killed.
 //!
 //! ```text
 //! tick every 10 min (wall clock: a sleeping Mac doesn't stall it)
@@ -10,14 +11,18 @@
 //!   │                                          └─ notification, `update_installed`
 //!   └─ installed, not restarted, 24 h since the last notice
 //!        ──▶ notification again (window in the background)
+//!
+//! phase: unknown ─▶ up to date | available ─▶ downloading (n%) ─▶ ready | failed
 //! ```
 
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
+use async_trait::async_trait;
 use tauri::{AppHandle, Manager, Runtime};
 use tauri_plugin_updater::UpdaterExt;
-use theodore_contract::UpdateInfo;
+use theodore_contract::{RestartReason, UpdateInfo};
+use theodore_ports::{TheodoreVersion, UpdateStart, UpdaterPort, UpdaterState};
 use url::Url;
 
 use crate::build_info;
@@ -37,15 +42,94 @@ const REMIND_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
 /// a monotonic 6 h sleep stops while the Mac sleeps, so a laptop that is
 /// closed most of the day would check every few days.
 const TICK: Duration = Duration::from_secs(10 * 60);
+/// How long `theodore_update` waits before pausing the turns: its answer
+/// reaches the agent that asked first.
+const TOOL_RESTART_DELAY: Duration = Duration::from_millis(1500);
 
-/// Last update this process downloaded and installed on disk (macOS/Linux
-/// need a relaunch to run it; see `CoreApi::install_update`).
+/// Where the updater stands in this process.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub enum Phase {
+    /// Never checked yet.
+    #[default]
+    Unknown,
+    /// The last check found nothing newer.
+    UpToDate,
+    /// Found, not downloading yet.
+    Available(UpdateInfo),
+    /// Downloading; `percent` once the size is known.
+    Downloading {
+        info: UpdateInfo,
+        percent: Option<u8>,
+    },
+    /// Installed on disk (macOS/Linux need a relaunch to run it).
+    Ready(UpdateInfo),
+    /// The last check or download failed: why.
+    Failed(String),
+}
+
+/// The updater's phase, shared by the periodic loop, the commands and the
+/// agent tools.
 #[derive(Default)]
-pub struct UpdateState(pub Mutex<Option<UpdateInfo>>);
+pub struct UpdateState(Mutex<Phase>);
 
 impl UpdateState {
+    /// The update installed on disk, waiting for a restart.
     pub fn get(&self) -> Option<UpdateInfo> {
+        match self.phase() {
+            Phase::Ready(info) => Some(info),
+            _ => None,
+        }
+    }
+
+    /// The update the UI should know of: ready, downloading or available.
+    pub fn info(&self) -> Option<UpdateInfo> {
+        match self.phase() {
+            Phase::Ready(info) | Phase::Available(info) | Phase::Downloading { info, .. } => {
+                Some(info)
+            }
+            _ => None,
+        }
+    }
+
+    pub fn phase(&self) -> Phase {
         self.0.lock().expect("UpdateState lock").clone()
+    }
+
+    fn set(&self, phase: Phase) {
+        *self.0.lock().expect("UpdateState lock") = phase;
+    }
+
+    /// A failed check never hides an update already on disk.
+    fn fail(&self, message: String) {
+        let mut phase = self.0.lock().expect("UpdateState lock");
+        if !matches!(*phase, Phase::Ready(_)) {
+            *phase = Phase::Failed(message);
+        }
+    }
+
+    /// The phase as the agent tools report it.
+    pub fn updater_state(&self) -> UpdaterState {
+        updater_state(&self.phase())
+    }
+}
+
+fn updater_state(phase: &Phase) -> UpdaterState {
+    match phase {
+        Phase::Unknown => UpdaterState::Unknown,
+        Phase::UpToDate => UpdaterState::UpToDate,
+        Phase::Available(info) => UpdaterState::Available {
+            version: info.version.clone(),
+        },
+        Phase::Downloading { info, percent } => UpdaterState::Downloading {
+            version: info.version.clone(),
+            percent: *percent,
+        },
+        Phase::Ready(info) => UpdaterState::Ready {
+            version: info.version.clone(),
+        },
+        Phase::Failed(message) => UpdaterState::Unavailable {
+            reason: message.clone(),
+        },
     }
 }
 
@@ -159,29 +243,47 @@ pub async fn check<R: Runtime>(
     try_check(app, core).await.map_err(|f| f.message)
 }
 
-async fn try_check<R: Runtime>(
-    app: &AppHandle<R>,
-    core: &Arc<dyn CoreApi>,
-) -> Result<Option<UpdateInfo>, Failure> {
+/// Why this build can't look for updates right now, if it can't.
+async fn cannot_check<R: Runtime>(app: &AppHandle<R>, core: &Arc<dyn CoreApi>) -> Option<Failure> {
     let other = |message: String| Failure {
         reason: "other",
         message,
     };
     // A sandbox window never reaches the network (docs/sandbox.md).
     if !core.updates_enabled().await {
-        return Ok(None);
+        return Some(other("updates are off in this run (the sandbox)".into()));
     }
     if !self_updates(build_info::BUILD_ENV) {
-        return Err(other(
+        return Some(other(
             "a nightly build doesn't update itself; build a new one".into(),
         ));
     }
     // The install would fail after the whole download (relocate.rs).
     if let Some(why) = crate::relocate::blocks_updates() {
-        return Err(Failure {
+        return Some(Failure {
             reason: "read_only",
             message: why.into(),
         });
+    }
+    let _ = app;
+    None
+}
+
+/// Asks the channel's feed for a newer version; `None` when up to date.
+/// Sets the phase to `UpToDate`, `Available` or `Failed` accordingly (a
+/// download already running, or an update already on disk, is left as is).
+async fn find_update<R: Runtime>(
+    app: &AppHandle<R>,
+    core: &Arc<dyn CoreApi>,
+) -> Result<Option<tauri_plugin_updater::Update>, Failure> {
+    let other = |message: String| Failure {
+        reason: "other",
+        message,
+    };
+    let state = app.state::<UpdateState>();
+    if let Some(why) = cannot_check(app, core).await {
+        state.fail(why.message.clone());
+        return Err(why);
     }
     // Resolved again here, so no `CoreApi` can point a build at another
     // environment's releases.
@@ -193,37 +295,85 @@ async fn try_check<R: Runtime>(
         .map_err(|e| other(format!("bad update endpoint: {e}")))?
         .build()
         .map_err(|e| other(format!("updater unavailable: {e}")))?;
-    let Some(update) = updater.check().await.map_err(|e| Failure {
+    let found = updater.check().await.map_err(|e| Failure {
         reason: failure_reason(&e),
         message: format!("couldn't check for updates: {e}"),
-    })?
-    else {
+    });
+    let update = match found {
+        Ok(u) => u,
+        Err(f) => {
+            state.fail(f.message.clone());
+            return Err(f);
+        }
+    };
+    let Some(update) = update else {
         tracing::info!(channel, "updater: up to date");
+        if !matches!(state.phase(), Phase::Ready(_)) {
+            state.set(Phase::UpToDate);
+        }
         return Ok(None);
     };
-    // Already on disk from an earlier check in this process: nothing to
-    // download again, the restart is still what's left.
-    if let Some(ready) = app
-        .state::<UpdateState>()
-        .get()
-        .filter(|u| u.downloaded && u.version == update.version)
-    {
-        return Ok(Some(ready));
+    match state.phase() {
+        Phase::Ready(info) | Phase::Downloading { info, .. } if info.version == update.version => {}
+        _ => state.set(Phase::Available(info_of(&update, false))),
     }
-    tracing::info!(channel, version = %update.version, "updater: downloading");
-    // Says "downloading" before the download, which can take a while.
-    events::emitter(app.clone()).update(UpdateInfo {
+    Ok(Some(update))
+}
+
+fn info_of(update: &tauri_plugin_updater::Update, downloaded: bool) -> UpdateInfo {
+    UpdateInfo {
         version: update.version.clone(),
         notes: update.body.clone().unwrap_or_default(),
-        downloaded: false,
+        downloaded,
+    }
+}
+
+/// Downloads and installs `update` on disk (no restart), with the phase
+/// following the download; emits `update` as it starts and once it's
+/// installed, and notifies when the window is in the background.
+async fn install<R: Runtime>(
+    app: &AppHandle<R>,
+    core: &Arc<dyn CoreApi>,
+    update: tauri_plugin_updater::Update,
+) -> Result<UpdateInfo, Failure> {
+    let state = app.state::<UpdateState>();
+    let channel = effective_channel(build_info::BUILD_ENV, &core.update_channel().await);
+    tracing::info!(channel, version = %update.version, "updater: downloading");
+    let info = info_of(&update, false);
+    state.set(Phase::Downloading {
+        info: info.clone(),
+        percent: None,
     });
-    update
-        .download_and_install(|_, _| {}, || {})
-        .await
-        .map_err(|e| Failure {
+    // Says "downloading" before the download, which can take a while.
+    events::emitter(app.clone()).update(info.clone());
+    let mut received: u64 = 0;
+    let mut last_percent = None;
+    let downloaded = update
+        .download_and_install(
+            |chunk, total| {
+                received += chunk as u64;
+                let percent = total
+                    .filter(|t| *t > 0)
+                    .map(|t| (received.saturating_mul(100) / t).min(100) as u8);
+                if percent != last_percent {
+                    last_percent = percent;
+                    state.set(Phase::Downloading {
+                        info: info.clone(),
+                        percent,
+                    });
+                }
+            },
+            || {},
+        )
+        .await;
+    if let Err(e) = downloaded {
+        let f = Failure {
             reason: failure_reason(&e),
             message: format!("download or signature check failed: {e}"),
-        })?;
+        };
+        state.fail(f.message.clone());
+        return Err(f);
+    }
     // On disk now; this process keeps running the old build until a restart.
     tracing::info!(version = %update.version, "updater: installed, restart to apply");
     theodore_telemetry::product(theodore_telemetry::ProductEvent::UpdateInstalled {
@@ -231,18 +381,30 @@ async fn try_check<R: Runtime>(
     });
     notify_installed(app, core, &update.version);
 
-    let info = UpdateInfo {
-        version: update.version.clone(),
-        notes: update.body.clone().unwrap_or_default(),
-        downloaded: true,
-    };
-    app.state::<UpdateState>()
-        .0
-        .lock()
-        .expect("UpdateState lock")
-        .replace(info.clone());
+    let info = info_of(&update, true);
+    state.set(Phase::Ready(info.clone()));
     events::emitter(app.clone()).update(info.clone());
-    Ok(Some(info))
+    Ok(info)
+}
+
+async fn try_check<R: Runtime>(
+    app: &AppHandle<R>,
+    core: &Arc<dyn CoreApi>,
+) -> Result<Option<UpdateInfo>, Failure> {
+    let Some(update) = find_update(app, core).await? else {
+        return Ok(None);
+    };
+    // Already on disk from an earlier check in this process: nothing to
+    // download again, the restart is still what's left. Already
+    // downloading: that download reports.
+    match app.state::<UpdateState>().phase() {
+        Phase::Ready(ready) if ready.version == update.version => return Ok(Some(ready)),
+        Phase::Downloading { info, .. } if info.version == update.version => {
+            return Ok(Some(info));
+        }
+        _ => {}
+    }
+    install(app, core, update).await.map(Some)
 }
 
 /// A system notification for an installed update, only while the window is
@@ -265,6 +427,7 @@ fn notify_installed<R: Runtime>(app: &AppHandle<R>, core: &Arc<dyn CoreApi>, ver
         UpdateWindow {
             app: app.clone(),
             core: core.clone(),
+            version: version.to_string(),
         },
         version,
     );
@@ -273,6 +436,7 @@ fn notify_installed<R: Runtime>(app: &AppHandle<R>, core: &Arc<dyn CoreApi>, ver
 struct UpdateWindow<R: Runtime> {
     app: AppHandle<R>,
     core: Arc<dyn CoreApi>,
+    version: String,
 }
 
 impl<R: Runtime> crate::notify::UpdateWindow for UpdateWindow<R> {
@@ -282,14 +446,27 @@ impl<R: Runtime> crate::notify::UpdateWindow for UpdateWindow<R> {
         }
     }
 
-    fn restart_when_idle(&self) {
-        let (app, core) = (self.app.clone(), self.core.clone());
-        tauri::async_runtime::spawn(async move {
-            if core.is_idle().await {
-                app.request_restart();
-            }
-        });
+    fn restart_to_update(&self) {
+        restart_into_update(&self.app, &self.core, &self.version, Duration::ZERO);
     }
+}
+
+/// Restarts into the installed update the graceful way: the running turns
+/// are paused and resume after the restart (`restart`); `delay` first.
+pub fn restart_into_update<R: Runtime>(
+    app: &AppHandle<R>,
+    core: &Arc<dyn CoreApi>,
+    version: &str,
+    delay: Duration,
+) {
+    crate::restart::restart_after_pausing(
+        app.clone(),
+        core.clone(),
+        RestartReason::Update {
+            version: version.to_string(),
+        },
+        delay,
+    );
 }
 
 /// When the installed update was last announced (notification or pill).
@@ -313,7 +490,7 @@ pub fn spawn_periodic_check<R: Runtime>(app: AppHandle<R>, core: Arc<dyn CoreApi
         let mut last_check = None;
         loop {
             let now = SystemTime::now();
-            let ready = app.state::<UpdateState>().get().filter(|u| u.downloaded);
+            let ready = app.state::<UpdateState>().get();
             let due = due(
                 now,
                 last_check,
@@ -334,9 +511,84 @@ pub fn spawn_periodic_check<R: Runtime>(app: AppHandle<R>, core: Arc<dyn CoreApi
     });
 }
 
+/// The updater as the agent tools see it (`theodore_version`,
+/// `theodore_update`; docs/releasing.md "Graceful update"), over this
+/// process's phase and Tauri's updater.
+pub struct TauriUpdater<R: Runtime> {
+    app: AppHandle<R>,
+    core: Arc<dyn CoreApi>,
+}
+
+impl<R: Runtime> TauriUpdater<R> {
+    pub fn new(app: AppHandle<R>, core: Arc<dyn CoreApi>) -> Self {
+        Self { app, core }
+    }
+}
+
+#[async_trait]
+impl<R: Runtime> UpdaterPort for TauriUpdater<R> {
+    async fn version(&self) -> TheodoreVersion {
+        let channel = effective_channel(build_info::BUILD_ENV, &self.core.update_channel().await);
+        let updater = match cannot_check(&self.app, &self.core).await {
+            Some(why) => UpdaterState::Unavailable {
+                reason: why.message,
+            },
+            None => self.app.state::<UpdateState>().updater_state(),
+        };
+        TheodoreVersion {
+            version: build_info::VERSION.into(),
+            channel: channel.into(),
+            commit: build_info::COMMIT.into(),
+            build_env: build_info::BUILD_ENV.into(),
+            updater,
+        }
+    }
+
+    async fn update(&self) -> UpdateStart {
+        match self.app.state::<UpdateState>().phase() {
+            Phase::Ready(info) => {
+                restart_into_update(&self.app, &self.core, &info.version, TOOL_RESTART_DELAY);
+                UpdateStart::Restarting {
+                    version: info.version,
+                }
+            }
+            Phase::Downloading { info, .. } => UpdateStart::Downloading {
+                version: info.version,
+            },
+            _ => match find_update(&self.app, &self.core).await {
+                Err(f) => UpdateStart::Unavailable { reason: f.message },
+                Ok(None) => UpdateStart::UpToDate,
+                Ok(Some(update)) => {
+                    let version = update.version.clone();
+                    let (app, core) = (self.app.clone(), self.core.clone());
+                    tauri::async_runtime::spawn(async move {
+                        if let Err(f) = install(&app, &core, update).await {
+                            tracing::warn!(err = %f.message, "updater: the download an agent started failed");
+                            theodore_telemetry::product(
+                                theodore_telemetry::ProductEvent::UpdateFailed {
+                                    reason: f.reason.into(),
+                                },
+                            );
+                        }
+                    });
+                    UpdateStart::Downloading { version }
+                }
+            },
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn info(version: &str, downloaded: bool) -> UpdateInfo {
+        UpdateInfo {
+            version: version.into(),
+            notes: String::new(),
+            downloaded,
+        }
+    }
 
     #[test]
     fn stable_and_beta_resolve_to_different_github_releases() {
@@ -417,5 +669,57 @@ mod tests {
                 assert!(!url.as_str().contains("channel-staging"), "{env}/{setting}");
             }
         }
+    }
+
+    /// The phase, as `theodore_version` reports it, per state.
+    #[test]
+    fn the_version_tool_reads_each_phase() {
+        assert_eq!(updater_state(&Phase::Unknown), UpdaterState::Unknown);
+        assert_eq!(updater_state(&Phase::UpToDate), UpdaterState::UpToDate);
+        assert_eq!(
+            updater_state(&Phase::Available(info("0.2.0", false))),
+            UpdaterState::Available {
+                version: "0.2.0".into()
+            }
+        );
+        assert_eq!(
+            updater_state(&Phase::Downloading {
+                info: info("0.2.0", false),
+                percent: Some(40),
+            }),
+            UpdaterState::Downloading {
+                version: "0.2.0".into(),
+                percent: Some(40),
+            }
+        );
+        assert_eq!(
+            updater_state(&Phase::Ready(info("0.2.0", true))),
+            UpdaterState::Ready {
+                version: "0.2.0".into()
+            }
+        );
+        assert_eq!(
+            updater_state(&Phase::Failed("offline".into())),
+            UpdaterState::Unavailable {
+                reason: "offline".into()
+            }
+        );
+    }
+
+    #[test]
+    fn a_failed_check_never_hides_an_installed_update() {
+        let state = UpdateState::default();
+        assert_eq!(state.get(), None);
+        state.set(Phase::Ready(info("0.2.0", true)));
+        state.fail("offline".into());
+        assert_eq!(state.get(), Some(info("0.2.0", true)));
+        state.set(Phase::Downloading {
+            info: info("0.3.0", false),
+            percent: None,
+        });
+        assert_eq!(state.get(), None, "downloading isn't installed");
+        assert_eq!(state.info(), Some(info("0.3.0", false)));
+        state.fail("offline".into());
+        assert_eq!(state.phase(), Phase::Failed("offline".into()));
     }
 }

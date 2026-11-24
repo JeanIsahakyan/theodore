@@ -29,7 +29,8 @@ pub use backend::{
     ProgressStepState, REPORT_TOOL, REVIEW_SPACE_TOOL_NAMES, REVIEW_TOOL_NAMES, ReportRequest,
     ReportScope, ReviewItem, ReviewToolsBackend, RunContext, SPACE_TOOL_NAMES,
     SUB_SPACE_STEER_TOOL_NAMES, SUB_SPACE_TOOL_NAMES, ShipMerge, ShipOutcome, ShipToolAction,
-    SpaceDiff, SpaceInfo, SpaceToolError, SpaceToolsBackend, TerminalTail, ToolSet, TurnMode,
+    SpaceDiff, SpaceInfo, SpaceToolError, SpaceToolsBackend, TerminalTail, TheodoreVersion,
+    ToolSet, TurnMode, UpdateStart, UpdaterState,
 };
 pub use bridge::{BridgeError, run_stdio_bridge};
 pub use code_server::{ServeError, code_run, serve_code_tools};

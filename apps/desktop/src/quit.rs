@@ -4,7 +4,8 @@
 //! second instance on the same data dir.
 //!
 //! ```text
-//! ⌘Q / handle.exit ──▶ ExitRequested ──▶ stop spaces (≤ 4 s, once)
+//! ⌘Q / handle.exit ──▶ ExitRequested ──▶ turns running? pause them first (`restart`)
+//!                                    ──▶ stop spaces (≤ 4 s, once)
 //!                      Exit          ──▶ telemetry (≤ 3 s, once)
 //! SIGTERM / SIGINT ──▶ stop spaces (≤ 4 s) ──▶ telemetry (≤ 3 s) ──▶ handle.exit
 //!                                                                  └─ 2 s ──▶ process::exit
@@ -111,8 +112,15 @@ pub fn exit_on_signal(handle: tauri::AppHandle, core: Arc<dyn CoreApi>) {
             _ = int.recv() => {}
         }
         tracing::info!("quit signal received");
-        // Off the runtime: the cleanup blocks its thread.
+        // Off the runtime: the cleanup blocks its thread. Turns running
+        // are paused first, to resume after the next launch.
         std::thread::spawn(move || {
+            block_on_bounded(theodore_app::PAUSE_BUDGET + Duration::from_secs(5), {
+                let core = core.clone();
+                async move {
+                    crate::restart::pause(&core, theodore_contract::RestartReason::Quit).await;
+                }
+            });
             stop_spaces(core);
             shutdown_telemetry();
             handle.exit(0);

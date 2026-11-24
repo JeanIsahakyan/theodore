@@ -41,6 +41,19 @@ impl RevisionEntry {
 
 pub(crate) struct RunHandle {
     pub cancel: CancellationToken,
+    /// A restart: the turn ends at the agent's next safe point and is
+    /// resumed by the next launch (`usecases::space_restart`). A review
+    /// run's is never fired.
+    pub pause: CancellationToken,
+}
+
+impl RunHandle {
+    pub(crate) fn new(cancel: CancellationToken) -> Self {
+        Self {
+            cancel,
+            pause: CancellationToken::new(),
+        }
+    }
 }
 
 pub(crate) struct Inner {
@@ -146,6 +159,14 @@ pub(crate) struct Inner {
     pub sub_spaces: crate::usecases::space_children::SubSpaceState,
     /// Each agent account's latest usage limit (`usecases::agent_accounts`).
     pub agent_limits: crate::usecases::agent_accounts::LimitBook,
+    /// The shell's updater, for `theodore_version` / `theodore_update`
+    /// (`usecases::space_restart`); `None` in the CLI and tests.
+    pub updater: std::sync::RwLock<Option<Arc<dyn theodore_ports::UpdaterPort>>>,
+    /// A restart is under way: no turn starts, queued messages wait.
+    pub restarting: std::sync::atomic::AtomicBool,
+    /// How long an interrupted agent gets before it is killed, in ms
+    /// (`space_restart::PAUSE_WAIT`; tests shorten it).
+    pub pause_wait_ms: AtomicU64,
 }
 
 /// Inbound streams the shell (Tauri or the CLI) forwards to the UI.
@@ -208,6 +229,11 @@ impl Core {
             fleet: Default::default(),
             sub_spaces: Default::default(),
             agent_limits: Default::default(),
+            updater: std::sync::RwLock::new(None),
+            restarting: std::sync::atomic::AtomicBool::new(false),
+            pause_wait_ms: AtomicU64::new(
+                crate::usecases::space_restart::PAUSE_WAIT.as_millis() as u64
+            ),
         });
 
         let core = Core(inner.clone());
@@ -217,6 +243,8 @@ impl Core {
                 core.fail_interrupted_runs().await;
                 core.fail_interrupted_spaces().await;
                 core.pause_resumed_mirrors().await;
+                // Turns paused for the restart go on (docs/spaces.md §7).
+                core.resume_paused_turns().await;
             });
         }
         {

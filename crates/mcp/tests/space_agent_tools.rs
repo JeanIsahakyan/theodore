@@ -21,7 +21,8 @@ use theodore_mcp::{
     AppStatus, BackendError, BaseChange, CheckOutcome, GroupWithHunks, LogKind, LogTail, McpServer,
     NewFinding, NewPatch, NewReviewComment, PrContext, ProgressStep, ReviewItem,
     ReviewToolsBackend, RunContext, ShipMerge, ShipOutcome, ShipToolAction, SpaceDiff, SpaceInfo,
-    SpaceToolError, SpaceToolsBackend, TerminalTail, ToolSet,
+    SpaceToolError, SpaceToolsBackend, TerminalTail, TheodoreVersion, ToolSet, UpdateStart,
+    UpdaterState,
 };
 
 struct EmptyReview;
@@ -51,6 +52,8 @@ struct FakeChange {
     calls: Mutex<Vec<String>>,
     /// Lines of the diff `space_diff` returns.
     diff_lines: usize,
+    /// What `theodore_version` reports; `None`: up to date.
+    updater: Option<UpdaterState>,
 }
 
 impl FakeChange {
@@ -201,6 +204,28 @@ impl SpaceToolsBackend for FakeChange {
             base_sha: "rel000".into(),
             previous: "main".into(),
             note: None,
+        })
+    }
+    async fn theodore_version(&self, space: &str) -> Result<TheodoreVersion, SpaceToolError> {
+        self.record(format!("theodore_version {space}"));
+        Ok(TheodoreVersion {
+            version: "0.1.9".into(),
+            channel: "staging".into(),
+            commit: "abc1234".into(),
+            build_env: "staging".into(),
+            updater: self.updater.clone().unwrap_or(UpdaterState::UpToDate),
+        })
+    }
+    async fn theodore_update(
+        &self,
+        space: &str,
+        run: &RunId,
+    ) -> Result<UpdateStart, SpaceToolError> {
+        self.record(format!("theodore_update {space} {run}"));
+        Ok(match self.updater.clone() {
+            Some(UpdaterState::Ready { version }) => UpdateStart::Restarting { version },
+            Some(UpdaterState::Available { version }) => UpdateStart::Downloading { version },
+            _ => UpdateStart::UpToDate,
         })
     }
     async fn update_progress(
@@ -362,6 +387,57 @@ async fn the_change_tools_reach_the_backend_with_the_tokens_space() {
 }
 
 #[tokio::test]
+async fn the_version_and_update_tools_say_where_the_updater_stands() {
+    let spaces = Arc::new(FakeChange {
+        updater: Some(UpdaterState::Ready {
+            version: "0.2.0".into(),
+        }),
+        ..Default::default()
+    });
+    let handle = McpServer::start_with_spaces(Arc::new(EmptyReview), spaces.clone())
+        .await
+        .unwrap();
+    let endpoint = handle.register_run(space_run());
+    let client = connect(&endpoint.url, &endpoint.token).await;
+    let names: Vec<String> = client
+        .list_all_tools()
+        .await
+        .unwrap()
+        .iter()
+        .map(|t| t.name.to_string())
+        .collect();
+    assert!(names.iter().any(|n| n == "theodore_version"));
+    assert!(names.iter().any(|n| n == "theodore_update"));
+
+    let v = json_of(&call(&client, "theodore_version", json!({})).await);
+    assert_eq!(v["version"], json!("0.1.9"));
+    assert_eq!(v["channel"], json!("staging"));
+    assert_eq!(v["commit"], json!("abc1234"));
+    assert_eq!(
+        v["updater"],
+        json!({ "state": "ready", "version": "0.2.0" })
+    );
+    assert_eq!(v["summary"], json!("downloaded and ready: 0.2.0"));
+
+    let u = json_of(&call(&client, "theodore_update", json!({})).await);
+    assert_eq!(u["outcome"], json!("restarting"));
+    assert_eq!(u["version"], json!("0.2.0"));
+    assert_eq!(
+        u["message"],
+        json!("restarting to update to 0.2.0; this turn continues after the restart")
+    );
+    assert_eq!(
+        spaces.calls(),
+        vec![
+            "theodore_version s1".to_string(),
+            "theodore_update s1 space:s1:m1".to_string()
+        ]
+    );
+    drop(client);
+    handle.shutdown().await;
+}
+
+#[tokio::test]
 async fn a_big_diff_is_cut_and_says_so() {
     let spaces = Arc::new(FakeChange {
         diff_lines: MAX_DIFF_CHARS / 40 + 100,
@@ -406,6 +482,8 @@ async fn a_review_on_a_space_pr_never_gets_the_change_tools() {
         "add_review_comment",
         "set_base",
         "update_progress",
+        "theodore_version",
+        "theodore_update",
     ] {
         assert!(!names.iter().any(|n| n == tool), "{tool} listed");
         let r = client

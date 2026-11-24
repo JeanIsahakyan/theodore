@@ -1290,6 +1290,8 @@ configured commands, never a shell of the agent's choosing.
 | `space_send`, `space_answer` | any other space here: a message, an answer to its question, marked as from this space (below). While `spaces.sub_spaces` is on |
 | `space_start`, `space_wait`, `space_stop`, `space_merge` | sub-spaces of this one: start, wait for, stop, bring their work back (below). While `spaces.sub_spaces` is on |
 | `space_archive`, `space_unarchive` | sub-spaces of this one: archive one (as Archive does, §7) when you ask to archive or clean up, bring one back (below). While `spaces.sub_spaces` is on |
+| `theodore_version` | Theodore's running version, channel (stable · beta · staging), build commit, and where the updater stands: up to date, an update available (version), downloading (percent), downloaded and ready (version), or unavailable (a nightly, the sandbox, a failed check). Read only, every mode |
+| `theodore_update` | only when you ask to update Theodore, never on the agent's own: a downloaded update restarts Theodore the graceful way (§7 "Restart with turns running": every running turn, the caller's included, pauses and resumes after; the call answers "restarting to update to X; this turn continues after the restart"); an available one starts downloading; up to date says so. Not for a space hosted here for another device (docs/fleet.md) |
 
 ```
 turn ─▶ token for this space ─▶ agent ─▶ run_check ─▶ check ─▶ result ─▶ agent fixes ─▶ …
@@ -1301,7 +1303,8 @@ turn ─▶ token for this space ─▶ agent ─▶ run_check ─▶ check ─�
 
 - The system prompt names them: use `run_check` after changes, `start_app`
   to try the app, `ship` only when you ask to push, open a PR or merge
-  (never `gh pr merge` itself).
+  (never `gh pr merge` itself), `theodore_update` only when you ask to
+  update Theodore.
 - `ship` from the turn runs while that turn holds the space; any other
   caller still waits for the turn. It checkpoints the edits so far first,
   so they ship too; the turn's own checkpoint follows when it ends.
@@ -1981,11 +1984,43 @@ tool payloads);
 **GC** (archived spaces whose branch was never pushed lose their ref after
 `spaces.gc_days`, 30); removing a project archiving its spaces first.
 
+**Restart with turns running** (docs/releasing.md "Graceful update")
+
+An update's restart, "Restart to update", `theodore_update`, and a plain
+quit (⌘Q, SIGTERM) with turns running pause the agents instead of killing
+them, and the next launch resumes each where it stopped:
+
+```
+restart asked ─▶ restarting: no turn starts, sends queue
+  each running turn ─▶ restart_pause on its space (run, message, agent, model,
+  (sub-spaces too)    effort, mode, session, reason, at) ─▶ interrupt the agent
+                      at a safe point (Claude: its control message; Codex,
+                      Gemini: the signal) ─▶ ≤ 20 s ─▶ the turn ends "(paused for
+                      the restart)": checkpoint, reply with what it wrote, the
+                      session kept; not stopped in time ─▶ killed, marked `killed`
+  kept processes (background tasks) ─▶ stopped ─▶ the shell restarts (≤ 45 s)
+next launch ─▶ each marker ─▶ "Theodore restarted (updated to X). Continue where
+               you left off." as your message, on the same agent, model, mode and
+               effort, `--resume` of its session (Codex: its thread; Gemini: the
+               replayed transcript) ─▶ marker cleared ─▶ its queued messages run after
+```
+
+| | |
+| --- | --- |
+| the space, meanwhile | idle, "Paused for update · resuming…" above the composer (`Space::restart_pause`), then nothing more |
+| the paused turn's reply | what the agent wrote, marked "Paused for the restart" (`failed` = `paused for the restart`); its turn-log entry is `stopped`; the space has no error |
+| a turn in its `check` | the check stops; the agent had finished, so nothing is resumed |
+| "Restart to update", agents running | the pill says "N agents will pause and resume after the update" before, "Pausing N agents…" while it waits; a host write still queued holds the restart off as before |
+| the start-up cleanup | reaps leftover agent processes as ever: a paused turn's process is gone by then and its session is what resumes, so nothing of it is lost |
+| Theodore died mid-pause | the space reads as interrupted on start (below) and the marker still resumes it |
+| the resume can't start | the marker goes, the queue is held, a toast says why |
+
 **Crash recovery**
 
 | Found on start | Action |
 | --- | --- |
 | `status = running` | → `failed` "interrupted: Theodore was closed" |
+| `restart_pause` set | the turn is resumed with the continuation message (above), once; its queue isn't held |
 | queued messages | kept, held: each waits for its Send (§8) |
 | dirty worktree | kept; the next turn (or archive) checkpoints it first |
 | worktree dir missing | recreated from `refs/theodore/spaces/<id>` |
@@ -2039,7 +2074,7 @@ send ─▶ running? ── no ──▶ turn now
 | stopped (also during its checkpoint or `check`) | held: nothing is sent, nothing dropped. The agent had already finished there, so its reply stays a whole one, not "stopped"; the note over the queue says you pressed Stop, not that the turn stopped |
 | stopped just as it ended on its own | the first waiting message, if it had already started, is stopped instead; the rest held |
 | failed, its checkpoint skipped, conflicts left, or a queued one couldn't start | held |
-| Theodore restarted | held (§7 Crash recovery) |
+| Theodore restarted | held (§7 Crash recovery); a turn paused for the restart instead: the queue runs after the resumed turn (§7 "Restart with turns running") |
 
 - **Edit** changes a queued message's text, **Cancel** deletes it; both
   only while it is queued.

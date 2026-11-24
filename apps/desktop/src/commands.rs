@@ -578,7 +578,7 @@ pub async fn app_info(
 ) -> Result<AppInfo, CommandError> {
     op.run(async move {
         let mut info = core.app_info().await?;
-        if let Some(update) = update_state.get() {
+        if let Some(update) = update_state.info() {
             info.update = Some(update);
         }
         Ok(info)
@@ -607,19 +607,30 @@ pub async fn check_update(
     .await
 }
 
-/// Restarts into the already-downloaded update, but only once the core is
-/// idle (no agent running, outbox empty) — never forced.
+/// Restarts into the already-downloaded update. Running agent turns are
+/// paused and resume after the restart (docs/spaces.md §7); a host write
+/// still queued holds it off, and the UI asks again. Nothing to install:
+/// an error.
 #[tauri::command]
 #[specta::specta]
 pub async fn install_update(
     op: crate::op::Op,
     app: AppHandle,
     core: State<'_, Arc<dyn CoreApi>>,
+    update_state: State<'_, updater::UpdateState>,
 ) -> Result<(), CommandError> {
     op.run(async move {
-        if core.is_idle().await {
-            app.request_restart();
+        let Some(update) = update_state.get() else {
+            return Err(CommandError {
+                code: "update".into(),
+                message: "no update is downloaded yet".into(),
+            });
+        };
+        if core.outbox_pending().await {
+            return Ok(());
         }
+        let core: Arc<dyn CoreApi> = core.inner().clone();
+        updater::restart_into_update(&app, &core, &update.version, std::time::Duration::ZERO);
         Ok(())
     })
     .await

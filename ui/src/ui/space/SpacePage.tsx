@@ -101,6 +101,7 @@ import { runControl, settingUp } from './commands';
 import { GlobalConfigSection, SpaceSetupAssistHint } from './ConfigSection';
 import { SpaceAgents, SubSpaceBanner } from './SpaceAgents';
 import { SpacePaused } from './SpacePaused';
+import { SpaceResuming } from './SpaceResuming';
 import { SpaceProgress } from './SpaceProgress';
 import { BaseMoved, UpdatingBanner } from './BaseUpdate';
 import {
@@ -1109,6 +1110,7 @@ export const SpaceChat = observer(function SpaceChat({
       <div className="px-4">
         <div className="mx-auto w-full max-w-[860px]">
           <SpacePaused space={space} />
+          <SpaceResuming space={space} />
           <SpaceSetupAssistHint space={space} config={config} />
         </div>
       </div>

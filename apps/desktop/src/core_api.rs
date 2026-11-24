@@ -2,9 +2,12 @@
 //! commands (`commands.rs`) delegate to `State<Arc<dyn CoreApi>>`; the real
 //! implementation (`theodore-app`) is wired in by the integration slice.
 
+use std::sync::Arc;
+
 use async_trait::async_trait;
+use theodore_app::RestartPaused;
 use theodore_contract::{
-    AccountSignInRequest, AccountSignInStart, AccountSignInState, AccountStatus,
+    AccountSignInRequest, AccountSignInStart, AccountSignInState, AccountStatus, RestartReason,
 };
 use theodore_contract::{
     AddProjectRequest, AgentModel, AgentStatus, AppInfo, AskRequest, BlobResponse, Bootstrap,
@@ -24,6 +27,7 @@ use theodore_contract::{
 };
 use theodore_contract::{SandboxFaultRequest, SandboxStatus};
 use theodore_domain::{AgentId, HostKind, HostRepo, Person, PrId, Revision};
+use theodore_ports::UpdaterPort;
 
 fn not_ready() -> CommandError {
     CommandError {
@@ -152,10 +156,27 @@ pub trait CoreApi: Send + Sync {
         Ok(())
     }
 
-    /// Gates `install_update`'s restart: no agent running, outbox empty.
-    async fn is_idle(&self) -> bool {
-        true
+    /// Space turns in flight: what "Restart to update" pauses and resumes
+    /// (docs/spaces.md §7 "Restart with turns running").
+    async fn running_turns(&self) -> usize {
+        0
     }
+
+    /// A host write still queued: "Restart to update" waits for it.
+    async fn outbox_pending(&self) -> bool {
+        false
+    }
+
+    /// Pauses every running turn for a restart (`restart`): each is
+    /// interrupted at a safe point, checkpointed and marked to resume on
+    /// the next launch. Returns once they ended or the budget passed.
+    async fn pause_for_restart(&self, _reason: RestartReason) -> RestartPaused {
+        RestartPaused::default()
+    }
+
+    /// The shell's updater, for the agent tools `theodore_version` and
+    /// `theodore_update`. Not a wire command; the shell sets it at setup.
+    fn set_updater(&self, _updater: Arc<dyn UpdaterPort>) {}
 
     /// `false` in sandbox mode: no update checks (no network at all).
     async fn updates_enabled(&self) -> bool {
@@ -1049,6 +1070,11 @@ mod tests {
     async fn default_methods_are_safe_before_the_core_is_wired_up() {
         let core = NotReadyCoreApi;
         assert_eq!(core.update_channel().await, "stable");
-        assert!(core.is_idle().await);
+        assert_eq!(core.running_turns().await, 0);
+        assert!(!core.outbox_pending().await);
+        assert_eq!(
+            core.pause_for_restart(RestartReason::Quit).await,
+            RestartPaused::default()
+        );
     }
 }

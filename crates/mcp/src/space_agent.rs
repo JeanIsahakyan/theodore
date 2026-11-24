@@ -1,7 +1,9 @@
 //! The `space-tools` that act on the change itself (docs/spaces.md "Tools
 //! the agent gets"): `ship`, `get_space_diff`, `get_review_comments`,
-//! `add_review_comment`, `set_base`, `update_progress`. Wire types here,
-//! the work in [`crate::backend::SpaceToolsBackend`].
+//! `add_review_comment`, `set_base`, `update_progress`; and on Theodore
+//! itself: `theodore_version`, `theodore_update` (docs/releasing.md
+//! "Graceful update"). Wire types here, the work in
+//! [`crate::backend::SpaceToolsBackend`].
 
 use rmcp::ErrorData;
 use rmcp::handler::server::tool::Extension;
@@ -13,7 +15,8 @@ use serde::{Deserialize, Serialize};
 use theodore_domain::FileStatus;
 
 use crate::backend::{
-    NewReviewComment, ProgressStep, ProgressStepState, ShipToolAction, SpaceDiff,
+    NewReviewComment, ProgressStep, ProgressStepState, ShipToolAction, SpaceDiff, TheodoreVersion,
+    UpdateStart, UpdaterState,
 };
 use crate::server::{ReviewToolsServer, run_space, space_result};
 use crate::tools::{SeverityParam, render_unified_diff};
@@ -232,8 +235,117 @@ pub struct UpdateProgressResult {
     pub ok: bool,
 }
 
+// ── theodore_version / theodore_update ───────────────────────────────────────
+
+/// `theodore_version`: the build, and the updater's state in words.
+#[derive(Debug, Serialize)]
+pub struct TheodoreVersionResult {
+    pub version: String,
+    pub channel: String,
+    pub commit: String,
+    pub build_env: String,
+    /// `state`: `unknown` · `up_to_date` · `available` · `downloading` ·
+    /// `ready` · `unavailable`, with the update's `version` (and the
+    /// download's `percent`) when there is one.
+    pub updater: UpdaterState,
+    /// One line: `up to date`, `update available: 0.2.0`, `downloading
+    /// 0.2.0 (40%)`, `downloaded and ready: 0.2.0`, `unavailable: …`.
+    pub summary: String,
+}
+
+/// One line for the updater's state.
+pub fn updater_summary(state: &UpdaterState) -> String {
+    match state {
+        UpdaterState::Unknown => "not checked yet".into(),
+        UpdaterState::UpToDate => "up to date".into(),
+        UpdaterState::Available { version } => format!("update available: {version}"),
+        UpdaterState::Downloading { version, percent } => match percent {
+            Some(p) => format!("downloading {version} ({p}%)"),
+            None => format!("downloading {version}"),
+        },
+        UpdaterState::Ready { version } => format!("downloaded and ready: {version}"),
+        UpdaterState::Unavailable { reason } => format!("unavailable: {reason}"),
+    }
+}
+
+impl From<TheodoreVersion> for TheodoreVersionResult {
+    fn from(v: TheodoreVersion) -> Self {
+        let summary = updater_summary(&v.updater);
+        TheodoreVersionResult {
+            version: v.version,
+            channel: v.channel,
+            commit: v.commit,
+            build_env: v.build_env,
+            updater: v.updater,
+            summary,
+        }
+    }
+}
+
+/// `theodore_update`: what started, and one line for the user.
+#[derive(Debug, Serialize)]
+pub struct TheodoreUpdateResult {
+    #[serde(flatten)]
+    pub started: UpdateStart,
+    pub message: String,
+}
+
+/// What `theodore_update` tells the agent, per outcome.
+pub fn update_message(start: &UpdateStart) -> String {
+    match start {
+        UpdateStart::Restarting { version } => {
+            format!("restarting to update to {version}; this turn continues after the restart")
+        }
+        UpdateStart::Downloading { version } => format!(
+            "downloading Theodore {version}; call theodore_update again once theodore_version \
+             says it is ready"
+        ),
+        UpdateStart::UpToDate => "Theodore is up to date".to_string(),
+        UpdateStart::Unavailable { reason } => format!("can't update: {reason}"),
+    }
+}
+
+impl From<UpdateStart> for TheodoreUpdateResult {
+    fn from(started: UpdateStart) -> Self {
+        let message = update_message(&started);
+        TheodoreUpdateResult { started, message }
+    }
+}
+
 #[tool_router(router = space_agent_router, vis = "pub(crate)")]
 impl ReviewToolsServer {
+    #[tool(
+        description = "Theodore's running version, update channel (stable, beta or staging), build commit, and where the updater stands: up to date, an update available (its version), downloading (progress), or downloaded and ready to install. Read only."
+    )]
+    async fn theodore_version(
+        &self,
+        Extension(parts): Extension<http::request::Parts>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let (_, space) = run_space(&parts)?;
+        space_result(
+            self.spaces
+                .theodore_version(&space)
+                .await
+                .map(TheodoreVersionResult::from),
+        )
+    }
+
+    #[tool(
+        description = "Update Theodore. Call theodore_update only when the user asks to update Theodore; never on your own. A downloaded update is installed by a restart: Theodore pauses every running agent turn, this one included, at a safe point and resumes each after the restart, so the call returns \"restarting to update to X; this turn continues after the restart\" and your work goes on in the updated app. An update that is only available starts downloading (ask again once theodore_version says it is ready); an up-to-date Theodore says so."
+    )]
+    async fn theodore_update(
+        &self,
+        Extension(parts): Extension<http::request::Parts>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let (run, space) = run_space(&parts)?;
+        space_result(
+            self.spaces
+                .theodore_update(&space, &run.run_id)
+                .await
+                .map(TheodoreUpdateResult::from),
+        )
+    }
+
     #[tool(
         description = "Ship the space the way its Ship menu does: open_pr / open_draft_pr / push / merge (a host project; merge merges the space's open PR as the page's Merge button does) or merge_locally / keep_branch (a local folder). Theodore squashes the turns into one commit authored by the user and never force-pushes. Call it only when the user asks to push, open a PR or merge; never run git push, gh pr create, gh pr merge or switch branches yourself. Returns the branch, the commit, the PR number and URL, and for merge what happened (merged now, auto-merge enabled, or added to the merge queue, with the method); a refusal says why."
     )]

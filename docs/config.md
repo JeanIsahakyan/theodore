@@ -456,6 +456,13 @@ The change itself (docs/spaces.md §5):
 | `set_base` | `branch` | `base`, `base_sha`, `previous`, `note` (an open PR is not retargeted) |
 | `update_progress` | `steps` (`label`, `state`: `pending · active · done`; at most 20), `note?` | `ok` |
 
+Theodore itself (docs/releasing.md "Graceful update"):
+
+| Tool | Takes | Returns |
+| --- | --- | --- |
+| `theodore_version` | — | `version`, `channel`, `commit`, `build_env`, `updater` (`state`: `unknown · up_to_date · available · downloading · ready · unavailable`, with `version`, `percent`, `reason`), a one-line `summary` |
+| `theodore_update` | — | `outcome`: `restarting` (the turns pause and resume after the restart) · `downloading` · `up_to_date` · `unavailable`, with `version` / `reason`, and a `message` for the user. Only when the user asks; refused from a space hosted for another device |
+
 ```
 ship ─▶ same turn? ─no──▶ error: the agent is still working
           └─yes─▶ ship_space: checkpoint ─▶ squash (you) ─▶ push / merge / branch
