@@ -38,6 +38,53 @@ impl SpaceCommandName {
     }
 }
 
+/// What `read_logs` reads: one of the space's commands, or `theodore` —
+/// the errors Theodore itself hit for the space (docs/spaces.md
+/// "Theodore's errors reach the agent").
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LogKind {
+    Setup,
+    Run,
+    Check,
+    Archive,
+    Theodore,
+}
+
+impl LogKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Setup => "setup",
+            Self::Run => "run",
+            Self::Check => "check",
+            Self::Archive => "archive",
+            Self::Theodore => "theodore",
+        }
+    }
+
+    /// The command it names; `None` for `theodore`.
+    pub fn command(self) -> Option<SpaceCommandName> {
+        match self {
+            Self::Setup => Some(SpaceCommandName::Setup),
+            Self::Run => Some(SpaceCommandName::Run),
+            Self::Check => Some(SpaceCommandName::Check),
+            Self::Archive => Some(SpaceCommandName::Archive),
+            Self::Theodore => None,
+        }
+    }
+}
+
+impl From<SpaceCommandName> for LogKind {
+    fn from(c: SpaceCommandName) -> Self {
+        match c {
+            SpaceCommandName::Setup => Self::Setup,
+            SpaceCommandName::Run => Self::Run,
+            SpaceCommandName::Check => Self::Check,
+            SpaceCommandName::Archive => Self::Archive,
+        }
+    }
+}
+
 /// `run_check`: how the check ended and its last lines.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct CheckOutcome {
@@ -78,13 +125,15 @@ pub struct AppStatus {
     pub note: Option<String>,
 }
 
-/// `read_logs`: the last lines of one command.
+/// `read_logs`: the last lines of one command, or of Theodore's own
+/// errors for the space.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct LogTail {
-    pub kind: SpaceCommandName,
-    /// Oldest first; stderr lines start with `! `.
+    pub kind: LogKind,
+    /// Oldest first; stderr lines start with `! ` (`theodore`: one entry
+    /// per line, newest last).
     pub lines: Vec<String>,
-    /// Lines of this command Theodore still holds (`lines` is the tail).
+    /// Lines of this kind Theodore still holds (`lines` is the tail).
     pub available: usize,
 }
 

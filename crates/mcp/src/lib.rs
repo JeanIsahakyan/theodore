@@ -24,13 +24,12 @@ pub use backend::{
     AppStatus, BackendError, BaseChange, CODE_EDIT_TOOL_NAMES, CODE_TOOL_NAMES, CheckOutcome,
     CodeEditOutcome, CodeTools, CodeToolsBackend, FLEET_STEER_TOOL_NAMES, FLEET_TOOL_NAMES,
     FileSummary, FleetTools, GroupSummary, GroupWithHunks, HOSTED_EDIT_TOOL_NAMES,
-    HOSTED_RUN_TOOL_NAMES, LOCAL_SPACE_READ_TOOL_NAMES, LogTail, NewFinding, NewPatch,
+    HOSTED_RUN_TOOL_NAMES, LOCAL_SPACE_READ_TOOL_NAMES, LogKind, LogTail, NewFinding, NewPatch,
     NewReviewComment, NoCodeTools, NoReviewTools, NoSpaceTools, PrContext, ProgressStep,
     ProgressStepState, REPORT_TOOL, REVIEW_SPACE_TOOL_NAMES, REVIEW_TOOL_NAMES, ReportRequest,
     ReportScope, ReviewItem, ReviewToolsBackend, RunContext, SPACE_TOOL_NAMES,
     SUB_SPACE_STEER_TOOL_NAMES, SUB_SPACE_TOOL_NAMES, ShipMerge, ShipOutcome, ShipToolAction,
-    SpaceCommandName, SpaceDiff, SpaceInfo, SpaceToolError, SpaceToolsBackend, TerminalTail,
-    ToolSet, TurnMode,
+    SpaceDiff, SpaceInfo, SpaceToolError, SpaceToolsBackend, TerminalTail, ToolSet, TurnMode,
 };
 pub use bridge::{BridgeError, run_stdio_bridge};
 pub use code_server::{ServeError, code_run, serve_code_tools};

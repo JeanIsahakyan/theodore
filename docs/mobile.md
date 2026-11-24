@@ -514,7 +514,8 @@ drawer, Android   long press a row (light haptic) ─▶ Compose DropdownMenu un
                   the row                        ╭ ⌸ Archive ╮  danger color
 drawer, web       right-click a row, or ⋯ at its right (hover, focus, the active
                   row) ─▶ a small menu under the row's right edge; Esc / outside closes
-a space's screen  no Archive of its own: ☰ ─▶ the drawer ─▶ its row
+a space's screen  no Archive of its own (☰ ─▶ the drawer ─▶ its row), except
+                  the "Merged #n" chip of a space whose PR merged ("Merged" below)
         │                                     glyph: `archive` in symbol-image.tsx (SF
         │                                     archivebox, Material archive, Lucide Archive)
         ▼ confirm (system alert / window.confirm)
@@ -550,7 +551,7 @@ a space's screen  no Archive of its own: ☰ ─▶ the drawer ─▶ its row
   status lists it again.
 - Flow: `src/ui/archiveFlow.ts` (pure, its dependencies passed in: the
   tests run it), bound by `src/ui/useArchive.ts`; telemetry `space_archived`
-  with `surface: row_menu`. Toast: `src/state/toast.ts`, `src/ui/Toast.tsx`
+  with `surface: row_menu` (`merged_chip` from the chip below). Toast: `src/state/toast.ts`, `src/ui/Toast.tsx`
   (mounted once in `app/(app)/_layout.tsx`, over the open drawer too).
 - The menu: `src/components/space-menu{.ios,.android,}.tsx` around the row
   (`SpaceMenu`: title, items, onSelect; hands the row its long press on
@@ -558,6 +559,38 @@ a space's screen  no Archive of its own: ☰ ─▶ the drawer ─▶ its row
   SwiftUI tree (`RNHostView`) as the `ContextMenu`'s trigger; Android anchors
   the `DropdownMenu` to a hairline under the row. The main header has no
   screen-specific buttons.
+
+### Merged
+
+A space whose PR merged on its host stays a normal space (docs/spaces.md §7
+"Merged is not archived"). Its screen says so with a small chip under the
+details line, the desktop's header chip in small:
+
+```text
+theodore · th/login · Edit
+   ╭ ● Merged #12 ╮  ─ tap ─▶ ╭ Merged #12 ──────────────╮
+                              │ Continue on a new branch │  the field focused, a note on the
+                              │ Open PR #12              │  strip: the host continues a merged
+                              │ Archive                  │  space on its next message
+                              ╰──────────────────────────╯
+```
+
+- When: the mirrored row has `pr` and `done_at` (`src/ui/merged.ts`
+  `mergedPr`; `cleanSpace` keeps both, and `base`). An open PR or a space
+  merged locally shows nothing.
+- **Continue on a new branch**: the fleet has no continue op; the host
+  continues a merged space itself when its next message arrives
+  (docs/spaces.md §7), so the composer is focused and the strip reads "Your
+  next message continues on a new branch from the updated main." until a
+  send, or until the row stops saying merged.
+- **Open PR #n**: the PR's page in the system browser, built only for a
+  `github:` / `gitlab:` / `bitbucket:` id whose slug is a slug (every
+  segment `[A-Za-z0-9_.-]+`): fleet text is untrusted. Other ids have no
+  item.
+- **Archive**: the row menu's flow (`useArchive('merged_chip')`), only when
+  `canArchive` says this phone may.
+- The chip and its sheet: `src/ui/MergedChip.tsx` (one React Native
+  `Modal` on every platform); tests `test/merged.test.ts`.
 
 ### Activity strip
 

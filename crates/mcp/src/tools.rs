@@ -271,6 +271,8 @@ pub struct BaseFileResult {
 pub const DEFAULT_LOG_TAIL: usize = 100;
 /// The most lines one `read_logs` call returns.
 pub const MAX_LOG_TAIL: usize = 400;
+/// Entries `read_logs {kind: theodore}` returns when `tail` is left out.
+pub const DEFAULT_THEODORE_TAIL: usize = 50;
 
 #[derive(Debug, Clone, Copy, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
@@ -279,16 +281,22 @@ pub enum LogKindParam {
     Run,
     Check,
     Archive,
+    /// Errors Theodore itself hit for this space: a checkpoint that
+    /// failed, a ship refused, the agent's process crashing, a file
+    /// another device sent that couldn't be written (docs/spaces.md
+    /// "Theodore's errors reach the agent").
+    Theodore,
 }
 
-impl From<LogKindParam> for theodore_ports::SpaceCommandName {
+impl From<LogKindParam> for theodore_ports::LogKind {
     fn from(k: LogKindParam) -> Self {
-        use theodore_ports::SpaceCommandName as N;
+        use theodore_ports::LogKind as K;
         match k {
-            LogKindParam::Setup => N::Setup,
-            LogKindParam::Run => N::Run,
-            LogKindParam::Check => N::Check,
-            LogKindParam::Archive => N::Archive,
+            LogKindParam::Setup => K::Setup,
+            LogKindParam::Run => K::Run,
+            LogKindParam::Check => K::Check,
+            LogKindParam::Archive => K::Archive,
+            LogKindParam::Theodore => K::Theodore,
         }
     }
 }
@@ -356,17 +364,24 @@ pub const REPORT_NOTE: &str = "The report window is open with your draft. The us
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ReadLogsParams {
-    /// Which command's output: setup, run (the app), check or archive.
+    /// Which command's output: setup, run (the app), check or archive; or
+    /// `theodore`, the errors Theodore itself hit for this space.
     pub kind: LogKindParam,
-    /// How many of the last lines (default 100, at most 400).
+    /// How many of the last lines (default 100, at most 400; `theodore`:
+    /// default 50).
     pub tail: Option<u32>,
 }
 
 impl ReadLogsParams {
-    /// `tail`, bounded to `1..=MAX_LOG_TAIL`.
+    /// `tail`, bounded to `1..=MAX_LOG_TAIL`; left out, `DEFAULT_LOG_TAIL`
+    /// lines of a command, `DEFAULT_THEODORE_TAIL` entries of `theodore`.
     pub fn bounded_tail(&self) -> usize {
+        let default = match self.kind {
+            LogKindParam::Theodore => DEFAULT_THEODORE_TAIL,
+            _ => DEFAULT_LOG_TAIL,
+        };
         self.tail
-            .map_or(DEFAULT_LOG_TAIL, |t| t as usize)
+            .map_or(default, |t| t as usize)
             .clamp(1, MAX_LOG_TAIL)
     }
 }

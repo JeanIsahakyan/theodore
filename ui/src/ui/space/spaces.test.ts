@@ -4,6 +4,8 @@ import { ALL } from '../../core/workspaces';
 import {
   remoteStartPicks,
   AUTO_ARCHIVE_KEY,
+  AUTO_ARCHIVE_MERGED_KEY,
+  autoArchiveMerged,
   BUILD_MODE_KEY,
   REVIEW_AGENT_KEY,
   autoArchiveDays,
@@ -401,6 +403,19 @@ describe('space archive settings', () => {
     expect(autoArchiveDays([row(AUTO_ARCHIVE_KEY, 3)])).toBe(3);
     expect(autoArchiveDays([row(AUTO_ARCHIVE_KEY, -1)])).toBe(7);
     expect(autoArchiveDays([row(AUTO_ARCHIVE_KEY, 'x')])).toBe(7);
+  });
+
+  it('archives merged spaces unless the user turned it off', () => {
+    expect(autoArchiveMerged([])).toBe(true);
+    expect(autoArchiveMerged([row(AUTO_ARCHIVE_MERGED_KEY, false)])).toBe(
+      false,
+    );
+    expect(autoArchiveMerged([row(AUTO_ARCHIVE_MERGED_KEY, true)])).toBe(true);
+    expect(autoArchiveMerged([row(AUTO_ARCHIVE_MERGED_KEY, 'no')])).toBe(true);
+    // Project scope doesn't count: it's a user preference.
+    expect(
+      autoArchiveMerged([row(AUTO_ARCHIVE_MERGED_KEY, false, 'project')]),
+    ).toBe(true);
   });
 });
 

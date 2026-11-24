@@ -96,6 +96,9 @@ pub(crate) struct Inner {
     pub account: crate::usecases::account::AccountState,
     /// Per space: its commands' last log lines and the ones in flight.
     pub space_rt: std::sync::Mutex<HashMap<String, crate::usecases::space_commands::SpaceRuntime>>,
+    /// Per space: the errors Theodore hit for it, for its agent
+    /// (`usecases::space_errors`); in memory, like `space_rt`.
+    pub space_errors: crate::usecases::space_errors::SpaceErrorBook,
     /// Serializes port reservation, so two creates never take one port.
     pub ports_lock: tokio::sync::Mutex<()>,
     /// Serializes changes to a space's setup stage (so the goal starts once).
@@ -186,6 +189,7 @@ impl Core {
             linear_cache: std::sync::Mutex::new(HashMap::new()),
             account: crate::usecases::account::AccountState::new(open),
             space_rt: std::sync::Mutex::new(HashMap::new()),
+            space_errors: Default::default(),
             ports_lock: tokio::sync::Mutex::new(()),
             setup_lock: tokio::sync::Mutex::new(()),
             config_warned: std::sync::Mutex::new(std::collections::HashSet::new()),
