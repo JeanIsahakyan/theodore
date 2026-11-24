@@ -37,13 +37,16 @@ export type SettingsPage =
   | 'about'
   /** Listed only in sandbox mode (`AppInfo.sandbox`). */
   | 'sandbox'
-  /** Settings → Spaces (the id predates the rename). */
-  | 'labs'
+  /** Settings → Spaces (`settings/SpacesSettingsPage`); saved routes with
+   *  the old id `labs` are migrated (`migrateRoute`). */
+  | 'spaces'
   /** Settings → Labs: switches for features in progress (`settings/labs.ts`). */
   | 'experiments';
 
-/** A project's own settings: its own menu, outside Settings. */
-export type ProjectSettingsSection = 'general' | 'languages' | 'config';
+/** A project's own settings: its own menu, outside Settings. `spaces`: its
+ *  config as it applies and its overrides of the space settings. */
+export type ProjectSettingsSection =
+  'general' | 'languages' | 'spaces' | 'config';
 
 export interface ContextMenuState {
   x: number;

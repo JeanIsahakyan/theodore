@@ -594,7 +594,8 @@ impl Core {
     }
 }
 
-/// The read-only view of `merged` (Settings → Labs, the editor's preview).
+/// The read-only view of `merged` (Project settings → Spaces, and the
+/// editor's preview).
 pub(crate) fn effective(merged: &Merged, repo: Option<RepoCommands>) -> EffectiveConfig {
     let mut unknown: Vec<String> = merged.unknown.iter().map(|(_, k)| k.clone()).collect();
     unknown.sort();

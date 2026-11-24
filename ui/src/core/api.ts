@@ -474,7 +474,7 @@ export const api = {
    *  terminal's last lines, `null` when it has none open. */
   spaceTerminalMention: (space: string) =>
     call<TerminalMention | null>('space_terminal_mention', { space }),
-  /** A project's merged config, read-only (Settings → Labs). */
+  /** A project's merged config, read-only (Project settings → Spaces). */
   projectConfig: (project: string) =>
     call<EffectiveConfig>('project_config', { project }),
   /** Project settings → Config: each layer's file and YAML generated

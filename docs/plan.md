@@ -1114,9 +1114,10 @@ Which agent does what is a setting, layered user → repo:
 | `agents.fallback_agents` | `[]` | user scope: other agents a space continues on, in order, when every account of its agent is limited (§8.6) |
 | `agents.auto_continue` | `true` | user scope: a turn cut off by a usage limit goes on by itself, on another account or after the reset (§8.6) |
 | `spaces.sub_spaces` | `true` | user scope: a space's agent may start, steer and wait for sub-spaces, and message or answer any other space here (docs/spaces.md "Sub-spaces"); listing, reading and asking other spaces stay on |
-| `spaces.ask_timeout_secs` | `180` | user scope: how long a `space_ask` waits for the other space's answer |
-| `spaces.max_depth` | `2` | user scope: how deep sub-spaces nest (a top-level space is 0) |
-| `spaces.max_children` | `5` | user scope: live (not archived) sub-spaces per space |
+| `spaces.ask_timeout_secs` | `180` | user scope, a project may override it (`project:<id>` scope, Project settings → Spaces): how long a `space_ask` waits for the other space's answer |
+| `spaces.max_depth` | `2` | user scope, per-project override: how deep sub-spaces nest (a top-level space is 0) |
+| `spaces.max_children` | `5` | user scope, per-project override: live (not archived) sub-spaces per space |
+| `spaces.auto_archive_days`, `spaces.auto_archive_merged` | `7`, `true` | user scope, per-project override: docs/spaces.md §7 |
 
 `theodore group --agent <id>` overrides the setting for evals. M1 ships the
 Claude runner; the others follow in M4 behind the same runner trait.

@@ -38,9 +38,11 @@ global ──▶ repo ──▶ local ──▶ effective config
   checkout, so its local file lives in Theodore's data directory:
   `~/.theodore/projects/<host>/<owner>/<name>/config.local.yaml`.
 
-Settings → Spaces → Global config also shows each project's effective config
-read-only: every value and the file it came from, unknown keys, and whether
-the repo's commands are allowed.
+Project settings → Spaces shows a project's effective config read-only:
+every value and the file it came from, unknown keys, and whether the repo's
+commands are allowed — next to the project's own space settings (limits,
+auto-archive: docs/spaces.md §7 "Where the settings live"), which are
+settings rows, not config keys.
 
 **Legacy path.** `<repo>/.review/config.yaml` is still read as the repo
 layer when `.theodore/config.yaml` is absent. It is deprecated: Theodore
@@ -515,7 +517,7 @@ Save to… ─┬─ Repo (team)
   generated from your settings. The preview shows the project's effective
   config with the editor's text in place of that layer (generated text is
   previewed as the repo file), each value with the file it comes from —
-  the same view as Settings → Spaces.
+  the same view as Project settings → Spaces.
 - **Problems.** The text is checked by the same parser that reads the file.
   Invalid YAML, a top level that isn't a mapping and a value of the wrong
   type (`ports: lots`) are errors, at their line; an unknown key is a

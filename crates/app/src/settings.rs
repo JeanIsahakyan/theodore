@@ -5,6 +5,13 @@
 //! by `load_repo_settings`) set `review.agents.*`, stored as `repo:<slug>`
 //! rows that win over `user` for that repo.
 //!
+//! `project:<project id>` rows are a project's own overrides, written from
+//! Project settings → Spaces (the `spaces.*` limits: docs/spaces.md §7 and
+//! "Sub-spaces"). They are resolved by [`Core::setting_value_for_project`]:
+//! the project's row, else the `user` row, else the caller's built-in
+//! default. Unlike `repo:` rows they are never derived from a file, so a
+//! config change doesn't touch them.
+//!
 //! `agents.<id>.model` / `agents.<id>.effort` (user scope, unset = the
 //! CLI's own default) are read per run by `AgentDefaults`.
 
@@ -20,6 +27,13 @@ use crate::error::AppResult;
 pub const SCOPE_USER: &str = "user";
 /// The setting key behind [`Core::user_mcp_allowed`].
 pub const USER_MCP: &str = "agents.user_mcp";
+
+/// The scope of a project's own overrides: `project:<project id>`
+/// (`github:owner/name`, `local:<name>`). The UI writes the same string
+/// (`projectScope` in `ui/src/ui/space/spaceSettings.ts`).
+pub fn project_scope(project: &str) -> String {
+    format!("project:{project}")
+}
 
 pub fn defaults() -> Vec<Setting> {
     vec![
@@ -131,13 +145,6 @@ impl Core {
             .unwrap_or(default)
     }
 
-    /// A numeric setting; `None` when unset or not a number.
-    pub async fn setting_f64_scoped(&self, key: &str, repo_scope: Option<&str>) -> Option<f64> {
-        self.setting_value_scoped(key, repo_scope)
-            .await
-            .and_then(|v| v.as_f64())
-    }
-
     /// `agents.stall_after_ms`: no scope override today (a stall timeout is
     /// a machine/CLI property, not a per-repo one), kept as `None` repo scope
     /// so it's a one-line change if that ever needs to differ.
@@ -226,14 +233,41 @@ impl Core {
         key: &str,
         repo_scope: Option<&str>,
     ) -> Option<serde_json::Value> {
+        pick_setting(self.setting_rows(key).await?, repo_scope)
+    }
+
+    /// A setting as it applies to one project (its id): the project's own
+    /// override (`project:<id>`), else the `user` value, else `None` — the
+    /// caller's built-in default applies then.
+    pub(crate) async fn setting_value_for_project(
+        &self,
+        key: &str,
+        project: &str,
+    ) -> Option<serde_json::Value> {
+        pick_project_setting(self.setting_rows(key).await?, project)
+    }
+
+    /// [`Self::setting_value_for_project`] as a `u32`; `default` when
+    /// unset or not a non-negative integer.
+    pub(crate) async fn setting_u32_for_project(
+        &self,
+        key: &str,
+        project: &str,
+        default: u32,
+    ) -> u32 {
+        self.setting_value_for_project(key, project)
+            .await
+            .and_then(|v| v.as_u64())
+            .map_or(default, |n| n.min(u32::MAX as u64) as u32)
+    }
+
+    async fn setting_rows(&self, key: &str) -> Option<Vec<theodore_ports::ModelRow>> {
         let store = self.0.deps.store.clone();
         let key_owned = key.to_string();
-        let rows =
-            tokio::task::spawn_blocking(move || store.query(models::SETTING, "key", &key_owned))
-                .await
-                .ok()?
-                .ok()?;
-        pick_setting(rows, repo_scope)
+        tokio::task::spawn_blocking(move || store.query(models::SETTING, "key", &key_owned))
+            .await
+            .ok()?
+            .ok()
     }
 
     /// Reads a review's config (docs/config.md: the global file, then the
@@ -331,4 +365,80 @@ pub(crate) fn pick_setting(
         .find(|s| s.scope == SCOPE_USER)
         .or_else(|| settings.first())
         .map(|s| s.value.clone())
+}
+
+/// One setting's value for a project: its `project:<id>` row, else the
+/// `user` row. Another project's row, or a `repo:` row, never counts.
+pub(crate) fn pick_project_setting(
+    rows: Vec<theodore_ports::ModelRow>,
+    project: &str,
+) -> Option<serde_json::Value> {
+    let settings: Vec<Setting> = rows
+        .into_iter()
+        .filter_map(|r| serde_json::from_value(r.data).ok())
+        .collect();
+    let scope = project_scope(project);
+    settings
+        .iter()
+        .find(|s| s.scope == scope)
+        .or_else(|| settings.iter().find(|s| s.scope == SCOPE_USER))
+        .map(|s| s.value.clone())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn row(key: &str, scope: &str, value: serde_json::Value) -> theodore_ports::ModelRow {
+        let setting = Setting {
+            key: key.into(),
+            scope: scope.into(),
+            value,
+        };
+        theodore_ports::ModelRow {
+            model: models::SETTING.into(),
+            id: format!("{scope}:{key}"),
+            data: serde_json::to_value(&setting).unwrap(),
+            archived: false,
+        }
+    }
+
+    #[test]
+    fn a_project_override_wins_over_the_user_value() {
+        let rows = vec![
+            row("spaces.max_children", "user", serde_json::json!(3)),
+            row(
+                "spaces.max_children",
+                "project:github:acme/web",
+                serde_json::json!(8),
+            ),
+        ];
+        assert_eq!(
+            pick_project_setting(rows, "github:acme/web"),
+            Some(serde_json::json!(8))
+        );
+    }
+
+    #[test]
+    fn without_an_override_the_user_value_applies_and_then_nothing() {
+        let rows = vec![
+            row("spaces.max_children", "user", serde_json::json!(3)),
+            row(
+                "spaces.max_children",
+                "project:github:acme/api",
+                serde_json::json!(8),
+            ),
+            row("spaces.max_children", "repo:acme/web", serde_json::json!(9)),
+        ];
+        assert_eq!(
+            pick_project_setting(rows.clone(), "github:acme/web"),
+            Some(serde_json::json!(3)),
+            "another project's row and a repo row don't count"
+        );
+        let only_other = rows
+            .into_iter()
+            .filter(|r| !r.id.starts_with("user:"))
+            .collect();
+        assert_eq!(pick_project_setting(only_other, "github:acme/web"), None);
+    }
 }

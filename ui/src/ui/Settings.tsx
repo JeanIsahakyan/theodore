@@ -73,9 +73,9 @@ import { SandboxBadge } from './sandbox/SandboxBadge';
 import { SandboxPage } from './sandbox/SandboxPage';
 import { visibleSettingsPages } from './sandbox/sandbox';
 import { isLabsVisible } from './space/mode';
-import { LabsPage } from './space/SpacePage';
 import { isHostOn, isLinearOn } from './settings/labs';
-import { LabsPage as ExperimentsPage } from './settings/LabsPage';
+import { LabsPage } from './settings/LabsPage';
+import { SpacesSettingsPage } from './settings/SpacesSettingsPage';
 import { pauseWarning, runningAgents } from './shell/UpdateReady';
 
 const AGENTS: AgentId[] = ['claude', 'codex', 'gemini'];
@@ -99,7 +99,7 @@ const PAGES: { id: Page; title: string; icon: ReactNode }[] = [
   { id: 'integrations', title: 'Integrations', icon: <PlugConnection /> },
   { id: 'about', title: 'About & updates', icon: <CircleInfo /> },
   { id: 'sandbox', title: 'Sandbox', icon: <Cubes3 /> },
-  { id: 'labs', title: 'Spaces', icon: <Sparkles /> },
+  { id: 'spaces', title: 'Spaces', icon: <Sparkles /> },
   { id: 'experiments', title: 'Labs', icon: <Flask /> },
 ];
 
@@ -114,7 +114,8 @@ const SUB: Record<Page, string> = {
   updates: 'Version, release channel and updates.',
   about: 'Version, release channel and updates.',
   sandbox: 'The simulated host this window runs against: faults and timeline.',
-  labs: 'An agent writes a change in its own worktree; you review it before it becomes a pull request.',
+  spaces:
+    'An agent writes a change in its own worktree; you review it before it becomes a pull request.',
   experiments:
     'Features in progress. Off by default; they may change or go away.',
 };
@@ -152,7 +153,7 @@ export const SettingsNav = observer(function SettingsNav({
   const fleet = store.fleet.available;
   const pages = visibleSettingsPages(PAGES, store.ephemeral.sandbox).filter(
     (p) =>
-      (p.id !== 'labs' || labs) &&
+      (p.id !== 'spaces' || labs) &&
       (p.id !== 'integrations' || linear) &&
       (p.id !== 'devices' || fleet),
   );
@@ -1134,12 +1135,12 @@ export const SettingsPage = observer(function SettingsPage({
           ) : null
         ) : page === 'sandbox' ? (
           <SandboxPage />
-        ) : page === 'labs' ? (
+        ) : page === 'spaces' ? (
           labs ? (
-            <LabsPage />
+            <SpacesSettingsPage />
           ) : null
         ) : page === 'experiments' ? (
-          <ExperimentsPage />
+          <LabsPage />
         ) : (
           <AboutPage />
         )}

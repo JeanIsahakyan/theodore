@@ -1,34 +1,25 @@
 /**
- * Settings → Labs → Global config: the global config file (open it in the
- * editor) and, per project, the merged config read-only — which files it
- * comes from, every effective value with its layer, unknown keys, and
- * whether the repo's commands are allowed. Also `SpaceSetupAssistHint`,
- * the space page's "no `spaces:` commands yet" nudge.
+ * Settings → Spaces → Global config: the global config file (open it in the
+ * editor), with a pointer to each project's own settings. `EffectiveConfigView`
+ * is a project's merged config read-only — which files it comes from, every
+ * effective value with its layer, unknown keys, and whether the repo's
+ * commands are allowed (Project settings → Spaces, the config editor's
+ * preview). Also `SpaceSetupAssistHint`, the space page's "no `spaces:`
+ * commands yet" nudge.
  */
 import { useEffect, useState } from 'react';
 
-import {
-  ChevronDown,
-  ChevronRight,
-  Folder,
-  Sparkles,
-  TriangleExclamation,
-  Xmark,
-} from '@gravity-ui/icons';
+import { Sparkles, TriangleExclamation, Xmark } from '@gravity-ui/icons';
 import { Button, Card, Chip, Typography } from '@heroui/react';
 import { observer } from 'mobx-react-lite';
 import type {
   ConfigLayer,
   EffectiveConfig,
   GlobalConfigInfo,
-  Project,
   Space,
   SpaceConfigView,
 } from '../../gen/contract';
 import { api } from '../../core/api';
-import { useWorkspaces } from '../../stores/context';
-import { Spinner } from '../bits';
-import { projectLabel } from '../Projects';
 import { STORAGE_NS } from '../../stores/UiStore';
 import { LAYER_LABEL, fileStatus, groupEntries, settingUp } from './commands';
 
@@ -120,7 +111,6 @@ export const SpaceSetupAssistHint = observer(function SpaceSetupAssistHint({
 });
 
 export const GlobalConfigSection = observer(function GlobalConfigSection() {
-  const ws = useWorkspaces();
   const [info, setInfo] = useState<GlobalConfigInfo | null>(null);
   const [busy, setBusy] = useState(false);
   useEffect(() => {
@@ -172,71 +162,12 @@ export const GlobalConfigSection = observer(function GlobalConfigSection() {
           Open in editor
         </Button>
       </Card>
-      {ws.projects.length > 0 && (
-        <Card variant="secondary" className="gap-0 p-0">
-          {ws.projects.map((p) => (
-            <ProjectConfigRow key={p.id} project={p} />
-          ))}
-        </Card>
-      )}
+      <span className="config-projects-hint text-xs text-muted">
+        Each project’s config, as it applies: Project settings → Spaces.
+      </span>
     </section>
   );
 });
-
-/** One project: collapsed to its name; expanded, its merged config
- *  (fetched when opened). */
-function ProjectConfigRow({ project }: { project: Project }) {
-  const [open, setOpen] = useState(false);
-  const [config, setConfig] = useState<EffectiveConfig | null>(null);
-  const [failed, setFailed] = useState(false);
-  useEffect(() => {
-    if (!open) return;
-    let on = true;
-    api
-      .projectConfig(project.id)
-      .then((c) => on && setConfig(c))
-      .catch(() => on && setFailed(true));
-    return () => {
-      on = false;
-    };
-  }, [open, project.id]);
-  return (
-    <div className="config-project border-b border-separator last:border-b-0">
-      <button
-        type="button"
-        aria-expanded={open}
-        className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-default/50"
-        onClick={() => {
-          setFailed(false);
-          setOpen((v) => !v);
-        }}
-      >
-        <Folder className="size-4 text-muted" />
-        <span className="min-w-0 flex-1 truncate text-sm">
-          {projectLabel(project)}
-        </span>
-        {open ? (
-          <ChevronDown className="size-4 text-muted" />
-        ) : (
-          <ChevronRight className="size-4 text-muted" />
-        )}
-      </button>
-      {open && (
-        <div className="flex flex-col gap-3 px-4 pb-4">
-          {failed ? (
-            <span className="text-xs text-danger">
-              Could not read this project's config.
-            </span>
-          ) : !config ? (
-            <Spinner />
-          ) : (
-            <EffectiveConfigView config={config} />
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
 
 export function EffectiveConfigView({ config }: { config: EffectiveConfig }) {
   const repo = config.repo_commands;

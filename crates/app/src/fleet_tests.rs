@@ -3327,6 +3327,14 @@ async fn a_trusted_phone_starts_and_answers_here_like_a_computer() {
         .find(|r| r.space == "rs_p")
         .expect("hosted");
     assert_eq!(row.origin_device, PHONE);
+    // The phone's space runs its goal turn in the background; let it end,
+    // or its agent run would take the hang meant for mac1's.
+    let phones = local_of(&f, "rs_p");
+    wait_until("rs_p settled", || {
+        let s = space(&f, &phones);
+        s.turns >= 1 && s.run.is_none() && s.status != SpaceStatus::Running
+    })
+    .await;
 
     // A space mac1 started asks; the phone answers it.
     f.agents.hang_next_run();

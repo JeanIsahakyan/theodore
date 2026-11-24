@@ -1,6 +1,6 @@
 /**
  * Space commands (setup / run / check / archive) and project config: pure
- * rules for what the space page and Settings → Labs show — the log buffer,
+ * rules for what the space page and Project settings → Spaces show — the log buffer,
  * the trust prompt, the "Setting up…" stage, the Run button, check chips.
  */
 import type {

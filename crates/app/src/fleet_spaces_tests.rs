@@ -415,8 +415,13 @@ async fn queued_message_removes_or_sends_a_waiting_message_from_another_device()
     );
     f.agents.push_script(done("second done"));
     h.core.space_stop(&a.id).await.unwrap();
-    let row = settled(&f, &a.id).await;
-    assert_eq!(row.turns, a.turns + 2, "busy, then second");
+    // Not `settled` alone: between the stopped turn ending and the queued
+    // one starting the space is briefly idle with one turn counted.
+    wait_until("busy, then second", || {
+        let s = space(&f, &a.id);
+        s.turns == a.turns + 2 && s.run.is_none() && s.status != SpaceStatus::Running
+    })
+    .await;
     assert!(h.core.queued_messages(&a.id).await.unwrap().is_empty());
 }
 

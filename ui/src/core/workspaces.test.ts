@@ -404,6 +404,22 @@ describe('migrateRoute', () => {
     for (const r of kept) expect(migrateRoute(r, ALL)).toEqual(r);
   });
 
+  it('turns the old Settings → Labs id into Settings → Spaces', () => {
+    expect(migrateRoute({ name: 'settings', page: 'labs' }, ALL)).toEqual({
+      name: 'settings',
+      page: 'spaces',
+    });
+    expect(migrateRoute({ name: 'settings', page: 'labs' }, web.id)).toEqual({
+      name: 'settings',
+      page: 'spaces',
+    });
+    const spaces = { name: 'settings', page: 'spaces' };
+    expect(migrateRoute(spaces, ALL)).toEqual(spaces);
+    // The Labs page itself kept its own id.
+    const labs = { name: 'settings', page: 'experiments' };
+    expect(migrateRoute(labs, ALL)).toEqual(labs);
+  });
+
   it('turns the old Settings → Projects and Languages tabs into the project’s settings', () => {
     expect(
       migrateRoute({ name: 'settings', page: 'projects' }, web.id),
