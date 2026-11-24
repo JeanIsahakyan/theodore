@@ -973,7 +973,7 @@ export type EditCommentRequest = {
 	body: string | null,
 };
 
-/**  A project's merged config, read-only (Settings → Labs). */
+/**  A project's merged config, read-only (Project settings → Spaces). */
 export type EffectiveConfig = {
 	files: ConfigFile[],
 	entries: ConfigEntry[],
@@ -2488,7 +2488,11 @@ export type SetTokenRequest = {
 export type Setting = {
 	/**  e.g. `agents.grouping`, `updates.channel` */
 	key: string,
-	/**  `user` or `repo:<owner>/<name>` */
+	/**
+	 *  `user`; `repo:<owner>/<name>` (set from the project's config files);
+	 *  or `project:<project id>` (a project's own override, Project
+	 *  settings → Spaces). Resolution: project → user → built-in default.
+	 */
 	scope: string,
 	value: unknown,
 };

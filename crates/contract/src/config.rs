@@ -53,7 +53,7 @@ pub struct RepoCommands {
     pub items: Vec<ConfigEntry>,
 }
 
-/// A project's merged config, read-only (Settings → Labs).
+/// A project's merged config, read-only (Project settings → Spaces).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
 pub struct EffectiveConfig {
     pub files: Vec<ConfigFile>,

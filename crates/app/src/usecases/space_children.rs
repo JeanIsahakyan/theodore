@@ -69,6 +69,8 @@ use crate::usecases::space_notes::AskTry;
 /// `spaces.sub_spaces`: the sub-space tools are on (user scope, default on).
 pub const SUB_SPACES_KEY: &str = "spaces.sub_spaces";
 /// `spaces.max_depth`: how deep sub-spaces nest (a top-level space is 0).
+/// This and the two below are read per the space's project: a
+/// `project:<id>` override, else the `user` value (`settings.rs`).
 pub const MAX_DEPTH_KEY: &str = "spaces.max_depth";
 pub const DEFAULT_MAX_DEPTH: u32 = 2;
 /// `spaces.max_children`: live (not archived, not done) sub-spaces per space.
@@ -383,11 +385,11 @@ impl Core {
             .unwrap_or(true)
     }
 
-    async fn setting_u32(&self, key: &str, default: u32) -> u32 {
-        self.setting_value_scoped(key, None)
+    /// A `spaces.*` limit as it applies to `space`: its project's override
+    /// (Project settings → Spaces), else the user's value, else `default`.
+    async fn space_limit(&self, key: &str, space: &Space, default: u32) -> u32 {
+        self.setting_u32_for_project(key, &space.project, default)
             .await
-            .and_then(|v| v.as_u64())
-            .map_or(default, |n| n.min(u32::MAX as u64) as u32)
     }
 
     async fn sub_spaces_on(&self) -> Result<(), SpaceToolError> {
@@ -764,8 +766,10 @@ impl Core {
             AskFrom::Space(f) => f.space.clone(),
             AskFrom::Device(name) => format!("device {name}"),
         };
+        // The asking space's project sets how long its agent waits; a
+        // device asking has none, so the answering space's applies.
         let secs = self
-            .setting_u32(ASK_TIMEOUT_KEY, SPACE_ASK_TIMEOUT_SECS)
+            .space_limit(ASK_TIMEOUT_KEY, me.unwrap_or(row), SPACE_ASK_TIMEOUT_SECS)
             .await
             .max(1);
         let deadline = tokio::time::Instant::now() + Duration::from_secs(u64::from(secs));
@@ -924,7 +928,11 @@ impl Core {
             return Err(refuse("invalid", "a sub-space needs a goal"));
         }
         let depth = me.parent.as_ref().map_or(0, |p| p.depth) + 1;
-        let max_depth = self.setting_u32(MAX_DEPTH_KEY, DEFAULT_MAX_DEPTH).await;
+        // The parent's project sets its limits, whichever project the
+        // child is started in.
+        let max_depth = self
+            .space_limit(MAX_DEPTH_KEY, &me, DEFAULT_MAX_DEPTH)
+            .await;
         if depth > max_depth {
             return Err(refuse(
                 "depth",
@@ -988,7 +996,7 @@ impl Core {
             .await?;
         }
         let max_children = self
-            .setting_u32(MAX_CHILDREN_KEY, DEFAULT_MAX_CHILDREN)
+            .space_limit(MAX_CHILDREN_KEY, &me, DEFAULT_MAX_CHILDREN)
             .await;
         // Counted and created under one lock: two starts can't both pass.
         let _start = self.0.sub_spaces.start_lock.lock().await;

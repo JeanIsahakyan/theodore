@@ -1,12 +1,19 @@
 /**
  * A project's own settings: the route `project-settings`, reached from the
  * workspace switcher. Same shell as Settings — Back with Esc, the project's
- * name, a left menu — with three sections: General (the settings effective
- * for the project, remove), Languages (`ProjectLanguages`) and Config (the
- * config file's editor, `ConfigEditor`).
+ * name, a left menu — with four sections: General (the settings effective
+ * for the project, remove), Languages (`ProjectLanguages`), Spaces (the
+ * config as it applies and the project's own space settings,
+ * `ProjectSpaces`) and Config (the config file's editor, `ConfigEditor`).
  */
 import { useState, type ReactNode } from 'react';
-import { ArrowLeft, Code, FileText, Sliders } from '@gravity-ui/icons';
+import {
+  ArrowLeft,
+  Code,
+  FileText,
+  Sliders,
+  Sparkles,
+} from '@gravity-ui/icons';
 import { Button, Card, ListBox, Typography } from '@heroui/react';
 import { observer } from 'mobx-react-lite';
 import type { Project } from '../../gen/contract';
@@ -20,6 +27,7 @@ import { projectLabel } from '../Projects';
 import { AI_KEYS, AI_TITLE, SOURCE_NOTE, effectiveOf } from '../Settings';
 import { ConfigEditor } from './ConfigEditor';
 import { ProjectLanguages } from './ProjectLanguages';
+import { ProjectSpaces } from './ProjectSpaces';
 
 export const SECTION_INFO: Record<
   ProjectSettingsSection,
@@ -34,6 +42,11 @@ export const SECTION_INFO: Record<
     title: 'Languages',
     sub: 'Language servers in reviews and spaces, and what is downloaded for each language.',
     icon: <Code />,
+  },
+  spaces: {
+    title: 'Spaces',
+    sub: 'The commands this project’s spaces run, and its own limits and auto-archive.',
+    icon: <Sparkles />,
   },
   config: {
     title: 'Config',
@@ -255,6 +268,8 @@ export const ProjectSettingsPage = observer(function ProjectSettingsPage({
               <General project={project} />
             ) : section === 'languages' ? (
               <ProjectLanguages key={project.id} project={project} />
+            ) : section === 'spaces' ? (
+              <ProjectSpaces key={project.id} project={project} />
             ) : (
               <ConfigEditor key={project.id} project={project} />
             )}

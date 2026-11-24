@@ -1122,7 +1122,7 @@ export type EditCommentRequest = {
 	body: string | null,
 };
 
-/**  A project's merged config, read-only (Settings → Labs). */
+/**  A project's merged config, read-only (Project settings → Spaces). */
 export type EffectiveConfig = {
 	files: ConfigFile[],
 	entries: ConfigEntry[],

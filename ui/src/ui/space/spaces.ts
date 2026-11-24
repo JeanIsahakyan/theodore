@@ -20,8 +20,9 @@ import type {
   SpaceTurn,
 } from '../../gen/contract';
 import { ALL, type WorkspaceId } from '../../core/workspaces';
+import { effectiveSpaceSetting } from './spaceSettings';
 
-/** The per-machine switch (Settings → Labs). */
+/** The per-machine switch (Settings → Spaces). */
 export const BUILD_MODE_KEY = 'labs.build_mode';
 
 /** `settings` rows are `{ key, scope, value }`; only the user scope counts. */
@@ -272,25 +273,31 @@ export function remoteStartPicks(
 export const AUTO_ARCHIVE_KEY = 'spaces.auto_archive_days';
 export const DEFAULT_AUTO_ARCHIVE_DAYS = 7;
 
-/** `spaces.auto_archive_days`, user scope; unset or invalid = 7. */
+/** `spaces.auto_archive_days` as it applies to `project`: its own override
+ *  (Project settings → Spaces), else the user's (Settings → Spaces); unset
+ *  or invalid = 7. */
 export function autoArchiveDays(
   settings: Pick<Setting, 'key' | 'scope' | 'value'>[],
+  project?: string | null,
 ): number {
-  const v = userSetting(settings, AUTO_ARCHIVE_KEY)?.value;
-  return typeof v === 'number' && v >= 0 && Number.isFinite(v)
-    ? Math.floor(v)
-    : DEFAULT_AUTO_ARCHIVE_DAYS;
+  const v = effectiveSpaceSetting(settings, AUTO_ARCHIVE_KEY, project).value;
+  return typeof v === 'number' ? Math.floor(v) : DEFAULT_AUTO_ARCHIVE_DAYS;
 }
 
 /** Whether a space whose PR merged archives itself at all (Settings →
- *  Labs); on unless the user turned it off. */
+ *  Spaces, or the project's override); on unless turned off. */
 export const AUTO_ARCHIVE_MERGED_KEY = 'spaces.auto_archive_merged';
 
-/** `spaces.auto_archive_merged`, user scope; unset or not a boolean = on. */
+/** `spaces.auto_archive_merged` for `project`; unset or not a boolean = on. */
 export function autoArchiveMerged(
   settings: Pick<Setting, 'key' | 'scope' | 'value'>[],
+  project?: string | null,
 ): boolean {
-  const v = userSetting(settings, AUTO_ARCHIVE_MERGED_KEY)?.value;
+  const v = effectiveSpaceSetting(
+    settings,
+    AUTO_ARCHIVE_MERGED_KEY,
+    project,
+  ).value;
   return typeof v === 'boolean' ? v : true;
 }
 
@@ -661,7 +668,7 @@ export function undoneMessages(s: Pick<Space, 'turn_log'>): Set<string> {
   );
 }
 
-/** Native "turn finished" notifications (Settings → Labs); on unless the
+/** Native "turn finished" notifications (Settings → Spaces); on unless the
  *  user turned them off. */
 export const NOTIFY_KEY = 'spaces.notify';
 
