@@ -58,6 +58,9 @@ pub(crate) enum TurnEnd {
     /// for what comes next (`space_limits::after_limit`): a turn on another
     /// account, a pause, or held there.
     Limited,
+    /// Paused for a restart (`space_restart`): the queue waits, unheld,
+    /// for the resumed turn after the restart.
+    Paused,
 }
 
 impl Core {
@@ -302,6 +305,11 @@ impl Core {
         if let Some((reason, messages)) = held {
             crate::usecases::telemetry::queue_held(space, reason, messages);
         }
+        // Restarting: nothing starts; the next launch resumes the turn and
+        // the queue drains after it.
+        if self.restart_pending() {
+            return;
+        }
         // Already written by the CLI: it goes before anything queued.
         self.start_follow_up_boxed(space).await;
         if end == TurnEnd::Done {
@@ -324,6 +332,9 @@ impl Core {
     /// from another device no longer allowed is dropped, and the next one
     /// tried.
     async fn drain_queue(&self, space_id: &str) {
+        if self.restart_pending() {
+            return;
+        }
         let Ok(space) = self.space_row(space_id).await else {
             return;
         };
@@ -400,9 +411,14 @@ impl Core {
     }
 
     /// On start: the turns those messages waited for never finished, so
-    /// nothing is sent on its own; each waits for your "Send".
+    /// nothing is sent on its own; each waits for your "Send". Not a space
+    /// whose turn was paused for the restart: its turn resumes, and the
+    /// queue runs after it (`space_restart`).
     pub(crate) async fn hold_queues_after_restart(&self, spaces: &[Space]) {
         for s in spaces {
+            if s.restart_pause.is_some() {
+                continue;
+            }
             self.hold_queue(&s.id, "restart").await;
         }
     }

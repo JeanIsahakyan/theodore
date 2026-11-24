@@ -282,6 +282,37 @@ or `beta` and never to staging (`effective_channel` in
   exactly `channel-beta` and overwrite its `latest.json` on each beta build.
 - **Never re-tag a published release.** Ship a new patch instead.
 
+## Graceful update: agents keep working
+
+The updater downloads and installs on disk in the background; the restart
+is the user's (the "Restart to update" pill, Settings → Updates, the
+update notification) or an agent's for the user (`theodore_update`). A
+restart never kills a running agent turn: the core pauses every turn,
+marks its space, and the next launch resumes each where it stopped
+(docs/spaces.md §7 "Restart with turns running"). A plain quit with turns
+running does the same.
+
+```
+phase   unknown ─▶ check ─┬─ up to date
+                          └─ available ─▶ downloading (n%) ─▶ ready ─▶ restart
+                                                                        │
+Restart to update ───────────────────────────────────────────────────┐  │
+theodore_update (ready) ─ answer "restarting to update to X" ─ 1.5 s ┼──┤
+⌘Q / SIGTERM, turns running ─────────────────────────────────────────┘  │
+   ─▶ core.pause_for_restart: interrupt each agent, ≤ 20 s, checkpoint, mark
+   ─▶ kept processes stopped ─▶ request_restart / exit (≤ 45 s in all)
+next launch ─▶ resume each marked turn (--resume its session) ─▶ queue after
+```
+
+| | |
+| --- | --- |
+| `UpdateState` (`apps/desktop/src/updater.rs`) | the phase above; `app_info.update` and the `update` event follow it, `theodore_version` reads it |
+| `theodore_version` | version · channel · commit · build env · the phase (version, percent) |
+| `theodore_update` | ready → the graceful restart (after its answer reaches the agent); downloading → says so; else a check now: found → the download starts, says so; none → up to date. Only when the user asks; refused for a space hosted for another device |
+| `restart.rs` | `restart_after_pausing` (update) and `exit_after_pausing` (`ExitRequested` with turns running: the exit waits for the pause, then comes again) |
+| a host write still queued (outbox) | holds "Restart to update" off as before; the pill asks again every few seconds |
+| a nightly, the sandbox | no updater: `theodore_version` says `unavailable` and why, `theodore_update` does nothing |
+
 ## Linux builds
 
 `build.yml` builds every platform from one version and fails as a whole:

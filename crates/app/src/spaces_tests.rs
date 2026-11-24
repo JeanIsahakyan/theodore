@@ -1598,6 +1598,7 @@ fn a_space_from_before_these_fields_still_loads() {
         effort: Some("high".into()),
         blank: true,
         paused: None,
+        restart_pause: None,
         ..sample_space()
     })
     .unwrap();

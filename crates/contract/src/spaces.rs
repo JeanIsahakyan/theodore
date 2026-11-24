@@ -289,6 +289,48 @@ pub struct Space {
     /// continues on its own at `until`, unless cancelled.
     #[serde(default)]
     pub paused: Option<crate::SpacePause>,
+    /// A turn Theodore paused to restart (an update, a quit; docs/spaces.md
+    /// §7 "Restart with turns running"): set when the turn is interrupted,
+    /// cleared when the next launch resumes it.
+    #[serde(default)]
+    pub restart_pause: Option<SpaceRestartPause>,
+}
+
+/// Why Theodore restarted with turns running.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum RestartReason {
+    /// Restarting into a downloaded update.
+    Update { version: String },
+    /// The user quit the app.
+    Quit,
+    /// A restart for another reason.
+    Restart,
+}
+
+/// A turn paused for a restart: what the next launch needs to resume it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct SpaceRestartPause {
+    /// The paused turn (`Space::run`).
+    pub run: String,
+    /// Your message that started the paused turn.
+    pub message: String,
+    pub agent: AgentId,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub effort: Option<String>,
+    pub mode: SpaceMode,
+    /// The agent session to resume, as the space knew it when paused
+    /// (`Space::agent_session` is the one the resume reads).
+    #[serde(default)]
+    pub session: Option<AgentSession>,
+    pub reason: RestartReason,
+    pub at: Millis,
+    /// The agent didn't stop in time and was killed; its session is still
+    /// resumed.
+    #[serde(default)]
+    pub killed: bool,
 }
 
 /// A merge of the base into the space, left in progress on conflicts

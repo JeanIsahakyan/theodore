@@ -11,7 +11,8 @@ pub use theodore_ports::{
     LocalSpaceAsk, LocalSpaceItem, LocalSpaceList, LocalSpaceMerge, LocalSpaceRead,
     LocalSpaceStart, LocalSpaceWait, LogTail, NewReviewComment, Position, ProgressStep,
     ProgressStepState, ReviewItem, ShipMerge, ShipOutcome, ShipToolAction, SpaceCommandName,
-    SpaceDiff, SpaceInfo, SpaceToolError, TerminalTail, UserAnswer, UserQuestion,
+    SpaceDiff, SpaceInfo, SpaceToolError, TerminalTail, TheodoreVersion, UpdateStart, UpdaterState,
+    UserAnswer, UserQuestion,
 };
 
 /// Which server a run talks to, and so which tools it sees.
@@ -55,6 +56,8 @@ pub const SPACE_TOOL_NAMES: &[&str] = &[
     "set_base",
     "update_progress",
     "ask_user",
+    "theodore_version",
+    "theodore_update",
 ];
 
 /// The fleet tools (docs/fleet.md "Agents use it too"): `space-tools`
@@ -571,6 +574,23 @@ pub trait SpaceToolsBackend: Send + Sync {
         questions: Vec<UserQuestion>,
     ) -> Result<Vec<UserAnswer>, SpaceToolError> {
         let _ = (space, run_id, questions);
+        Err(unavailable())
+    }
+    /// `theodore_version`: the running build and where an update stands
+    /// (docs/releasing.md "Graceful update").
+    async fn theodore_version(&self, space: &str) -> Result<TheodoreVersion, SpaceToolError> {
+        let _ = space;
+        Err(unavailable())
+    }
+    /// `theodore_update`, from the turn `run_id`: restarts into a downloaded
+    /// update (every running turn pauses and resumes after it), starts the
+    /// download of an available one, or says Theodore is up to date.
+    async fn theodore_update(
+        &self,
+        space: &str,
+        run_id: &RunId,
+    ) -> Result<UpdateStart, SpaceToolError> {
+        let _ = (space, run_id);
         Err(unavailable())
     }
 

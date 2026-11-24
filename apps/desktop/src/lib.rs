@@ -17,6 +17,7 @@ pub mod op;
 mod qa_driver;
 pub mod quit;
 pub mod relocate;
+pub mod restart;
 pub mod shell_path;
 pub mod updater;
 
@@ -324,6 +325,12 @@ pub fn run(
             // SIGTERM / SIGINT quit like ⌘Q, with the same cleanup.
             quit::exit_on_signal(handle.clone(), core.clone());
             forward(emitter(handle.clone()));
+            // `theodore_version` / `theodore_update` read and act on this
+            // process's updater (docs/releasing.md "Graceful update").
+            core.set_updater(Arc::new(updater::TauriUpdater::new(
+                handle.clone(),
+                core.clone(),
+            )));
             deep_link::listen(&handle, core.clone());
             if let Some(data_dir) = offer_move {
                 relocate::offer(&handle, data_dir);
@@ -335,7 +342,15 @@ pub fn run(
         })
         .build(tauri::generate_context!())
         .expect("error while building the Theodore app")
-        .run(move |_handle, event| {
+        .run(move |handle, event| {
+            // Turns running: they are paused first (and resumed by the next
+            // launch), then the exit comes back here (`restart`).
+            if let tauri::RunEvent::ExitRequested { api, code, .. } = &event
+                && restart::exit_after_pausing(handle.clone(), exit_core.clone(), *code)
+            {
+                api.prevent_exit();
+                return;
+            }
             // A clean quit stops every space's `run` command first, then
             // flushes telemetry; each step has a time limit, so a hung one
             // never keeps the app from exiting (`quit`).

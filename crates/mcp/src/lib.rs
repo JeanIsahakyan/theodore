@@ -30,7 +30,7 @@ pub use backend::{
     ReportScope, ReviewItem, ReviewToolsBackend, RunContext, SPACE_TOOL_NAMES,
     SUB_SPACE_STEER_TOOL_NAMES, SUB_SPACE_TOOL_NAMES, ShipMerge, ShipOutcome, ShipToolAction,
     SpaceCommandName, SpaceDiff, SpaceInfo, SpaceToolError, SpaceToolsBackend, TerminalTail,
-    ToolSet, TurnMode,
+    TheodoreVersion, ToolSet, TurnMode, UpdateStart, UpdaterState,
 };
 pub use bridge::{BridgeError, run_stdio_bridge};
 pub use code_server::{ServeError, code_run, serve_code_tools};

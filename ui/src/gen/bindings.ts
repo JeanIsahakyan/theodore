@@ -42,8 +42,10 @@ export const commands = {
 	downloaded: boolean,
 } | null, CommandError>(__TAURI_INVOKE("check_update")),
 	/**
-	 *  Restarts into the already-downloaded update, but only once the core is
-	 *  idle (no agent running, outbox empty) — never forced.
+	 *  Restarts into the already-downloaded update. Running agent turns are
+	 *  paused and resume after the restart (docs/spaces.md §7); a host write
+	 *  still queued holds it off, and the UI asks again. Nothing to install:
+	 *  an error.
 	 */
 	installUpdate: () => typedError<null, CommandError>(__TAURI_INVOKE("install_update")),
 	refreshInbox: () => typedError<null, CommandError>(__TAURI_INVOKE("refresh_inbox")),
@@ -2145,6 +2147,15 @@ export type ResolveRequest = {
 	resolved: boolean,
 };
 
+/**  Why Theodore restarted with turns running. */
+export type RestartReason =
+/**  Restarting into a downloaded update. */
+{ kind: "update"; version: string } |
+/**  The user quit the app. */
+{ kind: "quit" } |
+/**  A restart for another reason. */
+{ kind: "restart" };
+
 /**
  *  "Revert to base" / "Revert the last turn's change" on a file of the
  *  space's diff: the files are restored, checkpointed as an entry of the
@@ -2619,6 +2630,12 @@ export type Space = {
 	 *  continues on its own at `until`, unless cancelled.
 	 */
 	paused?: SpacePause | null,
+	/**
+	 *  A turn Theodore paused to restart (an update, a quit; docs/spaces.md
+	 *  §7 "Restart with turns running"): set when the turn is interrupted,
+	 *  cleared when the next launch resumes it.
+	 */
+	restart_pause?: SpaceRestartPause | null,
 };
 
 export type SpaceAnswerItem = {
@@ -2858,6 +2875,30 @@ export type SpaceRemote = {
 	project_name: string,
 	/**  Started from this device (vs followed through a delegation). */
 	started_here: boolean,
+};
+
+/**  A turn paused for a restart: what the next launch needs to resume it. */
+export type SpaceRestartPause = {
+	/**  The paused turn (`Space::run`). */
+	run: string,
+	/**  Your message that started the paused turn. */
+	message: string,
+	agent: AgentId,
+	model?: string | null,
+	effort?: string | null,
+	mode: SpaceMode,
+	/**
+	 *  The agent session to resume, as the space knew it when paused
+	 *  (`Space::agent_session` is the one the resume reads).
+	 */
+	session?: AgentSession | null,
+	reason: RestartReason,
+	at: number,
+	/**
+	 *  The agent didn't stop in time and was killed; its session is still
+	 *  resumed.
+	 */
+	killed?: boolean,
 };
 
 /**  Where "Revert" takes a file back to. */

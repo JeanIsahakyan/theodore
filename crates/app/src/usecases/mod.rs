@@ -58,6 +58,7 @@ pub mod space_plan;
 pub mod space_pr;
 pub mod space_questions;
 pub mod space_queue;
+pub mod space_restart;
 pub mod space_setup_assist;
 pub mod space_start;
 pub mod space_tasks;

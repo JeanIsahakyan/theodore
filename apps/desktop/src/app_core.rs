@@ -665,8 +665,20 @@ impl CoreApi for AppCore {
         let setting = self.core.setting_string("updates.channel", "stable").await;
         crate::updater::effective_channel(build_info::BUILD_ENV, &setting).into()
     }
-    async fn is_idle(&self) -> bool {
-        self.core.is_idle().await
+    async fn running_turns(&self) -> usize {
+        self.core.running_turns().await
+    }
+    async fn outbox_pending(&self) -> bool {
+        self.core.outbox_pending().await
+    }
+    async fn pause_for_restart(
+        &self,
+        reason: theodore_contract::RestartReason,
+    ) -> theodore_app::RestartPaused {
+        self.core.pause_for_restart(reason).await
+    }
+    fn set_updater(&self, updater: Arc<dyn theodore_ports::UpdaterPort>) {
+        self.core.set_updater(updater);
     }
     async fn account_gate(&self) -> Result<(), CommandError> {
         self.core.require_account().await.map_err(err)
