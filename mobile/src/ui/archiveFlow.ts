@@ -23,8 +23,11 @@ import {
 } from './archive';
 import { refusalCode } from './logic';
 
-/** Where Archive was chosen, for telemetry: the row's long-press menu. */
-export type ArchiveSurface = 'row_menu';
+/**
+ * Where Archive was chosen, for telemetry: the drawer row's long-press menu,
+ * or the space screen's "Merged #N" chip (src/ui/merged.ts).
+ */
+export type ArchiveSurface = 'row_menu' | 'merged_chip';
 
 export interface ArchiveTelemetry {
   action: 'archive' | 'unarchive';

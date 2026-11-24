@@ -258,11 +258,24 @@ impl Core {
     /// [`fleet_write_context`](Self::fleet_write_context).
     pub(crate) async fn fleet_receive_attachments(
         &self,
-        worktree: &Path,
+        space: &theodore_contract::Space,
         refs: &[BlobRef],
     ) -> Result<Vec<Attachment>, Refusal> {
-        let files = self.fleet_fetch_attachments(refs).await?;
-        self.fleet_write_context(worktree, files).await
+        let received = async {
+            let files = self.fleet_fetch_attachments(refs).await?;
+            self.fleet_write_context(Path::new(&space.worktree), files)
+                .await
+        }
+        .await;
+        if let Err((code, why)) = &received {
+            // The message is refused; the agent hears why next turn.
+            self.note_space_error(
+                space,
+                code,
+                &format!("files sent from another device didn't arrive: {why}"),
+            );
+        }
+        received
     }
 
     /// Files another device sent for a space being made (`start_space`),
@@ -303,10 +316,19 @@ impl Core {
         if files.is_empty() {
             return Ok(());
         }
-        let written = self
-            .fleet_write_context(worktree, files)
-            .await
-            .map_err(|(code, why)| AppError::Invalid(format!("{ATTACHMENTS_ERR}{code}: {why}")))?;
+        let written = match self.fleet_write_context(worktree, files).await {
+            Ok(written) => written,
+            Err((code, why)) => {
+                self.note_space_error_in(
+                    space,
+                    Some(&worktree.display().to_string()),
+                    "warn",
+                    code,
+                    &format!("files sent from another device didn't arrive: {why}"),
+                );
+                return Err(AppError::Invalid(format!("{ATTACHMENTS_ERR}{code}: {why}")));
+            }
+        };
         self.fleet_stash_attachments(space, written);
         Ok(())
     }

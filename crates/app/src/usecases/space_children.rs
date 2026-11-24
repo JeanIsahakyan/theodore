@@ -992,15 +992,22 @@ impl Core {
             .await;
         // Counted and created under one lock: two starts can't both pass.
         let _start = self.0.sub_spaces.start_lock.lock().await;
-        let children = self
-            .local_spaces(None)
-            .await
-            .map_err(failed)?
+        let all = self.local_spaces(None).await.map_err(failed)?;
+        let mut children = 0;
+        for s in all
             .iter()
-            // A merged (done) child no longer counts, like an archived one.
-            .filter(|s| s.status != SpaceStatus::Archived && s.done_at.is_none())
+            .filter(|s| s.status != SpaceStatus::Archived)
             .filter(|s| s.parent.as_ref().is_some_and(|p| p.space == me.id))
-            .count();
+        {
+            // A merged (done) child no longer counts, like an archived
+            // one — unless something is still going on in it: a turn, a
+            // queued message, turns after the merge, live sub-spaces of
+            // its own (docs/spaces.md §7 "Merged is not archived").
+            if s.done_at.is_some() && self.space_unsettled(s, &all, false).await.is_none() {
+                continue;
+            }
+            children += 1;
+        }
         if children >= max_children as usize {
             return Err(refuse(
                 "children",

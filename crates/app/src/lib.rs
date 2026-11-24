@@ -92,6 +92,8 @@ mod space_pr_tests;
 #[cfg(test)]
 mod space_queue_tests;
 #[cfg(test)]
+mod space_restart_tests;
+#[cfg(test)]
 mod space_tasks_tests;
 #[cfg(test)]
 mod space_tools_tests;
@@ -114,5 +116,6 @@ pub use usecases::account::{AccountGate, resolve_client_id};
 pub use usecases::code_intel::{CodeEdits, CodeRoot, CodeScope, LspPolicy, code_prompt};
 pub use usecases::grouping::{SymbolLinkLimits, symbol_links};
 pub use usecases::open_pr::parse_pr_ref;
+pub use usecases::space_restart::{PAUSE_BUDGET, RestartPaused, continuation_text};
 pub use usecases::spaces::space_chat_key;
 pub use usecases::telemetry::TelemetrySettings;

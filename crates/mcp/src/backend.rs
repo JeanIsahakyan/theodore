@@ -9,9 +9,10 @@ pub use theodore_ports::{
     Answer, AppStatus, BaseChange, CheckOutcome, CodeHit, CodeSymbol, CodeSymbolKind, Diagnostic,
     FleetToolDevice, FleetToolRead, FleetToolSpace, FleetToolWait, LanguageStatus, LocalAnswer,
     LocalSpaceAsk, LocalSpaceItem, LocalSpaceList, LocalSpaceMerge, LocalSpaceRead,
-    LocalSpaceStart, LocalSpaceWait, LogTail, NewReviewComment, Position, ProgressStep,
-    ProgressStepState, ReviewItem, ShipMerge, ShipOutcome, ShipToolAction, SpaceCommandName,
-    SpaceDiff, SpaceInfo, SpaceToolError, TerminalTail, UserAnswer, UserQuestion,
+    LocalSpaceStart, LocalSpaceWait, LogKind, LogTail, NewReviewComment, Position, ProgressStep,
+    ProgressStepState, ReviewItem, ShipMerge, ShipOutcome, ShipToolAction, SpaceDiff, SpaceInfo,
+    SpaceToolError, TerminalTail, TheodoreVersion, UpdateStart, UpdaterState, UserAnswer,
+    UserQuestion,
 };
 
 /// Which server a run talks to, and so which tools it sees.
@@ -55,6 +56,8 @@ pub const SPACE_TOOL_NAMES: &[&str] = &[
     "set_base",
     "update_progress",
     "ask_user",
+    "theodore_version",
+    "theodore_update",
 ];
 
 /// The fleet tools (docs/fleet.md "Agents use it too"): `space-tools`
@@ -484,11 +487,12 @@ pub trait SpaceToolsBackend: Send + Sync {
     /// Stops `run` and waits (a while) for it to exit.
     async fn stop_app(&self, space: &str) -> Result<AppStatus, SpaceToolError>;
     async fn app_status(&self, space: &str) -> Result<AppStatus, SpaceToolError>;
-    /// The last `tail` lines of `kind`; the backend bounds `tail`.
+    /// The last `tail` lines of `kind` (a command's output, or Theodore's
+    /// own errors for the space); the backend bounds `tail`.
     async fn read_logs(
         &self,
         space: &str,
-        kind: SpaceCommandName,
+        kind: LogKind,
         tail: usize,
     ) -> Result<LogTail, SpaceToolError>;
     /// `terminal` named, or else the space's most recently active one; its
@@ -571,6 +575,23 @@ pub trait SpaceToolsBackend: Send + Sync {
         questions: Vec<UserQuestion>,
     ) -> Result<Vec<UserAnswer>, SpaceToolError> {
         let _ = (space, run_id, questions);
+        Err(unavailable())
+    }
+    /// `theodore_version`: the running build and where an update stands
+    /// (docs/releasing.md "Graceful update").
+    async fn theodore_version(&self, space: &str) -> Result<TheodoreVersion, SpaceToolError> {
+        let _ = space;
+        Err(unavailable())
+    }
+    /// `theodore_update`, from the turn `run_id`: restarts into a downloaded
+    /// update (every running turn pauses and resumes after it), starts the
+    /// download of an available one, or says Theodore is up to date.
+    async fn theodore_update(
+        &self,
+        space: &str,
+        run_id: &RunId,
+    ) -> Result<UpdateStart, SpaceToolError> {
+        let _ = (space, run_id);
         Err(unavailable())
     }
 
@@ -791,12 +812,7 @@ impl SpaceToolsBackend for NoSpaceTools {
     async fn app_status(&self, _: &str) -> Result<AppStatus, SpaceToolError> {
         Err(unavailable())
     }
-    async fn read_logs(
-        &self,
-        _: &str,
-        _: SpaceCommandName,
-        _: usize,
-    ) -> Result<LogTail, SpaceToolError> {
+    async fn read_logs(&self, _: &str, _: LogKind, _: usize) -> Result<LogTail, SpaceToolError> {
         Err(unavailable())
     }
     async fn read_terminal(

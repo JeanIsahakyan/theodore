@@ -83,6 +83,14 @@ pub enum ChatNotice {
     /// that device's trust, or the mode it may use, changed meanwhile
     /// (docs/fleet.md "Sends queue"). `from`: the device's name as pinned.
     RemoteDropped { from: String, reason: String },
+    /// A message sent to a space whose PR had merged continued it first
+    /// (docs/spaces.md §7 "Continue after merge"): "Continued on `branch`
+    /// from the updated `base`". `pr`: the merged PR, as `#123`.
+    Continued {
+        pr: String,
+        branch: String,
+        base: String,
+    },
 }
 
 /// A space waiting for usage limits to reset (docs/spaces.md "Usage

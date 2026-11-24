@@ -246,7 +246,8 @@ local folder:  Merge locally  ·  Keep as branch
   next turn.
 - A turn that ends while the window is in the background sends a system notification
   (`spaces.notify`); clicking it opens the space. The dock badge counts spaces waiting on you.
-- Archive any time, or automatically `spaces.auto_archive_days` after shipping.
+- Archive any time, or automatically `spaces.auto_archive_days` after shipping — once nothing is
+  left in the space; a merged space stays a normal space (`Merged #n` in its header) until then.
 - Pin a space (right-click, or ⌘K) to sort it first; "Mark as unread" re-shows the ● glyph.
 - ⌘F searches the sidebar's Spaces section (name, title, goal, branch) wherever it's shown.
 - A space's agent also gets your own Claude Code MCP servers (Linear, GitHub…, claude.ai connectors);

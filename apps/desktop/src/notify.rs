@@ -65,8 +65,9 @@ pub fn notify_space(
 pub trait UpdateWindow: Send + 'static {
     /// Brings the main window forward.
     fn focus(&self);
-    /// Restarts into the installed update once nothing is running.
-    fn restart_when_idle(&self);
+    /// Restarts into the installed update; running turns pause and
+    /// resume after it (`restart`).
+    fn restart_to_update(&self);
 }
 
 /// "Theodore 0.1.3 is ready": shown once an update is installed on disk
@@ -80,7 +81,7 @@ pub fn notify_update(notifier: &dyn Notifier, window: impl UpdateWindow, version
         },
         Box::new(move || {
             window.focus();
-            window.restart_when_idle();
+            window.restart_to_update();
         }),
     )
 }
@@ -359,7 +360,7 @@ mod tests {
         fn focus(&self) {
             self.0.lock().unwrap().push("focus".into());
         }
-        fn restart_when_idle(&self) {
+        fn restart_to_update(&self) {
             self.0.lock().unwrap().push("restart".into());
         }
     }

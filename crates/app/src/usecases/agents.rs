@@ -80,12 +80,11 @@ impl Core {
         .await?;
 
         let cancel = CancellationToken::new();
-        self.0.runs.write().await.insert(
-            run_id.clone(),
-            RunHandle {
-                cancel: cancel.clone(),
-            },
-        );
+        self.0
+            .runs
+            .write()
+            .await
+            .insert(run_id.clone(), RunHandle::new(cancel.clone()));
 
         // Held for the whole run (plan "worktree locks"): the GC sweep must
         // never remove this worktree out from under a skill run in flight.
@@ -174,12 +173,11 @@ impl Core {
 
         let run_id = format!("{}{message_id}", theodore_ports::CHAT_RUN_PREFIX);
         let cancel = CancellationToken::new();
-        self.0.runs.write().await.insert(
-            run_id.clone(),
-            RunHandle {
-                cancel: cancel.clone(),
-            },
-        );
+        self.0
+            .runs
+            .write()
+            .await
+            .insert(run_id.clone(), RunHandle::new(cancel.clone()));
 
         // Held for the whole run (plan "worktree locks"): see `run_skill`.
         let lease = self

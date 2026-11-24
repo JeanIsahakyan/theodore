@@ -2702,6 +2702,74 @@ impl FakeLive {
     }
 }
 
+// ── updater ───────────────────────────────────────────────────────────────
+
+/// The shell's updater, scripted: its state, and what `update` answers.
+pub struct FakeUpdater {
+    state: Mutex<theodore_ports::UpdaterState>,
+    /// What `update` answers; `None` answers from `state` the way the real
+    /// one would (ready → restarting, available → downloading, else up to
+    /// date).
+    answer: Mutex<Option<theodore_ports::UpdateStart>>,
+    updates: std::sync::atomic::AtomicUsize,
+}
+
+impl Default for FakeUpdater {
+    fn default() -> Self {
+        Self {
+            state: Mutex::new(theodore_ports::UpdaterState::UpToDate),
+            answer: Mutex::new(None),
+            updates: std::sync::atomic::AtomicUsize::new(0),
+        }
+    }
+}
+
+impl FakeUpdater {
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self::default())
+    }
+    pub fn set_state(&self, state: theodore_ports::UpdaterState) {
+        *self.state.lock().unwrap() = state;
+    }
+    pub fn answer_update(&self, start: theodore_ports::UpdateStart) {
+        *self.answer.lock().unwrap() = Some(start);
+    }
+    /// How many times `update` was called.
+    pub fn updates(&self) -> usize {
+        self.updates.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+#[async_trait]
+impl theodore_ports::UpdaterPort for FakeUpdater {
+    async fn version(&self) -> theodore_ports::TheodoreVersion {
+        theodore_ports::TheodoreVersion {
+            version: "0.1.0".into(),
+            channel: "stable".into(),
+            commit: "abc1234".into(),
+            build_env: "production".into(),
+            updater: self.state.lock().unwrap().clone(),
+        }
+    }
+
+    async fn update(&self) -> theodore_ports::UpdateStart {
+        use theodore_ports::{UpdateStart, UpdaterState};
+        self.updates
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        if let Some(a) = self.answer.lock().unwrap().clone() {
+            return a;
+        }
+        match self.state.lock().unwrap().clone() {
+            UpdaterState::Ready { version } => UpdateStart::Restarting { version },
+            UpdaterState::Available { version } | UpdaterState::Downloading { version, .. } => {
+                UpdateStart::Downloading { version }
+            }
+            UpdaterState::Unavailable { reason } => UpdateStart::Unavailable { reason },
+            UpdaterState::Unknown | UpdaterState::UpToDate => UpdateStart::UpToDate,
+        }
+    }
+}
+
 // ── grouper ───────────────────────────────────────────────────────────────
 
 pub struct FakeGrouper {

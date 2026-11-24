@@ -76,6 +76,7 @@ import { isLabsVisible } from './space/mode';
 import { LabsPage } from './space/SpacePage';
 import { isHostOn, isLinearOn } from './settings/labs';
 import { LabsPage as ExperimentsPage } from './settings/LabsPage';
+import { pauseWarning, runningAgents } from './shell/UpdateReady';
 
 const AGENTS: AgentId[] = ['claude', 'codex', 'gemini'];
 export const AI_KEYS = [
@@ -960,9 +961,20 @@ const UpdatesPage = observer(function UpdatesPage() {
             </span>
             <p className="text-muted">{update.notes}</p>
             {update.downloaded && (
-              <Btn tone="primary" onPress={() => void api.installUpdate()}>
-                Restart to update
-              </Btn>
+              <>
+                {pauseWarning(runningAgents(store.models.spaces.all())) && (
+                  <span className="update-pause-warning text-xs text-muted">
+                    {pauseWarning(runningAgents(store.models.spaces.all()))}
+                  </span>
+                )}
+                <Btn
+                  tone="primary"
+                  className="self-start"
+                  onPress={() => void api.installUpdate()}
+                >
+                  Restart to update
+                </Btn>
+              </>
             )}
           </Card>
         )}

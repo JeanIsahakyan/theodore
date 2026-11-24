@@ -18,9 +18,9 @@ use serde_json::{Value, json};
 use theodore_domain::{AgentId, FindingId, PrId, RunId};
 use theodore_mcp::{
     AppStatus, BackendError, CheckOutcome, FleetTools, GroupWithHunks, LOCAL_SPACE_READ_TOOL_NAMES,
-    LogTail, McpServer, NewFinding, NewPatch, PrContext, ReviewToolsBackend, RunContext,
-    SUB_SPACE_STEER_TOOL_NAMES, SUB_SPACE_TOOL_NAMES, SpaceCommandName, SpaceInfo, SpaceToolError,
-    SpaceToolsBackend, TerminalTail, ToolSet, TurnMode,
+    LogKind, LogTail, McpServer, NewFinding, NewPatch, PrContext, ReviewToolsBackend, RunContext,
+    SUB_SPACE_STEER_TOOL_NAMES, SUB_SPACE_TOOL_NAMES, SpaceInfo, SpaceToolError, SpaceToolsBackend,
+    TerminalTail, ToolSet, TurnMode,
 };
 use theodore_ports::{
     LocalAnswer, LocalMergedFile, LocalSpaceAsk, LocalSpaceItem, LocalSpaceList, LocalSpaceMerge,
@@ -96,12 +96,7 @@ impl SpaceToolsBackend for FakeLocal {
     async fn app_status(&self, _: &str) -> Result<AppStatus, SpaceToolError> {
         Err(nope())
     }
-    async fn read_logs(
-        &self,
-        _: &str,
-        _: SpaceCommandName,
-        _: usize,
-    ) -> Result<LogTail, SpaceToolError> {
+    async fn read_logs(&self, _: &str, _: LogKind, _: usize) -> Result<LogTail, SpaceToolError> {
         Err(nope())
     }
     async fn read_terminal(
