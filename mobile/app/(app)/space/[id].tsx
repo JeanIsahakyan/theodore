@@ -39,7 +39,12 @@
  *                              "· 1 queued" on the strip's first line meanwhile
  *     refused / silent      ─▶ "Not sent · why" with Retry and Edit (text back)
  * (■) Stop while running, beside Send ─▶ confirm() ─▶ fleet.stopSpace
- * Archive: the drawer row's long-press menu (docs/mobile.md "Archive"), not here
+ * Archive: the drawer row's long-press menu (docs/mobile.md "Archive"); here
+ *     only from the "Merged #N" chip
+ * mirrored pr + done_at ─▶ ● Merged #N under the details (src/ui/merged.ts)
+ *     ─▶ Continue on a new branch: the field focused, a note on the strip
+ *        (the host continues a merged space on its next message)
+ *     ─▶ Open PR #N: the PR's page in the browser  ─▶ Archive: the flow above
  * running ─▶ the strip's first line: the plan's active step, else the newest
  *     live step, else (not mirrored) the newest log line, and a timer;
  *     waiting on a question ─▶ "Waiting for your answer ↓" scrolls to the card
@@ -57,7 +62,16 @@
  * the list is inset by its height and rides on the keyboard with it.
  */
 import { Redirect, router, useLocalSearchParams } from 'expo-router';
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import * as WebBrowser from 'expo-web-browser';
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
 import { StyleSheet, Text, View, type TextInputInstance } from 'react-native';
 import {
   AttachButton,
@@ -112,6 +126,7 @@ import {
 } from '../../../src/state/pending';
 import { log, track } from '../../../src/telemetry/log';
 import { NO_PICK, sendPicks, spaceOwn } from '../../../src/ui/agents';
+import { canArchive } from '../../../src/ui/archive';
 import { canSendWith } from '../../../src/ui/attachments';
 import {
   APPROVED_TEXT,
@@ -145,6 +160,14 @@ import {
   unmatchedByLines,
 } from '../../../src/ui/pending';
 import { ActivityStrip, useActivityStrip } from '../../../src/ui/ActivityStrip';
+import {
+  continueNote,
+  mergedChipItems,
+  mergedPr,
+  prWebUrl,
+  type MergedChipItemId,
+} from '../../../src/ui/merged';
+import { MergedChip } from '../../../src/ui/MergedChip';
 import { Glass, confirm } from '../../../src/ui/native';
 import { QuestionCard } from '../../../src/ui/QuestionCard';
 import { SubSpaces } from '../../../src/ui/SubSpaces';
@@ -156,6 +179,7 @@ import {
   type PlanProps,
 } from '../../../src/ui/SpaceChat';
 import { mono, usePalette } from '../../../src/ui/theme';
+import { useArchive } from '../../../src/ui/useArchive';
 
 const EMPTY_LINES: SpaceLine[] = [];
 const EMPTY_STEPS: TurnStep[] = [];
@@ -229,14 +253,16 @@ function Line({ line }: { line: SpaceLine }) {
   }
 }
 
-/** Where it runs and how, at the top of the chat; the space's error, its
- *  sub-spaces. */
+/** Where it runs and how, at the top of the chat; the "Merged #N" chip, the
+ *  space's error, its sub-spaces. */
 function Details({
   space,
   subs,
+  chip,
 }: {
   space: SpaceView;
   subs: Readonly<Record<string, MirroredSubSpace>> | undefined;
+  chip?: ReactNode;
 }) {
   const p = usePalette();
   const where = [
@@ -252,6 +278,7 @@ function Details({
       >
         {where.join(' · ')}
       </Text>
+      {chip}
       {space.error ? <Notice tone="danger">{space.error}</Notice> : null}
       {subs ? <SubSpaces root={space.space} subs={subs} /> : null}
     </View>
@@ -413,9 +440,17 @@ function LiveSpaceScreen({ id }: { id: string }) {
   const mirrors = useFleetState((s) => s.mirrors);
   const mirror = mirrors[id];
   const routed = useFleetState((s) => s.questions);
-  const host = useFleetState((s) =>
-    s.devices.find((d) => d.deviceId === space?.hostDevice),
-  );
+  const devices = useFleetState((s) => s.devices);
+  const host = devices.find((d) => d.deviceId === space?.hostDevice);
+  const archive = useArchive('merged_chip');
+  // The PR merged on the host (src/ui/merged.ts): the "Merged #N" chip.
+  const merged = mergedPr(mirror?.space);
+  const mergedId = merged?.id ?? null;
+  // "Continue on a new branch" was chosen for this merged PR: a note until
+  // the next send, or until the row no longer says merged.
+  const [continuingFor, setContinuingFor] = useState<string | null>(null);
+  const continuing = mergedId !== null && continuingFor === mergedId;
+  const setContinuing = (on: boolean) => setContinuingFor(on ? mergedId : null);
   // Your messages the host hasn't shown yet (src/state/pending.ts).
   const pending = usePending(selectSends(id));
   const [loaded, setLoaded] = useState<SpaceLine[]>(EMPTY_LINES);
@@ -612,6 +647,7 @@ function LiveSpaceScreen({ id }: { id: string }) {
     const { refs, files } = attach.take();
     setText('');
     setRevising(false);
+    setContinuing(false);
     setError(null);
     const mode = sendMode(picked, space.mode);
     const key = addSend({
@@ -669,6 +705,7 @@ function LiveSpaceScreen({ id }: { id: string }) {
     busy: approving(shown),
     onApprove: () => {
       setError(null);
+      setContinuing(false);
       const key = addSend({
         space: id,
         text: APPROVED_TEXT,
@@ -754,9 +791,48 @@ function LiveSpaceScreen({ id }: { id: string }) {
         {RUN_WARNING}
       </Text>
     ) : null,
+    continuing && merged ? (
+      <Text key="continue" style={[styles.small, { color: p.muted }]}>
+        {continueNote(mirror?.space?.base)}
+      </Text>
+    ) : null,
   ].filter((n) => n !== null);
 
-  const details = <Details space={space} subs={mirror?.subSpaces} />;
+  const prUrl = merged ? prWebUrl(merged.id) : null;
+  const onMerged = (item: MergedChipItemId) => {
+    switch (item) {
+      case 'continue':
+        setContinuing(true);
+        input.current?.focus();
+        return;
+      case 'pr':
+        if (prUrl) {
+          WebBrowser.openBrowserAsync(prUrl).catch((e: unknown) =>
+            setError(errorText(e)),
+          );
+        }
+        return;
+      case 'archive':
+        void archive(space);
+        return;
+    }
+  };
+  const chip = merged ? (
+    <MergedChip
+      number={merged.number}
+      items={mergedChipItems({
+        prUrl,
+        canArchive: canArchive(space, devices),
+        number: merged.number,
+      })}
+      onSelect={onMerged}
+      testID="space-merged"
+    />
+  ) : null;
+
+  const details = (
+    <Details space={space} subs={mirror?.subSpaces} chip={chip} />
+  );
 
   const chips = (
     <>

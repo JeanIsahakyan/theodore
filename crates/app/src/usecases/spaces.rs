@@ -252,6 +252,7 @@ impl Core {
             },
             blank,
             paused: None,
+            restart_pause: None,
             handoff_summary: None,
             progress: None,
             updating: None,
@@ -427,7 +428,9 @@ impl Core {
         if space.status == SpaceStatus::Archived {
             return Err(AppError::Invalid("this space is archived".into()));
         }
-        let running = space.status == SpaceStatus::Running;
+        // Restarting: nothing starts now; the message waits in the queue and
+        // runs after the paused turn resumes (docs/spaces.md §7).
+        let running = space.status == SpaceStatus::Running || self.restart_pending();
         if !running {
             self.check_setup_done(&space)?;
         }
@@ -516,6 +519,13 @@ impl Core {
         stored: bool,
         prompt: Option<String>,
     ) -> AppResult<String> {
+        if self.restart_pending() {
+            return Err(AppError::Invalid(
+                "Theodore is restarting; the turn starts after it".into(),
+            ));
+        }
+        // A merged space goes on on a new branch first (docs/spaces.md §7).
+        let space = self.continue_if_merged(space, message.at).await?;
         let project = self.space_project(&space).await?;
         // A host project never cloned on this Mac: nothing to work in
         // without the network, so the clone — or its refusal, offline —
@@ -556,6 +566,9 @@ impl Core {
             "continue_note": null,
             // A pause for usage limits ends with any turn.
             "paused": null,
+            // A turn paused for a restart is resumed by the turn that
+            // starts here (`space_restart`).
+            "restart_pause": null,
             "updated_at": now,
         });
         if matches!(mode, SpaceMode::Edit | SpaceMode::Run) {
@@ -584,12 +597,14 @@ impl Core {
         .await?;
 
         let cancel = CancellationToken::new();
-        self.0.runs.write().await.insert(
-            run_id.clone(),
-            RunHandle {
-                cancel: cancel.clone(),
-            },
-        );
+        let handle = RunHandle::new(cancel.clone());
+        let pause = handle.pause.clone();
+        self.0.runs.write().await.insert(run_id.clone(), handle);
+        let claim = TurnClaim {
+            run_id: run_id.clone(),
+            cancel,
+            pause,
+        };
         let picks = TurnPicks {
             agent,
             model,
@@ -608,7 +623,7 @@ impl Core {
         tokio::spawn(tracing::Instrument::instrument(
             async move {
                 match core
-                    .prepare_turn(&space, project, message, picks, run_id.clone(), cancel)
+                    .prepare_turn(&space, project, message, picks, claim)
                     .await
                 {
                     Ok(turn) => drive_turn(&core, turn).await,
@@ -630,9 +645,13 @@ impl Core {
         project: Project,
         message: ChatMessage,
         picks: TurnPicks,
-        run_id: String,
-        cancel: CancellationToken,
+        claim: TurnClaim,
     ) -> AppResult<Turn> {
+        let TurnClaim {
+            run_id,
+            cancel,
+            pause,
+        } = claim;
         let TurnPicks {
             agent,
             model,
@@ -706,10 +725,17 @@ impl Core {
                 Some(e) => e.trim() == ULTRACODE,
                 None => self.setting_string("agents.claude.effort", "").await.trim() == ULTRACODE,
             };
+        // Errors Theodore hit since the previous turn, each told once
+        // (docs/spaces.md "Theodore's errors reach the agent").
+        let error_notes = self.take_space_error_notes(&space.id);
         let wrap = |prompt: String| {
             let prompt = crate::usecases::space_pr::with_continue_note(space, prompt);
             let prompt = crate::usecases::space_checkpoints::with_reverts(space, prompt);
-            with_ultracode(with_failed_check(space, prompt), ultracode)
+            let prompt = with_failed_check(space, prompt);
+            with_ultracode(
+                crate::usecases::space_errors::with_error_notes(&error_notes, prompt),
+                ultracode,
+            )
         };
         // The same agent in the same worktree continues its session and
         // hears only the new turn; anything else starts a new session from
@@ -833,6 +859,7 @@ impl Core {
             },
             cwd: wt.path,
             cancel,
+            pause,
             code,
         };
         Ok(turn)
@@ -937,12 +964,9 @@ impl Core {
         }])
         .await?;
         let cancel = CancellationToken::new();
-        self.0.runs.write().await.insert(
-            run_id.clone(),
-            RunHandle {
-                cancel: cancel.clone(),
-            },
-        );
+        let handle = RunHandle::new(cancel.clone());
+        let pause = handle.pause.clone();
+        self.0.runs.write().await.insert(run_id.clone(), handle);
         let account = match self.agent_account(live.key.agent, &live.key.account).await {
             Some(a) => a,
             None => crate::usecases::agent_accounts::default_account(live.key.agent),
@@ -964,6 +988,7 @@ impl Core {
             attachments: Vec::new(),
             cwd: live.cwd.clone(),
             cancel,
+            pause,
             code: CodeTools::Off,
             live: Some(live),
             follow_up: true,
@@ -1413,6 +1438,14 @@ impl Core {
 
 /// What a send picked for its turn, resolved against the space
 /// (`start_turn`), carried into the turn's task for `prepare_turn`.
+/// What `start_turn` claimed for the turn: its run id and the handles
+/// Stop and a restart's pause reach it by (`RunHandle`).
+struct TurnClaim {
+    run_id: String,
+    cancel: CancellationToken,
+    pause: CancellationToken,
+}
+
 struct TurnPicks {
     agent: AgentId,
     model: Option<String>,
@@ -1453,6 +1486,9 @@ struct Turn {
     attachments: Vec<AgentAttachment>,
     cwd: PathBuf,
     cancel: CancellationToken,
+    /// A restart: the turn ends at the agent's next safe point and is
+    /// resumed after it (`space_restart`).
+    pause: CancellationToken,
     /// The code tools this turn's `space-tools` lists.
     code: CodeTools,
 }
@@ -1497,6 +1533,8 @@ struct Streamed {
     live: Option<LiveCli>,
     /// The last usage limit the run reported (`AgentEvent::Limit`).
     limit: Option<theodore_domain::AgentLimit>,
+    /// Paused for a restart, and the agent didn't stop in time: killed.
+    killed: bool,
 }
 
 /// What a stream starts from when its process was kept: `live`, and the
@@ -1510,6 +1548,7 @@ async fn stream_run(
     core: &Core,
     req: AgentRequest,
     cancel: &CancellationToken,
+    pause: &CancellationToken,
     run_id: &str,
     space: &str,
     attach: Option<Attach>,
@@ -1599,12 +1638,31 @@ async fn stream_run(
                     }
                 }
             }
+            // A restart (`space_restart`): the agent ends its turn at its
+            // next safe point (its control message), and is resumed after.
+            // A CLI without one (Codex, Gemini) gets the signal instead.
+            _ = pause.cancelled(), if give_up.is_none() => {
+                match &steer {
+                    Some(steer) => {
+                        interrupting = true;
+                        let steer = steer.clone();
+                        tokio::spawn(async move { steer.interrupt().await });
+                        give_up = Some(tokio::time::Instant::now() + core.pause_wait());
+                    }
+                    None => {
+                        out.killed = true;
+                        run.cancel.cancel();
+                        give_up = Some(tokio::time::Instant::now() + STOP_WAIT);
+                    }
+                }
+            }
             _ = tokio::time::sleep_until(give_up.unwrap_or_else(tokio::time::Instant::now)),
                 if give_up.is_some() =>
             {
                 if interrupting {
                     // It didn't take the interrupt: the old way, tasks and all.
                     interrupting = false;
+                    out.killed = true;
                     run.cancel.cancel();
                     give_up = Some(tokio::time::Instant::now() + STOP_WAIT);
                     continue;
@@ -1672,6 +1730,22 @@ async fn stream_run(
                     AgentEvent::Error { message, stderr_tail } => {
                         let said = format!("{message}\n{stderr_tail}").to_lowercase();
                         out.session_gone = resumed && SESSION_GONE.iter().any(|m| said.contains(m));
+                        // The agent hears about its own crash next turn; not
+                        // about a usage limit (the space goes on elsewhere),
+                        // its servers being out of reach or signing it out,
+                        // which only the user can fix.
+                        if !out.session_gone
+                            && out.limit.is_none()
+                            && theodore_ports::offline_message_in(&message).is_none()
+                            && theodore_ports::signed_out_message_in(&message).is_none()
+                        {
+                            core.note_space_error_by_id(
+                                space,
+                                "agent.crashed",
+                                &crash_note(agent, &message, &stderr_tail),
+                            )
+                            .await;
+                        }
                         out.error = Some(message);
                         break;
                     }
@@ -1704,7 +1778,12 @@ async fn stream_run(
             }
         }
     }
-    if lingering && let Some(steer) = steer.clone() {
+    // A paused turn keeps no process: the restart ends it anyway, and its
+    // session is what the next launch resumes.
+    if lingering
+        && !pause.is_cancelled()
+        && let Some(steer) = steer.clone()
+    {
         out.live = Some(LiveCli {
             kill: kill
                 .take()
@@ -1852,6 +1931,7 @@ async fn drive_turn(core: &Core, turn: Turn) {
         attachments,
         cwd,
         cancel,
+        pause,
         code,
     } = turn;
     // The space's commands as tools, for this turn only.
@@ -1930,8 +2010,19 @@ async fn drive_turn(core: &Core, turn: Turn) {
         live,
         send: (!follow_up).then(|| req.prompt.clone()),
     });
-    let mut streamed = stream_run(core, req.clone(), &cancel, &run_id, &space.id, attach).await;
-    let session_gone = streamed.session_gone && !cancel.is_cancelled();
+    let mut streamed = stream_run(
+        core,
+        req.clone(),
+        &cancel,
+        &pause,
+        &run_id,
+        &space.id,
+        attach,
+    )
+    .await;
+    // Paused for a restart: cut like a stop, resumed by the next launch.
+    let paused = pause.is_cancelled();
+    let session_gone = streamed.session_gone && !cancel.is_cancelled() && !paused;
     if session_gone && let Some(replay) = replay {
         // The CLI lost it (cleaned up, another machine): once more as a new
         // session that hears the transcript.
@@ -1942,8 +2033,9 @@ async fn drive_turn(core: &Core, turn: Turn) {
         );
         req.resume = None;
         req.prompt = replay;
-        streamed = stream_run(core, req, &cancel, &run_id, &space.id, None).await;
+        streamed = stream_run(core, req, &cancel, &pause, &run_id, &space.id, None).await;
     }
+    let killed = streamed.killed;
     let kept = streamed.live.take();
     // No kept process means its tasks went with it. (A kept one stays.)
     if kept.is_none() {
@@ -1963,7 +2055,7 @@ async fn drive_turn(core: &Core, turn: Turn) {
     core.end_space_questions(&run_id);
     // A Plan turn's reply is its plan (the card's text, and what a later
     // turn's replayed transcript carries).
-    let plan = (mode == SpaceMode::Plan && error.is_none() && !cancel.is_cancelled())
+    let plan = (mode == SpaceMode::Plan && error.is_none() && !cancel.is_cancelled() && !paused)
         .then(|| crate::usecases::space_plan::plan_of(plan, &text))
         .flatten();
     // Without a final text the blocks are the reply, unless a plan took over.
@@ -1993,7 +2085,9 @@ async fn drive_turn(core: &Core, turn: Turn) {
     }
     drop(tools_guard);
     let shown_live = live.stop().await;
-    let cancelled = cancel.is_cancelled();
+    // Stopped by you, or paused for a restart: the same cut, told apart in
+    // the reply and the turn log.
+    let cancelled = cancel.is_cancelled() || paused;
     let ms = started.elapsed().as_millis() as u64;
     if let (Some(e), false) = (&error, cancelled)
         && theodore_ports::offline_message_in(e).is_some()
@@ -2028,13 +2122,18 @@ async fn drive_turn(core: &Core, turn: Turn) {
             "space turn failed"
         );
     }
-    if cancelled && error.is_none() {
+    if paused {
+        // The CLI's answer to the interrupt is no failure of the turn.
+        error = Some(crate::usecases::space_restart::PAUSED_FOR_RESTART.into());
+    } else if cancelled && error.is_none() {
         error = Some("stopped".into());
     }
 
     // Whatever the agent wrote is kept, even on a failed or stopped turn.
     let turn_no = space.turns + 1;
-    let suffix = if cancelled {
+    let suffix = if paused {
+        " (paused for the restart)"
+    } else if cancelled {
         " (stopped)"
     } else if error.is_some() {
         " (failed)"
@@ -2063,6 +2162,11 @@ async fn drive_turn(core: &Core, turn: Turn) {
             None
         }
         Err(e) => {
+            core.note_space_error(
+                &space,
+                "space.checkpoint_failed",
+                &format!("the last checkpoint failed: {e}"),
+            );
             error.get_or_insert_with(|| format!("checkpoint failed: {e}"));
             None
         }
@@ -2098,6 +2202,7 @@ async fn drive_turn(core: &Core, turn: Turn) {
     };
     // After the checkpoint: one that failed fails the turn.
     let outcome = match (cancelled, &error) {
+        (true, _) if paused => "paused",
         (true, _) => "stopped",
         (false, Some(_)) => "failed",
         (false, None) => "ok",
@@ -2185,6 +2290,24 @@ async fn drive_turn(core: &Core, turn: Turn) {
     if let Some(base) = &base_moved {
         patch["base_sha"] = serde_json::json!(base);
     }
+    if paused {
+        // The marker `pause_for_restart` wrote, now with whether the agent
+        // had to be killed; a turn paused only in its `check` had finished:
+        // nothing to resume.
+        let marker = core
+            .space_row(&space.id)
+            .await
+            .ok()
+            .and_then(|s| s.restart_pause);
+        patch["restart_pause"] = match marker {
+            Some(mut m) => {
+                m.killed = killed;
+                m.session = agent_session.clone();
+                serde_json::json!(m)
+            }
+            None => serde_json::Value::Null,
+        };
+    }
     if let Some(cp) = &checkpoint {
         patch["head_sha"] = serde_json::json!(cp.sha);
         patch["worktree_head"] = serde_json::json!(cp.head);
@@ -2219,7 +2342,7 @@ async fn drive_turn(core: &Core, turn: Turn) {
             before_head: space.worktree_head.clone(),
             after_head: Some(cp.head.clone()),
             reverted: vec![],
-            stopped: cancel.is_cancelled(),
+            stopped: cancelled,
         });
         patch["turn_log"] = serde_json::json!(log);
     }
@@ -2246,7 +2369,9 @@ async fn drive_turn(core: &Core, turn: Turn) {
     let limit_hit = limit
         .filter(|l| l.status == theodore_domain::LimitStatus::Limited)
         .filter(|_| error.is_some() && !cancel.is_cancelled());
-    let end = if cancel.is_cancelled() {
+    let end = if paused {
+        TurnEnd::Paused
+    } else if cancel.is_cancelled() {
         TurnEnd::Interrupted("stopped")
     } else if limit_hit.is_some() {
         TurnEnd::Limited
@@ -2292,10 +2417,24 @@ async fn drive_turn(core: &Core, turn: Turn) {
     }
 
     if checking {
-        let check = core.run_check(&space, cancel.clone()).await;
+        // A restart during the check stops the check; the agent had
+        // finished, so there is nothing to resume: the marker goes.
+        let check_cancel = cancel.child_token();
+        let stop_check = {
+            let (pause, check_cancel) = (pause.clone(), check_cancel.clone());
+            tokio::spawn(async move {
+                pause.cancelled().await;
+                check_cancel.cancel();
+            })
+        };
+        let check = core.run_check(&space, check_cancel).await;
+        stop_check.abort();
+        let paused_in_check = pause.is_cancelled();
         // A failing check isn't a failed turn: the next one hears it. Stop
         // during the check is a stop.
-        let end = if cancel.is_cancelled() {
+        let end = if paused_in_check {
+            TurnEnd::Paused
+        } else if cancel.is_cancelled() {
             TurnEnd::Interrupted("stopped")
         } else {
             end
@@ -2309,18 +2448,22 @@ async fn drive_turn(core: &Core, turn: Turn) {
         if let Some(t) = log.iter_mut().rev().find(|t| t.reply == reply.id) {
             t.check = check;
         }
+        let mut patch = serde_json::json!({
+            "status": status,
+            "run": null,
+            "turn_log": log,
+            "updated_at": core.0.deps.clock.now(),
+        });
+        if paused_in_check {
+            patch["restart_pause"] = serde_json::Value::Null;
+        }
         core.end_turn(
             &space.id,
             vec![NewAction {
                 model: models::SPACE.into(),
                 model_id: space.id.clone(),
                 action: SyncActionCode::C,
-                data: Some(serde_json::json!({
-                    "status": status,
-                    "run": null,
-                    "turn_log": log,
-                    "updated_at": core.0.deps.clock.now(),
-                })),
+                data: Some(patch),
             }],
             end,
             None,
@@ -2344,6 +2487,28 @@ fn with_ultracode(prompt: String, on: bool) -> String {
         format!("{ULTRACODE}\n\n{prompt}")
     } else {
         prompt
+    }
+}
+
+/// What the agent is told about its own process failing: the message and
+/// the last line of stderr (docs/spaces.md "Theodore's errors reach the
+/// agent"; `space_errors` redacts and cuts the line).
+fn crash_note(agent: AgentId, message: &str, stderr_tail: &str) -> String {
+    let last = stderr_tail
+        .lines()
+        .rev()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .unwrap_or("");
+    match last {
+        "" => format!("the previous {} run failed: {message}", agent.as_str()),
+        last if message.contains(last) => {
+            format!("the previous {} run failed: {message}", agent.as_str())
+        }
+        last => format!(
+            "the previous {} run failed: {message} (stderr: {last})",
+            agent.as_str()
+        ),
     }
 }
 
@@ -2509,8 +2674,8 @@ pub(crate) fn is_valid_branch(name: &str) -> bool {
 pub(crate) const SPACE_TOOLS_PROMPT: &str = "Theodore's space-tools MCP server runs this \
      space's configured commands for you: run_check (the project's check; use it after \
      changes), start_app / stop_app / app_status (the app, its ports and http://localhost \
-     URLs; start_app to try it), read_logs (setup, run, check or archive output) and \
-     space_info. read_terminal reads one of the space's open terminals (id, title, \
+     URLs; start_app to try it), read_logs (setup, run, check or archive output; kind \
+     `theodore`: the errors Theodore itself hit for this space) and space_info. read_terminal reads one of the space's open terminals (id, title, \
      whether it still runs, its last lines) — leave `terminal` out for the most \
      recently active one; a note, not an error, says so when none is open. It also \
      acts on the change: when the user asks you to push, open a PR \
@@ -2523,7 +2688,12 @@ pub(crate) const SPACE_TOOLS_PROMPT: &str = "Theodore's space-tools MCP server r
      and add_review_comment leaves one on a line; set_base changes the base branch when \
      the user asks; update_progress shows your plan above the user's message box, for \
      work with several steps; ask_user asks the user 1-3 multiple-choice questions and \
-     waits for the answer, only when you can't go on without their decision.";
+     waits for the answer, only when you can't go on without their decision. \
+     theodore_version tells Theodore's running version, channel, commit and whether an \
+     update is available, downloading or downloaded; theodore_update installs a downloaded \
+     update (Theodore restarts; every running turn, yours included, pauses and resumes \
+     after it), starts the download of an available one, or says Theodore is up to date. \
+     Call theodore_update only when the user asks to update Theodore; never on your own.";
 
 /// Told to the agent when its turn has the user's own MCP servers.
 const USER_MCP_PROMPT: &str = "The user's own MCP servers (Linear, GitHub, docs and \

@@ -62,6 +62,9 @@ pub(crate) enum TurnEnd {
     /// for what comes next (`space_limits::after_limit`): a turn on another
     /// account, a pause, or held there.
     Limited,
+    /// Paused for a restart (`space_restart`): the queue waits, unheld,
+    /// for the resumed turn after the restart.
+    Paused,
 }
 
 impl Core {
@@ -297,6 +300,11 @@ impl Core {
         if let Some(live) = park {
             self.park_cli(space, live);
         }
+        // Restarting: nothing starts; the next launch resumes the turn and
+        // the queue drains after it.
+        if self.restart_pending() {
+            return;
+        }
         // Already written by the CLI: it goes before anything queued.
         self.start_follow_up_boxed(space).await;
         match end {
@@ -314,7 +322,9 @@ impl Core {
                 }
                 self.drain_queue(space).await;
             }
-            TurnEnd::Limited => {}
+            // The queue waits for what comes next: `space_limits::after_limit`,
+            // or the turn resumed after the restart (`space_restart`).
+            TurnEnd::Limited | TurnEnd::Paused => {}
         }
     }
 
@@ -334,6 +344,9 @@ impl Core {
     /// can't start is held (you decide about it); either way the next one
     /// is tried. Caller holds the space's queue lock: one drain at a time.
     async fn drain_queue(&self, space_id: &str) {
+        if self.restart_pending() {
+            return;
+        }
         let Ok(space) = self.space_row(space_id).await else {
             return;
         };
@@ -427,9 +440,14 @@ impl Core {
 
     /// On start: a turn left running by the last process is failed by now
     /// (docs/spaces.md §7 "Crash recovery"), and whatever waited behind it
-    /// runs, as after any turn.
+    /// runs, as after any turn. Not a space whose turn was paused for the
+    /// restart: its turn resumes, and the queue runs after it
+    /// (`space_restart`).
     pub(crate) async fn drain_queues_after_restart(&self, spaces: &[Space]) {
         for s in spaces {
+            if s.restart_pause.is_some() {
+                continue;
+            }
             let has_queue = self
                 .queued_messages(&s.id)
                 .await

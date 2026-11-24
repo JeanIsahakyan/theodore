@@ -2,7 +2,9 @@
  * A followed space's sub-spaces as a tree (docs/fleet.md "What a hosted
  * space's agent may do"): the rows the host mirrors (`mirror{sub_space}`),
  * flattened for the space screen, counted for the drawer. Pure, so the
- * tests read it.
+ * tests read it. An archived sub-space is gone from the tree: the host
+ * deletes its row; a row still saying `archived` (an older host) is
+ * skipped.
  *
  * ```text
  * rs_root
@@ -40,7 +42,8 @@ export const SUB_STATE_TONE: Record<SubSpaceState, Tone> = {
  * What a sub-space is doing, as its chip says it. `done` (merged into its
  * parent, or shipped) wins; the host's words otherwise (`spaces_list`'s):
  * `running` / `setting_up` run, `question` / `waiting` wait for a person,
- * `failed` failed, the rest (`idle`, `archived`, unknown) are done.
+ * `failed` failed, the rest (`idle`, unknown) are done. An `archived` row
+ * never gets here: the tree and the counts skip it.
  */
 export function subSpaceState(
   s: Pick<MirroredSubSpace, 'status' | 'done'>,
@@ -60,6 +63,9 @@ export function subSpaceState(
   }
 }
 
+/** Archived on the host: not shown, not counted. */
+const shown = (s: MirroredSubSpace) => s.status !== 'archived';
+
 export interface SubSpaceRow {
   sub: MirroredSubSpace;
   /** 0: a child of the space; 1: a grandchild; and so on. */
@@ -71,13 +77,14 @@ export interface SubSpaceRow {
  * The sub-spaces of `root`, parents before their children, siblings in the
  * order first seen. A row whose parent isn't in the tree (gone, or not
  * arrived yet) is shown at the top level after it, never hidden; a loop
- * of parents is cut where it closes.
+ * of parents is cut where it closes. Archived rows are left out; a row
+ * under one is placed as if its parent were gone.
  */
 export function subSpaceRows(
   root: string,
   subs: Readonly<Record<string, MirroredSubSpace>>,
 ): SubSpaceRow[] {
-  const list = Object.values(subs);
+  const list = Object.values(subs).filter(shown);
   const children = new Map<string, MirroredSubSpace[]>();
   for (const s of list) {
     const kids = children.get(s.parent);
@@ -102,7 +109,9 @@ export function subSpaceRows(
     const path = new Set<string>([top.space]);
     for (;;) {
       const up = subs[top.parent];
-      if (!up || seen.has(up.space) || path.has(up.space)) break;
+      if (!up || !shown(up) || seen.has(up.space) || path.has(up.space)) {
+        break;
+      }
       path.add(up.space);
       top = up;
     }
@@ -124,6 +133,7 @@ export function subSpaceCounts(
 ): SubSpaceCounts {
   const c: SubSpaceCounts = { total: 0, running: 0, waiting: 0 };
   for (const s of Object.values(subs ?? {})) {
+    if (!shown(s)) continue;
     c.total += 1;
     const state = subSpaceState(s);
     if (state === 'running') c.running += 1;

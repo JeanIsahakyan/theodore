@@ -201,18 +201,24 @@ impl Core {
     }
 
     /// No agent run in flight and no host write still queued — the shell
-    /// may restart for an update.
+    /// may restart for an update without pausing anything.
     pub async fn is_idle(&self) -> bool {
         if !self.0.runs.read().await.is_empty() {
             return false;
         }
+        !self.outbox_pending().await
+    }
+
+    /// A host write is still queued (plan "outbox"): a restart would lose
+    /// nothing, but the UI waits for it before restarting.
+    pub async fn outbox_pending(&self) -> bool {
         let store = self.0.deps.store.clone();
         let pending = tokio::task::spawn_blocking(move || store.outbox_pending_count())
             .await
             .ok()
             .and_then(|r| r.ok())
             .unwrap_or(0);
-        pending == 0
+        pending > 0
     }
 
     pub(crate) async fn setting_value_scoped(

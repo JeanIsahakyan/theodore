@@ -369,7 +369,7 @@ impl ReviewToolsServer {
     }
 
     #[tool(
-        description = "The last lines of output of one of the space's commands: setup, run (the app), check or archive."
+        description = "The last lines of output of one of the space's commands: setup, run (the app), check or archive. Kind `theodore`: the last errors Theodore itself hit for this space (a checkpoint that failed, a ship refused, the agent's process crashing), newest last."
     )]
     async fn read_logs(
         &self,

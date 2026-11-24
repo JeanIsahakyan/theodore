@@ -728,8 +728,14 @@ async fn a_failed_turn_marks_the_space_failed_and_can_be_retried() {
     let s = idle(&f, &s.id).await;
     assert_eq!(s.status, SpaceStatus::Idle);
     assert_eq!(s.error, None);
-    // The failed placeholder isn't replayed as conversation.
-    assert!(!f.agents.last_request().unwrap().prompt.contains("boom"));
+    // The failed placeholder isn't replayed as conversation; the agent
+    // hears about the crash once, in Theodore's note.
+    let prompt = f.agents.last_request().unwrap().prompt;
+    assert!(
+        prompt.starts_with("Theodore: the previous claude run failed: boom"),
+        "{prompt}"
+    );
+    assert_eq!(prompt.matches("boom").count(), 1, "{prompt}");
 }
 
 /// A rebase the agent left mid-way: the answer is kept, no checkpoint is
@@ -1611,6 +1617,7 @@ fn a_space_from_before_these_fields_still_loads() {
         effort: Some("high".into()),
         blank: true,
         paused: None,
+        restart_pause: None,
         ..sample_space()
     })
     .unwrap();

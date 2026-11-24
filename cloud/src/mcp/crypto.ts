@@ -232,6 +232,13 @@ function opInOrder(op: RemoteOp): RemoteOp {
         path: op.path,
         max_bytes: op.max_bytes,
       };
+    case 'queued_message':
+      return {
+        op: 'queued_message',
+        space: op.space,
+        message: op.message,
+        action: op.action,
+      };
     case 'archive_space':
       return { op: 'archive_space', space: op.space };
     case 'unarchive_space':

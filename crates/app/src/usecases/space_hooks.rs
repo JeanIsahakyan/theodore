@@ -248,6 +248,12 @@ impl Core {
             }
             Some(error) => {
                 let now = self.0.deps.clock.now();
+                self.note_space_error_by_id(
+                    id,
+                    "space.command_failed",
+                    &format!("the setup command failed: {error}"),
+                )
+                .await;
                 let _ = self
                     .update_setup(id, |s| {
                         s.status = SetupStatus::Failed;
@@ -677,6 +683,11 @@ impl Core {
             )
             .await;
         if let Some(why) = describe_failure(SpaceCommandKind::Archive, &exit, timeout) {
+            self.note_space_error(
+                space,
+                "space.command_failed",
+                &format!("the archive command failed: {why}"),
+            );
             self.emit(theodore_contract::Ephemeral::Toast {
                 level: ToastLevel::Warn,
                 text: format!("{}: {why}; archived anyway", space.name),

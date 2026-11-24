@@ -282,6 +282,18 @@ export function autoArchiveDays(
     : DEFAULT_AUTO_ARCHIVE_DAYS;
 }
 
+/** Whether a space whose PR merged archives itself at all (Settings →
+ *  Labs); on unless the user turned it off. */
+export const AUTO_ARCHIVE_MERGED_KEY = 'spaces.auto_archive_merged';
+
+/** `spaces.auto_archive_merged`, user scope; unset or not a boolean = on. */
+export function autoArchiveMerged(
+  settings: Pick<Setting, 'key' | 'scope' | 'value'>[],
+): boolean {
+  const v = userSetting(settings, AUTO_ARCHIVE_MERGED_KEY)?.value;
+  return typeof v === 'boolean' ? v : true;
+}
+
 /** Where a space is in its lifecycle (docs/spaces.md §1). `opening`: the
  *  branch is pushed and the PR is being opened (or the attempt failed —
  *  Open PR again is safe, it never opens a second one). */

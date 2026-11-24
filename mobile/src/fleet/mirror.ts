@@ -251,6 +251,7 @@ export function cleanSpace(v: unknown, space: string): Space | null {
     name: str(v.name, NAME_MAX),
     goal: str(v.goal, TEXT_MAX),
     branch: str(v.branch, NAME_MAX),
+    base: str(v.base, NAME_MAX),
     base_sha: str(v.base_sha, 64),
     head_sha: str(v.head_sha, 64),
     status: ROW_STATUSES.includes(v.status as SpaceStatusRow)
@@ -270,6 +271,7 @@ export function cleanSpace(v: unknown, space: string): Space | null {
           sha: str(v.shipped.sha, 64),
         }
       : null,
+    done_at: optNum(v.done_at),
     error: optStr(v.error, LINE_MAX),
     turn_log: cleanTurns(v.turn_log),
     title: optStr(v.title, NAME_MAX),

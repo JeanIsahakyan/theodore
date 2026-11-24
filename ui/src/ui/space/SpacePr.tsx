@@ -1,10 +1,11 @@
 /**
  * A space in review (docs/spaces.md §3, §7), without leaving the space
  * page: the right pane's Changes · Threads · Checks tabs, Merge in the
- * header, Continue once the PR merged, and the sidebar's `⎇ #n` glyph.
+ * header, the `Merged #n` chip once the PR merged, and the sidebar's
+ * `⎇ #n` glyph.
  * The review's own Threads, Checks and Merge pieces, reused.
  */
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   ChevronDown,
   CircleCheckFill,
@@ -12,7 +13,7 @@ import {
   CodePullRequest,
   TriangleExclamation,
 } from '@gravity-ui/icons';
-import { Alert, Button, Chip, Dropdown, Tabs, Tooltip } from '@heroui/react';
+import { Button, Chip, Dropdown, Tabs, Tooltip } from '@heroui/react';
 import { observer } from 'mobx-react-lite';
 import type {
   ConflictFile,
@@ -23,7 +24,7 @@ import type {
 } from '../../gen/contract';
 import { updateBranch } from '../../actions';
 import { api } from '../../core/api';
-import { useRootStore } from '../../stores/context';
+import { useRootStore, useUi } from '../../stores/context';
 import { Checks, ReviewerStrip } from '../Checks';
 import {
   CONFLICT_KIND_LABEL,
@@ -35,12 +36,14 @@ import { mergeInfoVersion, useMergeInfo } from '../mergeInfo';
 import { Threads } from '../SidePanel';
 import {
   autoArchiveDays,
-  canContinue,
+  autoArchiveMerged,
   defaultMergeMethod,
   mergeLine,
   prPollMs,
   prTint,
+  remoteOf,
   spaceMerge,
+  spaceStage,
   type PrTint,
 } from './spaces';
 
@@ -409,51 +412,151 @@ export const SpaceMergeButton = observer(function SpaceMergeButton({
   );
 });
 
-/** Once the PR merged: Continue on a new branch from the updated base, or
- *  leave it to archive itself. */
-export const MergedBanner = observer(function MergedBanner({
+type Store = ReturnType<typeof useRootStore>;
+type Ui = ReturnType<typeof useUi>;
+
+/** The space's PR, as a review tab. */
+export function openSpacePr(store: Store, ui: Ui, space: Space) {
+  const id = space.pr;
+  if (!id) return;
+  void store.sync.openPr(id).then(() => ui.go({ name: 'review', pr: id }));
+}
+
+/** Archive the space and leave its page; errors are toasted by api.ts. */
+export function archive(ui: Ui, space: Space) {
+  void api
+    .archiveSpace(space.id)
+    .then(() => ui.goBack())
+    .catch(() => {});
+}
+
+/** How long the pointer may be between the chip and its menu before the
+ *  menu closes. */
+const HOVER_CLOSE_MS = 250;
+
+/** The header's stage chip once the PR merged (docs/spaces.md §3, §7): a
+ *  green dot and `Merged #N`. Hovering, pressing or Enter/Space/ArrowDown
+ *  on it opens a small menu: Continue on a new branch from the updated
+ *  base, Open PR, Archive. A remote or archived space only gets Open PR.
+ *  Its tooltip says when the space archives itself, if it does. */
+export const MergedChip = observer(function MergedChip({
   space,
 }: {
   space: Space;
 }) {
   const store = useRootStore();
+  const ui = useUi();
   const summary = space.pr ? store.models.prSummaries.get(space.pr) : undefined;
   const [busy, setBusy] = useState(false);
-  if (!canContinue(space, summary?.state)) return null;
-  const days = autoArchiveDays(store.models.settings.all());
-  const number = summary ? `#${summary.pr.number}` : 'The PR';
+  const [open, setOpen] = useState(false);
+  const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (closeTimer.current) clearTimeout(closeTimer.current);
+    },
+    [],
+  );
+  if (spaceStage(space, summary?.state) !== 'done') return null;
+
+  const settings = store.models.settings.all();
+  const days = autoArchiveDays(settings);
+  const archives =
+    space.done_at && days > 0 && autoArchiveMerged(settings)
+      ? `Archives itself ${days} day${days === 1 ? '' : 's'} after the merge when idle`
+      : undefined;
+  const number = summary ? ` #${summary.pr.number}` : '';
+  const label = `Merged${number}`;
+  const remote = remoteOf(space) != null;
+  const archived = space.status === 'archived';
+  const canAct = !remote && !archived;
+
+  const cancelClose = () => {
+    if (closeTimer.current) clearTimeout(closeTimer.current);
+    closeTimer.current = null;
+  };
+  const scheduleClose = () => {
+    cancelClose();
+    closeTimer.current = setTimeout(() => setOpen(false), HOVER_CLOSE_MS);
+  };
+  const cont = () => {
+    setBusy(true);
+    void api
+      .continueSpace(space.id)
+      .then((s) => store.ephemeral.toast(`Continuing on ${s.branch}`, 'info'))
+      .catch(() => {})
+      .finally(() => setBusy(false));
+  };
+  const disabled = [
+    ...(busy ? ['continue'] : []),
+    ...(space.status === 'running' ? ['archive'] : []),
+  ];
+
   return (
-    <Alert
-      status="success"
-      className="space-merged m-3 w-auto shrink-0 items-center"
+    <span
+      className="space-stage inline-flex shrink-0"
+      title={archives}
+      onPointerEnter={() => {
+        cancelClose();
+        setOpen(true);
+      }}
+      onPointerLeave={scheduleClose}
     >
-      <Alert.Content className="min-w-0">
-        <Alert.Description>
-          {number} merged into {space.base}. Continue here on a new branch from
-          the updated {space.base}; the chat and turns stay.
-          {days > 0
-            ? ` Left alone, the space archives itself ${days} day${days === 1 ? '' : 's'} after the merge.`
-            : ''}
-        </Alert.Description>
-      </Alert.Content>
-      <Button
-        size="sm"
-        variant="secondary"
-        className="space-continue shrink-0"
-        isPending={busy}
-        onPress={() => {
-          setBusy(true);
-          void api
-            .continueSpace(space.id)
-            .then((s) =>
-              store.ephemeral.toast(`Continuing on ${s.branch}`, 'info'),
-            )
-            .catch(() => {})
-            .finally(() => setBusy(false));
-        }}
-      >
-        Continue
-      </Button>
-    </Alert>
+      <Dropdown isOpen={open} onOpenChange={setOpen}>
+        <Button
+          size="sm"
+          variant="ghost"
+          className="space-merged-chip h-6 min-w-0 gap-1.5 px-2 text-xs"
+          aria-label={`${label}: actions`}
+          isPending={busy}
+        >
+          <span className="size-1.5 rounded-full bg-success" aria-hidden />
+          {label}
+        </Button>
+        <Dropdown.Popover
+          placement="bottom start"
+          onPointerEnter={cancelClose}
+          onPointerLeave={scheduleClose}
+        >
+          <Dropdown.Menu
+            aria-label="Merged"
+            disabledKeys={disabled}
+            onAction={(k) => {
+              setOpen(false);
+              if (k === 'continue') cont();
+              else if (k === 'pr') openSpacePr(store, ui, space);
+              else if (k === 'archive') archive(ui, space);
+            }}
+          >
+            {[
+              ...(canAct
+                ? [
+                    <Dropdown.Item
+                      key="continue"
+                      id="continue"
+                      textValue="Continue on a new branch"
+                    >
+                      Continue on a new branch
+                    </Dropdown.Item>,
+                  ]
+                : []),
+              <Dropdown.Item key="pr" id="pr" textValue={`Open PR${number}`}>
+                Open PR{number}
+              </Dropdown.Item>,
+              ...(canAct
+                ? [
+                    <Dropdown.Item
+                      key="archive"
+                      id="archive"
+                      textValue="Archive"
+                    >
+                      Archive
+                    </Dropdown.Item>,
+                  ]
+                : []),
+            ]}
+          </Dropdown.Menu>
+        </Dropdown.Popover>
+      </Dropdown>
+    </span>
   );
 });

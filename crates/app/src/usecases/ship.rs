@@ -29,6 +29,9 @@ use crate::error::{AppError, AppResult};
 
 pub(crate) const AUTO_ARCHIVE_KEY: &str = "spaces.auto_archive_days";
 pub(crate) const DEFAULT_AUTO_ARCHIVE_DAYS: f64 = 7.0;
+/// Whether a space whose PR merged archives itself at all (default on);
+/// off keeps it a normal space until you archive it (docs/spaces.md §7).
+pub(crate) const AUTO_ARCHIVE_MERGED_KEY: &str = "spaces.auto_archive_merged";
 const DAY_MS: f64 = 86_400_000.0;
 /// Subject line limit for the squashed commit / PR title.
 const TITLE_CHARS: usize = 72;
@@ -57,18 +60,32 @@ impl Core {
         turn: Option<&str>,
     ) -> AppResult<Space> {
         let how = crate::usecases::telemetry::wire_str(&req.action);
+        let space = req.space.clone();
         let result = self.ship_space_inner(req, turn).await;
         match &result {
             Ok(_) => {
                 theodore_telemetry::product(theodore_telemetry::ProductEvent::SpaceShipped { how })
             }
-            Err(e) if !e.is_expected() => tracing::warn!(
-                error.code = e.code(),
-                how,
-                error = %e,
-                "shipping a space failed"
-            ),
-            Err(_) => {}
+            Err(e) => {
+                if !e.is_expected() {
+                    tracing::warn!(
+                        error.code = e.code(),
+                        how,
+                        error = %e,
+                        "shipping a space failed"
+                    );
+                }
+                // Refused or failed alike, the agent hears why next turn —
+                // when it wasn't its own `ship` call, whose result says so.
+                if turn.is_none() {
+                    self.note_space_error_by_id(
+                        &space,
+                        e.code(),
+                        &format!("ship ({how}) failed: {e}"),
+                    )
+                    .await;
+                }
+            }
         }
         result
     }
@@ -627,7 +644,12 @@ impl Core {
     }
 
     /// Marks spaces done once their PR merged, and archives done spaces
-    /// after `spaces.auto_archive_days` (0 = never). Run by the poller.
+    /// after `spaces.auto_archive_days` (0 = never) — once nothing is
+    /// left in them: not while a turn runs, a message waits in the queue,
+    /// a sub-space is still live or turns or edits aren't shipped
+    /// (docs/spaces.md §7 "Merged is not archived"). A space whose PR
+    /// merged also keeps `spaces.auto_archive_merged` on. Run by the
+    /// poller.
     pub(crate) async fn sweep_spaces(&self) {
         let Ok(spaces) = self.local_spaces(None).await else {
             return;
@@ -636,8 +658,13 @@ impl Core {
             .setting_f64_scoped(AUTO_ARCHIVE_KEY, None)
             .await
             .unwrap_or(DEFAULT_AUTO_ARCHIVE_DAYS);
+        let archive_merged = self
+            .setting_value_scoped(AUTO_ARCHIVE_MERGED_KEY, None)
+            .await
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
         let now = self.0.deps.clock.now();
-        for space in spaces {
+        for space in &spaces {
             if matches!(space.status, SpaceStatus::Archived | SpaceStatus::Running) {
                 continue;
             }
@@ -647,7 +674,7 @@ impl Core {
             {
                 // Offline, only the host's answer would tell; the poller's
                 // probe notices it's back, and the next sweep asks then.
-                if let Some(pr_ref) = self.space_pr_ref(&space, pr).await
+                if let Some(pr_ref) = self.space_pr_ref(space, pr).await
                     && (self.host_online() || pr_ref.repo.host == HostKind::Local)
                     && self.pr_state(pr).await != Some(PrState::Merged)
                 {
@@ -660,17 +687,75 @@ impl Core {
                     done_at = Some(now);
                 }
             }
-            if let Some(done) = done_at
-                && days > 0.0
-                && (now - done) as f64 >= days * DAY_MS
-                && let Err(e) = self.archive_space(&space.id).await
-            {
+            let Some(done) = done_at else {
+                continue;
+            };
+            if days <= 0.0 || ((now - done) as f64) < days * DAY_MS {
+                continue;
+            }
+            if space.pr.is_some() && !archive_merged {
+                continue;
+            }
+            if self.space_unsettled(space, &spaces, true).await.is_some() {
+                continue;
+            }
+            if let Err(e) = self.archive_space(&space.id).await {
+                self.note_space_error(
+                    space,
+                    "space.auto_archive_failed",
+                    &format!("auto-archive failed: {e}"),
+                );
                 self.emit(Ephemeral::Toast {
                     level: ToastLevel::Warn,
                     text: format!("{}: auto-archive failed: {e}", space.name),
                 });
             }
         }
+    }
+
+    /// Why a done space isn't finished with yet, or `None` when it is
+    /// (docs/spaces.md §7 "Merged is not archived"): a turn running, a
+    /// message in its queue, a sub-space of it not archived, turns after
+    /// the last ship, or (`edits`: a snapshot of the worktree) edits since
+    /// the last checkpoint. `all` is every local space (for the children).
+    pub(crate) async fn space_unsettled(
+        &self,
+        space: &Space,
+        all: &[Space],
+        edits: bool,
+    ) -> Option<&'static str> {
+        if space.status == SpaceStatus::Running {
+            return Some("a turn is running");
+        }
+        if self
+            .queued_messages(&space.id)
+            .await
+            .is_ok_and(|q| !q.is_empty())
+        {
+            return Some("messages wait in its queue");
+        }
+        if all.iter().any(|s| {
+            s.status != SpaceStatus::Archived
+                && s.parent.as_ref().is_some_and(|p| p.space == space.id)
+        }) {
+            return Some("it has live sub-spaces");
+        }
+        if space
+            .shipped
+            .as_ref()
+            .is_some_and(|shipped| shipped.head != space.head_sha)
+        {
+            return Some("turns since the last ship aren't shipped");
+        }
+        if edits
+            && self
+                .worktree_edited_since(space, &space.head_sha)
+                .await
+                .unwrap_or(false)
+        {
+            return Some("the worktree has edits since the last checkpoint");
+        }
+        None
     }
 
     /// The host ref of a space's PR: the stored row's, else rebuilt from

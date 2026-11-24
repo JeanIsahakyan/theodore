@@ -812,6 +812,62 @@ async fn the_origin_archives_and_unarchives_a_space_hosted_for_it() {
 }
 
 #[tokio::test]
+async fn an_archived_sub_space_leaves_the_followers_tree_and_comes_back_unarchived() {
+    let f = fixtures();
+    let h = host(&f, DeviceKind::Desktop, SpaceMode::Edit).await;
+    f.agents.push_script(done("ok"));
+    run(
+        &f,
+        &h.key,
+        start_with(&h.project.id, "rs_h", FleetMode::Edit, None, 0),
+    )
+    .await;
+    let local = local_of(&f, "rs_h");
+    settled(&f, &local).await;
+    f.agents.push_script(done("child"));
+    let child = h
+        .core
+        .sub_space_start(&local, SpaceMode::Edit, goal("Port it"))
+        .await
+        .unwrap()
+        .space;
+    settled(&f, &child).await;
+
+    // The latest `sub_space` mirror of the child: `Some(None)` a delete.
+    let latest = |f: &Fixtures| {
+        events(f, "rs_h")
+            .into_iter()
+            .rev()
+            .find_map(|(_, e)| match e {
+                RemoteSpaceEvent::Mirror { model, id, data }
+                    if model == SUB_SPACE_MODEL && id == child =>
+                {
+                    Some(data)
+                }
+                _ => None,
+            })
+    };
+    wait_until("mirrored", || latest(&f).is_some_and(|d| d.is_some())).await;
+    let before = events(&f, "rs_h").len();
+
+    // Archived on this computer: followers forget it.
+    f.clock.advance(1000);
+    h.core.archive_space(&child).await.unwrap();
+    assert_eq!(space(&f, &child).status, SpaceStatus::Archived);
+    wait_until("deleted", || {
+        events(&f, "rs_h").len() > before && latest(&f) == Some(None)
+    })
+    .await;
+
+    // Back: a row again, as it is now.
+    f.clock.advance(1000);
+    h.core.unarchive_space(&child).await.unwrap();
+    wait_until("mirrored again", || latest(&f).is_some_and(|d| d.is_some())).await;
+    let m: MirroredSubSpace = serde_json::from_value(latest(&f).unwrap().unwrap()).unwrap();
+    assert_eq!((m.parent.as_str(), m.status.as_str()), ("rs_h", "idle"));
+}
+
+#[tokio::test]
 async fn a_running_hosted_space_is_not_archived_until_stopped() {
     let f = fixtures();
     let h = host(&f, DeviceKind::Desktop, SpaceMode::Edit).await;

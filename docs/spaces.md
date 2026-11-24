@@ -38,7 +38,7 @@ space, and a push from the space updates the PR.
 | --- | --- | --- | --- |
 | Drafting | chat · live diff vs base | you + the agent | Open PR / Merge locally / Keep as branch |
 | In review | the same, plus the PR's Threads and Checks tabs and Merge | reviewers → you → the agent | merged (here or on the host) or closed |
-| Done | transcript and final diff; Continue | — | Continue (drafting again, new branch) or archived (auto, `spaces.auto_archive_days` after merge, merge locally or keep) |
+| Done | a normal space still: chat, diff, the `● Merged #n` chip in the header (Continue · Open PR · Archive) | you + the agent (a message continues it on a new branch first) | Continue (drafting again, new branch) or archived (auto, `spaces.auto_archive_days` after merge, merge locally or keep — once nothing is left in it, §7) |
 
 ## 2. The core loop
 
@@ -61,8 +61,11 @@ reviewer comments      ──▶  thread ─▶ "Send to agent" ─▶ turn ─�
 not what you wanted    ──▶  "Undo" / "Back to here" ─▶ HEAD + changed files + ref back
 one file wrong         ──▶  "Revert to base" ─▶ that file restored ─▶ checkpoint
 Merge                  ──▶  merge_space ─▶ outbox merge_pr (now · auto-merge · queue)
-merged                 ──▶  space.done_at ─▶ archive after spaces.auto_archive_days
+merged                 ──▶  space.done_at ─▶ ● Merged #123 in the header; archive after
+                            spaces.auto_archive_days once idle, nothing unshipped, no live sub-spaces
 Continue               ──▶  fetch base ─▶ <login>/fix-login-2 on its tip ─▶ drafting again
+"and the 503s"         ──▶  a merged space: Continue first, "#123 merged: continued on
+                            <login>/fix-login-2 from the updated main" in the chat, then the turn
 ```
 
 ---
@@ -719,13 +722,20 @@ host's default method, and tells you what happened — merged now, auto-merge
 on, or in the queue — or why it was refused. Edits of that turn not pushed
 yet refuse it too (push first), the same as turns not pushed.
 
-**Continue** — once the PR merged, a banner offers it instead of only
-waiting for auto-archive (§7):
+**Merged** — once the PR merged, the header's stage chip becomes
+`● Merged #123` (a green dot, link-like; no banner, nothing written into
+the chat). Hover, press or Enter/Space/ArrowDown on it opens its actions:
+**Continue on a new branch** (§7), **Open PR #123**, **Archive**. Its
+tooltip says when the space archives itself, if it does. A remote space's
+chip offers Open PR alone. On the phone the same chip sits under the
+space's details line (docs/mobile.md "Merged").
 
 ```
-#123 merged ─▶ [Continue] ─▶ fetch main ─▶ branch ada/rate-limits-2 on main's tip
+● Merged #123 ─▶ Continue ─▶ fetch main ─▶ branch ada/rate-limits-2 on main's tip
                               turns + chat stay · pr/shipped/done_at clear
                               next turn's prompt: "the previous PR (#123) merged…"
+              ─▶ a message ─▶ the same Continue first, one chat line
+                              "#123 merged: continued on ada/rate-limits-2 from the updated main"
 ```
 
 Open PR isn't about the goal as typed — it may be in any language, and
@@ -1263,7 +1273,7 @@ configured commands, never a shell of the agent's choosing.
 | --- | --- |
 | `run_check` | the project's `check`, now: exit code + last lines |
 | `start_app` / `stop_app` / `app_status` | the `run` command: start, stop, running?, ports, `http://localhost:<port>` |
-| `read_logs` | the tail of `setup`, `run`, `check` or `archive` output (bounded) |
+| `read_logs` | the tail of `setup`, `run`, `check` or `archive` output (bounded); kind `theodore`: the last errors Theodore itself hit for this space (default 50, newest last; "Theodore's errors reach the agent", §7) |
 | `read_terminal` | one of the space's open terminals — id, title, running?, last lines (ANSI stripped); defaults to the most recently active one; a note, not an error, when none is open |
 | `space_info` | name, branch, base, worktree, ports, env variable names (not values), which commands are set |
 | `ship` | Open PR / Open as draft / Push / Merge (the PR, as the page's Merge does: now, auto-merge or the queue, §3) / Merge locally / Keep as branch, as the Ship menu does (§6): PR number and URL, for `merge` what happened and the method, or why it was refused |
@@ -1280,6 +1290,8 @@ configured commands, never a shell of the agent's choosing.
 | `space_send`, `space_answer` | any other space here: a message, an answer to its question, marked as from this space (below). While `spaces.sub_spaces` is on |
 | `space_start`, `space_wait`, `space_stop`, `space_merge` | sub-spaces of this one: start, wait for, stop, bring their work back (below). While `spaces.sub_spaces` is on |
 | `space_archive`, `space_unarchive` | sub-spaces of this one: archive one (as Archive does, §7) when you ask to archive or clean up, bring one back (below). While `spaces.sub_spaces` is on |
+| `theodore_version` | Theodore's running version, channel (stable · beta · staging), build commit, and where the updater stands: up to date, an update available (version), downloading (percent), downloaded and ready (version), or unavailable (a nightly, the sandbox, a failed check). Read only, every mode |
+| `theodore_update` | only when you ask to update Theodore, never on the agent's own: a downloaded update restarts Theodore the graceful way (§7 "Restart with turns running": every running turn, the caller's included, pauses and resumes after; the call answers "restarting to update to X; this turn continues after the restart"); an available one starts downloading; up to date says so. Not for a space hosted here for another device (docs/fleet.md) |
 
 ```
 turn ─▶ token for this space ─▶ agent ─▶ run_check ─▶ check ─▶ result ─▶ agent fixes ─▶ …
@@ -1291,7 +1303,8 @@ turn ─▶ token for this space ─▶ agent ─▶ run_check ─▶ check ─�
 
 - The system prompt names them: use `run_check` after changes, `start_app`
   to try the app, `ship` only when you ask to push, open a PR or merge
-  (never `gh pr merge` itself).
+  (never `gh pr merge` itself), `theodore_update` only when you ask to
+  update Theodore.
 - `ship` from the turn runs while that turn holds the space; any other
   caller still waits for the turn. It checkpoints the edits so far first,
   so they ship too; the turn's own checkpoint follows when it ends.
@@ -1479,6 +1492,12 @@ space_merge {child}   (own child · settled · same project · not shipped on it
   apply it). The merged child is done: out of `spaces_list` unless
   `include_done`, `spaces.auto_archive_days` counts from then, and its
   header reads "Merged into <parent>". Its Undo stops at the merged turn.
+- **Live sub-spaces** (the `spaces.max_children` count): every child not
+  archived, except a done one with nothing left in it — no turn running,
+  no queued message, no turns after the merge, no live sub-spaces of its
+  own (§7 "Merged is not archived"; the worktree isn't snapshotted here).
+  A merged child that got more turns counts again until merged again. A
+  parent's own merge changes nothing about its children.
 - The running turn's text is kept in memory per space while it streams,
   and dropped when the turn ends.
 - Settings are `user` scope (Settings → Spaces).
@@ -1907,6 +1926,33 @@ PR, sets `done_at` when it has merged, and archives spaces done for
 closed without merging leaves the space alone. Space worktrees live outside
 `~/.theodore/wt`, so the PR worktree sweep never touches them.
 
+**Merged is not archived.** A space whose PR merged stays a normal, active
+space: listed as usual, the `● Merged #n` chip in its header, its chat and
+diff open, the agent at hand. The sweep archives it only once nothing is
+left in it (`space_unsettled`), each sweep checking again:
+
+| Done for `auto_archive_days`, and | Archived? |
+| --- | --- |
+| a turn runs, or a message waits in its queue | no |
+| a sub-space of it isn't archived (any, done or not) | no |
+| turns after the last ship (`shipped.head ≠ head_sha`), or edits in the worktree since the last checkpoint | no |
+| its PR merged and `spaces.auto_archive_merged` is off (default on; Settings → Labs) | no — it stays until you archive it |
+| none of the above | yes |
+
+The same holds for a space merged locally, kept as a branch or merged
+into its parent; only the setting is about PR-merged spaces. A failed
+auto-archive is a toast, and a note to the agent (below).
+
+**A message to a merged space continues it first**: the send runs
+`continue_space` (the same as the chip's Continue — a new branch from the
+updated base, turns and chat kept), writes one line into the chat
+(`ChatNotice::Continued`: "#123 merged: continued on ada/rate-limits-2
+from the updated main"), then starts the turn, whose prompt opens with the
+continue note as after a Continue by hand. A Continue that can't happen
+(offline, the unpushed turns conflict with the new base) fails the send:
+nothing runs on the merged branch, and the agent hears why next time.
+Queued messages take the same path when their turn comes.
+
 **Continue after merge** (`continue_space`): a merged space goes on as the
 next round instead of waiting to be archived.
 
@@ -1938,11 +1984,43 @@ tool payloads);
 **GC** (archived spaces whose branch was never pushed lose their ref after
 `spaces.gc_days`, 30); removing a project archiving its spaces first.
 
+**Restart with turns running** (docs/releasing.md "Graceful update")
+
+An update's restart, "Restart to update", `theodore_update`, and a plain
+quit (⌘Q, SIGTERM) with turns running pause the agents instead of killing
+them, and the next launch resumes each where it stopped:
+
+```
+restart asked ─▶ restarting: no turn starts, sends queue
+  each running turn ─▶ restart_pause on its space (run, message, agent, model,
+  (sub-spaces too)    effort, mode, session, reason, at) ─▶ interrupt the agent
+                      at a safe point (Claude: its control message; Codex,
+                      Gemini: the signal) ─▶ ≤ 20 s ─▶ the turn ends "(paused for
+                      the restart)": checkpoint, reply with what it wrote, the
+                      session kept; not stopped in time ─▶ killed, marked `killed`
+  kept processes (background tasks) ─▶ stopped ─▶ the shell restarts (≤ 45 s)
+next launch ─▶ each marker ─▶ "Theodore restarted (updated to X). Continue where
+               you left off." as your message, on the same agent, model, mode and
+               effort, `--resume` of its session (Codex: its thread; Gemini: the
+               replayed transcript) ─▶ marker cleared ─▶ its queued messages run after
+```
+
+| | |
+| --- | --- |
+| the space, meanwhile | idle, "Paused for update · resuming…" above the composer (`Space::restart_pause`), then nothing more |
+| the paused turn's reply | what the agent wrote, marked "Paused for the restart" (`failed` = `paused for the restart`); its turn-log entry is `stopped`; the space has no error |
+| a turn in its `check` | the check stops; the agent had finished, so nothing is resumed |
+| "Restart to update", agents running | the pill says "N agents will pause and resume after the update" before, "Pausing N agents…" while it waits; a host write still queued holds the restart off as before |
+| the start-up cleanup | reaps leftover agent processes as ever: a paused turn's process is gone by then and its session is what resumes, so nothing of it is lost |
+| Theodore died mid-pause | the space reads as interrupted on start (below) and the marker still resumes it |
+| the resume can't start | the marker goes, the queue is held (a Send on each releases it), a toast says why |
+
 **Crash recovery**
 
 | Found on start | Action |
 | --- | --- |
 | `status = running` | → `failed` "interrupted: Theodore was closed" |
+| `restart_pause` set | the turn is resumed with the continuation message (above), once; its queued messages run after it |
 | queued messages | kept; the turn they waited for is failed by then, so they run on start, in order (§8) |
 | dirty worktree | kept; the next turn (or archive) checkpoints it first |
 | worktree dir missing | recreated from `refs/theodore/spaces/<id>` |
@@ -1950,6 +2028,28 @@ tool payloads);
 | a rebase, merge or conflict left in the worktree | no checkpoint or Undo until it is finished or aborted (§6 "Busy worktree") |
 | `updating` set (an Update from base was resolving) | kept: the merge is still in the worktree; Complete merge or Abort from the banner, or send the agent a message |
 | ref missing too | `failed`, transcript kept, "Restart from base" offered |
+
+**Theodore's errors reach the agent** (`space_errors.rs`). What Theodore
+itself hits for a space is logged as before and also kept per space, for
+its agent, which would otherwise never hear of it:
+
+```
+checkpoint failed · ship / push / merge refused or failed (from the UI; the agent's own
+`ship` call already got its answer) · a message to a merged space couldn't continue ·
+the agent's process crashed (exit / stderr tail; not a usage limit, not offline or
+signed out) · files sent from another device didn't arrive · setup / archive command
+failed · auto-archive failed
+  ─▶ note_space_error ─▶ redacted (secrets, emails, `~`; the worktree as `.`, other
+     paths `<path>`), one line ≤ 300 chars, same code + text folded (×N), ≤ 100 per space
+the next turn ─▶ its prompt opens with ≤ 3 lines "Theodore: the last checkpoint failed: …",
+     oldest first, each told once (a 4th points at read_logs); told again only when it
+     happens again after a later turn
+read_logs {kind: "theodore", tail?: 50} ─▶ this space's entries, newest last, `available`
+```
+
+In memory, like the commands' log lines: gone on restart, never synced
+or mirrored. The codes are the telemetry ones (docs/telemetry.md "Error
+codes": `space.checkpoint_failed`, `space.auto_archive_failed`, …).
 
 ---
 
@@ -1976,7 +2076,7 @@ send ─▶ running? ── no ──▶ turn now
 | stopped just as it ended on its own | the first waiting message, if it had already started, is what Stop stops; the rest run after it |
 | failed, its checkpoint skipped, conflicts left | the same: the next message runs, and its turn clears the space's error |
 | a queued one couldn't start (no worktree, the project's cache gone) | its own failed turn, a reply saying why ("The turn couldn't start: …"); the next message runs |
-| Theodore restarted | the running turn is failed on start (§7 Crash recovery); the messages behind it run then, in order |
+| Theodore restarted | the running turn is failed on start (§7 Crash recovery); the messages behind it run then, in order. A turn paused for the restart instead: the queue waits, unheld, and runs after the resumed turn (§7 "Restart with turns running") |
 | cut off by a usage limit | waits for what "Usage limits" decides: a continue on another account (then the queue), a pause (then the queue, after the continue), or, with nothing to continue on and `auto_continue` off or Cancel pressed, **held** |
 
 - **Edit** changes a queued message's text, **Cancel** deletes it; both
@@ -2085,7 +2185,7 @@ downloaded to this Mac yet".
 | `list_space_terminals` | a space's open (or just-exited) terminals, each with scrollback to reseed the view |
 | `space_fix_ci` | "Fix with agent" on the Checks tab: the space PR's failing checks' logs (or links), as one turn |
 | `merge_space` | merges the space's PR: an optional method, else the host's default; now, auto-merge or the merge queue (§3); refused with turns not pushed |
-| `continue_space` | after the PR merged: a new branch on the base's fresh tip, the round kept (§7) |
+| `continue_space` | after the PR merged: a new branch on the base's fresh tip, the round kept (§7); a send to a merged space does it first |
 | `mirror_space` | "Mirror into `<folder>`": on fresh, or resuming a paused one (§6 "Mirror into a local folder") |
 | `sync_mirror` | "Sync now": re-syncs by hand; a no-op when mirroring is off or paused |
 | `unmirror_space` | "Mirror off": restores the folder; refused (named paths, unless `discard`) if it was edited meanwhile |
@@ -2121,7 +2221,7 @@ no row, or `true`, means on. The flag forces them on and locks the switch.
 | 4 | Run mode safety | no extra sandbox: Run mode trusts the agent CLI as configured |
 | 5 | Local folder end state | **Merge locally**: a normal merge of the squashed commit into the folder's checked-out branch, instead of a PR; *Keep as branch* stays as the alternative |
 | 6 | Budget | none: budgets, and showing spend at all, were dropped by the owner on 2026-10-22. Nothing is limited, no cost is shown, and an old `budget.*` setting is ignored |
-| 7 | Archive | a setting `spaces.auto_archive_days` (default 7, `0` = never) plus an **Archive** button on the space at any time |
+| 7 | Archive | a setting `spaces.auto_archive_days` (default 7, `0` = never) plus an **Archive** button on the space at any time; `spaces.auto_archive_merged` (default on, 2026-11-23) keeps PR-merged spaces from archiving themselves at all, and a done space with work left in it never archives itself (§7 "Merged is not archived") |
 
 ## Seeing sub-spaces and agents
 

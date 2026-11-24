@@ -292,6 +292,9 @@ export function NoticeRow({ id, notice }: { id: string; notice: ChatNotice }) {
 
 /** `ChatMessage.failed` of a run you stopped (the core's "stopped"). */
 const STOPPED = 'stopped';
+/** `ChatMessage.failed` of a turn Theodore paused to restart (the core's
+ *  `PAUSED_FOR_RESTART`); the next launch resumes it. */
+const PAUSED = 'paused for the restart';
 
 /** One stored message. Yours: a `UserBubble`. The agent's: its tag, a space
  *  turn's activity, the markdown reply, its chips and files, `after` (a turn's
@@ -384,6 +387,11 @@ export function ChatMessage({
         {m.failed === STOPPED ? (
           // You stopped it: no failure, just where it ended.
           <span className="agent-stopped text-xs text-muted">Stopped</span>
+        ) : m.failed === PAUSED ? (
+          // Theodore restarted: the turn went on after it.
+          <span className="agent-stopped text-xs text-muted">
+            Paused for the restart
+          </span>
         ) : m.failed ? (
           <Alert status="danger" className="agent-failed">
             <Alert.Indicator />

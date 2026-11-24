@@ -129,6 +129,23 @@ describe('mirror reducer', () => {
     expect(apply(m, 'space', SP, null).space).toBeNull();
   });
 
+  it('keeps base and done_at, bounded', () => {
+    const m = apply(
+      emptyMirror(),
+      'space',
+      SP,
+      spaceRow({ base: 'main', done_at: 1_700_000_000_000 }),
+    );
+    expect(m.space).toMatchObject({ base: 'main', done_at: 1_700_000_000_000 });
+    const odd = apply(
+      emptyMirror(),
+      'space',
+      SP,
+      spaceRow({ base: 42, done_at: 'soon' }),
+    );
+    expect(odd.space).toMatchObject({ base: '', done_at: null });
+  });
+
   it("drops another space's row and unknown models", () => {
     const m0 = emptyMirror();
     expect(apply(m0, 'space', 'rs_other', spaceRow({ id: 'rs_other' }))).toBe(
