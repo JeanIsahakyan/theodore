@@ -95,9 +95,14 @@ export function sendSettled(space: string, key: string, r: SendResult): void {
   updateSend(space, key, (p) => settleSend(p, r));
 }
 
-/** Refused, or no answer in time. */
-export function sendFailed(space: string, key: string, error: string): void {
-  updateSend(space, key, (p) => failSend(p, error));
+/** Refused, or no answer in time (`unsure`: the host may have taken it). */
+export function sendFailed(
+  space: string,
+  key: string,
+  error: string,
+  unsure = false,
+): void {
+  updateSend(space, key, (p) => failSend(p, error, unsure));
 }
 
 /** Retry: sending again; the screen sends it. Returns the send, or `null`

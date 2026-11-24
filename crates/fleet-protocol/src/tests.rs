@@ -475,6 +475,22 @@ fn ops_on_any_space_are_tagged_and_on_no_cloud_space() {
             },
             serde_json::json!({"op": "merge_child", "parent": "rs_1", "child": "c1"}),
         ),
+        (
+            RemoteOp::QueuedMessage {
+                space: "a1".into(),
+                message: "m1".into(),
+                action: QueuedMessageAction::Send,
+            },
+            serde_json::json!({"op": "queued_message", "space": "a1", "message": "m1", "action": "send"}),
+        ),
+        (
+            RemoteOp::QueuedMessage {
+                space: "rs_1".into(),
+                message: "m1".into(),
+                action: QueuedMessageAction::Cancel,
+            },
+            serde_json::json!({"op": "queued_message", "space": "rs_1", "message": "m1", "action": "cancel"}),
+        ),
     ];
     for (op, json) in ops {
         assert!(op.on_any_space(), "{op:?}");
@@ -482,6 +498,17 @@ fn ops_on_any_space_are_tagged_and_on_no_cloud_space() {
         assert_eq!(serde_json::to_value(&op).unwrap(), json);
         assert_eq!(serde_json::from_value::<RemoteOp>(json).unwrap(), op);
     }
+    // Protocol 10: a queued message's Send now / Remove.
+    assert_eq!(
+        RemoteOp::QueuedMessage {
+            space: "a1".into(),
+            message: "m1".into(),
+            action: QueuedMessageAction::Send,
+        }
+        .protocol(),
+        10
+    );
+    assert_eq!(PROTOCOL_VERSION, 10);
     assert!(
         !RemoteOp::Stop {
             space: "rs_1".into()
@@ -517,7 +544,7 @@ fn archive_ops_are_on_a_hosted_space_and_need_protocol_9() {
         assert_eq!(serde_json::to_value(&op).unwrap(), json);
         assert_eq!(serde_json::from_value::<RemoteOp>(json).unwrap(), op);
     }
-    assert_eq!(PROTOCOL_VERSION, 9);
+    assert_eq!(PROTOCOL_VERSION, 10);
     assert_eq!(
         RemoteOp::Stop {
             space: "rs_1".into()
@@ -1081,7 +1108,7 @@ mod blobs {
         assert_eq!(ok.validate_blobs(), Ok(()));
         let v = serde_json::to_value(ReadFileResult { blob: good() }).unwrap();
         assert_eq!(v["blob"]["name"], "notes.md");
-        assert_eq!(PROTOCOL_VERSION, 9);
+        assert_eq!(PROTOCOL_VERSION, 10);
         assert_eq!(codes::BLOB_NOT_FOUND, "fleet.blob_not_found");
         assert_eq!(codes::QUOTA, "fleet.quota");
     }

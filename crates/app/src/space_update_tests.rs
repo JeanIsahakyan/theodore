@@ -653,10 +653,11 @@ async fn back_to_here_stops_at_a_clean_update() {
     assert_eq!(s.base_sha, Sha::new("base222"));
 }
 
-/// Files with markers left wait for the agent; the turn's error and the
-/// messages behind it wait for you.
+/// Files with markers left wait for the agent: the turn fails and the
+/// space says why. (What's queued behind it runs all the same, as after
+/// any failed turn: `space_queue_tests`.)
 #[tokio::test]
-async fn conflicts_left_after_a_turn_hold_the_queue() {
+async fn conflicts_left_after_a_turn_fail_the_space() {
     let f = fixtures();
     let (core, _recv, project) = host_project(&f).await;
     let s = one_turn(&f, &core, &project).await;
@@ -670,22 +671,10 @@ async fn conflicts_left_after_a_turn_hold_the_queue() {
     core.update_space_from_base(&s.id).await.unwrap();
     assert_eq!(space(&f, &s.id).status, SpaceStatus::Running);
     wait_until(|| f.agents.requests().len() == 2).await;
-    core.space_send(theodore_contract::SpaceSendRequest {
-        space: s.id.clone(),
-        text: "next".into(),
-        agent: None,
-        model: None,
-        mode: None,
-        attachments: None,
-        effort: None,
-        mentions: None,
-    })
-    .await
-    .unwrap();
     go.send(()).unwrap();
     let s = idle(&f, &s.id).await;
     tokio::time::sleep(Duration::from_millis(30)).await;
-    assert_eq!(f.agents.requests().len(), 2, "the queue waits for you");
+    assert_eq!(f.agents.requests().len(), 2);
     let s = space(&f, &s.id);
     assert_eq!(s.status, SpaceStatus::Failed);
     assert!(

@@ -21,17 +21,17 @@ export function splitQueue(messages: readonly ChatMessage[]): {
   return { sent, queued };
 }
 
-/** Why the queue waits for you, or `null` while it sends on its own.
- *  "You pressed Stop", not "the turn stopped": a Stop that lands while
- *  the turn's checkpoint is written holds the queue, but the agent had
- *  already finished, so its reply reads as a whole one. */
+/** Why the queue waits for you, or `null` while it sends on its own: a
+ *  held message is one whose turn couldn't start, or one a usage limit left
+ *  to you (docs/spaces.md §8); Stop, a failed turn or a restart don't hold
+ *  the queue any more. */
 export function heldReason(
   space: Pick<Space, 'status'>,
   queued: readonly ChatMessage[],
 ): string | null {
   if (!queued.some((m) => m.queued?.held)) return null;
   if (space.status === 'archived') return 'Unarchive the space to send these.';
-  return 'Not sent: you pressed Stop, a turn failed, or Theodore restarted. Send or drop each one.';
+  return "Held: a turn couldn't start, or a usage limit left this to you. Send or drop each held one; the rest go on by themselves.";
 }
 
 /** "Send now" can go into the running turn: a Claude turn, and the message

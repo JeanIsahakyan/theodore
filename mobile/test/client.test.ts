@@ -2262,6 +2262,48 @@ describe('any space on a host (sub-spaces)', () => {
     );
   });
 
+  it('acts on a queued message with queued_message: Send now, Remove', async () => {
+    const { client, sock } = await connectedWithHost();
+    const sending = client.queuedMessage(HOST, CHILD, 'm9', 'send');
+    await waitFor(() => sock.of('request').length === 1, 'request');
+    const req = lastRequest(sock);
+    expect(req.op).toEqual({
+      op: 'queued_message',
+      space: CHILD,
+      message: 'm9',
+      action: 'send',
+    });
+    sock.deliver({
+      type: 'reply',
+      envelope: await reply(req, { outcome: 'ok', value: {} }),
+    });
+    await expect(sending).resolves.toBeUndefined();
+
+    // Gone from the queue meanwhile: the host's refusal, by its code.
+    const removing = client.queuedMessage(HOST, CHILD, 'm9', 'cancel');
+    await waitFor(() => sock.of('request').length === 2, 'request');
+    expect(lastRequest(sock).op).toMatchObject({
+      op: 'queued_message',
+      action: 'cancel',
+    });
+    sock.deliver({
+      type: 'reply',
+      envelope: await reply(lastRequest(sock), {
+        outcome: 'err',
+        code: 'fleet.unknown_space',
+        message: 'not queued any more',
+      }),
+    });
+    await expect(removing).rejects.toMatchObject({
+      code: 'fleet.unknown_space',
+    });
+    // Not a message id: nothing goes on the wire.
+    await expect(
+      client.queuedMessage(HOST, CHILD, 'm 9', 'send'),
+    ).rejects.toThrow(/message id/);
+    expect(sock.of('request').length).toBe(2);
+  });
+
   it('sends to it with send_to (its own mode, no agent), queued or not', async () => {
     const { client, sock } = await connectedWithHost();
     const sent = client.sendTo(HOST, CHILD, '  go on  ');

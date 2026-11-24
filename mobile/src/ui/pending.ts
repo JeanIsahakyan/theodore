@@ -10,7 +10,9 @@
  *                                    the same text, close in time) arrives,
  *                                    then dropped in favour of the row
  *   host: ok {queued, position}   ─▶ "Queued" (the mirrored queued row replaces it)
- *   refused / no answer in time   ─▶ "Not sent · Retry · Edit", never lost
+ *   refused                       ─▶ "Not sent · Retry · Edit", never lost
+ *   no answer in time             ─▶ the same, but the host may have taken it:
+ *                                    its row, if it shows up, drops the bubble
  *   a host that mirrors no rows   ─▶ kept until a "Turn n: <text>" line past
  *                                    the send shows it was received
  * start ─▶ /space/<pending id> at once: the goal, "Starting on mac-A…"
@@ -50,6 +52,9 @@ export interface PendingSend {
   messageId: string | null;
   /** Why it wasn't sent. */
   error: string | null;
+  /** Failed without the host's word (no answer in time): it may have
+   *  reached the host all the same, so a row of it still stands for it. */
+  unsure: boolean;
   /** What a retry sends again. */
   mode: FleetMode | null;
   picks: AgentPicks;
@@ -129,6 +134,7 @@ export function newSend(input: NewSend): PendingSend {
     position: null,
     messageId: null,
     error: null,
+    unsure: false,
     mode: input.mode ?? null,
     picks: input.picks ?? {},
     afterSeq: input.afterSeq ?? 0,
@@ -146,12 +152,18 @@ export function settleSend(p: PendingSend, r: SendResult): PendingSend {
     position: r.queued ? r.position : null,
     messageId: r.message ?? p.messageId,
     error: null,
+    unsure: false,
   };
 }
 
-/** Refused, or no answer in time: shown as not sent, with why. */
-export function failSend(p: PendingSend, error: string): PendingSend {
-  return { ...p, state: 'failed', position: null, error };
+/** Refused, or no answer in time (`unsure`: the host may have taken it):
+ *  shown as not sent, with why. */
+export function failSend(
+  p: PendingSend,
+  error: string,
+  unsure = false,
+): PendingSend {
+  return { ...p, state: 'failed', position: null, error, unsure };
 }
 
 /** Retry: sent again, as new. */
@@ -164,6 +176,7 @@ export function retrySend(p: PendingSend, at: number): PendingSend {
     position: null,
     messageId: null,
     error: null,
+    unsure: false,
   };
 }
 
@@ -197,10 +210,12 @@ export const rowOfSubSpaceMessage = (m: SubSpaceMessage): ChatRow => ({
 
 /**
  * `row` is the host's copy of `p`: the id its reply named, else your text
- * close in time. A failed send matches nothing: it never reached the host.
+ * close in time. A refused send matches nothing: it never reached the
+ * host; one the host didn't answer in time (`unsure`) may have, so its row
+ * still takes the bubble.
  */
 export function matchesRow(p: PendingSend, row: ChatRow): boolean {
-  if (p.state === 'failed' || !row.mine) return false;
+  if ((p.state === 'failed' && !p.unsure) || !row.mine) return false;
   if (p.messageId !== null && row.id !== null) return row.id === p.messageId;
   return (
     row.text.trim() === p.text.trim() &&
@@ -230,7 +245,7 @@ const TURN_LINE = /^Turn \d+: /;
 /** A history line shows the host took `p` as a turn: a "Turn n: <text>"
  *  line that came after the send (a host that mirrors no rows). */
 export function matchesLine(p: PendingSend, line: SpaceLine): boolean {
-  if (p.state === 'failed' || line.kind !== 'turn') return false;
+  if ((p.state === 'failed' && !p.unsure) || line.kind !== 'turn') return false;
   if (line.seq <= p.afterSeq) return false;
   const text = line.text.replace(TURN_LINE, '');
   const sent = p.text.trim();

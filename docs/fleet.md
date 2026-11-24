@@ -113,7 +113,7 @@ Two kinds of refusal, told apart on the wire:
 | `fleet.depth` | target, cloud | deeper than 2 or more than 5 children (starts in flight count) |
 | `fleet.invalid` | target, cloud | the op doesn't fit what it acts on (answers that don't answer the set, an empty message, a space id started already); origin = target |
 | `fleet.agent_unavailable` | target | a start or send names an agent, model or effort the target doesn't list (`DeviceInfo.agents`): not installed, turned off, not signed in ("Sign-in"), or not that model's ("Agent, model and effort") |
-| `fleet.busy` | target, cloud | a send to a running space whose queue already holds 5 messages from other devices ("Sends queue"); a host older than that, any send while it runs |
+| `fleet.busy` | target, cloud | a send to a running space whose queue already holds 5 messages from other devices ("Sends queue"); a host older than that, any send while it runs; `merge_child` / `archive_space` while the space runs |
 | `fleet.internal` | target | the target couldn't record the request, so it didn't run it |
 | `fleet.denied` | target | from an `mcp` device, an edit or run the person on the target (or on a device it delegates to) denied, or didn't allow before `issued_at` + 5 min; a daemon's at once, unless auto mode covers it |
 | `fleet.offline` | cloud | target not connected within 10 s grace |
@@ -414,31 +414,42 @@ claim_result{claimed: true} ─▶ seen done kept in the store (else fleet.inter
 A `send` (a space hosted for the origin) or `send_to` (any space here)
 that reaches a running space waits in that space's queue, the one a local
 message waits in (docs/spaces.md §8), and runs as its own turn after the
-running one (`crates/app/src/usecases/fleet_queue.rs`).
+running one — whether that one finished, was stopped or failed
+(`crates/app/src/usecases/fleet_queue.rs`).
 
 ```
 send / send_to ─▶ the gate ─▶ claim ─▶ mcp, Edit / Run: a person's yes or auto
-  ─▶ under the space's queue lock:
+  ─▶ under the space's queue lock (held for a store write only: a turn's
+     worktree, prompt and agent are prepared outside it, so the answer
+     comes at once even while another turn starts):
        idle    ─▶ its turn now                 ─▶ ok {message}
        running ─▶ < 5 from other devices queued ─▶ queued ─▶ ok {message, queued: true, position}
                └▶ 5 already                     ─▶ fleet.busy
-its turn comes (the queue drains, or Send on a held one)
+its turn comes (the turn before it ends — done, stopped or failed —, the
+app starts with it waiting, or Send now on a held one)
   ─▶ accept_remote, same pin, mode ≤ max_mode, send_to: the space's own
      mode not above the one allowed, mcp: a person's yes stands, auto must
      still cover it
        ├─ yes ─▶ runs
        └─ no  ─▶ dropped, and a notice row in the chat:
                  "A message queued from <device> was dropped: <why>"
+queued_message {space, message, action: send | cancel}   (protocol 10)
+  ─▶ the gate: the message still waits in that space's queue
+       send   ─▶ counts as the mode it runs in (its own pick, else the space's)
+                 ─▶ runs now when the space is free, else back in line (a held one
+                    released), as the host's own Send (space_queued)      ─▶ ok {}
+       cancel ─▶ counts as Ask ─▶ dropped from the queue, its files with it ─▶ ok {}
+  not queued any more ─▶ fleet.unknown_space; a host below 10 ─▶ fleet.upgrade_required
 ```
 
 | | |
 | --- | --- |
-| Cap | 5 messages from other devices per space (`REMOTE_QUEUE_MAX`), checked at the gate and again under the queue lock; this computer's own messages don't count |
+| Cap | 5 messages from other devices per space (`REMOTE_QUEUE_MAX`), checked at the gate and again under the queue lock; this computer's own messages don't count. The phone says so on the bubble ("Not sent · The space's queue already holds 5 messages…") and offers Retry |
 | `position` | its place in the whole queue, 1 = runs next |
-| Held | stopped, failed or restarted, the queue is held as any (docs/spaces.md §8): a person's Send here runs it, after the same checks |
-| Memory | what a queued message came with (origin, pin, mode, the yes) lives in memory; a restart holds every queue anyway, and a held message runs only on a person's Send here |
-| Origin | the queued `chat_message` row is mirrored like any: a desktop follower shows it "queued on <host>", without Edit / Cancel / Send (the host's queue changes only there); a phone shows it as queued |
-| Older hosts | answer `fleet.busy` while the space runs, and that stays a valid answer; the reply shape is unchanged (`value` of an ok reply is free-form), so no protocol bump |
+| Held | only a message whose own turn couldn't start, or one a usage limit left to a person (docs/spaces.md §8); it runs on Send — the host's own, or `queued_message send` from the phone. Stop, a failed turn or a restart don't hold the queue: the next message runs |
+| Memory | what a queued message came with (origin, pin, mode, the yes) lives in memory; after a restart those are gone, so a message queued from another device before the restart runs with the gate's checks as for this computer's own |
+| Origin | the queued `chat_message` row is mirrored like any, `held` included: a desktop follower shows it "queued on <host>" / "held on <host>", without Edit / Cancel / Send (the host's queue changes only there); a phone shows "Queued" or "Held", and a long press offers Send now and Remove (`queued_message`) |
+| Older hosts | answer `fleet.busy` while the space runs, and that stays a valid answer; the reply shape is unchanged (`value` of an ok reply is free-form), so no protocol bump for queuing itself. `queued_message` is protocol 10: the cloud refuses it to an older host with `fleet.upgrade_required` |
 
 #### Requests from Claude via the cloud (`mcp`)
 
@@ -493,6 +504,7 @@ request ─▶ the gate above (pin, target_key, fresh, accept_remote, claim)
 | `read_space {space, messages?}` | Ask | goal, status, last messages (10, ≤ 50), running text, question, progress, diff stat | `space_read`'s |
 | `ask_space {space, question}` | Ask | its agent answers from a read-only fork of its session (or a fresh read-only agent); the space is left as it was; ≤ 2 at once per asking device; `fleet.timeout` after `spaces.ask_timeout_secs` | `space_ask`'s: `{note, space, answer, agent, model, how}` |
 | `send_to {space, message}` | the space's own mode | its next turn, as from you; its mode never changes; queued while it runs ("Sends queue") | `{message}`, queued: `{message, queued: true, position}` |
+| `queued_message {space, message, action}` (protocol 10) | `send`: the message's mode (its pick, else the space's); `cancel`: Ask | Send now / Remove on a message waiting in the space's queue, as the host's own ("Sends queue") | `{}`; `fleet.unknown_space` once it isn't queued |
 | `answer_space {space, ask, answers}` | — | as `answer`: the question set waits, the answers fit it | `{}` |
 | `merge_child {parent, child}` | Edit | `space_merge` of `child` (a child of `parent`) into `parent`'s worktree; `fleet.busy` while `parent` runs | `space_merge`'s |
 

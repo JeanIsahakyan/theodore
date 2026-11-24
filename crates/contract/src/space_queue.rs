@@ -23,9 +23,11 @@ pub struct QueuedSend {
     pub mode: Option<SpaceMode>,
     #[serde(default)]
     pub effort: Option<String>,
-    /// Waits for your "Send": Stop was pressed on the turn before it (even
-    /// as that turn finished on its own), that turn failed, its own turn
-    /// couldn't start, or Theodore restarted meanwhile.
+    /// Waits for your "Send" instead of running when its turn comes: its
+    /// own turn couldn't start, or a usage limit left the space without an
+    /// account and you chose not to continue by itself. A turn that was
+    /// stopped or failed, or a restart, doesn't hold the queue: the next
+    /// message runs all the same.
     #[serde(default)]
     pub held: bool,
 }

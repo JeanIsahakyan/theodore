@@ -4,7 +4,13 @@
  * `FleetClient` is implemented in `src/fleet/client.ts`; screens read the
  * zustand store in `src/state/fleet.ts` and call the client's methods.
  */
-import type { BlobRef, ConfirmAction, FleetMode, McpAuto } from '../gen/fleet';
+import type {
+  BlobRef,
+  ConfirmAction,
+  FleetMode,
+  McpAuto,
+  QueuedMessageAction,
+} from '../gen/fleet';
 import type { SpaceMirror } from './mirror';
 
 export type { BlobRef } from '../gen/fleet';
@@ -352,6 +358,19 @@ export interface FleetClient {
     text: string,
     attachments?: BlobRef[],
   ): Promise<SendResult>;
+  /**
+   * Send now or Remove on a message waiting in that space's queue
+   * (`queued_message`, docs/fleet.md "Sends queue"): `send` runs it now
+   * when the space is free (a held one released), else back in line;
+   * `cancel` drops it. Refused `fleet.unknown_space` once it isn't queued
+   * any more, `fleet.upgrade_required` by a computer below protocol 10.
+   */
+  queuedMessage(
+    hostDevice: string,
+    space: string,
+    message: string,
+    action: QueuedMessageAction,
+  ): Promise<void>;
   /** Answers the question set `ask` waiting in that space (`answer_space`). */
   answerSpace(
     hostDevice: string,

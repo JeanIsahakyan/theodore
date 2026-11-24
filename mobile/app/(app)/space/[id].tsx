@@ -94,6 +94,7 @@ import { useSpaceMode } from '../../../src/components/pickers/use-picker';
 import { MainHeader } from '../../../src/components/main-header';
 import { SpaceHeader } from '../../../src/components/space-header';
 import type { ChatMessage, TurnStep } from '../../../src/fleet/contract';
+import { mayHaveReached } from '../../../src/fleet/errors';
 import { mirrored } from '../../../src/fleet/mirror';
 import type {
   AgentPicks,
@@ -104,6 +105,7 @@ import type {
   BlobRef,
   FleetMode,
   MirroredSubSpace,
+  QueuedMessageAction,
 } from '../../../src/gen/fleet';
 import { useServices } from '../../../src/services';
 import { useGlassHeaderInset } from '../../../src/shell/glassHeader';
@@ -611,7 +613,28 @@ function LiveSpaceScreen({ id }: { id: string }) {
           space: id,
           'error.code': code ?? 'fleet.send_failed',
         });
-        sendFailed(id, key, errorText(e));
+        // No answer in time: the host may have taken it all the same, so
+        // its row, if it shows up, replaces the bubble.
+        sendFailed(id, key, errorText(e), mayHaveReached(e));
+      });
+  };
+
+  /** Send now / Remove on a message waiting in the host's queue
+   *  (docs/fleet.md "Sends queue"); a refusal shows over the composer. */
+  const onQueued = (m: ChatMessage, action: QueuedMessageAction) => {
+    setError(null);
+    fleet
+      .queuedMessage(space.hostDevice, id, m.id, action)
+      .then(() =>
+        track('queued_message', { action, outcome: 'ok', code: null }),
+      )
+      .catch((e: unknown) => {
+        track('queued_message', {
+          action,
+          outcome: 'failed',
+          code: refusalCode(e),
+        });
+        setError(errorText(e));
       });
   };
 
@@ -715,7 +738,12 @@ function LiveSpaceScreen({ id }: { id: string }) {
     <View style={styles.tail}>
       {chat?.live ? <LiveReply live={chat.live} waiting={!!question} /> : null}
       {chat?.queued.map((m) => (
-        <QueuedRow key={m.id} m={m} />
+        <QueuedRow
+          key={m.id}
+          m={m}
+          onSendNow={() => onQueued(m, 'send')}
+          onRemove={() => onQueued(m, 'cancel')}
+        />
       ))}
       {shown.map((x) => (
         <PendingRow

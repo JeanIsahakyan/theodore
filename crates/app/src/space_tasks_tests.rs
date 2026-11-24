@@ -360,20 +360,27 @@ async fn stop_during_a_follow_up_interrupts_it_and_leaves_the_tasks() {
 
     wait_until(|| live.interrupts() == 1).await;
     wait_until(|| space(&f, &s.id).turns == 2).await;
-    wait_until(|| core.has_parked(&s.id)).await;
     assert!(!live.was_killed(), "Stop never kills the tasks");
     assert_eq!(
         task_status(&f, &s.id, "t1"),
         Some(BackgroundTaskStatus::Running)
     );
     assert_eq!(reply(&f, &s.id, 1).failed.as_deref(), Some("stopped"));
-    // Stop holds the queue, the follow-up or not.
-    let held = transcript(&f, &s.id)
+    // Stop ends the follow-up only: the queued message runs right after
+    // it, on the kept process (docs/spaces.md §8), which is parked again
+    // once that turn ends.
+    wait_until(|| live.steered().len() == 1).await;
+    assert!(live.steered()[0].ends_with("wait"));
+    live.emit(AgentEvent::Lingering).await;
+    live.emit(done_event("waited")).await;
+    wait_until(|| space(&f, &s.id).turns == 3).await;
+    wait_until(|| core.has_parked(&s.id)).await;
+    assert!(!live.was_killed());
+    let ran = transcript(&f, &s.id)
         .into_iter()
         .find(|m| m.id == queued)
         .unwrap();
-    assert!(held.queued.as_ref().unwrap().held);
-    assert!(live.steered().is_empty(), "nothing was sent");
+    assert!(ran.queued.is_none(), "it ran as a turn of its own");
 }
 
 #[tokio::test]
@@ -428,11 +435,12 @@ async fn a_follow_up_while_the_queue_is_held_leaves_it_held() {
     let (core, _recv, project) = started(&f).await;
     let (s, live) = parked(&f, &core, &project).await;
 
-    // Held by a stopped turn: nothing goes by itself.
+    // Held (a usage limit left it to you, say): nothing goes by itself.
     live.on_interrupt(vec![AgentEvent::Lingering, done_event("stopped")]);
     core.space_send(send(&s.id, "first")).await.unwrap();
     wait_until(|| live.steered().len() == 1).await;
     let q = core.space_send(send(&s.id, "held")).await.unwrap();
+    core.hold_queue(&s.id, "test").await;
     core.space_stop(&s.id).await.unwrap();
     wait_until(|| space(&f, &s.id).status != SpaceStatus::Running).await;
     wait_until(|| core.has_parked(&s.id)).await;
@@ -608,7 +616,8 @@ async fn a_message_needing_another_process_ends_this_one_first() {
     })
     .await
     .unwrap();
-    assert!(live.was_killed(), "the old process ends first");
+    // The turn's task ends the old process before its agent starts.
+    wait_until(|| live.was_killed()).await;
     wait_until(|| f.agents.requests().len() == 2).await;
     wait_until(|| space(&f, &s.id).turns == 2).await;
     let toast = async {
@@ -683,7 +692,7 @@ async fn a_mode_change_ends_the_process() {
     })
     .await
     .unwrap();
-    assert!(live.was_killed());
+    wait_until(|| live.was_killed()).await;
     wait_until(|| f.agents.requests().len() == 2).await;
     assert_eq!(f.agents.last_request().unwrap().mode, AgentMode::ReadOnly);
 }

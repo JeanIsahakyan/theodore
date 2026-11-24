@@ -420,7 +420,9 @@ async fn the_diff_tool_only_calls_new_edits_uncommitted() {
 }
 
 /// Stop: the agent's CLI traps SIGTERM, takes a moment, and writes one more
-/// file. The stopped turn's checkpoint waits for it.
+/// file. The stopped turn's checkpoint waits for it. The space's naming
+/// run (`space_naming`, a one-shot in the same worktree, without the
+/// turn's `THEODORE_SPACE`) only idles: the markers are the turn's.
 #[cfg(unix)]
 #[tokio::test]
 async fn a_stopped_turn_checkpoints_what_the_agent_wrote_while_dying() {
@@ -430,6 +432,7 @@ async fn a_stopped_turn_checkpoints_what_the_agent_wrote_while_dying() {
     std::fs::write(
         &cli,
         "#!/bin/sh\n\
+         if [ -z \"$THEODORE_SPACE\" ]; then while :; do sleep 0.1; done; fi\n\
          trap 'sleep 1; echo late > late.txt; exit 0' TERM\n\
          touch started.txt\n\
          while :; do sleep 0.1; done\n",
