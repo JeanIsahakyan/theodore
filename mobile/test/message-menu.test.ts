@@ -5,7 +5,7 @@ import {
   SELECT_TEXT,
   SELECT_TEXT_MAX,
   messageMenuItems,
-  sheetText,
+  selectableText,
   textSegments,
   type MessageKind,
 } from '../src/ui/messageMenu';
@@ -44,7 +44,7 @@ describe('the long-press menu', () => {
   });
 });
 
-describe('the sheet’s text', () => {
+describe('the selectable text', () => {
   it('splits fenced code out, the fences gone, the code kept as written', () => {
     const md = 'Run this:\n\n```sh\ncargo test\n  --all\n```\n\nthen `x`.';
     expect(textSegments(md)).toEqual([
@@ -64,8 +64,8 @@ describe('the sheet’s text', () => {
   });
 
   it('cuts very long text with a note', () => {
-    expect(sheetText('hi')).toEqual({ text: 'hi', cut: false });
-    const long = sheetText('a'.repeat(SELECT_TEXT_MAX + 5));
+    expect(selectableText('hi')).toEqual({ text: 'hi', cut: false });
+    const long = selectableText('a'.repeat(SELECT_TEXT_MAX + 5));
     expect(long.cut).toBe(true);
     expect(long.text.length).toBe(SELECT_TEXT_MAX);
   });

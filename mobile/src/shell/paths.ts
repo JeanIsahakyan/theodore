@@ -38,7 +38,6 @@ export const SHEET_PATHS = {
   project: '/project-picker',
   activity: '/activity-sheet',
   accounts: '/accounts-sheet',
-  text: '/select-text',
 } as const;
 
 const SHEET_PATH_SET: ReadonlySet<string> = new Set(Object.values(SHEET_PATHS));
