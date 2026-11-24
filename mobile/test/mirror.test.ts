@@ -171,6 +171,16 @@ describe('mirror reducer', () => {
     expect(m).toBe(before);
     m = apply(m, 'chat_message', 'm1', message({ text: 'edited' }));
     expect(m.messages.m1!.text).toBe('edited');
+    // A queued row carries its place and whether the host holds it.
+    m = apply(m, 'chat_message', 'm1', message({ queued: { seq: 2 } }));
+    expect(m.messages.m1!.queued).toEqual({ seq: 2, held: false });
+    m = apply(
+      m,
+      'chat_message',
+      'm1',
+      message({ queued: { seq: 2, held: true, mode: 'edit' } }),
+    );
+    expect(m.messages.m1!.queued).toEqual({ seq: 2, held: true });
     m = apply(m, 'chat_message', 'm1', null);
     expect(Object.keys(m.messages)).toEqual(['m2']);
   });

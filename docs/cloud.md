@@ -476,6 +476,12 @@ hello's protocol is kept per connection:
 | `DeviceInfo.mcp_auto` | dropped | dropped | dropped | kept and listed | kept and listed |
 | ops on any space (`list_spaces` … `merge_child`), as a target | refused | refused | refused | refused | routed |
 
+Later protocols add ops the cloud routes only to a target that reads them
+(else `refused{fleet.upgrade_required}`): 8 the blob transfer
+(attachments, `read_file`), 9 `archive_space` / `unarchive_space`, 10
+`queued_message` (Send now / Remove on a queued message, docs/fleet.md
+"Sends queue").
+
 Kind `mcp` is the cloud's own device ("MCP" below): only its in-process
 connection says it, and says nothing else; a socket's hello or `announce`
 with `mcp` is `fleet.bad_message`. Refused with

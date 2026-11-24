@@ -12,8 +12,8 @@ use theodore_contract::{
 };
 use theodore_domain::Sha;
 use theodore_fleet_protocol::{
-    DeviceKey, DeviceKind, FleetMode, MirroredSubSpace, RemoteOp, RemoteSpaceEvent, ReplyOutcome,
-    SUB_SPACE_MODEL, codes,
+    DeviceKey, DeviceKind, FleetMode, MirroredSubSpace, QueuedMessageAction, RemoteOp,
+    RemoteSpaceEvent, ReplyOutcome, SUB_SPACE_MODEL, codes,
 };
 use theodore_ports::{AgentEvent, LocalSpaceStart, SpaceToolError, Store};
 
@@ -358,6 +358,66 @@ async fn send_to_keeps_the_spaces_mode_queues_while_it_runs_and_stays_under_the_
     let above = run(&f, &h.key, send_to(&wide.id, "go")).await;
     assert_eq!(err_code(above), codes::MODE_NOT_ALLOWED);
     assert_eq!(space(&f, &wide.id).turns, wide.turns);
+}
+
+/// Protocol 10 (docs/fleet.md "Sends queue"): a phone's Send now / Remove
+/// on a message waiting in any space's queue, as the host's own.
+#[tokio::test]
+async fn queued_message_removes_or_sends_a_waiting_message_from_another_device() {
+    let f = fixtures();
+    let h = host(&f, DeviceKind::Desktop, SpaceMode::Edit).await;
+    let a = own_space(&f, &h, "Fix login", SpaceMode::Edit).await;
+    f.agents.hang_next_run();
+    h.core
+        .space_send(crate::space_children_tests::send(&a.id, "busy"))
+        .await
+        .unwrap();
+    wait_until("running", || space(&f, &a.id).run.is_some()).await;
+    let first = ok_value(run(&f, &h.key, send_to(&a.id, "first")).await);
+    let second = ok_value(run(&f, &h.key, send_to(&a.id, "second")).await);
+    let (first, second) = (
+        first["message"].as_str().unwrap().to_string(),
+        second["message"].as_str().unwrap().to_string(),
+    );
+    let queued_op = |message: &str, action: QueuedMessageAction| RemoteOp::QueuedMessage {
+        space: a.id.clone(),
+        message: message.into(),
+        action,
+    };
+
+    // Remove drops it from the queue; a second Remove finds nothing.
+    let ok = run(&f, &h.key, queued_op(&first, QueuedMessageAction::Cancel)).await;
+    assert!(matches!(ok, ReplyOutcome::Ok { .. }), "{ok:?}");
+    let queue = h.core.queued_messages(&a.id).await.unwrap();
+    assert_eq!(queue.len(), 1);
+    assert_eq!(queue[0].id, second);
+    let gone = run(&f, &h.key, queued_op(&first, QueuedMessageAction::Cancel)).await;
+    assert_eq!(err_code(gone), codes::UNKNOWN_SPACE);
+
+    // A held message (its start failed, say) is released by Send now:
+    // while the turn runs, back in line; it runs after the turn.
+    h.core.hold_queue(&a.id, "test").await;
+    assert!(
+        h.core.queued_messages(&a.id).await.unwrap()[0]
+            .queued
+            .as_ref()
+            .unwrap()
+            .held
+    );
+    let ok = run(&f, &h.key, queued_op(&second, QueuedMessageAction::Send)).await;
+    assert!(matches!(ok, ReplyOutcome::Ok { .. }), "{ok:?}");
+    assert!(
+        !h.core.queued_messages(&a.id).await.unwrap()[0]
+            .queued
+            .as_ref()
+            .unwrap()
+            .held
+    );
+    f.agents.push_script(done("second done"));
+    h.core.space_stop(&a.id).await.unwrap();
+    let row = settled(&f, &a.id).await;
+    assert_eq!(row.turns, a.turns + 2, "busy, then second");
+    assert!(h.core.queued_messages(&a.id).await.unwrap().is_empty());
 }
 
 #[tokio::test]
@@ -749,6 +809,62 @@ async fn the_origin_archives_and_unarchives_a_space_hosted_for_it() {
     .await;
     assert!(matches!(back, ReplyOutcome::Ok { .. }), "{back:?}");
     assert_eq!(space(&f, &local).status, SpaceStatus::Idle);
+}
+
+#[tokio::test]
+async fn an_archived_sub_space_leaves_the_followers_tree_and_comes_back_unarchived() {
+    let f = fixtures();
+    let h = host(&f, DeviceKind::Desktop, SpaceMode::Edit).await;
+    f.agents.push_script(done("ok"));
+    run(
+        &f,
+        &h.key,
+        start_with(&h.project.id, "rs_h", FleetMode::Edit, None, 0),
+    )
+    .await;
+    let local = local_of(&f, "rs_h");
+    settled(&f, &local).await;
+    f.agents.push_script(done("child"));
+    let child = h
+        .core
+        .sub_space_start(&local, SpaceMode::Edit, goal("Port it"))
+        .await
+        .unwrap()
+        .space;
+    settled(&f, &child).await;
+
+    // The latest `sub_space` mirror of the child: `Some(None)` a delete.
+    let latest = |f: &Fixtures| {
+        events(f, "rs_h")
+            .into_iter()
+            .rev()
+            .find_map(|(_, e)| match e {
+                RemoteSpaceEvent::Mirror { model, id, data }
+                    if model == SUB_SPACE_MODEL && id == child =>
+                {
+                    Some(data)
+                }
+                _ => None,
+            })
+    };
+    wait_until("mirrored", || latest(&f).is_some_and(|d| d.is_some())).await;
+    let before = events(&f, "rs_h").len();
+
+    // Archived on this computer: followers forget it.
+    f.clock.advance(1000);
+    h.core.archive_space(&child).await.unwrap();
+    assert_eq!(space(&f, &child).status, SpaceStatus::Archived);
+    wait_until("deleted", || {
+        events(&f, "rs_h").len() > before && latest(&f) == Some(None)
+    })
+    .await;
+
+    // Back: a row again, as it is now.
+    f.clock.advance(1000);
+    h.core.unarchive_space(&child).await.unwrap();
+    wait_until("mirrored again", || latest(&f).is_some_and(|d| d.is_some())).await;
+    let m: MirroredSubSpace = serde_json::from_value(latest(&f).unwrap().unwrap()).unwrap();
+    assert_eq!((m.parent.as_str(), m.status.as_str()), ("rs_h", "idle"));
 }
 
 #[tokio::test]

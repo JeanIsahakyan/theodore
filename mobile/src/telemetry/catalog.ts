@@ -101,6 +101,10 @@ export const CATALOG = {
     answers: 'Do people stop spaces from the phone?',
     props: ['outcome', 'code'],
   },
+  queued_message: {
+    answers: 'Do people send now or remove queued messages from the phone?',
+    props: ['action', 'outcome', 'code'],
+  },
   space_archived: {
     answers: 'Do people archive (and undo) from the phone, why refused?',
     props: ['action', 'surface', 'stopped_first', 'outcome', 'code'],

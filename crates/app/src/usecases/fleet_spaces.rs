@@ -26,7 +26,9 @@ use serde_json::Value;
 use theodore_contract::{
     FleetConfirm, FleetConfirmAction, Space, SpaceAnswerRequest, SpaceSendRequest, SpaceStatus,
 };
-use theodore_fleet_protocol::{FleetMode, REPLY_VALUE_MAX_BYTES, RemoteOp, RemoteRequest, codes};
+use theodore_fleet_protocol::{
+    FleetMode, QueuedMessageAction, REPLY_VALUE_MAX_BYTES, RemoteOp, RemoteRequest, codes,
+};
 use theodore_ports::{SPACE_READ_MESSAGES, SpaceToolError};
 
 use crate::core::Core;
@@ -235,6 +237,44 @@ impl Core {
                 }
                 Ok(Some(FleetMode::Edit))
             }
+            // Protocol 10 (docs/fleet.md "Sends queue"): the message must
+            // still wait in the space's queue. Send counts as the mode the
+            // message runs in (its own pick, else the space's); Remove as
+            // nothing more than reading the space.
+            RemoteOp::QueuedMessage {
+                space,
+                message,
+                action,
+            } => {
+                let row = self.fleet_reach(origin, space).await?;
+                let queued = self
+                    .queued_messages(&row.id)
+                    .await
+                    .ok()
+                    .and_then(|q| q.into_iter().find(|m| &m.id == message))
+                    .ok_or_else(|| {
+                        refuse(
+                            codes::UNKNOWN_SPACE,
+                            "this message isn't waiting in the space's queue any more",
+                        )
+                    })?;
+                match action {
+                    QueuedMessageAction::Cancel => Ok(Some(FleetMode::Ask)),
+                    QueuedMessageAction::Send => {
+                        let m = fleet_mode(
+                            queued
+                                .queued
+                                .as_ref()
+                                .and_then(|q| q.mode)
+                                .unwrap_or(row.mode),
+                        );
+                        if m > s.max_mode {
+                            return Err(above(m));
+                        }
+                        Ok(Some(m))
+                    }
+                }
+            }
             // Protocol 8 (docs/fleet.md "Files (blobs)"): as `read_space`,
             // for a space that has a worktree here.
             RemoteOp::ReadFile { space, .. } => {
@@ -366,6 +406,35 @@ impl Core {
                     .map_err(tool_refusal)?;
                 tracing::info!(parent = %p.id, child = %child, origin, "merged a sub-space for another device");
                 json(serde_json::to_value(merged))?
+            }
+            // Protocol 10: as the host's own Send / Cancel on a queued row
+            // (`space_queued`): Send runs it now when the space is free,
+            // else releases it to the queue; Cancel drops it.
+            RemoteOp::QueuedMessage {
+                space,
+                message,
+                action,
+            } => {
+                let row = self.fleet_reach(origin, &space).await?;
+                let action = match action {
+                    QueuedMessageAction::Send => theodore_contract::QueuedAction::Send,
+                    QueuedMessageAction::Cancel => theodore_contract::QueuedAction::Cancel,
+                };
+                self.space_queued(theodore_contract::SpaceQueuedRequest {
+                    space: row.id.clone(),
+                    message: message.clone(),
+                    action: action.clone(),
+                })
+                .await
+                .map_err(|e| match e {
+                    crate::AppError::NotFound(_) => refuse(
+                        codes::UNKNOWN_SPACE,
+                        "this message isn't waiting in the space's queue any more",
+                    ),
+                    other => crate::usecases::fleet_host::app_refusal(other),
+                })?;
+                tracing::info!(space = %row.id, message = %message, ?action, origin, "a queued message was acted on from another device");
+                serde_json::json!({})
             }
             // Protocol 8 (docs/fleet.md "Files (blobs)"): sealed for the key
             // the request verified against (the origin's pin).

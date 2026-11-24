@@ -322,7 +322,7 @@ async fn a_turn_reports_how_it_ended_once() {
 }
 
 #[tokio::test]
-async fn stop_counts_once_and_holds_the_queue_with_its_reason() {
+async fn stop_counts_once_and_the_queue_goes_on_unheld() {
     let f = fixtures();
     let (core, _recv, project) = started(&f).await;
     let (log, _guard) = capture_product();
@@ -332,16 +332,17 @@ async fn stop_counts_once_and_holds_the_queue_with_its_reason() {
     core.space_send(send(&s.id, "after", None)).await.unwrap();
 
     core.space_stop(&s.id).await.unwrap();
+    // The stopped turn, then the two queued ones (docs/spaces.md §8).
+    wait_until(|| log.named("space_turn").len() == 3).await;
     idle(&f, &s.id).await;
-    wait_until(|| !log.named("queue_held").is_empty()).await;
 
     let actions = log.named("space_action");
     assert_eq!(actions, [json!({ "action": "stop" })]);
-    let held = log.named("queue_held");
-    assert_eq!(held, [json!({ "reason": "stopped", "messages": 2 })]);
+    assert!(log.named("queue_held").is_empty(), "Stop holds nothing");
     let turns = log.named("space_turn");
-    assert_eq!(turns.len(), 1);
     assert_eq!(turns[0]["outcome"], "stopped");
+    assert_eq!(turns[1]["outcome"], "ok");
+    assert_eq!(turns[2]["outcome"], "ok");
 }
 
 #[tokio::test]

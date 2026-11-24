@@ -287,6 +287,9 @@ export type PushProvider =
 /**  Expo Push (APNs / FCM behind it). */
 "expo";
 
+/**  What [`RemoteOp::QueuedMessage`] does with the message. */
+export type QueuedMessageAction = "send" | "cancel";
+
 /**  `reply.value` for a `read_file`. */
 export type ReadFileResult = {
 	blob: BlobRef,
@@ -429,7 +432,14 @@ path: string; max_bytes: number } |
  *  Brings an archived space back: its worktree recreated from its
  *  checkpoints.
  */
-{ op: "unarchive_space"; space: string };
+{ op: "unarchive_space"; space: string } |
+/**
+ *  `send`: runs the message now when the space is free, else back in
+ *  line (a held one released); `cancel`: drops it from the queue.
+ */
+{ op: "queued_message"; space: string;
+/**  The queued `chat_message`'s id, as mirrored. */
+message: string; action: QueuedMessageAction };
 
 export type RemoteQuestion = {
 	question: string,

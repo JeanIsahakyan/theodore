@@ -503,6 +503,14 @@ impl Core {
     /// starts its turn with `req`'s picks; `prompt`, when set, is the
     /// turn's ask instead of the message (an approved plan). Caller holds
     /// the space's queue lock; the space isn't running.
+    ///
+    /// Only the claim happens here: the message and the space's `running`
+    /// are written, and the rest (the worktree, the prompt, the agent) is
+    /// prepared in the turn's own task. The queue lock is held for a store
+    /// write, never for git or the network: a send from another device
+    /// while a turn starts is answered at once (docs/fleet.md "Sends
+    /// queue"). What can't be prepared fails the turn, as a failed run
+    /// would (`fail_unprepared_turn`).
     pub(crate) async fn start_turn(
         &self,
         space: Space,
@@ -519,7 +527,13 @@ impl Core {
         // A merged space goes on on a new branch first (docs/spaces.md §7).
         let space = self.continue_if_merged(space, message.at).await?;
         let project = self.space_project(&space).await?;
-        let (text, attachments) = (message.text.clone(), message.attachments.clone());
+        // A host project never cloned on this Mac: nothing to work in
+        // without the network, so the clone — or its refusal, offline —
+        // comes before anything is stored. With a copy on disk the fetch
+        // waits for the turn's own task (`prepare_turn`).
+        if project.path.is_none() && self.0.deps.git.cached_repo(&project.repo).await?.is_none() {
+            self.ensure_project_cache(&project).await?;
+        }
 
         let agent = req.agent.unwrap_or(space.agent);
         // A send naming no model keeps the space's, which is another agent's
@@ -537,40 +551,6 @@ impl Core {
                 .flatten()
         });
 
-        // A worktree removed by hand comes back from the checkpoint ref.
-        let repo_path = self.ensure_project_cache(&project).await?;
-        let wt = self
-            .0
-            .deps
-            .git
-            .space_worktree(&repo_path, &space.id, &space.base_sha)
-            .await?;
-
-        // The account it runs on: the preferred one, else the space's own,
-        // else the next one not limited (docs/plan.md "Agent accounts and
-        // limits").
-        let session_account = space
-            .agent_session
-            .as_ref()
-            .filter(|s| s.agent == agent)
-            .map(|s| s.account.clone().unwrap_or_else(|| DEFAULT_ACCOUNT.into()));
-        let account = self.turn_account(agent, session_account.as_deref()).await;
-
-        // A process kept for its background tasks takes this turn, when it
-        // can; otherwise it ends first (one CLI per session).
-        let cli_key = CliKey {
-            account: account.id.clone(),
-            agent,
-            model: crate::agent_defaults::run_model(&self.0.deps.store, agent, model.clone()).await,
-            effort: crate::agent_defaults::run_effort(&self.0.deps.store, agent, effort.clone())
-                .await,
-            mode,
-        };
-        let attach = self
-            .attach_parked(&space.id, &cli_key, !attachments.is_empty())
-            .await;
-
-        let history = self.space_history(&space).await?;
         let message_id = message.id.clone();
         let now = message.at;
         let run_id = format!("space:{}:{message_id}", space.id);
@@ -615,13 +595,110 @@ impl Core {
             },
         ])
         .await?;
-        // Ended rows have been seen; the ones still running stay.
-        self.prune_ended_tasks(&space.id).await;
 
         let cancel = CancellationToken::new();
         let handle = RunHandle::new(cancel.clone());
         let pause = handle.pause.clone();
         self.0.runs.write().await.insert(run_id.clone(), handle);
+        let claim = TurnClaim {
+            run_id: run_id.clone(),
+            cancel,
+            pause,
+        };
+        let picks = TurnPicks {
+            agent,
+            model,
+            effort,
+            mode,
+            prompt,
+        };
+        let core = self.clone();
+        // `run_id` tags the turn's log lines (a chat report's logs).
+        let span = tracing::info_span!(
+            "space_turn",
+            space = %space.id,
+            agent = agent.as_str(),
+            run_id = %run_id
+        );
+        tokio::spawn(tracing::Instrument::instrument(
+            async move {
+                match core
+                    .prepare_turn(&space, project, message, picks, claim)
+                    .await
+                {
+                    Ok(turn) => drive_turn(&core, turn).await,
+                    Err(e) => core.fail_unprepared_turn(&space, &run_id, e).await,
+                }
+            },
+            span,
+        ));
+        Ok(message_id)
+    }
+
+    /// Everything a turn needs before its agent runs: the worktree (one
+    /// removed by hand comes back from the checkpoint ref), the account, a
+    /// kept process to take it, the prompt with its history, the code tools.
+    /// The space is `running` already; an error here fails the turn.
+    async fn prepare_turn(
+        &self,
+        space: &Space,
+        project: Project,
+        message: ChatMessage,
+        picks: TurnPicks,
+        claim: TurnClaim,
+    ) -> AppResult<Turn> {
+        let TurnClaim {
+            run_id,
+            cancel,
+            pause,
+        } = claim;
+        let TurnPicks {
+            agent,
+            model,
+            effort,
+            mode,
+            prompt,
+        } = picks;
+        let (text, attachments) = (message.text.clone(), message.attachments.clone());
+        let repo_path = self.ensure_project_cache(&project).await?;
+        let wt = self
+            .0
+            .deps
+            .git
+            .space_worktree(&repo_path, &space.id, &space.base_sha)
+            .await?;
+
+        // The account it runs on: the preferred one, else the space's own,
+        // else the next one not limited (docs/plan.md "Agent accounts and
+        // limits").
+        let session_account = space
+            .agent_session
+            .as_ref()
+            .filter(|s| s.agent == agent)
+            .map(|s| s.account.clone().unwrap_or_else(|| DEFAULT_ACCOUNT.into()));
+        let account = self.turn_account(agent, session_account.as_deref()).await;
+
+        // A process kept for its background tasks takes this turn, when it
+        // can; otherwise it ends first (one CLI per session).
+        let cli_key = CliKey {
+            account: account.id.clone(),
+            agent,
+            model: crate::agent_defaults::run_model(&self.0.deps.store, agent, model.clone()).await,
+            effort: crate::agent_defaults::run_effort(&self.0.deps.store, agent, effort.clone())
+                .await,
+            mode,
+        };
+        let attach = self
+            .attach_parked(&space.id, &cli_key, !attachments.is_empty())
+            .await;
+
+        // Stored by the claim already: the turn's own message is the ask,
+        // not history.
+        let mut history = self.space_history(space).await?;
+        history.retain(|m| m.id != message.id);
+        // Ended rows have been seen; the ones still running stay.
+        self.prune_ended_tasks(&space.id).await;
+        let message_id = message.id.clone();
         // `/<skill> task` runs one of your or the repo's skills as this
         // turn's instructions, and the attached files are listed after it;
         // the transcript keeps the text as typed.
@@ -652,9 +729,9 @@ impl Core {
         // (docs/spaces.md "Theodore's errors reach the agent").
         let error_notes = self.take_space_error_notes(&space.id);
         let wrap = |prompt: String| {
-            let prompt = crate::usecases::space_pr::with_continue_note(&space, prompt);
-            let prompt = crate::usecases::space_checkpoints::with_reverts(&space, prompt);
-            let prompt = with_failed_check(&space, prompt);
+            let prompt = crate::usecases::space_pr::with_continue_note(space, prompt);
+            let prompt = crate::usecases::space_checkpoints::with_reverts(space, prompt);
+            let prompt = with_failed_check(space, prompt);
             with_ultracode(
                 crate::usecases::space_errors::with_error_notes(&error_notes, prompt),
                 ultracode,
@@ -663,7 +740,7 @@ impl Core {
         // The same agent in the same worktree continues its session and
         // hears only the new turn; anything else starts a new session from
         // the replayed transcript.
-        let mut resume = resumable_session(&space, agent, &wt.path);
+        let mut resume = resumable_session(space, agent, &wt.path);
         // Another account than the session's: its session moves over
         // (Claude Code's file, copied), or the transcript is replayed.
         if let (Some(id), Some(from)) = (&resume, &session_account)
@@ -707,7 +784,7 @@ impl Core {
             None => (
                 wrap(
                     crate::usecases::space_handoff::replay_prompt(
-                        self, &space, agent, &wt.path, &history, &ask,
+                        self, space, agent, &wt.path, &history, &ask,
                     )
                     .await,
                 ),
@@ -748,13 +825,13 @@ impl Core {
             resume,
             replay,
             system: self
-                .space_review_rules(&space, &project, &wt.path)
+                .space_review_rules(space, &project, &wt.path)
                 .await
                 .with_system(Some(crate::usecases::space_plan::with_plan_rules(
                     with_local_spaces(
                         with_fleet_tools(
                             system_prompt(
-                                &space,
+                                space,
                                 self.0.deps.tools.is_some(),
                                 code,
                                 !hosted && self.user_mcp_allowed().await,
@@ -769,7 +846,7 @@ impl Core {
                     mode,
                 )))
                 .unwrap_or_default(),
-            env: self.space_agent_env(&space).await,
+            env: self.space_agent_env(space).await,
             attachments: {
                 let mut all = agent_attachments(&attachments);
                 let images: Vec<_> = context_files
@@ -785,19 +862,73 @@ impl Core {
             pause,
             code,
         };
-        let core = self.clone();
-        // `run_id` tags the turn's log lines (a chat report's logs).
-        let span = tracing::info_span!(
-            "space_turn",
+        Ok(turn)
+    }
+
+    /// The turn couldn't be prepared (no worktree, the project's cache
+    /// gone…): it ends as a failed one with nothing run — a failed reply
+    /// says why, the space is `failed`, and the queue goes on as after any
+    /// turn (`end_turn`).
+    async fn fail_unprepared_turn(&self, space: &Space, run_id: &str, error: AppError) {
+        tracing::warn!(
+            error.code = "space.turn_not_started",
             space = %space.id,
-            agent = agent.as_str(),
-            run_id = %turn.run_id
+            agent = space.agent.as_str(),
+            error = %error,
+            "space turn couldn't start"
         );
-        tokio::spawn(tracing::Instrument::instrument(
-            async move { drive_turn(&core, turn).await },
-            span,
-        ));
-        Ok(message_id)
+        let text = format!("The turn couldn't start: {error}");
+        let now = self.0.deps.clock.now();
+        let reply = ChatMessage {
+            id: uuid::Uuid::new_v4().to_string(),
+            pr: space_chat_key(&space.id),
+            author: Author::Agent(space.agent),
+            text: String::new(),
+            refs: vec![],
+            at: now,
+            failed: Some(text.clone()),
+            from_tasks: vec![],
+            attachments: vec![],
+            queued: None,
+            activity: vec![],
+            duration_ms: Some(0),
+            changed_files: vec![],
+            model: None,
+            model_resolved: false,
+            text_in_steps: false,
+            run: Some(run_id.to_string()),
+            vote: None,
+            effort: None,
+            effort_resolved: false,
+            mode: None,
+            from_space: None,
+            notice: None,
+            mentions: vec![],
+        };
+        let mut actions = Vec::new();
+        if let Ok(data) = serde_json::to_value(&reply) {
+            actions.push(NewAction {
+                model: models::CHAT_MESSAGE.into(),
+                model_id: reply.id.clone(),
+                action: SyncActionCode::I,
+                data: Some(data),
+            });
+        }
+        actions.push(NewAction {
+            model: models::SPACE.into(),
+            model_id: space.id.clone(),
+            action: SyncActionCode::C,
+            data: Some(serde_json::json!({
+                "status": SpaceStatus::Failed,
+                "run": null,
+                "error": text,
+                "progress": null,
+                "question": null,
+                "updated_at": now,
+            })),
+        });
+        let end = release_run(self, run_id, TurnEnd::Interrupted("failed")).await;
+        self.end_turn(&space.id, actions, end, None).await;
     }
 
     /// A turn the CLI started by itself on a kept process, when a background
@@ -1187,7 +1318,7 @@ impl Core {
         }
         let _ = self.apply(actions).await;
         self.tasks_after_restart(&spaces).await;
-        self.hold_queues_after_restart(&spaces).await;
+        self.drain_queues_after_restart(&spaces).await;
     }
 
     /// Reopens a space's branch review by its id (`ensure_open` after a
@@ -1303,6 +1434,25 @@ impl Core {
         messages.sort_by_key(|m| m.at);
         Ok(messages)
     }
+}
+
+/// What a send picked for its turn, resolved against the space
+/// (`start_turn`), carried into the turn's task for `prepare_turn`.
+/// What `start_turn` claimed for the turn: its run id and the handles
+/// Stop and a restart's pause reach it by (`RunHandle`).
+struct TurnClaim {
+    run_id: String,
+    cancel: CancellationToken,
+    pause: CancellationToken,
+}
+
+struct TurnPicks {
+    agent: AgentId,
+    model: Option<String>,
+    effort: Option<String>,
+    mode: SpaceMode,
+    /// The turn's ask instead of the message as typed (an approved plan).
+    prompt: Option<String>,
 }
 
 struct Turn {

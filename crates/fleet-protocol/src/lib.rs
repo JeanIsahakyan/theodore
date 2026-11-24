@@ -31,14 +31,15 @@ pub use keys::{DeviceKey, KeyError, fingerprint, verify};
 
 /// Protocol version sent in `hello`; the cloud refuses others with
 /// `fleet.version`.
-pub const PROTOCOL_VERSION: u32 = 9;
+pub const PROTOCOL_VERSION: u32 = 10;
 /// The oldest protocol the cloud still accepts (it hides `mobile` / `web`
 /// devices from protocol-3 connections and `mcp` ones from protocol < 5,
 /// whose `DeviceKind` can't read them; `confirm` / `confirm_dismissed` and
 /// the `confirm` / `set_mcp_auto` ops need protocol 6; the ops on any
 /// space of a computer ([`RemoteOp::on_any_space`]) need protocol 7;
 /// attachments and `read_file` ([`BlobRef`]) need protocol 8; the
-/// `archive_space` / `unarchive_space` ops need protocol 9).
+/// `archive_space` / `unarchive_space` ops need protocol 9; the
+/// `queued_message` op needs protocol 10).
 pub const MIN_PROTOCOL_VERSION: u32 = 3;
 /// A signed request older or newer than this is refused (`fleet.stale_request`).
 pub const REQUEST_WINDOW_MS: u64 = 5 * 60 * 1000;
@@ -507,6 +508,26 @@ pub enum RemoteOp {
     UnarchiveSpace {
         space: RemoteSpaceId,
     },
+    // ── protocol 10: a queued message of any space on the target
+    // (docs/fleet.md "Sends queue"): a person's Send now or Remove on a
+    // message waiting in the space's queue, as the host's own does
+    // (`space_queued`). `space` as `send_to`'s.
+    /// `send`: runs the message now when the space is free, else back in
+    /// line (a held one released); `cancel`: drops it from the queue.
+    QueuedMessage {
+        space: String,
+        /// The queued `chat_message`'s id, as mirrored.
+        message: String,
+        action: QueuedMessageAction,
+    },
+}
+
+/// What [`RemoteOp::QueuedMessage`] does with the message.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum QueuedMessageAction {
+    Send,
+    Cancel,
 }
 
 impl RemoteOp {
@@ -529,12 +550,13 @@ impl RemoteOp {
             | RemoteOp::SendTo { .. }
             | RemoteOp::AnswerSpace { .. }
             | RemoteOp::MergeChild { .. }
-            | RemoteOp::ReadFile { .. } => "",
+            | RemoteOp::ReadFile { .. }
+            | RemoteOp::QueuedMessage { .. } => "",
         }
     }
 
     /// An op on any space of the target, by its local id (protocol 7;
-    /// `read_file` is protocol 8).
+    /// `read_file` is protocol 8, `queued_message` protocol 10).
     pub fn on_any_space(&self) -> bool {
         matches!(
             self,
@@ -545,6 +567,7 @@ impl RemoteOp {
                 | RemoteOp::AnswerSpace { .. }
                 | RemoteOp::MergeChild { .. }
                 | RemoteOp::ReadFile { .. }
+                | RemoteOp::QueuedMessage { .. }
         )
     }
 
@@ -553,6 +576,7 @@ impl RemoteOp {
     pub fn protocol(&self) -> u32 {
         match self {
             RemoteOp::Confirm { .. } | RemoteOp::SetMcpAuto { .. } => 6,
+            RemoteOp::QueuedMessage { .. } => 10,
             RemoteOp::ArchiveSpace { .. } | RemoteOp::UnarchiveSpace { .. } => 9,
             RemoteOp::ReadFile { .. } => 8,
             _ if self.on_any_space() => 7,

@@ -725,7 +725,8 @@ impl Core {
             | RemoteOp::SendTo { .. }
             | RemoteOp::AnswerSpace { .. }
             | RemoteOp::MergeChild { .. }
-            | RemoteOp::ReadFile { .. } => Ok(()),
+            | RemoteOp::ReadFile { .. }
+            | RemoteOp::QueuedMessage { .. } => Ok(()),
         }
     }
 
@@ -981,7 +982,8 @@ impl Core {
             | RemoteOp::SendTo { .. }
             | RemoteOp::AnswerSpace { .. }
             | RemoteOp::MergeChild { .. }
-            | RemoteOp::ReadFile { .. } => Err(refuse(codes::INTERNAL, "not a space op")),
+            | RemoteOp::ReadFile { .. }
+            | RemoteOp::QueuedMessage { .. } => Err(refuse(codes::INTERNAL, "not a space op")),
         }
     }
 

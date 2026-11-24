@@ -258,7 +258,11 @@ function answerError(a: Answer): FleetError | null {
     case 'refused':
       return new FleetError(`refused by the cloud: ${a.code}`, a.code);
     case 'timeout':
-      return new FleetError("the other device didn't answer in time");
+      return new FleetError(
+        "the other device didn't answer in time",
+        null,
+        true,
+      );
   }
 }
 
@@ -2023,6 +2027,17 @@ export function createFleetClient(
         // host for a fresh one).
         await blobs.remove(ref.blob_id).catch(() => {});
       }
+    },
+
+    async queuedMessage(hostDevice, space, message, action) {
+      if (!/^[A-Za-z0-9_-]{1,64}$/.test(message))
+        throw new FleetError('not a message id');
+      await steerOn(hostDevice, {
+        op: 'queued_message',
+        space: localSpaceId(space),
+        message,
+        action,
+      });
     },
 
     async answerSpace(hostDevice, space, ask, answers) {

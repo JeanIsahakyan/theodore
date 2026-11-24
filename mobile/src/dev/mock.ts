@@ -807,6 +807,9 @@ export function createMock(options: MockOptions = {}): Mock {
     async answerSpace(hostDevice, space, ask, answers) {
       await call('answerSpace', hostDevice, space, ask, answers);
     },
+    async queuedMessage(hostDevice, space, message, action) {
+      await call('queuedMessage', hostDevice, space, message, action);
+    },
     async uploadAttachment(hostDevice, file, onProgress) {
       await call(
         'uploadAttachment',
