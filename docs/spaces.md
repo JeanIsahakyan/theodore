@@ -1500,7 +1500,12 @@ space_merge {child}   (own child · settled · same project · not shipped on it
   parent's own merge changes nothing about its children.
 - The running turn's text is kept in memory per space while it streams,
   and dropped when the turn ends.
-- Settings are `user` scope (Settings → Spaces).
+- Settings: `spaces.max_children`, `spaces.max_depth` and
+  `spaces.ask_timeout_secs` are read per the space's project — its own
+  override (Project settings → Spaces, a `project:<id>` setting row), else
+  the `user` value (Settings → Spaces), else the default. The parent's
+  project sets the depth and children limits, whichever project a child
+  starts in; the asking space's sets the ask timeout.
 
 ---
 
@@ -1922,7 +1927,7 @@ The same `archive_space` / `unarchive_space` run for the other ways in:
 | the poller | auto-archive below | — |
 **Auto-archive**: once a minute the poller re-fetches each in-review space's
 PR, sets `done_at` when it has merged, and archives spaces done for
-`spaces.auto_archive_days` (default 7, `0` = never; Settings → Spaces). A PR
+`spaces.auto_archive_days` (default 7, `0` = never). A PR
 closed without merging leaves the space alone. Space worktrees live outside
 `~/.theodore/wt`, so the PR worktree sweep never touches them.
 
@@ -1936,12 +1941,30 @@ left in it (`space_unsettled`), each sweep checking again:
 | a turn runs, or a message waits in its queue | no |
 | a sub-space of it isn't archived (any, done or not) | no |
 | turns after the last ship (`shipped.head ≠ head_sha`), or edits in the worktree since the last checkpoint | no |
-| its PR merged and `spaces.auto_archive_merged` is off (default on; Settings → Labs) | no — it stays until you archive it |
+| its PR merged and `spaces.auto_archive_merged` is off (default on) | no — it stays until you archive it |
 | none of the above | yes |
 
 The same holds for a space merged locally, kept as a branch or merged
 into its parent; only the setting is about PR-merged spaces. A failed
 auto-archive is a toast, and a note to the agent (below).
+
+**Where the settings live.** Both are read per the space's project:
+
+```
+project:<id> row (Project settings → Spaces)  ─▶ user row (Settings → Spaces)  ─▶ default
+   "This project"                                  "Global"                         "Default"
+```
+
+Settings → Spaces holds the on/off switch, turn notifications, the defaults
+for every project (auto-archive days, archive merged spaces, max sub-spaces,
+max depth, ask timeout) and the global config file. Project settings → Spaces
+shows the project's config as it applies to its spaces (the `spaces:`
+commands with their files, layers and trust, read-only, with a way to the
+editor) and one row per setting: the value in effect with its source, a
+field or switch for the project's own value, and **Reset to default**. An
+override is a `setting` row of scope `project:<project id>`; it is never
+derived from a config file, so a config change leaves it alone, and the
+sweep resolves it once per project.
 
 **A message to a merged space continues it first**: the send runs
 `continue_space` (the same as the chip's Continue — a new branch from the
@@ -2195,7 +2218,7 @@ downloaded to this Mac yet".
 | | on (default) | turned off |
 | --- | --- | --- |
 | Sidebar section, route, palette items, keys | present | absent |
-| Settings → Spaces | present, switch on | present, switch off |
+| Settings → Spaces | present, switch on | present, switch off (only the switch) |
 | Core commands | used | registered, unused |
 
 On = `FEATURES.buildMode || setting labs.build_mode != false` (user scope):
@@ -2221,7 +2244,7 @@ no row, or `true`, means on. The flag forces them on and locks the switch.
 | 4 | Run mode safety | no extra sandbox: Run mode trusts the agent CLI as configured |
 | 5 | Local folder end state | **Merge locally**: a normal merge of the squashed commit into the folder's checked-out branch, instead of a PR; *Keep as branch* stays as the alternative |
 | 6 | Budget | none: budgets, and showing spend at all, were dropped by the owner on 2026-10-22. Nothing is limited, no cost is shown, and an old `budget.*` setting is ignored |
-| 7 | Archive | a setting `spaces.auto_archive_days` (default 7, `0` = never) plus an **Archive** button on the space at any time; `spaces.auto_archive_merged` (default on, 2026-11-23) keeps PR-merged spaces from archiving themselves at all, and a done space with work left in it never archives itself (§7 "Merged is not archived") |
+| 7 | Archive | a setting `spaces.auto_archive_days` (default 7, `0` = never) plus an **Archive** button on the space at any time; `spaces.auto_archive_merged` (default on, 2026-11-23) keeps PR-merged spaces from archiving themselves at all, and a done space with work left in it never archives itself (§7 "Merged is not archived"); both, and the sub-space limits, per project since 2026-11-24 (Project settings → Spaces over Settings → Spaces) |
 
 ## Seeing sub-spaces and agents
 

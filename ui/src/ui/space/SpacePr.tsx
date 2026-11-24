@@ -459,9 +459,9 @@ export const MergedChip = observer(function MergedChip({
   if (spaceStage(space, summary?.state) !== 'done') return null;
 
   const settings = store.models.settings.all();
-  const days = autoArchiveDays(settings);
+  const days = autoArchiveDays(settings, space.project);
   const archives =
-    space.done_at && days > 0 && autoArchiveMerged(settings)
+    space.done_at && days > 0 && autoArchiveMerged(settings, space.project)
       ? `Archives itself ${days} day${days === 1 ? '' : 's'} after the merge when idle`
       : undefined;
   const number = summary ? ` #${summary.pr.number}` : '';

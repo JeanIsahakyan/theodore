@@ -14,7 +14,7 @@ use theodore_ports::{
     SyncActionCode, UserQuestion,
 };
 
-use crate::space_children_tests::{code, parent, put_setting, send};
+use crate::space_children_tests::{code, parent, put_setting, put_setting_in, send};
 use crate::space_commands_tests::{Env, done, start_env, wait_until};
 use crate::usecases::spaces::space_chat_key;
 
@@ -298,6 +298,25 @@ async fn an_ask_without_an_answer_in_time_times_out() {
     // Its slot is back.
     e.core.sub_space_ask(&a.id, &b.id, "Now?").await.unwrap();
     assert_eq!(notes(&e, &b.id).len(), 2);
+}
+
+#[tokio::test]
+async fn the_asking_spaces_project_sets_the_ask_timeout() {
+    let e = start_env(true).await;
+    let a = parent(&e).await;
+    // The user waits 180 s; A's project waits 1 s.
+    put_setting_in(
+        &e,
+        &format!("project:{}", a.project),
+        "spaces.ask_timeout_secs",
+        serde_json::json!(1),
+    );
+    let b = other(&e, "Pick a store", None).await;
+    e.f.agents.hang_matching(is_ask);
+    let r = e.core.sub_space_ask(&a.id, &b.id, "Slow?").await;
+    assert_eq!(code(r), "sub_spaces.timeout");
+    let failed = notes(&e, &b.id)[0].ask.failed.clone().unwrap();
+    assert!(failed.contains("no answer within 1 s"), "{failed}");
 }
 
 /// `space_note` rows of `space`, by time.

@@ -27,6 +27,9 @@ use theodore_ports::{
 use crate::core::Core;
 use crate::error::{AppError, AppResult};
 
+/// Days a done space waits before archiving itself (0 = never). Read per
+/// the space's project: a `project:<id>` override, else the `user` value
+/// (`settings.rs`); so is `AUTO_ARCHIVE_MERGED_KEY`.
 pub(crate) const AUTO_ARCHIVE_KEY: &str = "spaces.auto_archive_days";
 pub(crate) const DEFAULT_AUTO_ARCHIVE_DAYS: f64 = 7.0;
 /// Whether a space whose PR merged archives itself at all (default on);
@@ -654,20 +657,23 @@ impl Core {
         let Ok(spaces) = self.local_spaces(None).await else {
             return;
         };
-        let days = self
-            .setting_f64_scoped(AUTO_ARCHIVE_KEY, None)
-            .await
-            .unwrap_or(DEFAULT_AUTO_ARCHIVE_DAYS);
-        let archive_merged = self
-            .setting_value_scoped(AUTO_ARCHIVE_MERGED_KEY, None)
-            .await
-            .and_then(|v| v.as_bool())
-            .unwrap_or(true);
+        // Both settings are per project (Project settings → Spaces, else
+        // the user's value): resolved once per project in this sweep.
+        let mut per_project: std::collections::HashMap<String, (f64, bool)> =
+            std::collections::HashMap::new();
         let now = self.0.deps.clock.now();
         for space in &spaces {
             if matches!(space.status, SpaceStatus::Archived | SpaceStatus::Running) {
                 continue;
             }
+            let (days, archive_merged) = match per_project.get(&space.project) {
+                Some(v) => *v,
+                None => {
+                    let v = self.auto_archive_settings(&space.project).await;
+                    per_project.insert(space.project.clone(), v);
+                    v
+                }
+            };
             let mut done_at = space.done_at;
             if done_at.is_none()
                 && let Some(pr) = &space.pr
@@ -711,6 +717,23 @@ impl Core {
                 });
             }
         }
+    }
+
+    /// `spaces.auto_archive_days` and `spaces.auto_archive_merged` as they
+    /// apply to a project: its override, else the user's value, else the
+    /// defaults (7 days, on).
+    pub(crate) async fn auto_archive_settings(&self, project: &str) -> (f64, bool) {
+        let days = self
+            .setting_value_for_project(AUTO_ARCHIVE_KEY, project)
+            .await
+            .and_then(|v| v.as_f64())
+            .unwrap_or(DEFAULT_AUTO_ARCHIVE_DAYS);
+        let archive_merged = self
+            .setting_value_for_project(AUTO_ARCHIVE_MERGED_KEY, project)
+            .await
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+        (days, archive_merged)
     }
 
     /// Why a done space isn't finished with yet, or `None` when it is

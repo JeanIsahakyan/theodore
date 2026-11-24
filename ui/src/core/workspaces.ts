@@ -189,6 +189,7 @@ const ROUTE_NAMES = new Set([
 export const PROJECT_SETTINGS_SECTIONS: readonly ProjectSettingsSection[] = [
   'general',
   'languages',
+  'spaces',
   'config',
 ];
 
@@ -209,7 +210,8 @@ export function projectSettingsRoute(
  *  (`mine`) is Pull requests, a project page (`project`) is the
  *  workspace's own home — Pull requests, or Branches for a local folder;
  *  the Settings tabs Projects and Languages became each project's own
- *  settings (this workspace's project, or Settings' first page under All).
+ *  settings (this workspace's project, or Settings' first page under All);
+ *  Settings → Spaces was page `labs`.
  *  `null` for anything unreadable. */
 export function migrateRoute(raw: unknown, ws: WorkspaceId): Route | null {
   if (!raw || typeof raw !== 'object') return null;
@@ -230,6 +232,10 @@ export function migrateRoute(raw: unknown, ws: WorkspaceId): Route | null {
   if (r.name === 'fleet-space')
     return typeof r.id === 'string' ? { name: 'space', id: r.id } : null;
   if (typeof r.name !== 'string' || !ROUTE_NAMES.has(r.name)) return null;
+  // Settings → Spaces kept the id of the Labs page it grew out of until
+  // the Labs page got its own.
+  if (r.name === 'settings' && r.page === 'labs')
+    return { name: 'settings', page: 'spaces' };
   if (
     r.name === 'settings' &&
     (r.page === 'projects' || r.page === 'languages')

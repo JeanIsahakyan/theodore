@@ -412,10 +412,23 @@ describe('space archive settings', () => {
     );
     expect(autoArchiveMerged([row(AUTO_ARCHIVE_MERGED_KEY, true)])).toBe(true);
     expect(autoArchiveMerged([row(AUTO_ARCHIVE_MERGED_KEY, 'no')])).toBe(true);
-    // Project scope doesn't count: it's a user preference.
+    // A stray scope doesn't count.
     expect(
       autoArchiveMerged([row(AUTO_ARCHIVE_MERGED_KEY, false, 'project')]),
     ).toBe(true);
+  });
+
+  it('a project’s own override wins for its spaces only', () => {
+    const rows = [
+      row(AUTO_ARCHIVE_KEY, 3),
+      row(AUTO_ARCHIVE_KEY, 10, 'project:github:acme/web'),
+      row(AUTO_ARCHIVE_MERGED_KEY, false, 'project:github:acme/web'),
+    ];
+    expect(autoArchiveDays(rows, 'github:acme/web')).toBe(10);
+    expect(autoArchiveDays(rows, 'github:acme/api')).toBe(3);
+    expect(autoArchiveDays(rows)).toBe(3);
+    expect(autoArchiveMerged(rows, 'github:acme/web')).toBe(false);
+    expect(autoArchiveMerged(rows, 'github:acme/api')).toBe(true);
   });
 });
 

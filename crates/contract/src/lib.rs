@@ -1102,7 +1102,9 @@ pub struct SetMessageVoteRequest {
 pub struct Setting {
     /// e.g. `agents.grouping`, `updates.channel`
     pub key: String,
-    /// `user` or `repo:<owner>/<name>`
+    /// `user`; `repo:<owner>/<name>` (set from the project's config files);
+    /// or `project:<project id>` (a project's own override, Project
+    /// settings → Spaces). Resolution: project → user → built-in default.
     pub scope: String,
     #[specta(type = specta_typescript::Unknown)]
     pub value: serde_json::Value,

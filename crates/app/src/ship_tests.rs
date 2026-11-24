@@ -1050,3 +1050,65 @@ fn patch_setting(f: &Fixtures, key: &str, value: serde_json::Value) {
         }])
         .unwrap();
 }
+
+/// A project's own override of a setting (Project settings → Spaces).
+fn put_project_setting(f: &Fixtures, project: &str, key: &str, value: serde_json::Value) {
+    let scope = format!("project:{project}");
+    let setting = Setting {
+        key: key.into(),
+        scope: scope.clone(),
+        value,
+    };
+    f.store
+        .apply(vec![NewAction {
+            model: models::SETTING.into(),
+            model_id: format!("{scope}:{key}"),
+            action: SyncActionCode::I,
+            data: Some(serde_json::to_value(&setting).unwrap()),
+        }])
+        .unwrap();
+}
+
+#[tokio::test]
+async fn a_projects_auto_archive_days_win_over_the_user_setting() {
+    let f = fixtures();
+    let (core, _recv, project) = folder_project(&f).await;
+    // The user never auto-archives; this project does, after 2 days.
+    put_setting(&f, "spaces.auto_archive_days", json!(0));
+    put_project_setting(&f, &project.id, "spaces.auto_archive_days", json!(2));
+    assert_eq!(core.auto_archive_settings(&project.id).await, (2.0, true));
+    assert_eq!(
+        core.auto_archive_settings("github:acme/other").await,
+        (0.0, true),
+        "another project gets the user's value"
+    );
+    let a = one_turn(&f, &core, &project, "Add export").await;
+    core.ship_space(ship(&a, ShipAction::MergeLocally))
+        .await
+        .unwrap();
+    f.clock.advance(DAY);
+    core.sweep_spaces().await;
+    assert_eq!(space(&f, &a.id).status, SpaceStatus::Idle);
+    f.clock.advance(DAY);
+    core.sweep_spaces().await;
+    assert_eq!(space(&f, &a.id).status, SpaceStatus::Archived);
+}
+
+#[tokio::test]
+async fn a_project_can_keep_its_merged_spaces_while_the_user_archives_them() {
+    let f = fixtures();
+    let (core, _recv, project) = host_project(&f).await;
+    put_project_setting(&f, &project.id, "spaces.auto_archive_merged", json!(false));
+    let s = one_turn(&f, &core, &project, "Retry on 429").await;
+    core.ship_space(ship(&s, ShipAction::OpenPr)).await.unwrap();
+    let s = with_pr(&f, &s.id).await;
+    merged_on_host(&f, &core, 100).await;
+
+    f.clock.advance(365 * DAY);
+    core.sweep_spaces().await;
+    assert_eq!(
+        space(&f, &s.id).status,
+        SpaceStatus::Idle,
+        "off here: never"
+    );
+}

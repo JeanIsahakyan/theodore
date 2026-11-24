@@ -84,6 +84,12 @@ beforeEach(() => {
   transport = new FakeTransport();
   setTransport(transport);
   transport.onCall('remove_project', () => null);
+  transport.onCall('project_config', () => ({
+    files: [],
+    entries: [],
+    unknown: [],
+    repo_commands: null,
+  }));
   transport.onCall('code_intel_status', () => ({
     enabled: true,
     install: 'ask',
@@ -111,8 +117,10 @@ const render = async (node = <Harness store={store} />) => {
   await settle();
 };
 
-const open = (id: string, section: 'general' | 'languages' | 'config') =>
-  act(() => store.ui.go(projectSettingsRoute(id, section)));
+const open = (
+  id: string,
+  section: 'general' | 'languages' | 'spaces' | 'config',
+) => act(() => store.ui.go(projectSettingsRoute(id, section)));
 
 const text = () => m!.host.textContent ?? '';
 const navOptions = () => [
@@ -128,14 +136,14 @@ const esc = () =>
   });
 
 describe('project settings route', () => {
-  it('opens with the project and its three sections, General first', async () => {
+  it('opens with the project and its four sections, General first', async () => {
     store.ui.go({ name: 'prs' });
     open(WEB.id, 'general');
     await render();
     expect(m!.host.querySelector('.project-settings-name')?.textContent).toBe(
       'acme/web',
     );
-    expect(navItems()).toEqual(['General', 'Languages', 'Config']);
+    expect(navItems()).toEqual(['General', 'Languages', 'Spaces', 'Config']);
     expect(text()).toContain('Effective settings');
     expect(text()).toContain('Remove project');
     expect(text()).not.toContain('Language servers in reviews');
@@ -151,6 +159,17 @@ describe('project settings route', () => {
     expect(store.ui.tabs).toHaveLength(tabs);
     expect(text()).toContain('Language servers in reviews');
     expect(text()).not.toContain('Effective settings');
+  });
+
+  it('Spaces shows the config as it applies and the project’s own space settings', async () => {
+    open(WEB.id, 'spaces');
+    await render();
+    expect(text()).toContain('Commands');
+    expect(text()).toContain('Space settings');
+    expect(text()).toContain('Max sub-spaces per space');
+    expect(
+      transport.calls.find((c) => c.cmd === 'project_config')?.args,
+    ).toEqual({ project: WEB.id });
   });
 
   it('keeps one project settings tab, moved to the project you open', () => {
@@ -185,7 +204,7 @@ describe('project settings route', () => {
       'notes',
     );
     expect(text()).toContain('The folder itself stays where it is');
-    expect(navItems()).toEqual(['General', 'Languages', 'Config']);
+    expect(navItems()).toEqual(['General', 'Languages', 'Spaces', 'Config']);
   });
 
   it('removing needs a second press, then closes the tab and forgets it', async () => {

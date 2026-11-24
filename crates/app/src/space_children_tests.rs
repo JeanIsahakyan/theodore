@@ -20,15 +20,20 @@ use crate::space_commands_tests::{Env, done, start_env, wait_until};
 use crate::testkit::ApplyCall;
 
 pub(crate) fn put_setting(e: &Env, key: &str, value: serde_json::Value) {
+    put_setting_in(e, "user", key, value);
+}
+
+/// A setting row in any scope (`user`, `project:<id>`).
+pub(crate) fn put_setting_in(e: &Env, scope: &str, key: &str, value: serde_json::Value) {
     let setting = Setting {
         key: key.into(),
-        scope: "user".into(),
+        scope: scope.into(),
         value,
     };
     e.f.store
         .apply(vec![NewAction {
             model: models::SETTING.into(),
-            model_id: format!("user:{key}"),
+            model_id: format!("{scope}:{key}"),
             action: SyncActionCode::I,
             data: Some(serde_json::to_value(&setting).unwrap()),
         }])
@@ -163,6 +168,51 @@ async fn depth_and_children_are_limited_by_the_settings() {
     e.core.archive_space(&a.space).await.unwrap();
     e.core
         .sub_space_start(&p.id, SpaceMode::Edit, goal("C"))
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn a_projects_own_limit_wins_over_the_user_setting() {
+    let e = start_env(true).await;
+    let p = parent(&e).await;
+    // The user allows 5; this project allows 1; another project's row and
+    // a repo row for this one don't count.
+    put_setting(&e, "spaces.max_children", serde_json::json!(5));
+    put_setting_in(
+        &e,
+        &format!("project:{}", p.project),
+        "spaces.max_children",
+        serde_json::json!(1),
+    );
+    put_setting_in(
+        &e,
+        "project:github:acme/other",
+        "spaces.max_depth",
+        serde_json::json!(0),
+    );
+    let a = e
+        .core
+        .sub_space_start(&p.id, SpaceMode::Edit, goal("A"))
+        .await
+        .unwrap();
+    settle(&e, &a.space).await;
+    let second = e
+        .core
+        .sub_space_start(&p.id, SpaceMode::Edit, goal("B"))
+        .await;
+    assert_eq!(code(second), "sub_spaces.children");
+    // Without the override the user's 5 applies again.
+    e.f.store
+        .apply(vec![NewAction {
+            model: models::SETTING.into(),
+            model_id: format!("project:{}:spaces.max_children", p.project),
+            action: SyncActionCode::D,
+            data: None,
+        }])
+        .unwrap();
+    e.core
+        .sub_space_start(&p.id, SpaceMode::Edit, goal("B"))
         .await
         .unwrap();
 }

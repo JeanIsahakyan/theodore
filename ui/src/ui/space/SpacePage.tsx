@@ -1,7 +1,8 @@
 /**
  * Spaces (docs/spaces.md), hidden behind build mode: the space page (chat
  * with the agent on the left, the live diff vs base on the right), the
- * New space dialog, Settings → Labs, and the "turn done" notices.
+ * New space dialog, and the "turn done" notices (Settings → Spaces:
+ * `settings/SpacesSettingsPage`).
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { MutableRefObject, RefObject } from 'react';
@@ -23,14 +24,12 @@ import {
 import {
   Alert,
   Button,
-  Card,
   Dropdown,
   Input,
   InputGroup,
   Label,
   Modal,
   Popover,
-  Switch,
   TextField,
   ToggleButton,
   Tooltip,
@@ -53,8 +52,6 @@ import type {
 import { api, CommandFailure, HOST_UNSUPPORTED } from '../../core/api';
 import { STORAGE_NS } from '../../stores/UiStore';
 import { ALL } from '../../core/workspaces';
-import { FEATURES } from '../../features';
-import { setSetting } from '../../actions';
 
 import { useRootStore, useUi } from '../../stores/context';
 import { Hints, K, Spinner } from '../bits';
@@ -86,7 +83,6 @@ import {
 import { running } from '../AgentMenu';
 import { useAgentModels } from '../useAgentModels';
 import { agentModel } from '../agentModel';
-import { isBuildMode } from './mode';
 import { ReviewMenu } from './ReviewMenu';
 import { markSpaceSeen } from './seen';
 import { useProjectIssues } from './useProjectIssues';
@@ -98,7 +94,7 @@ import {
 } from './newSpaceStart';
 import { setTerminalOpenFor, terminalOpenFor } from './terminalOpen';
 import { runControl, settingUp } from './commands';
-import { GlobalConfigSection, SpaceSetupAssistHint } from './ConfigSection';
+import { SpaceSetupAssistHint } from './ConfigSection';
 import { SpaceAgents, SubSpaceBanner } from './SpaceAgents';
 import { SpacePaused } from './SpacePaused';
 import { SpaceResuming } from './SpaceResuming';
@@ -129,18 +125,12 @@ import { TerminalDrawer, TerminalToggle } from './Terminal';
 import { reportChat, reportCommand } from '../reportChat';
 import { useDrawerHeight } from './drawerHeight';
 import {
-  AUTO_ARCHIVE_KEY,
-  AUTO_ARCHIVE_MERGED_KEY,
-  autoArchiveMerged,
-  BUILD_MODE_KEY,
-  NOTIFY_KEY,
   stageLabel,
   autoArchiveDays,
   shipTitle,
   diffStat,
   actionablePlan,
   nextMode,
-  notifyOn,
   spaceKeyAction,
   spaceChatKey,
   spaceStage,
@@ -589,7 +579,7 @@ const SpaceHeader = observer(function SpaceHeader({
     stage === 'merged_into_parent' && space.parent
       ? store.models.spaces.get(space.parent.space)
       : undefined;
-  const days = autoArchiveDays(store.models.settings.all());
+  const days = autoArchiveDays(store.models.settings.all(), space.project);
   return (
     // Just what you act on: the name, and the stage only once it says
     // something (in review, done). Branch, base and agent are in the
@@ -1957,163 +1947,5 @@ export const NewSpaceModal = observer(function NewSpaceModal() {
         </Modal.Dialog>
       </Modal.Container>
     </Modal.Backdrop>
-  );
-});
-
-/** Settings → Labs: the build mode switch, and the spaces' own settings. */
-export const LabsPage = observer(function LabsPage() {
-  const store = useRootStore();
-  const on = isBuildMode(store);
-  return (
-    <section className="flex flex-col gap-2">
-      <Card
-        variant="secondary"
-        className="flex flex-row items-center gap-3 px-4 py-3"
-      >
-        <Switch
-          size="sm"
-          aria-label="Spaces"
-          isSelected={on}
-          isDisabled={FEATURES.buildMode}
-          onChange={(v) => setSetting(store, 'user', BUILD_MODE_KEY, v)}
-        >
-          <Switch.Content>
-            <Switch.Control>
-              <Switch.Thumb />
-            </Switch.Control>
-          </Switch.Content>
-        </Switch>
-        <span className="text-sm">
-          Spaces in the sidebar, ⌥N for a new one. Off hides them everywhere;
-          existing spaces stay on disk.
-        </span>
-      </Card>
-      {on && (
-        <Card variant="secondary" className="gap-0 p-0">
-          <NumberSettingRow
-            settingKey={AUTO_ARCHIVE_KEY}
-            label="Auto-archive after (days)"
-            hint="Days after a space's PR merges, or it is merged locally or kept as a branch, before it archives itself. 0 = never."
-            placeholder={String(autoArchiveDays([]))}
-            accept={(n) => n >= 0 && Number.isInteger(n)}
-          />
-          <div className="set-row flex items-center gap-4 px-4 py-3">
-            <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-              <span className="text-sm font-medium">
-                Archive merged spaces automatically
-              </span>
-              <span className="text-xs text-muted">
-                A space whose PR merged archives itself after the days above,
-                once it is idle with nothing unshipped and no live sub-spaces.
-                Off keeps merged spaces as normal spaces until you archive them.
-              </span>
-            </div>
-            <Switch
-              size="sm"
-              aria-label="Archive merged spaces automatically"
-              isSelected={autoArchiveMerged(store.models.settings.all())}
-              onChange={(v) =>
-                setSetting(store, 'user', AUTO_ARCHIVE_MERGED_KEY, v)
-              }
-            >
-              <Switch.Content>
-                <Switch.Control>
-                  <Switch.Thumb />
-                </Switch.Control>
-              </Switch.Content>
-            </Switch>
-          </div>
-          <div className="set-row flex items-center gap-4 px-4 py-3">
-            <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-              <span className="text-sm font-medium">
-                Notify when a turn ends
-              </span>
-              <span className="text-xs text-muted">
-                A system notification when a space's turn finishes or fails
-                while Theodore is in the background; the dock badge counts the
-                spaces waiting for you.
-              </span>
-            </div>
-            <Switch
-              size="sm"
-              aria-label="Notify when a turn ends"
-              isSelected={notifyOn(store.models.settings.all())}
-              onChange={(v) => setSetting(store, 'user', NOTIFY_KEY, v)}
-            >
-              <Switch.Content>
-                <Switch.Control>
-                  <Switch.Thumb />
-                </Switch.Control>
-              </Switch.Content>
-            </Switch>
-          </div>
-        </Card>
-      )}
-      {on && <GlobalConfigSection />}
-    </section>
-  );
-});
-
-/** One numeric user setting; empty clears it (the default applies). */
-const NumberSettingRow = observer(function NumberSettingRow({
-  settingKey,
-  label,
-  hint,
-  prefix,
-  placeholder,
-  accept,
-}: {
-  settingKey: string;
-  label: string;
-  hint: string;
-  prefix?: string;
-  placeholder: string;
-  accept: (n: number) => boolean;
-}) {
-  const store = useRootStore();
-  const raw = store.models.settings.get(`user:${settingKey}`)?.value;
-  const [text, setText] = useState(typeof raw === 'number' ? String(raw) : '');
-  useEffect(() => {
-    setText(typeof raw === 'number' ? String(raw) : '');
-  }, [raw]);
-  const save = () => {
-    const t = text.trim();
-    if (!t) {
-      if (raw !== undefined) setSetting(store, 'user', settingKey, null);
-      return;
-    }
-    const n = Number(t);
-    if (Number.isFinite(n) && accept(n)) {
-      setSetting(store, 'user', settingKey, n);
-    }
-  };
-  return (
-    <div className="set-row flex items-center gap-4 px-4 py-3">
-      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <span className="text-sm font-medium">{label}</span>
-        <span className="text-xs text-muted">{hint}</span>
-      </div>
-      <TextField
-        value={text}
-        onChange={setText}
-        aria-label={label}
-        className="w-32 shrink-0"
-      >
-        <InputGroup className="w-full rounded-xl">
-          {prefix && (
-            <InputGroup.Prefix className="text-xs text-muted">
-              {prefix}
-            </InputGroup.Prefix>
-          )}
-          <InputGroup.Input
-            placeholder={placeholder}
-            inputMode="decimal"
-            className="w-full min-w-0 text-right text-sm"
-            onBlur={save}
-            onKeyDown={(e) => e.key === 'Enter' && save()}
-          />
-        </InputGroup>
-      </TextField>
-    </div>
   );
 });
