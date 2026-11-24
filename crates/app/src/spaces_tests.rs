@@ -17,8 +17,11 @@ use crate::testkit::{Fixtures, fixtures};
 use crate::usecases::spaces::space_chat_key;
 use crate::{AppError, Core, Receivers};
 
+/// Generous (a loaded runner takes seconds to clone a real folder or
+/// schedule a task); a passing test returns as soon as the condition holds.
 async fn wait_until(mut cond: impl FnMut() -> bool) {
-    for _ in 0..400 {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
+    while tokio::time::Instant::now() < deadline {
         if cond() {
             return;
         }
