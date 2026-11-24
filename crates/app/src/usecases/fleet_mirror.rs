@@ -58,7 +58,8 @@ pub(crate) struct Mirror {
     /// Local run → the mirrored id of the text row being written.
     text: HashMap<String, String>,
     /// Sub-space (local id) → the hosted space at the top of its tree:
-    /// its `sub_space` rows go there.
+    /// its `sub_space` rows go there. Kept once archived (sent as a
+    /// delete): unarchiving patches the row without naming its parent.
     subs: HashMap<String, String>,
 }
 
@@ -300,12 +301,10 @@ impl Core {
                     m.chat.remove(&id);
                 }
             }
+            // A deleted one stays known: archived, it comes back on
+            // unarchive, whose patch doesn't name its parent.
             if model == SUB_SPACE_MODEL {
-                if data.is_some() {
-                    m.subs.insert(id.clone(), remote.to_string());
-                } else {
-                    m.subs.remove(&id);
-                }
+                m.subs.insert(id.clone(), remote.to_string());
             }
             m.sent
                 .insert((remote.to_string(), model, id), hash_of(&data));
@@ -343,7 +342,15 @@ impl Core {
         match model {
             models::SPACE => Some(mirror_space(row.data, local, remote)),
             SUB_SPACE_MODEL => {
+                if row.archived {
+                    return None;
+                }
                 let s: theodore_contract::Space = serde_json::from_value(row.data).ok()?;
+                // An archived sub-space leaves the followers' tree: a
+                // delete; unarchived, it's a row again.
+                if s.status == theodore_contract::SpaceStatus::Archived {
+                    return None;
+                }
                 let parent = s.parent.as_ref()?.space.clone();
                 let sub = MirroredSubSpace {
                     space: s.id.clone(),
@@ -489,7 +496,7 @@ impl Core {
     /// Every row of hosted space `remote`, as a change: the snapshot when
     /// hosting starts, and what a lagged or restarted observer missed (rows
     /// unchanged since they last went are skipped; known chat rows no
-    /// longer there are deleted).
+    /// longer there, and sub-spaces archived or gone, are deleted).
     pub(crate) async fn fleet_mirror_resync(&self, m: &mut Mirror, remote: &str) {
         let Some(local) = self
             .fleet()
@@ -584,8 +591,20 @@ impl Core {
             }
         }
         tree.remove(local);
+        // Sent before and no longer in the tree (deleted, or moved under
+        // another space): a delete goes, like an archived one's.
+        let gone: Vec<String> = m
+            .subs
+            .iter()
+            .filter(|(id, r)| r.as_str() == remote && !tree.contains(id.as_str()))
+            .map(|(id, _)| id.clone())
+            .collect();
         for id in tree {
             m.subs.insert(id.clone(), remote.to_string());
+            self.fleet_mirror_touch(m, remote, SUB_SPACE_MODEL, &id)
+                .await;
+        }
+        for id in gone {
             self.fleet_mirror_touch(m, remote, SUB_SPACE_MODEL, &id)
                 .await;
         }
