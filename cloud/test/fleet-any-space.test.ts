@@ -124,17 +124,28 @@ describe('wire', () => {
   it('reads queued_message on no cloud space, needing protocol 10', () => {
     for (const op of QUEUED) {
       const r = peekRequest(requestBody(op));
-      expect(r).toMatchObject({ op: 'queued_message', space: '', ask_id: null });
+      expect(r).toMatchObject({
+        op: 'queued_message',
+        space: '',
+        ask_id: null,
+      });
       expect(protocolFor(r.op)).toBe(10);
     }
     for (const op of [
       { op: 'queued_message', space: SPACE, message: 'm1' },
       { op: 'queued_message', space: SPACE, message: 'm1', action: 'edit' },
       { op: 'queued_message', space: SPACE, message: '', action: 'send' },
-      { op: 'queued_message', space: SPACE, message: 'm'.repeat(65), action: 'send' },
+      {
+        op: 'queued_message',
+        space: SPACE,
+        message: 'm'.repeat(65),
+        action: 'send',
+      },
       { op: 'queued_message', message: 'm1', action: 'send' },
     ]) {
-      expect(code(() => peekRequest(requestBody(op)))).toBe('fleet.bad_message');
+      expect(code(() => peekRequest(requestBody(op)))).toBe(
+        'fleet.bad_message',
+      );
     }
   });
 
