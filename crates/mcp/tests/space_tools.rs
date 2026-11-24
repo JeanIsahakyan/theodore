@@ -14,9 +14,9 @@ use rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig
 use serde_json::{Value, json};
 use theodore_domain::{AgentId, FindingId, PrId, RunId};
 use theodore_mcp::{
-    AppStatus, BackendError, CheckOutcome, GroupWithHunks, LogTail, McpServer, NewFinding,
+    AppStatus, BackendError, CheckOutcome, GroupWithHunks, LogKind, LogTail, McpServer, NewFinding,
     NewPatch, PrContext, REVIEW_TOOL_NAMES, ReviewToolsBackend, RunContext, SPACE_TOOL_NAMES,
-    SpaceCommandName, SpaceInfo, SpaceToolError, SpaceToolsBackend, TerminalTail, ToolSet,
+    SpaceInfo, SpaceToolError, SpaceToolsBackend, TerminalTail, ToolSet,
 };
 use theodore_ports::{UserAnswer, UserQuestion};
 
@@ -125,7 +125,7 @@ impl SpaceToolsBackend for FakeSpaces {
     async fn read_logs(
         &self,
         space: &str,
-        kind: SpaceCommandName,
+        kind: LogKind,
         tail: usize,
     ) -> Result<LogTail, SpaceToolError> {
         self.record(format!("read_logs {space} {} {tail}", kind.as_str()));

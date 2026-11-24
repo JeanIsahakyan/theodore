@@ -74,6 +74,9 @@ pub fn notice_text(notice: &ChatNotice, now: Millis) -> String {
         ChatNotice::RemoteDropped { from, reason } => {
             format!("A message queued from {from} was dropped: {reason}")
         }
+        ChatNotice::Continued { pr, branch, base } => {
+            format!("{pr} merged: continued on {branch} from the updated {base}")
+        }
     }
 }
 

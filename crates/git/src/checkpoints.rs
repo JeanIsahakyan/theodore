@@ -27,12 +27,28 @@ const GITLINK: &str = "160000";
 
 /// The space's `.context/` (files other devices sent, docs/spaces.md
 /// "The `.context/` folder"): never part of a checkpoint, a snapshot or
-/// what ships, whatever the excludes say.
-pub(crate) const CONTEXT_DIR: &str = ".context";
+/// what ships, whatever the excludes say. The pathspec below names it.
+#[cfg(test)]
+const CONTEXT_DIR: &str = ".context";
 
-/// `add -A` over the whole worktree but [`CONTEXT_DIR`]: the pathspec
-/// anchored at the top, so a `.context` deeper down is a file like any.
-pub(crate) const ADD_ALL: [&str; 5] = ["add", "-A", "--", ":(top)", ":(exclude,top).context"];
+/// `add -A` over the whole worktree. [`CONTEXT_DIR`] is taken back out
+/// with [`UNSTAGE_CONTEXT`] right after: an `:(exclude).context` pathspec
+/// makes `git add` exit 1 ("paths are ignored") whenever the repo's
+/// `.gitignore` already lists `.context`, which failed every checkpoint.
+pub(crate) const ADD_ALL: [&str; 4] = ["add", "-A", "--", ":(top)"];
+
+/// Unstages [`CONTEXT_DIR`] (anchored at the top, so a `.context` deeper
+/// down is a file like any), ignored or not, tracked or not.
+pub(crate) const UNSTAGE_CONTEXT: [&str; 8] = [
+    "rm",
+    "-r",
+    "-q",
+    "-f",
+    "--cached",
+    "--ignore-unmatch",
+    "--",
+    ":(top).context",
+];
 
 /// A temporary index under the worktree's git dir, removed when dropped.
 struct TempIndex(PathBuf);
@@ -99,20 +115,7 @@ pub(crate) async fn worktree_tree(git: &SpaceGit<'_>, git_dir: &Path) -> GitResu
     git.run_env(&ADD_ALL, &index.env()).await?;
     // Tracked by the agent or a user's commit: still not Theodore's to
     // checkpoint or ship.
-    git.run_env(
-        &[
-            "rm",
-            "-r",
-            "-q",
-            "-f",
-            "--cached",
-            "--ignore-unmatch",
-            "--",
-            &format!(":(top){CONTEXT_DIR}"),
-        ],
-        &index.env(),
-    )
-    .await?;
+    git.run_env(&UNSTAGE_CONTEXT, &index.env()).await?;
     let out = git.run_env(&["write-tree"], &index.env()).await?;
     Ok(String::from_utf8_lossy(&out).trim().to_string())
 }
@@ -645,5 +648,16 @@ mod tests {
         ] {
             assert!(safe_rel(bad).is_err(), "{bad:?}");
         }
+    }
+}
+
+#[cfg(test)]
+mod context_pathspec_tests {
+    use super::*;
+
+    #[test]
+    fn the_unstage_pathspec_names_the_context_folder_at_the_top() {
+        assert_eq!(UNSTAGE_CONTEXT[7], format!(":(top){CONTEXT_DIR}"));
+        assert!(!ADD_ALL.iter().any(|a| a.contains("exclude")));
     }
 }

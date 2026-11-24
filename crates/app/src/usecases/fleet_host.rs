@@ -881,12 +881,7 @@ impl Core {
                 Some(local) => {
                     let row = self.space_row(&local).await.map_err(app_refusal)?;
                     // Its files first: none of the turn without all of them.
-                    let files = self
-                        .fleet_receive_attachments(
-                            std::path::Path::new(&row.worktree),
-                            &attachments,
-                        )
-                        .await?;
+                    let files = self.fleet_receive_attachments(&row, &attachments).await?;
                     let from = RemoteQueued {
                         space: local.clone(),
                         ..from

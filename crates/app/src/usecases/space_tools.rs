@@ -17,8 +17,8 @@ use theodore_contract::{
 };
 use theodore_domain::{AgentId, PrId};
 use theodore_ports::{
-    AppStatus, CheckOutcome, CommandInfo, LogTail, McpEndpoint, SpaceCommandName, SpaceInfo,
-    SpaceToolError, TerminalTail, local_urls,
+    AppStatus, CheckOutcome, CommandInfo, LogKind, LogTail, McpEndpoint, SpaceCommandName,
+    SpaceInfo, SpaceToolError, TerminalTail, local_urls,
 };
 
 use crate::core::Core;
@@ -183,16 +183,26 @@ impl Core {
         })
     }
 
-    /// `read_logs`: the last `tail` lines of one command (the MCP server
-    /// bounds `tail`).
+    /// `read_logs`: the last `tail` lines of one command, or (`theodore`)
+    /// the last `tail` errors Theodore hit for this space, newest last
+    /// (docs/spaces.md "Theodore's errors reach the agent"). The MCP
+    /// server bounds `tail`.
     pub async fn space_tool_logs(
         &self,
         space: &str,
-        kind: SpaceCommandName,
+        kind: LogKind,
         tail: usize,
     ) -> Result<LogTail, SpaceToolError> {
         let row = self.space_row(space).await.map_err(unavailable)?;
-        let want = kind_of(kind);
+        let Some(command) = kind.command() else {
+            let (lines, available) = self.space_error_lines(&row.id, tail);
+            return Ok(LogTail {
+                kind,
+                lines,
+                available,
+            });
+        };
+        let want = kind_of(command);
         let lines: Vec<String> = self.with_runtime(&row.id, |rt| {
             rt.logs
                 .iter()

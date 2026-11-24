@@ -319,9 +319,7 @@ impl Core {
                     ));
                 }
                 // Its files first: none of the turn without all of them.
-                let files = self
-                    .fleet_receive_attachments(std::path::Path::new(&row.worktree), &attachments)
-                    .await?;
+                let files = self.fleet_receive_attachments(&row, &attachments).await?;
                 let from = RemoteQueued {
                     space: row.id.clone(),
                     ..from

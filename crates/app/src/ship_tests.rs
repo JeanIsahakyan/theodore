@@ -946,3 +946,107 @@ async fn run_mode_reaches_the_agent() {
     assert_eq!(f.agents.last_request().unwrap().mode, AgentMode::Run);
     assert_eq!(s.mode, SpaceMode::Run, "sticky");
 }
+
+// ── merged is not archived (docs/spaces.md §7) ────────────────────────────
+
+/// The host merged PR `number` of the space, and the sweep saw it.
+async fn merged_on_host(f: &Fixtures, core: &Core, number: u64) {
+    let pr_ref = theodore_domain::PrRef {
+        repo: widget(),
+        number,
+        host_id: None,
+    };
+    let mut merged = sample_pr_detail(&pr_ref, &Sha::new("base000"), &Sha::new("squash1"));
+    merged.summary.state = PrState::Merged;
+    f.host.push_get_pr(Ok(theodore_ports::Fetched::Modified {
+        etag: None,
+        value: merged,
+    }));
+    core.sweep_spaces().await;
+}
+
+#[tokio::test]
+async fn a_merged_space_with_unshipped_turns_is_not_auto_archived() {
+    let f = fixtures();
+    let (core, _recv, project) = host_project(&f).await;
+    let s = one_turn(&f, &core, &project, "Retry on 429").await;
+    core.ship_space(ship(&s, ShipAction::OpenPr)).await.unwrap();
+    let s = with_pr(&f, &s.id).await;
+    // A turn after the push: not in the PR.
+    let s = turn(&f, &core, &s, "And 503s", "turn222").await;
+    merged_on_host(&f, &core, 100).await;
+    assert!(space(&f, &s.id).done_at.is_some(), "done when merged");
+
+    f.clock.advance(8 * DAY);
+    core.sweep_spaces().await;
+    let s = space(&f, &s.id);
+    assert_eq!(s.status, SpaceStatus::Idle, "unshipped turns keep it");
+    assert_eq!(
+        core.space_unsettled(&s, std::slice::from_ref(&s), false)
+            .await,
+        Some("turns since the last ship aren't shipped")
+    );
+}
+
+#[tokio::test]
+async fn a_merged_space_with_a_live_sub_space_is_not_auto_archived() {
+    let f = fixtures();
+    let (core, _recv, project) = host_project(&f).await;
+    let s = one_turn(&f, &core, &project, "Retry on 429").await;
+    core.ship_space(ship(&s, ShipAction::OpenPr)).await.unwrap();
+    let s = with_pr(&f, &s.id).await;
+    let child = one_turn(&f, &core, &project, "Port the parser").await;
+    patch_space(
+        &f,
+        &child.id,
+        json!({ "parent": { "space": s.id, "depth": 1 } }),
+    );
+    merged_on_host(&f, &core, 100).await;
+
+    f.clock.advance(8 * DAY);
+    core.sweep_spaces().await;
+    assert_eq!(
+        space(&f, &s.id).status,
+        SpaceStatus::Idle,
+        "a live sub-space keeps it"
+    );
+
+    core.archive_space(&child.id).await.unwrap();
+    core.sweep_spaces().await;
+    assert_eq!(space(&f, &s.id).status, SpaceStatus::Archived);
+}
+
+#[tokio::test]
+async fn the_setting_keeps_merged_spaces_from_archiving_themselves() {
+    let f = fixtures();
+    let (core, _recv, project) = host_project(&f).await;
+    put_setting(&f, "spaces.auto_archive_merged", json!(false));
+    let s = one_turn(&f, &core, &project, "Retry on 429").await;
+    core.ship_space(ship(&s, ShipAction::OpenPr)).await.unwrap();
+    let s = with_pr(&f, &s.id).await;
+    merged_on_host(&f, &core, 100).await;
+
+    f.clock.advance(365 * DAY);
+    core.sweep_spaces().await;
+    assert_eq!(space(&f, &s.id).status, SpaceStatus::Idle, "off: never");
+
+    patch_setting(&f, "spaces.auto_archive_merged", json!(true));
+    core.sweep_spaces().await;
+    assert_eq!(space(&f, &s.id).status, SpaceStatus::Archived);
+}
+
+fn patch_setting(f: &Fixtures, key: &str, value: serde_json::Value) {
+    let setting = Setting {
+        key: key.into(),
+        scope: "user".into(),
+        value,
+    };
+    f.store
+        .apply(vec![NewAction {
+            model: models::SETTING.into(),
+            model_id: format!("user:{key}"),
+            action: SyncActionCode::U,
+            data: Some(serde_json::to_value(&setting).unwrap()),
+        }])
+        .unwrap();
+}

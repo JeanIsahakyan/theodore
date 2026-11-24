@@ -45,6 +45,7 @@ pub mod space_blank;
 pub mod space_checkpoints;
 pub mod space_children;
 pub mod space_commands;
+pub(crate) mod space_errors;
 pub mod space_feedback;
 pub mod space_fix_ci;
 pub(crate) mod space_handoff;

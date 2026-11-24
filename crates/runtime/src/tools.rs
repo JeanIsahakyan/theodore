@@ -13,10 +13,10 @@ use theodore_domain::{
 };
 use theodore_mcp::{
     AppStatus, BackendError, BaseChange, CheckOutcome, CodeEditOutcome, CodeTools,
-    CodeToolsBackend, FileSummary, FleetTools, GroupSummary, GroupWithHunks, LogTail, McpHandle,
-    McpServer, NewFinding, NewPatch, NewReviewComment, PrContext, ProgressStep, ReportRequest,
-    ReportScope, ReviewItem, ReviewToolsBackend, RunContext, ShipOutcome, ShipToolAction,
-    SpaceCommandName, SpaceDiff, SpaceInfo, SpaceToolError, SpaceToolsBackend, TerminalTail,
+    CodeToolsBackend, FileSummary, FleetTools, GroupSummary, GroupWithHunks, LogKind, LogTail,
+    McpHandle, McpServer, NewFinding, NewPatch, NewReviewComment, PrContext, ProgressStep,
+    ReportRequest, ReportScope, ReviewItem, ReviewToolsBackend, RunContext, ShipOutcome,
+    ShipToolAction, SpaceDiff, SpaceInfo, SpaceToolError, SpaceToolsBackend, TerminalTail,
     TheodoreVersion, ToolSet, TurnMode, UpdateStart,
 };
 use theodore_ports::{
@@ -236,7 +236,7 @@ impl SpaceToolsBackend for CoreTools {
     async fn read_logs(
         &self,
         space: &str,
-        kind: SpaceCommandName,
+        kind: LogKind,
         tail: usize,
     ) -> Result<LogTail, SpaceToolError> {
         self.space_core()?.space_tool_logs(space, kind, tail).await

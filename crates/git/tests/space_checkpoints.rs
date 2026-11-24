@@ -468,6 +468,25 @@ async fn build_junk_stays_out_without_a_gitignore_but_tracked_files_stay_tracked
     assert!(!files.contains("target/debug/x"), "{files}");
 }
 
+/// A repo whose `.gitignore` already lists `.context/` (as Theodore's own
+/// does): an exclude pathspec naming an ignored path makes `git add` exit 1,
+/// which failed every checkpoint. They must still succeed and leave it out.
+#[tokio::test]
+async fn checkpoints_work_when_the_repo_ignores_the_context_folder() {
+    let s = space().await;
+    s.write(".gitignore", ".context/\n");
+    s.write(".context/profile.mobileprovision", "binary\n");
+    s.write("c.txt", "kept\n");
+    let cp = s.checkpoint("turn 1").await;
+    let files = git(&s.cache, &["ls-tree", "-r", "--name-only", cp.sha.as_str()]);
+    assert!(files.contains("c.txt"), "{files}");
+    assert!(!files.contains(".context/"), "{files}");
+    let snap = s.git.space_snapshot(&s.wt).await.unwrap();
+    let files = git(&s.cache, &["ls-tree", "-r", "--name-only", snap.as_str()]);
+    assert!(files.contains("c.txt"), "{files}");
+    assert!(!files.contains(".context/"), "{files}");
+}
+
 /// Files other devices sent live in `.context/` (docs/spaces.md): never in a
 /// checkpoint, a snapshot or the shipped commit, even without an exclude
 /// line, and even once the agent tracked them.

@@ -104,7 +104,16 @@ import { SpacePaused } from './SpacePaused';
 import { SpaceResuming } from './SpaceResuming';
 import { SpaceProgress } from './SpaceProgress';
 import { BaseMoved, UpdatingBanner } from './BaseUpdate';
-import { MergedBanner, SpaceMergeButton, SpacePrPane } from './SpacePr';
+import {
+  archive,
+  MergedChip,
+  openSpacePr,
+  SpaceMergeButton,
+  SpacePrPane,
+} from './SpacePr';
+
+// Also used by the sidebar's row menu.
+export { archive };
 import { revertItems } from './SpaceRewind';
 import {
   LogsDrawer,
@@ -121,6 +130,8 @@ import { reportChat, reportCommand } from '../reportChat';
 import { useDrawerHeight } from './drawerHeight';
 import {
   AUTO_ARCHIVE_KEY,
+  AUTO_ARCHIVE_MERGED_KEY,
+  autoArchiveMerged,
   BUILD_MODE_KEY,
   NOTIFY_KEY,
   stageLabel,
@@ -185,19 +196,6 @@ async function openGroupedReview(store: Store, ui: Ui, space: Space) {
   const res = await api.spaceReview({ space: space.id, group: true });
   await store.sync.openPr(res.pr);
   ui.go({ name: 'review', pr: res.pr });
-}
-
-function openSpacePr(store: Store, ui: Ui, space: Space) {
-  const id = space.pr;
-  if (!id) return;
-  void store.sync.openPr(id).then(() => ui.go({ name: 'review', pr: id }));
-}
-
-export function archive(ui: Ui, space: Space) {
-  void api
-    .archiveSpace(space.id)
-    .then(() => ui.goBack())
-    .catch(() => {});
 }
 
 export function unarchive(space: Pick<Space, 'id'>): Promise<void> {
@@ -469,7 +467,6 @@ export const SpacePage = observer(function SpacePage({ id }: { id: string }) {
       {space.status === 'archived' && (
         <ArchivedBanner space={space} canUnarchive={!remote} />
       )}
-      {!remote && <MergedBanner space={space} />}
       {remote ? (
         <Hints>
           <K>C</K> message the agent <K>M</K> mode <K>⌘.</K> stop <K>⇧E</K>{' '}
@@ -611,7 +608,8 @@ const SpaceHeader = observer(function SpaceHeader({
         >
           {spaceTitle(space)}
         </Typography.Heading>
-        {stage !== 'drafting' && (
+        {stage === 'done' && <MergedChip space={space} />}
+        {stage !== 'drafting' && stage !== 'done' && (
           <span
             className="space-stage shrink-0 rounded-full bg-default px-2 py-0.5 text-xs"
             title={
@@ -1999,6 +1997,32 @@ export const LabsPage = observer(function LabsPage() {
             placeholder={String(autoArchiveDays([]))}
             accept={(n) => n >= 0 && Number.isInteger(n)}
           />
+          <div className="set-row flex items-center gap-4 px-4 py-3">
+            <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+              <span className="text-sm font-medium">
+                Archive merged spaces automatically
+              </span>
+              <span className="text-xs text-muted">
+                A space whose PR merged archives itself after the days above,
+                once it is idle with nothing unshipped and no live sub-spaces.
+                Off keeps merged spaces as normal spaces until you archive them.
+              </span>
+            </div>
+            <Switch
+              size="sm"
+              aria-label="Archive merged spaces automatically"
+              isSelected={autoArchiveMerged(store.models.settings.all())}
+              onChange={(v) =>
+                setSetting(store, 'user', AUTO_ARCHIVE_MERGED_KEY, v)
+              }
+            >
+              <Switch.Content>
+                <Switch.Control>
+                  <Switch.Thumb />
+                </Switch.Control>
+              </Switch.Content>
+            </Switch>
+          </div>
           <div className="set-row flex items-center gap-4 px-4 py-3">
             <div className="flex min-w-0 flex-1 flex-col gap-0.5">
               <span className="text-sm font-medium">

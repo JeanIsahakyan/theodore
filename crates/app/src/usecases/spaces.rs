@@ -516,6 +516,8 @@ impl Core {
                 "Theodore is restarting; the turn starts after it".into(),
             ));
         }
+        // A merged space goes on on a new branch first (docs/spaces.md §7).
+        let space = self.continue_if_merged(space, message.at).await?;
         let project = self.space_project(&space).await?;
         let (text, attachments) = (message.text.clone(), message.attachments.clone());
 
@@ -646,10 +648,17 @@ impl Core {
                 Some(e) => e.trim() == ULTRACODE,
                 None => self.setting_string("agents.claude.effort", "").await.trim() == ULTRACODE,
             };
+        // Errors Theodore hit since the previous turn, each told once
+        // (docs/spaces.md "Theodore's errors reach the agent").
+        let error_notes = self.take_space_error_notes(&space.id);
         let wrap = |prompt: String| {
             let prompt = crate::usecases::space_pr::with_continue_note(&space, prompt);
             let prompt = crate::usecases::space_checkpoints::with_reverts(&space, prompt);
-            with_ultracode(with_failed_check(&space, prompt), ultracode)
+            let prompt = with_failed_check(&space, prompt);
+            with_ultracode(
+                crate::usecases::space_errors::with_error_notes(&error_notes, prompt),
+                ultracode,
+            )
         };
         // The same agent in the same worktree continues its session and
         // hears only the new turn; anything else starts a new session from
@@ -1571,6 +1580,22 @@ async fn stream_run(
                     AgentEvent::Error { message, stderr_tail } => {
                         let said = format!("{message}\n{stderr_tail}").to_lowercase();
                         out.session_gone = resumed && SESSION_GONE.iter().any(|m| said.contains(m));
+                        // The agent hears about its own crash next turn; not
+                        // about a usage limit (the space goes on elsewhere),
+                        // its servers being out of reach or signing it out,
+                        // which only the user can fix.
+                        if !out.session_gone
+                            && out.limit.is_none()
+                            && theodore_ports::offline_message_in(&message).is_none()
+                            && theodore_ports::signed_out_message_in(&message).is_none()
+                        {
+                            core.note_space_error_by_id(
+                                space,
+                                "agent.crashed",
+                                &crash_note(agent, &message, &stderr_tail),
+                            )
+                            .await;
+                        }
                         out.error = Some(message);
                         break;
                     }
@@ -1987,6 +2012,11 @@ async fn drive_turn(core: &Core, turn: Turn) {
             None
         }
         Err(e) => {
+            core.note_space_error(
+                &space,
+                "space.checkpoint_failed",
+                &format!("the last checkpoint failed: {e}"),
+            );
             error.get_or_insert_with(|| format!("checkpoint failed: {e}"));
             None
         }
@@ -2310,6 +2340,28 @@ fn with_ultracode(prompt: String, on: bool) -> String {
     }
 }
 
+/// What the agent is told about its own process failing: the message and
+/// the last line of stderr (docs/spaces.md "Theodore's errors reach the
+/// agent"; `space_errors` redacts and cuts the line).
+fn crash_note(agent: AgentId, message: &str, stderr_tail: &str) -> String {
+    let last = stderr_tail
+        .lines()
+        .rev()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .unwrap_or("");
+    match last {
+        "" => format!("the previous {} run failed: {message}", agent.as_str()),
+        last if message.contains(last) => {
+            format!("the previous {} run failed: {message}", agent.as_str())
+        }
+        last => format!(
+            "the previous {} run failed: {message} (stderr: {last})",
+            agent.as_str()
+        ),
+    }
+}
+
 /// A failing `check` after the last turn goes into the next prompt, so
 /// the agent sees what broke.
 fn with_failed_check(space: &Space, prompt: String) -> String {
@@ -2472,8 +2524,8 @@ pub(crate) fn is_valid_branch(name: &str) -> bool {
 pub(crate) const SPACE_TOOLS_PROMPT: &str = "Theodore's space-tools MCP server runs this \
      space's configured commands for you: run_check (the project's check; use it after \
      changes), start_app / stop_app / app_status (the app, its ports and http://localhost \
-     URLs; start_app to try it), read_logs (setup, run, check or archive output) and \
-     space_info. read_terminal reads one of the space's open terminals (id, title, \
+     URLs; start_app to try it), read_logs (setup, run, check or archive output; kind \
+     `theodore`: the errors Theodore itself hit for this space) and space_info. read_terminal reads one of the space's open terminals (id, title, \
      whether it still runs, its last lines) — leave `terminal` out for the most \
      recently active one; a note, not an error, says so when none is open. It also \
      acts on the change: when the user asks you to push, open a PR \

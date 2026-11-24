@@ -186,7 +186,7 @@ Failures are logged with a stable dotted `error.code`, plus context: `agent` and
 | Git | `git.command_failed`, `git.auth`, `git.network` (the remote can't be reached; expected, logged at info), `git.not_installed`, `git.refused`, `git.not_a_worktree` (a space dir git wouldn't resolve as its worktree), `git.busy` (a rebase or conflict unfinished in a space; expected, logged at info), `git.unsupported`, `git.commit_not_found` (a stale sha, force-pushed away; expected, logged at info), `git.parse`, `git.io` |
 | Store | `store.db`, `store.serde`, `store.migration` |
 | Outbox | `outbox.gave_up` |
-| Spaces | `space.command_failed`, `space.command_timed_out`, `space.turn_failed`, `space.worktree_moved_aside` (a space dir that wasn't its worktree, moved to `spaces/.moved-aside/`) |
+| Spaces | `space.command_failed`, `space.command_timed_out`, `space.turn_failed`, `space.worktree_moved_aside` (a space dir that wasn't its worktree, moved to `spaces/.moved-aside/`), `space.checkpoint_failed` and `space.auto_archive_failed` (recorded for the space's agent, docs/spaces.md "Theodore's errors reach the agent"; the ship, merge and attachment codes land there too) |
 | Account | `account.refresh_rejected`, `account.rejected`, `account.network`, `account.invalid_token`, `account.config`, `account.protocol`, `account.required` |
 | Chat | `chat.failed` (an AI panel question whose run failed) |
 | Other | `skill.failed`, `app.not_found`, `app.invalid`, `app.internal`, `app.start_failed`, `app.offline_not_cached`, `app.offline` (offline and the project was never cloned), `panic` |
@@ -630,7 +630,8 @@ no choice recorded ─▶ nothing sent, nothing queued; a switch off ─▶ its 
   approvals, picks, sheets, the activity strip, sub-space opens and read
   failures, saved-spaces restore (count, ms), trust changes, archive from the
   phone (`space_archived`: `action` archive / unarchive, `surface` `row_menu`:
-  the drawer row's long-press menu, whether the space was stopped first,
+  the drawer row's long-press menu, or `merged_chip`: the space screen's
+  "Merged #n" chip, whether the space was stopped first,
   outcome, code), diagnostics exports,
   JS errors (`ui.uncaught`, `ui.unhandled_rejection`, `ui.render_crash`). The
   file flows (protocol v8) have their events in the catalog (`file_attached`,

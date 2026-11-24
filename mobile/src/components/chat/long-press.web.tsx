@@ -1,12 +1,16 @@
 /**
  * Web: the text is plain DOM text, selectable with the mouse or a finger
  * already (`user-select: text` on every selectable Text). A long press on
- * a touch screen still shows the small menu (Copy, Select text, a row's
- * actions); the right-click menu stays the browser's.
+ * a touch screen still shows the small menu (Copy, Select text in place,
+ * a row's actions); the right-click menu stays the browser's.
  */
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useId, useState } from 'react';
 import { Modal, Pressable, StyleSheet, Text } from 'react-native';
-import { setSelectText } from '../../state/selectText';
+import {
+  startSelecting,
+  stopSelecting,
+  useSelectText,
+} from '../../state/selectText';
 import {
   CANCEL,
   COPY,
@@ -16,7 +20,7 @@ import {
 } from '../../ui/messageMenu';
 import { usePalette } from '../../ui/theme';
 import { copied, copyText } from '../settings/feedback';
-import { useSheet } from '../pickers/sheet-host';
+import { InlineSelect } from './inline-select';
 import type { LongPressMenuProps } from './long-press';
 
 export type { LongPressMenuProps } from './long-press';
@@ -30,23 +34,29 @@ export function LongPressMenu({
   disabled,
 }: LongPressMenuProps) {
   const p = usePalette();
-  const sheet = useSheet('text');
+  const id = useId();
+  const selecting = useSelectText((s) => s.owner === id);
+  useEffect(() => () => stopSelecting(id), [id]);
   const [open, setOpen] = useState(false);
   const items = messageMenuItems(kind, text, extras);
   const pick = useCallback(
-    (id: string) => {
+    (action: string) => {
       setOpen(false);
-      if (id === COPY.id) {
+      if (action === COPY.id) {
         void copyText(text).then((ok) => ok && copied());
-      } else if (id === SELECT_TEXT.id) {
-        setSelectText(text, kind);
-        sheet.open();
-      } else if (id !== CANCEL.id) {
-        onExtra?.(id);
+      } else if (action === SELECT_TEXT.id) {
+        startSelecting(id);
+      } else if (action !== CANCEL.id) {
+        onExtra?.(action);
       }
     },
-    [text, kind, sheet, onExtra],
+    [text, id, onExtra],
   );
+  if (selecting) {
+    return (
+      <InlineSelect text={text} kind={kind} onDone={() => stopSelecting(id)} />
+    );
+  }
   return (
     <>
       <Pressable
@@ -100,7 +110,6 @@ export function LongPressMenu({
           </Pressable>
         </Pressable>
       </Modal>
-      {sheet.element}
     </>
   );
 }

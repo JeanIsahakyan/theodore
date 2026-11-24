@@ -110,6 +110,8 @@ export interface Space {
   name: string;
   goal: string;
   branch: string;
+  /** The base branch's name (`main`). */
+  base?: string;
   /** The commit it forked from, and its last checkpoint: equal ⇒ nothing done yet. */
   base_sha: string;
   head_sha: string;
@@ -126,6 +128,8 @@ export interface Space {
   pr?: string | null;
   /** The last Open PR / Push / Merge locally / Keep as branch. */
   shipped?: SpaceShipped | null;
+  /** Unix ms when its PR merged (or it was merged locally / kept); else none. */
+  done_at?: number | null;
   error?: string | null;
   turn_log?: SpaceTurn[];
   title?: string | null;
