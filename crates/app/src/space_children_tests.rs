@@ -964,3 +964,37 @@ async fn only_a_space_under_this_one_is_archived_from_an_edit_or_run_turn() {
     assert_eq!(code(r), "sub_spaces.off");
     assert_eq!(e.f.git.removed_spaces(), vec![g.id.clone()]);
 }
+
+#[tokio::test]
+async fn a_merged_child_with_turns_since_still_counts_against_the_limit() {
+    let e = start_env(true).await;
+    put_setting(&e, "spaces.max_children", serde_json::json!(1));
+    let p = parent(&e).await;
+    let c = child_at(&e, &p, "child1").await;
+    e.core
+        .sub_space_merge(&p.id, SpaceMode::Edit, &c.id)
+        .await
+        .unwrap();
+    // Work after the merge: the child is live again until merged.
+    e.f.git.push_checkpoint(Sha::new("child2"));
+    e.f.agents.push_script(done("more"));
+    e.core
+        .sub_space_send(&p.id, SpaceMode::Edit, &c.id, "And the lexer", None)
+        .await
+        .unwrap();
+    e.until(&c.id, |s| s.turns == 2 && s.run.is_none()).await;
+    let full = e
+        .core
+        .sub_space_start(&p.id, SpaceMode::Edit, goal("B"))
+        .await;
+    assert_eq!(code(full), "sub_spaces.children");
+
+    e.core
+        .sub_space_merge(&p.id, SpaceMode::Edit, &c.id)
+        .await
+        .unwrap();
+    e.core
+        .sub_space_start(&p.id, SpaceMode::Edit, goal("B"))
+        .await
+        .unwrap();
+}

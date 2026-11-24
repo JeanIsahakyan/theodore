@@ -5,9 +5,9 @@
 
 use std::time::Duration;
 
-use theodore_contract::{AskRequest, RunSkillRequest, SpaceTrustRequest};
+use theodore_contract::{AskRequest, RunSkillRequest, SpaceSendRequest, SpaceTrustRequest};
 use theodore_domain::AgentId;
-use theodore_ports::{SpaceCommandName, SpaceToolError};
+use theodore_ports::{LogKind, SpaceToolError};
 
 use crate::space_commands_tests::{done, start_env, wait_until};
 use crate::testkit::{FakeScript, ToolRegistration};
@@ -130,7 +130,7 @@ async fn run_check_returns_the_exit_and_a_bounded_tail() {
     assert!(spec.env.iter().any(|(k, _)| k == "THEODORE_SPACE"));
     let logs = e
         .core
-        .space_tool_logs(&s.id, SpaceCommandName::Check, 3)
+        .space_tool_logs(&s.id, LogKind::Check, 3)
         .await
         .unwrap();
     assert_eq!(logs.available, 102, "the `$` line, 100 lines, the summary");
@@ -179,7 +179,7 @@ async fn start_stop_and_status_follow_the_run_command() {
     .await;
     let logs = e
         .core
-        .space_tool_logs(&s.id, SpaceCommandName::Run, 100)
+        .space_tool_logs(&s.id, LogKind::Run, 100)
         .await
         .unwrap();
     assert_eq!(logs.lines, ["$ pnpm dev", "ready"]);
@@ -212,7 +212,7 @@ async fn read_logs_returns_one_commands_tail() {
     e.core.space_tool_check(&s.id, "r").await.unwrap();
     let all = e
         .core
-        .space_tool_logs(&s.id, SpaceCommandName::Check, 400)
+        .space_tool_logs(&s.id, LogKind::Check, 400)
         .await
         .unwrap();
     assert_eq!(
@@ -222,13 +222,13 @@ async fn read_logs_returns_one_commands_tail() {
     assert_eq!(all.available, 5);
     let one = e
         .core
-        .space_tool_logs(&s.id, SpaceCommandName::Check, 1)
+        .space_tool_logs(&s.id, LogKind::Check, 1)
         .await
         .unwrap();
     assert_eq!(one.lines, ["── check finished"]);
     let run = e
         .core
-        .space_tool_logs(&s.id, SpaceCommandName::Run, 100)
+        .space_tool_logs(&s.id, LogKind::Run, 100)
         .await
         .unwrap();
     assert!(run.lines.is_empty() && run.available == 0);
@@ -526,4 +526,87 @@ async fn an_ai_panel_reply_records_the_model_it_ran_with() {
         Some("medium"),
         "the request carries the effort the reply records"
     );
+}
+
+// ── Theodore's errors reach the agent (docs/spaces.md) ────────────────────
+
+#[tokio::test]
+async fn read_logs_theodore_lists_this_spaces_errors_redacted() {
+    let e = start_env(false).await;
+    let a = e.create("").await;
+    let b = e.create("").await;
+    let wt = a.worktree.clone();
+    e.core.note_space_error(
+        &a,
+        "space.checkpoint_failed",
+        &format!(
+            "the last checkpoint failed: git add {wt}/src/x.rs exit 1:\n  ignored by \
+             /Users/someone/.gitignore token=ghp_abcdefghijklmnopqrstuvwxyz0123456789"
+        ),
+    );
+    let logs = e
+        .core
+        .space_tool_logs(&a.id, LogKind::Theodore, 50)
+        .await
+        .unwrap();
+    assert_eq!((logs.kind, logs.available), (LogKind::Theodore, 1));
+    let line = &logs.lines[0];
+    assert!(
+        line.contains(
+            "warn space.checkpoint_failed: the last checkpoint failed: git add ./src/x.rs \
+             exit 1: ignored by <path> token=[redacted]"
+        ) || (line.contains("git add ./src/x.rs exit 1: ignored by <path>")
+            && !line.contains("ghp_")),
+        "{line}"
+    );
+    assert!(!line.contains(&wt), "{line}");
+    // The other space's log is its own.
+    let other = e
+        .core
+        .space_tool_logs(&b.id, LogKind::Theodore, 50)
+        .await
+        .unwrap();
+    assert!(other.lines.is_empty() && other.available == 0);
+}
+
+#[tokio::test]
+async fn theodore_errors_open_the_next_prompt_once() {
+    let e = start_env(false).await;
+    e.f.agents.push_script(done("ok"));
+    let s = e.create("Fix it").await;
+    let s = e.until(&s.id, |s| s.turns == 1 && s.run.is_none()).await;
+    e.core
+        .note_space_error(&s, "app.invalid", "ship (push) failed: rejected");
+    e.core
+        .note_space_error(&s, "app.invalid", "ship (push) failed: rejected");
+    e.core
+        .note_space_error(&s, "space.auto_archive_failed", "auto-archive failed: busy");
+
+    let send = |text: &str| SpaceSendRequest {
+        space: s.id.clone(),
+        text: text.into(),
+        agent: None,
+        model: None,
+        mode: None,
+        attachments: None,
+        effort: None,
+        mentions: None,
+    };
+    e.f.agents.push_script(done("ok"));
+    e.core.space_send(send("again")).await.unwrap();
+    e.until(&s.id, |s| s.turns == 2 && s.run.is_none()).await;
+    let prompt = e.f.agents.last_request().unwrap().prompt;
+    assert!(
+        prompt.starts_with(
+            "Theodore: ship (push) failed: rejected (×2)\n\
+             Theodore: auto-archive failed: busy\n\n"
+        ),
+        "{prompt}"
+    );
+
+    e.f.agents.push_script(done("ok"));
+    e.core.space_send(send("more")).await.unwrap();
+    e.until(&s.id, |s| s.turns == 3 && s.run.is_none()).await;
+    let prompt = e.f.agents.last_request().unwrap().prompt;
+    assert!(!prompt.contains("Theodore:"), "{prompt}");
 }

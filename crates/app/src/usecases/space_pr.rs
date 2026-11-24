@@ -209,6 +209,22 @@ impl Core {
         req: MergeSpaceRequest,
         turn: Option<&str>,
     ) -> AppResult<MergeSpaceResult> {
+        let space = req.space.clone();
+        let result = self.merge_space_inner(req, turn).await;
+        // The agent hears why next turn — when it wasn't its own `ship`
+        // call, whose result says so.
+        if let (Err(e), None) = (&result, turn) {
+            self.note_space_error_by_id(&space, e.code(), &format!("merge failed: {e}"))
+                .await;
+        }
+        result
+    }
+
+    async fn merge_space_inner(
+        &self,
+        req: MergeSpaceRequest,
+        turn: Option<&str>,
+    ) -> AppResult<MergeSpaceResult> {
         let space = self.space_row(&req.space).await?;
         let pr = space
             .pr
@@ -266,7 +282,11 @@ impl Core {
     /// snapshot through a temporary index (no ref moves), compared by
     /// tree. `false` without a worktree (archived: the checkpoint is all
     /// there is).
-    async fn worktree_edited_since(&self, space: &Space, since: &Sha) -> AppResult<bool> {
+    pub(crate) async fn worktree_edited_since(
+        &self,
+        space: &Space,
+        since: &Sha,
+    ) -> AppResult<bool> {
         let wt = Path::new(&space.worktree);
         if !wt.exists() {
             return Ok(false);
@@ -496,6 +516,78 @@ impl Core {
         }])
         .await
         .is_ok()
+    }
+}
+
+impl Core {
+    /// A message to a space whose PR merged continues it first
+    /// (docs/spaces.md §7 "Merged is not archived"): the space moves onto
+    /// a new branch from the updated base, as Continue does, and the chat
+    /// gets one line saying so. The space as it is then; the send fails
+    /// when the continue does (offline, a conflict), so nothing runs on
+    /// the merged branch.
+    pub(crate) async fn continue_if_merged(&self, space: Space, at: i64) -> AppResult<Space> {
+        let Some(pr) = space.pr.clone() else {
+            return Ok(space);
+        };
+        if space.done_at.is_none() && self.pr_state(&pr).await != Some(PrState::Merged) {
+            return Ok(space);
+        }
+        let continued = match self.continue_space(&space.id).await {
+            Ok(continued) => continued,
+            Err(e) => {
+                // The message never runs: the agent hears why next time.
+                self.note_space_error(
+                    &space,
+                    e.code(),
+                    &format!("a message wasn't sent: its PR merged, and continuing on a new branch failed: {e}"),
+                );
+                return Err(AppError::Invalid(format!(
+                    "its PR merged, and it couldn't continue on a new branch: {e}"
+                )));
+            }
+        };
+        let number = pr.0.rsplit_once('#').map_or(pr.0.as_str(), |(_, n)| n);
+        let notice = theodore_contract::ChatNotice::Continued {
+            pr: format!("#{number}"),
+            branch: continued.branch.clone(),
+            base: continued.base.clone(),
+        };
+        let row = theodore_contract::ChatMessage {
+            id: uuid::Uuid::new_v4().to_string(),
+            pr: crate::usecases::spaces::space_chat_key(&space.id),
+            author: theodore_domain::Author::Agent(space.agent),
+            text: crate::usecases::space_limits::notice_text(&notice, at),
+            refs: vec![],
+            // Just before the message that continued it.
+            at: at.saturating_sub(1),
+            failed: None,
+            from_tasks: vec![],
+            attachments: vec![],
+            mentions: vec![],
+            queued: None,
+            activity: vec![],
+            duration_ms: None,
+            changed_files: vec![],
+            model: None,
+            text_in_steps: false,
+            model_resolved: false,
+            effort_resolved: false,
+            run: None,
+            vote: None,
+            effort: None,
+            mode: None,
+            from_space: None,
+            notice: Some(notice),
+        };
+        self.apply(vec![NewAction {
+            model: models::CHAT_MESSAGE.into(),
+            model_id: row.id.clone(),
+            action: SyncActionCode::I,
+            data: serde_json::to_value(&row).ok(),
+        }])
+        .await?;
+        Ok(continued)
     }
 }
 

@@ -107,6 +107,20 @@ describe('noticeText', () => {
       ),
     ).toBe('Claude · work hit its limit (resets 18:00)');
   });
+
+  it('a merged space continued on a new branch', () => {
+    expect(
+      noticeText(
+        {
+          kind: 'continued',
+          pr: '#123',
+          branch: 'ada/rate-limits-2',
+          base: 'main',
+        },
+        NOW,
+      ),
+    ).toBe('#123 merged: continued on ada/rate-limits-2 from the updated main');
+  });
 });
 
 describe('pauseText', () => {

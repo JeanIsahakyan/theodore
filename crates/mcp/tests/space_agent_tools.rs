@@ -18,10 +18,10 @@ use theodore_domain::{
 };
 use theodore_mcp::space_agent::MAX_DIFF_CHARS;
 use theodore_mcp::{
-    AppStatus, BackendError, BaseChange, CheckOutcome, GroupWithHunks, LogTail, McpServer,
+    AppStatus, BackendError, BaseChange, CheckOutcome, GroupWithHunks, LogKind, LogTail, McpServer,
     NewFinding, NewPatch, NewReviewComment, PrContext, ProgressStep, ReviewItem,
-    ReviewToolsBackend, RunContext, ShipMerge, ShipOutcome, ShipToolAction, SpaceCommandName,
-    SpaceDiff, SpaceInfo, SpaceToolError, SpaceToolsBackend, TerminalTail, ToolSet,
+    ReviewToolsBackend, RunContext, ShipMerge, ShipOutcome, ShipToolAction, SpaceDiff, SpaceInfo,
+    SpaceToolError, SpaceToolsBackend, TerminalTail, ToolSet,
 };
 
 struct EmptyReview;
@@ -80,12 +80,7 @@ impl SpaceToolsBackend for FakeChange {
     async fn app_status(&self, s: &str) -> Result<AppStatus, SpaceToolError> {
         Err(no(s))
     }
-    async fn read_logs(
-        &self,
-        s: &str,
-        _: SpaceCommandName,
-        _: usize,
-    ) -> Result<LogTail, SpaceToolError> {
+    async fn read_logs(&self, s: &str, _: LogKind, _: usize) -> Result<LogTail, SpaceToolError> {
         Err(no(s))
     }
     async fn read_terminal(

@@ -1198,3 +1198,108 @@ async fn open_pr_interrupted_during_the_fill_can_be_retried() {
     assert_eq!(ship.pushes.len(), 1, "already on the host");
     assert_eq!(f.host.create_pr_calls.lock().unwrap().len(), 1);
 }
+
+// ── a message to a merged space continues it first (docs/spaces.md §7) ──
+
+fn transcript(f: &Fixtures, id: &str) -> Vec<theodore_contract::ChatMessage> {
+    let mut out: Vec<theodore_contract::ChatMessage> = f
+        .store
+        .query(
+            models::CHAT_MESSAGE,
+            "pr",
+            &crate::usecases::spaces::space_chat_key(id).0,
+        )
+        .unwrap()
+        .into_iter()
+        .filter_map(|r| serde_json::from_value(r.data).ok())
+        .collect();
+    out.sort_by_key(|m| m.at);
+    out
+}
+
+#[tokio::test]
+async fn a_message_to_a_merged_space_continues_it_first() {
+    let f = fixtures();
+    let (core, _recv, project) = host_project(&f).await;
+    let s = in_review(&f, &core, &project, "Retry on 429").await;
+    merge_on_host(&f, &core, 100).await;
+    base_moved(&f, "main222");
+
+    let c = send(&f, &core, &s, "Now the 503s", None).await;
+    assert_eq!(c.branch, "me/retry-on-429-2");
+    assert!(c.pr.is_none() && c.done_at.is_none());
+    assert_eq!(c.rounds.len(), 1);
+    assert_eq!(c.base_sha, Sha::new("main222"));
+    // The chat says so, in one line before the message.
+    let chat = transcript(&f, &s.id);
+    let notice = chat
+        .iter()
+        .find(|m| m.notice.is_some())
+        .expect("a continued notice");
+    assert_eq!(
+        notice.text,
+        "#100 merged: continued on me/retry-on-429-2 from the updated main"
+    );
+    assert!(matches!(
+        notice.notice,
+        Some(theodore_contract::ChatNotice::Continued { ref pr, ref branch, ref base })
+            if pr == "#100" && branch == "me/retry-on-429-2" && base == "main"
+    ));
+    let mine = chat.iter().position(|m| m.text == "Now the 503s").unwrap();
+    let said = chat.iter().position(|m| m.notice.is_some()).unwrap();
+    assert!(said < mine, "the notice comes before the message");
+    // The turn hears it, as after Continue.
+    let prompt = f.agents.last_request().unwrap().prompt;
+    assert!(
+        prompt.starts_with("Note: the previous pull request (#100, branch me/retry-on-429)"),
+        "{prompt}"
+    );
+    // Once: a second message is a plain turn.
+    send(&f, &core, &c, "And 502s", None).await;
+    assert_eq!(
+        transcript(&f, &s.id)
+            .iter()
+            .filter(|m| m.notice.is_some())
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn a_message_to_a_merged_space_fails_when_it_cant_continue_and_the_agent_hears_why() {
+    let f = fixtures();
+    let (core, _recv, project) = host_project(&f).await;
+    let s = in_review(&f, &core, &project, "Retry on 429").await;
+    merge_on_host(&f, &core, 100).await;
+    f.git.set_offline(true);
+    let err = core
+        .space_send(SpaceSendRequest {
+            space: s.id.clone(),
+            text: "Now the 503s".into(),
+            agent: None,
+            model: None,
+            mode: None,
+            attachments: None,
+            effort: None,
+            mentions: None,
+        })
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("couldn't continue"), "{err}");
+    let s = space(&f, &s.id);
+    assert!(s.pr.is_some() && s.status == SpaceStatus::Idle, "unchanged");
+    assert!(
+        transcript(&f, &s.id)
+            .iter()
+            .all(|m| m.text != "Now the 503s")
+    );
+
+    f.git.set_offline(false);
+    base_moved(&f, "main222");
+    send(&f, &core, &s, "Try again", None).await;
+    let prompt = f.agents.last_request().unwrap().prompt;
+    assert!(
+        prompt.starts_with("Theodore: a message wasn't sent: its PR merged, and continuing"),
+        "{prompt}"
+    );
+}

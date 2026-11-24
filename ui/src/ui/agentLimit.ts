@@ -80,6 +80,8 @@ export function noticeText(notice: ChatNotice, now: number): string {
       return `${notice.account} hit its limit${resets(notice.resets_at)}`;
     case 'remote_dropped':
       return `A message queued from ${notice.from} was dropped: ${notice.reason}`;
+    case 'continued':
+      return `${notice.pr} merged: continued on ${notice.branch} from the updated ${notice.base}`;
   }
 }
 

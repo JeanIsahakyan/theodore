@@ -512,7 +512,13 @@ export type ChatNotice =
  *  that device's trust, or the mode it may use, changed meanwhile
  *  (docs/fleet.md "Sends queue"). `from`: the device's name as pinned.
  */
-{ kind: "remote_dropped"; from: string; reason: string };
+{ kind: "remote_dropped"; from: string; reason: string } |
+/**
+ *  A message sent to a space whose PR had merged continued it first
+ *  (docs/spaces.md §7 "Continue after merge"): "Continued on `branch`
+ *  from the updated `base`". `pr`: the merged PR, as `#123`.
+ */
+{ kind: "continued"; pr: string; branch: string; base: string };
 
 export type Check = {
 	id: string,
