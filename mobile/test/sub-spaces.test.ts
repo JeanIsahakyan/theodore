@@ -84,6 +84,16 @@ describe('subSpaceRows', () => {
   it('is empty with none', () => {
     expect(subSpaceRows(ROOT, {})).toEqual([]);
   });
+
+  it('leaves archived rows out, their children at the top', () => {
+    const subs = byId(
+      sub('a'),
+      sub('old', ROOT, { status: 'archived' }),
+      sub('old1', 'old'),
+      sub('a1', 'a', { status: 'archived', done: true }),
+    );
+    expect(shape(subs)).toEqual(['a', 'old1']);
+  });
 });
 
 describe('subSpaceSummary', () => {
@@ -97,6 +107,19 @@ describe('subSpaceSummary', () => {
     );
     expect(subSpaceCounts(subs)).toEqual({ total: 5, running: 2, waiting: 1 });
     expect(subSpaceSummary(subs)).toBe('5 sub-spaces, 2 running, 1 waiting');
+  });
+
+  it('does not count archived rows', () => {
+    const subs = byId(
+      sub('a'),
+      sub('old', ROOT, { status: 'archived' }),
+      sub('old1', 'old', { status: 'archived', done: true }),
+    );
+    expect(subSpaceCounts(subs)).toEqual({ total: 1, running: 1, waiting: 0 });
+    expect(subSpaceSummary(subs)).toBe('1 sub-space, 1 running');
+    expect(
+      subSpaceSummary(byId(sub('old', ROOT, { status: 'archived' }))),
+    ).toBeNull();
   });
 
   it('says only what there is', () => {

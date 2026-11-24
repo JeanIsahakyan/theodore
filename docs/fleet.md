@@ -302,7 +302,10 @@ A child isn't a fleet space of its own: no `rs_` id, no journal. Its row is
 sent as a `sub_space` mirror of the hosted space at the top of its tree
 (`MirroredSubSpace{space, parent, title, status, mode, done}`, `parent` the
 hosted `rs_` id or another child's id), on every change, latest kept; the
-origin reaches it by its local id through the ops on any space below.
+origin reaches it by its local id through the ops on any space below. An
+archived child leaves the tree: its row goes as a delete
+(`mirror{sub_space, <child id>, null}`), on archive and on a resync;
+unarchived, it's a row again.
 
 A desktop that follows the hosted space keeps each child as a
 `remote_sub_space` row and shows the tree under the mirrored space, like
@@ -689,7 +692,7 @@ run step (live)                  ─▶ mirror{turn_step}     ─▶ relay only 
 | `space` | `rs_…` (the fleet id) | `Space`, local-only fields blanked | on change, ≤ 1 per second | latest |
 | `chat_message` | the message id | `ChatMessage`, `pr = "space:rs_…"` | on change, ≤ 1 per second per row | latest |
 | `turn_step` | `<run>:<n>` | `TurnStep`, `run = "space:rs_…:<message>"` | as it happens | relayed, not kept |
-| `sub_space` | the child's local id | `MirroredSubSpace`, `parent` the `rs_` id or another child's id | on change | latest |
+| `sub_space` | the child's local id | `MirroredSubSpace`, `parent` the `rs_` id or another child's id; `null` once archived or gone | on change | latest |
 
 A follower drops a model it doesn't know (a protocol-6 one, `sub_space`);
 a desktop follower keeps a `sub_space` row as a `remote_sub_space` row,
