@@ -7,7 +7,7 @@
 //! to `mirror_edited` / `mirror_restore`; these tests do the same by hand.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
+mod support;
 use std::sync::Arc;
 use std::time::SystemTime;
 
@@ -24,8 +24,7 @@ impl CredentialSource for NoAuth {
 }
 
 fn git(dir: &Path, args: &[&str]) -> String {
-    let out = Command::new("git")
-        .current_dir(dir)
+    let out = support::git_cmd(dir)
         .args(args)
         .output()
         .expect("git installed");
@@ -67,6 +66,19 @@ fn init_repo(dir: &Path) {
 
 fn mtime(p: &Path) -> SystemTime {
     std::fs::metadata(p).unwrap().modified().unwrap()
+}
+
+/// An old mtime, so a rewrite of the file can't land on the same timestamp
+/// whatever the filesystem's granularity.
+fn age(p: &Path) -> SystemTime {
+    let old = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000_000);
+    std::fs::File::options()
+        .write(true)
+        .open(p)
+        .unwrap()
+        .set_modified(old)
+        .unwrap();
+    old
 }
 
 struct Env {
@@ -180,12 +192,9 @@ async fn a_resync_only_rewrites_what_changed() {
     .await;
     let mut touched = Vec::new();
     sync(&e, "s1", &mut touched, &e.base, &head1).await;
-    let a_before = mtime(&e.folder.join("a.txt"));
-    let c_before = mtime(&e.folder.join("c.txt"));
-    let b_before = mtime(&e.folder.join("b.txt"));
-    // Give the filesystem a moment so a real rewrite would show a newer
-    // mtime than "unchanged".
-    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    let a_before = age(&e.folder.join("a.txt"));
+    let c_before = age(&e.folder.join("c.txt"));
+    let b_before = age(&e.folder.join("b.txt"));
 
     let head2 = checkpoint(&e, "s1", &head1, |p| {
         std::fs::write(p.join("a.txt"), "one\ntwo\nthree\n").unwrap();

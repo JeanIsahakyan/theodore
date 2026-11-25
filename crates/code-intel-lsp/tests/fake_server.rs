@@ -36,11 +36,18 @@ fn config(env: &[(&str, &str)]) -> LaunchConfig {
     }
 }
 
+/// How long a test waits for a state it expects. Generous: CI runs every
+/// test binary at once on a loaded machine.
+const READY: Duration = Duration::from_secs(10);
+
 fn options() -> SessionOptions {
     SessionOptions {
         request_timeout: Duration::from_secs(5),
         init_timeout: Duration::from_secs(5),
-        ready_settle: Duration::from_millis(50),
+        // Long enough for the fake's `$/progress begin` (two round trips
+        // after its progress token) to land under load, so a warm-up is
+        // never called ready before the work was announced.
+        ready_settle: Duration::from_millis(300),
         ready_max_wait: Duration::from_secs(5),
         max_open_docs: 8,
         shutdown_grace: Duration::from_secs(1),
@@ -97,7 +104,7 @@ where
     F: FnMut() -> Fut,
     Fut: std::future::Future<Output = bool>,
 {
-    let until = Instant::now() + Duration::from_secs(5);
+    let until = Instant::now() + READY;
     while Instant::now() < until {
         if check().await {
             return;
@@ -113,10 +120,7 @@ async fn handshake_warms_up_until_indexing_ends() {
     let t0 = Instant::now();
     let s = start(wt.path(), &[("FAKE_LSP_PROGRESS_MS", "300")]).await;
     assert_eq!(s.state(), ServerState::Warming);
-    assert_eq!(
-        s.wait_ready(Duration::from_secs(5)).await,
-        ServerState::Ready
-    );
+    assert_eq!(s.wait_ready(READY).await, ServerState::Ready);
     assert!(
         t0.elapsed() >= Duration::from_millis(300),
         "{:?}",
@@ -144,10 +148,7 @@ async fn ready_after_max_wait_when_indexing_never_ends() {
     .unwrap();
     tokio::time::sleep(Duration::from_millis(200)).await;
     assert_eq!(s.state(), ServerState::Warming);
-    assert_eq!(
-        s.wait_ready(Duration::from_secs(5)).await,
-        ServerState::Ready
-    );
+    assert_eq!(s.wait_ready(READY).await, ServerState::Ready);
     assert!(t0.elapsed() >= Duration::from_millis(400));
 }
 
@@ -164,7 +165,7 @@ async fn a_server_may_ask_for_a_longer_start() {
 
     let s = LspSession::start(wt.path(), slow.clone(), opts.clone()).unwrap();
     assert_eq!(
-        s.wait_ready(Duration::from_secs(5)).await,
+        s.wait_ready(READY).await,
         ServerState::Failed,
         "the default gives up"
     );
@@ -174,10 +175,7 @@ async fn a_server_may_ask_for_a_longer_start() {
         ..slow
     };
     let s = LspSession::start(wt.path(), cfg, opts).unwrap();
-    assert_eq!(
-        s.wait_ready(Duration::from_secs(5)).await,
-        ServerState::Ready
-    );
+    assert_eq!(s.wait_ready(READY).await, ServerState::Ready);
     s.shutdown().await;
 }
 
@@ -196,10 +194,7 @@ async fn the_start_timeout_also_replaces_the_wait_for_ready() {
     };
     let t0 = Instant::now();
     let s = LspSession::start(wt.path(), cfg, opts).unwrap();
-    assert_eq!(
-        s.wait_ready(Duration::from_secs(5)).await,
-        ServerState::Ready
-    );
+    assert_eq!(s.wait_ready(READY).await, ServerState::Ready);
     assert!(
         t0.elapsed() >= Duration::from_millis(600),
         "{:?}",
@@ -214,19 +209,24 @@ async fn the_start_timeout_also_replaces_the_wait_for_ready() {
 #[tokio::test]
 async fn a_late_announcement_needs_a_longer_settle() {
     let wt = worktree();
-    let late = config(&[
-        ("FAKE_LSP_PROGRESS_DELAY_MS", "400"),
-        ("FAKE_LSP_PROGRESS_MS", "800"),
-    ]);
 
+    // Work announced late and never ending: honouring the announcement
+    // would mean `Ready` only at `ready_max_wait`. The default settle is
+    // over before it, so `Ready` comes well under that.
+    let max_wait = Duration::from_secs(20);
+    let opts = SessionOptions {
+        ready_max_wait: max_wait,
+        ..options()
+    };
+    let never = config(&[
+        ("FAKE_LSP_PROGRESS_DELAY_MS", "400"),
+        ("FAKE_LSP_PROGRESS_MS", "never"),
+    ]);
     let t0 = Instant::now();
-    let s = LspSession::start(wt.path(), late.clone(), options()).unwrap();
-    assert_eq!(
-        s.wait_ready(Duration::from_secs(5)).await,
-        ServerState::Ready
-    );
+    let s = LspSession::start(wt.path(), never, opts).unwrap();
+    assert_eq!(s.wait_ready(max_wait * 2).await, ServerState::Ready);
     assert!(
-        t0.elapsed() < Duration::from_millis(400),
+        t0.elapsed() < max_wait,
         "ready before the work began: {:?}",
         t0.elapsed()
     );
@@ -234,14 +234,14 @@ async fn a_late_announcement_needs_a_longer_settle() {
 
     let cfg = LaunchConfig {
         ready_settle_secs: Some(1),
-        ..late
+        ..config(&[
+            ("FAKE_LSP_PROGRESS_DELAY_MS", "400"),
+            ("FAKE_LSP_PROGRESS_MS", "800"),
+        ])
     };
     let t0 = Instant::now();
     let s = LspSession::start(wt.path(), cfg, options()).unwrap();
-    assert_eq!(
-        s.wait_ready(Duration::from_secs(5)).await,
-        ServerState::Ready
-    );
+    assert_eq!(s.wait_ready(READY).await, ServerState::Ready);
     assert!(
         t0.elapsed() >= Duration::from_millis(1200),
         "ready once the work ended: {:?}",
@@ -312,7 +312,7 @@ async fn positions_convert_through_utf16_and_utf8() {
 async fn configuration_is_answered_from_init_options() {
     let wt = worktree();
     let s = start(wt.path(), &[]).await;
-    s.wait_ready(Duration::from_secs(5)).await;
+    s.wait_ready(READY).await;
     // The answer may land just after the first hover; ask again until it has.
     let mut seen = Value::Null;
     for _ in 0..100 {
@@ -620,7 +620,7 @@ async fn shutdown_kills_a_server_that_ignores_exit() {
         ..options()
     };
     let s = LspSession::start(wt.path(), config(&[("FAKE_LSP_IGNORE_EXIT", "1")]), opts).unwrap();
-    s.wait_ready(Duration::from_secs(5)).await;
+    s.wait_ready(READY).await;
     let t0 = Instant::now();
     s.shutdown().await;
     assert!(s.has_exited());
@@ -640,13 +640,10 @@ async fn a_crash_fails_pending_requests_and_restarts_once() {
     let err = first.definition(root, "src/lib.rs", at).await.unwrap_err();
     assert!(matches!(err, CodeIntelError::Server { .. }), "{err:?}");
     let mut rx = first.subscribe();
-    tokio::time::timeout(
-        Duration::from_secs(5),
-        rx.wait_for(|s| *s == ServerState::Failed),
-    )
-    .await
-    .unwrap()
-    .unwrap();
+    tokio::time::timeout(READY, rx.wait_for(|s| *s == ServerState::Failed))
+        .await
+        .unwrap()
+        .unwrap();
     assert!(pool.get("repo", root, "fake-lsp").await.is_none());
     // Restartable: not a failure yet.
     assert_eq!(
@@ -658,13 +655,10 @@ async fn a_crash_fails_pending_requests_and_restarts_once() {
     assert!(!Arc::ptr_eq(&first, &second));
     assert!(second.definition(root, "src/lib.rs", at).await.is_err());
     let mut rx = second.subscribe();
-    tokio::time::timeout(
-        Duration::from_secs(5),
-        rx.wait_for(|s| *s == ServerState::Failed),
-    )
-    .await
-    .unwrap()
-    .unwrap();
+    tokio::time::timeout(READY, rx.wait_for(|s| *s == ServerState::Failed))
+        .await
+        .unwrap()
+        .unwrap();
 
     let third = pool.get_or_spawn("repo", root, &cfg).await;
     assert!(
@@ -701,17 +695,11 @@ async fn pool_evicts_the_least_recently_used_over_max_servers() {
     assert!(pool.get("repo", b.path(), "fake-lsp").await.is_none());
     assert!(pool.get("repo", a.path(), "fake-lsp").await.is_some());
     let mut rx = sb.subscribe();
-    tokio::time::timeout(
-        Duration::from_secs(5),
-        rx.wait_for(|s| *s == ServerState::NotRunning),
-    )
-    .await
-    .unwrap()
-    .unwrap();
-    assert_eq!(
-        sc.wait_ready(Duration::from_secs(5)).await,
-        ServerState::Ready
-    );
+    tokio::time::timeout(READY, rx.wait_for(|s| *s == ServerState::NotRunning))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(sc.wait_ready(READY).await, ServerState::Ready);
     pool.shutdown_all().await;
     assert!(pool.is_empty().await);
     assert_eq!(sa.state(), ServerState::NotRunning);
@@ -726,13 +714,10 @@ async fn idle_sessions_are_reaped() {
         .await
         .unwrap();
     let mut rx = s.subscribe();
-    tokio::time::timeout(
-        Duration::from_secs(5),
-        rx.wait_for(|s| *s == ServerState::NotRunning),
-    )
-    .await
-    .unwrap()
-    .unwrap();
+    tokio::time::timeout(READY, rx.wait_for(|s| *s == ServerState::NotRunning))
+        .await
+        .unwrap()
+        .unwrap();
     assert!(pool.is_empty().await);
     assert!(pool.status(wt.path()).await.is_empty());
 }

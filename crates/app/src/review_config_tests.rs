@@ -13,11 +13,17 @@ use crate::usecases::review_config::{ConfigBase, ReviewSource};
 use crate::{Core, Receivers};
 
 async fn wait_until(mut cond: impl FnMut() -> bool) {
-    for _ in 0..400 {
+    // Up to 30 s of wall time, counted by the clock: sleeps stretch on a
+    // loaded runner, and a condition met during the last stretch still counts.
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    while std::time::Instant::now() < deadline {
         if cond() {
             return;
         }
         tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    if cond() {
+        return;
     }
     panic!("condition not met in time");
 }
@@ -399,7 +405,7 @@ async fn space_turns_carry_the_repo_instructions() {
     let f = fixtures();
     global(&f, INSTRUCTIONS);
     let (core, _recv) = Core::start(f.deps());
-    tokio::time::sleep(Duration::from_millis(30)).await;
+    f.startup_refresh_done().await;
     let project = core
         .add_project(theodore_contract::AddProjectRequest {
             repo: None,

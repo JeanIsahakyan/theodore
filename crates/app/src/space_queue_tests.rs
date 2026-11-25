@@ -28,12 +28,17 @@ async fn wait_until(mut cond: impl FnMut() -> bool) {
         }
         tokio::time::sleep(Duration::from_millis(5)).await;
     }
+    // One last look: the condition may have been met during the final sleep,
+    // which a loaded runner stretches past the deadline.
+    if cond() {
+        return;
+    }
     panic!("condition not met in time");
 }
 
 async fn started(f: &Fixtures) -> (Core, Receivers, Project) {
     let (core, recv) = Core::start(f.deps());
-    tokio::time::sleep(Duration::from_millis(30)).await;
+    f.startup_refresh_done().await;
     let project = core
         .add_project(AddProjectRequest {
             repo: None,

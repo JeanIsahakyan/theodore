@@ -62,7 +62,12 @@ impl Clock for FakeClock {
     async fn sleep(&self, d: Duration) {
         let target = self.now() + d.as_millis() as i64;
         loop {
+            // Enabled before the look: `notify_waiters` only wakes futures
+            // already registered, so an `advance` between the check and
+            // the await would otherwise be missed and the sleep never end.
             let notified = self.notify.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
             if self.now() >= target {
                 return;
             }
@@ -1719,6 +1724,8 @@ pub struct FakeHost {
     /// How many `get_pr` / `changed_since` calls reached the "host".
     pub get_pr_calls: std::sync::atomic::AtomicUsize,
     pub changed_since_calls: std::sync::atomic::AtomicUsize,
+    /// How many `search` / `search_checked` calls reached the "host".
+    pub search_calls: std::sync::atomic::AtomicUsize,
     pub get_pr_responses: Mutex<VecDeque<HostResult<Fetched<PrDetail>>>>,
     pub set_viewed_responses: Mutex<VecDeque<HostResult<()>>>,
     /// Every `(path, viewed)` a `set_viewed` call was made with.
@@ -1956,6 +1963,8 @@ impl HostAdapter for FakeHost {
             .unwrap_or_else(|| Ok(sample_person("me")))
     }
     async fn search(&self, _section: &InboxSection) -> HostResult<Vec<PrSummary>> {
+        self.search_calls
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         self.search_responses
             .lock()
             .unwrap()
@@ -4342,6 +4351,31 @@ pub struct Fixtures {
 }
 
 impl Fixtures {
+    /// Waits until `Core::start`'s one-shot inbox refresh has asked the host
+    /// for every section: it shares `FakeHost`'s search queue with a
+    /// project's own refresh, so a test that queues searches (or counts
+    /// them) must let it go first. Call it right after `Core::start`; a core
+    /// whose account gate is closed never refreshes, so don't wait for one.
+    pub async fn startup_refresh_done(&self) {
+        let want = crate::usecases::inbox::SECTIONS.len();
+        let searched = || {
+            self.host
+                .search_calls
+                .load(std::sync::atomic::Ordering::SeqCst)
+                >= want
+        };
+        let deadline = std::time::Instant::now() + Duration::from_secs(30);
+        while std::time::Instant::now() < deadline {
+            if searched() {
+                // Its rows land right after the last search.
+                tokio::task::yield_now().await;
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        assert!(searched(), "the startup inbox refresh didn't run in time");
+    }
+
     /// `deps` with the [`FakeRunTools`] wired in.
     pub fn deps_with_tools(&self) -> Deps {
         Deps {

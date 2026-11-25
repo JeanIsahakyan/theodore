@@ -3,7 +3,9 @@
 //! and a checkpoint or Undo waits while a git operation is unfinished.
 
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::Output;
+
+mod support;
 use std::sync::Arc;
 
 use tempfile::TempDir;
@@ -38,8 +40,7 @@ const PLAIN: [&str; 8] = [
 ];
 
 fn git_out(dir: &Path, args: &[&str]) -> Output {
-    Command::new("git")
-        .current_dir(dir)
+    support::git_cmd(dir)
         .args(PLAIN)
         .args(args)
         .output()

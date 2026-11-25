@@ -369,7 +369,20 @@ mod tests {
         })
         .await
         .unwrap();
-        let reqs = server.received_requests().await.unwrap();
+        // The SDK's `force_flush` gives up after a fixed 5s, so under load
+        // `flush` can return before the export lands: wait for the
+        // requests themselves.
+        let deadline = std::time::Instant::now() + Duration::from_secs(30);
+        let reqs = loop {
+            let reqs = server.received_requests().await.unwrap();
+            let count = |p: &str| reqs.iter().filter(|r| r.url.path() == p).count();
+            if (count("/v1/logs") >= 1 && count("/v1/traces") >= 1)
+                || std::time::Instant::now() > deadline
+            {
+                break reqs;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        };
         let logs: Vec<_> = reqs.iter().filter(|r| r.url.path() == "/v1/logs").collect();
         let traces: Vec<_> = reqs
             .iter()
