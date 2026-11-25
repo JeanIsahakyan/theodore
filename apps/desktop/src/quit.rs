@@ -4,11 +4,13 @@
 //! second instance on the same data dir.
 //!
 //! ```text
-//! ⌘Q / handle.exit ──▶ ExitRequested ──▶ turns running? pause them first (`restart`)
-//!                                    ──▶ stop spaces (≤ 4 s, once)
-//!                      Exit          ──▶ telemetry (≤ 3 s, once)
-//! SIGTERM / SIGINT ──▶ stop spaces (≤ 4 s) ──▶ telemetry (≤ 3 s) ──▶ handle.exit
-//!                                                                  └─ 2 s ──▶ process::exit
+//! handle.exit ──▶ ExitRequested ──▶ turns running? pause them first (`restart`)
+//!                               ──▶ stop spaces (≤ 4 s, once)
+//! ⌘Q on macOS ──▶ applicationShouldTerminate ──▶ pause first (`terminate`)
+//!                 Exit          ──▶ not paused yet? pause now ──▶ stop spaces
+//!                               ──▶ telemetry (≤ 3 s, once)
+//! SIGTERM / SIGINT ──▶ pause (≤ 50 s) ──▶ stop spaces (≤ 4 s) ──▶ telemetry (≤ 3 s)
+//!                  ──▶ handle.exit ─ 2 s ──▶ process::exit
 //! second signal    ──▶ process::exit now
 //! ```
 
@@ -113,14 +115,10 @@ pub fn exit_on_signal(handle: tauri::AppHandle, core: Arc<dyn CoreApi>) {
         }
         tracing::info!("quit signal received");
         // Off the runtime: the cleanup blocks its thread. Turns running
-        // are paused first, to resume after the next launch.
+        // are paused first (bounded by its own deadline, not EXIT_GRACE),
+        // to resume after the next launch.
         std::thread::spawn(move || {
-            block_on_bounded(theodore_app::PAUSE_BUDGET + Duration::from_secs(5), {
-                let core = core.clone();
-                async move {
-                    crate::restart::pause(&core, theodore_contract::RestartReason::Quit).await;
-                }
-            });
+            crate::restart::pause_then(core.clone(), crate::restart::Wait::Blocking, || {});
             stop_spaces(core);
             shutdown_telemetry();
             handle.exit(0);

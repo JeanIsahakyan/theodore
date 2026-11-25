@@ -29,6 +29,8 @@ use theodore_ports::{
 
 use crate::core::Core;
 use crate::error::AppError;
+use crate::usecases::fleet::{follows, kind_str};
+use theodore_fleet_protocol::DeviceKind;
 
 /// How long an interrupted agent gets to end its turn before it is killed.
 pub const PAUSE_WAIT: Duration = Duration::from_secs(20);
@@ -279,6 +281,38 @@ impl Core {
         }
     }
 
+    /// Whether `origin`, the device a hosted space runs here for, is a
+    /// person's own device trusted here: pinned, not capped as an `mcp`
+    /// one, and of a kind someone sits at (a phone, the web app, a
+    /// desktop). A pin from before kinds were kept counts by the cloud's
+    /// listing now; unknown → no.
+    async fn fleet_origin_is_person(&self, origin: &str) -> bool {
+        let settings = self.fleet_settings().await;
+        let Some(pin) = settings
+            .trusted_devices
+            .iter()
+            .find(|t| t.device_id == origin)
+        else {
+            return false;
+        };
+        if self.fleet_origin_mcp(pin) {
+            return false;
+        }
+        let listed = self
+            .fleet()
+            .devices
+            .iter()
+            .find(|d| d.device_id == pin.device_id)
+            .map(|d| d.info.kind);
+        match (pin.kind.as_deref(), listed) {
+            (Some(kind), _) => [DeviceKind::Mobile, DeviceKind::Web, DeviceKind::Desktop]
+                .iter()
+                .any(|k| kind_str(*k) == kind),
+            (None, Some(kind)) => follows(kind),
+            (None, None) => false,
+        }
+    }
+
     pub(crate) async fn clear_restart_pause(&self, space_id: &str) {
         let _ = self
             .apply(vec![NewAction {
@@ -307,18 +341,22 @@ impl Core {
 
     /// `theodore_update`: restarts into a downloaded update (the turns
     /// pause and resume), starts the download of an available one, or
-    /// says Theodore is up to date. Never for a space hosted here for
-    /// another device.
+    /// says Theodore is up to date. For a space hosted here for another
+    /// device, only when that device is the user's own trusted phone, web
+    /// app or computer (someone drives this computer from it); never for
+    /// an `mcp` origin or a device not trusted here.
     pub async fn space_tool_theodore_update(
         &self,
         space: &str,
         run: &str,
     ) -> Result<UpdateStart, SpaceToolError> {
         let row = self.space_row(space).await.map_err(refusal)?;
-        if self.fleet_hosts_local(&row.id).await {
+        if let Some(origin) = self.fleet_hosted_origin(&row.id).await
+            && !self.fleet_origin_is_person(&origin).await
+        {
             return Err(SpaceToolError::Unavailable(
                 "this space runs here for another device: Theodore is updated from this \
-                 computer, not from it"
+                 computer, or from the user's own trusted phone, not from it"
                     .into(),
             ));
         }
