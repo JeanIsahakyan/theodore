@@ -67,6 +67,8 @@ fn item(id: &str, status: &str) -> LocalSpaceItem {
         status: status.into(),
         mode: "edit".into(),
         agent: "claude".into(),
+        model: Some("claude-opus-5-5".into()),
+        effort: Some("high".into()),
         turns: 0,
         parent: None,
         relation: Some("child".into()),

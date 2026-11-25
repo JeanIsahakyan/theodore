@@ -111,7 +111,9 @@ const ASK_SYSTEM: &str = "The agent of another space on this computer is asking 
 pub(crate) const SUB_SPACES_PROMPT: &str = "When the work splits into clearly independent \
      parts (separate modules, separate fixes), you may start sub-spaces with space_start: \
      each gets its own branch and worktree and a goal that must say everything it needs \
-     (it doesn't see this conversation). Then space_wait for them and space_read their \
+     (it doesn't see this conversation). A sub-space runs on your model and effort unless \
+     you pass agent/model/effort; pick a cheaper model for search or mechanical work and a \
+     stronger one for hard work. Then space_wait for them and space_read their \
      results. Each sub-space's work stays on its own branch until you space_merge it: \
      merge each one you want to keep (its change lands here as uncommitted edits), \
      resolve the conflict markers in any files it lists, and check the result. \
@@ -362,6 +364,8 @@ fn item(s: &Space, caller: Option<&Space>) -> LocalSpaceItem {
         status: status_word(s).into(),
         mode: mode_word(s.mode).into(),
         agent: s.agent.as_str().into(),
+        model: s.model.clone(),
+        effort: s.effort.clone(),
         turns: s.turns,
         parent: s.parent.as_ref().map(|p| LocalSpaceParent {
             space: p.space.clone(),
@@ -951,6 +955,20 @@ impl Core {
             ),
             None => None,
         };
+        let text = |v: Option<String>| v.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+        let (model, effort) = (text(req.model), text(req.effort));
+        // On the parent's agent, model and effort unless named; checked
+        // before a person is asked (hosted) or a slot is counted.
+        let pick = self
+            .space_pick(
+                &me.project,
+                Some(&me),
+                agent,
+                model.as_deref(),
+                effort.as_deref(),
+            )
+            .await
+            .map_err(|why| refuse("model", why))?;
         let project = req
             .project
             .filter(|p| !p.trim().is_empty())
@@ -1033,10 +1051,10 @@ impl Core {
                     name: req.name.filter(|n| !n.trim().is_empty()),
                     branch: None,
                     base: None,
-                    agent,
-                    model: req.model.filter(|m| !m.trim().is_empty()),
+                    agent: Some(pick.agent),
+                    model: pick.model,
                     start_from: None,
-                    effort: req.effort.filter(|e| !e.trim().is_empty()),
+                    effort: pick.effort,
                     mode: Some(mode),
                 },
                 None,

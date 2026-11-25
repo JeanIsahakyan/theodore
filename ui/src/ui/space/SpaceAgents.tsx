@@ -13,8 +13,8 @@
  *   Background
  *   ⌘ pnpm dev                                                 4m 2s  [Stop]
  *   Sub-spaces
- *   ◌ Fix the flaky test   ?   claude · Edit · 3 turns  waiting for you → opens it
- *   ✓ Update the docs          claude · Edit · 2 turns  merged   (muted, last)
+ *   ◌ Fix the flaky test   ?   claude · Haiku 4.5 · Edit · 3 turns  waiting for you → opens it
+ *   ✓ Update the docs          claude · Opus 5.5 · Edit · 2 turns  merged   (muted, last)
  * ```
  *
  * A space mirrored from another computer lists the sub-spaces it started
@@ -82,12 +82,15 @@ const MODE_LABEL: Record<Space['mode'], string> = {
   run: 'Run',
 };
 
-/** "claude · Edit · 3 turns": what a sub-space runs, at a glance. */
+/** "claude · Opus 5.5 · Edit · 3 turns": what a sub-space runs, at a
+ *  glance; its model by name from its agent's catalog (`models`). */
 export function subSpaceMeta(
-  s: Pick<Space, 'agent' | 'mode' | 'turns'>,
+  s: Pick<Space, 'agent' | 'model' | 'mode' | 'turns'>,
+  models?: readonly AgentModel[],
 ): string {
   const turns = `${s.turns} turn${s.turns === 1 ? '' : 's'}`;
-  return `${s.agent} · ${MODE_LABEL[s.mode]} · ${turns}`;
+  const model = s.model ? ` · ${modelName(models, s.model)}` : '';
+  return `${s.agent}${model} · ${MODE_LABEL[s.mode]} · ${turns}`;
 }
 
 /** The word for where a sub-space stands: running → done → merged, or
@@ -231,6 +234,7 @@ export const SubSpaceLine = observer(function SubSpaceLine({
   const stage = childStage(space);
   const ask = stage === 'asking';
   const merged = stage === 'merged';
+  const catalog = useAgentModels(space.model ? [space.agent] : []);
   return (
     <li
       data-status={space.status}
@@ -273,7 +277,7 @@ export const SubSpaceLine = observer(function SubSpaceLine({
           />
         )}
         <span className="shrink-0 truncate text-muted">
-          {subSpaceMeta(space)}
+          {subSpaceMeta(space, catalog[space.agent])}
         </span>
         <span
           className={`space-subspace-stage shrink-0 ${stage === 'failed' ? 'text-danger' : ask ? 'text-accent' : 'text-muted'}`}

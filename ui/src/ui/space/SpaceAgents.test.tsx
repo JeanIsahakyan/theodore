@@ -149,6 +149,7 @@ describe('the strip', () => {
         parent: { space: 'a', depth: 1 },
         status: 'running',
         turns: 3,
+        model: 'claude-sonnet-5',
       }),
     );
     put(space('d', { parent: { space: 'a', depth: 1 }, mode: 'plan' }));
@@ -179,7 +180,8 @@ describe('the strip', () => {
       (r) => r.textContent,
     );
     expect(subs).toEqual([
-      'Goal cclaude · Edit · 3 turnsrunning',
+      // Its model by name, from its agent's catalog.
+      'Goal cclaude · Sonnet 5 · Edit · 3 turnsrunning',
       'Goal dclaude · Plan · 1 turndone',
     ]);
 

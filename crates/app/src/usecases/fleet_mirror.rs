@@ -363,6 +363,7 @@ impl Core {
                     status: crate::usecases::space_children::status_word(&s).to_string(),
                     mode: crate::usecases::fleet::fleet_mode(s.mode),
                     done: s.done_at.is_some(),
+                    model: s.model.clone(),
                 };
                 serde_json::to_value(sub).ok()
             }

@@ -6,9 +6,9 @@
  *
  * ```text
  * ╭ Sub-spaces ─────────────────────────────────────╮
- * │ Split the grouping crate        (Running)  Edit │ ─▶ its screen
- * │    Move the eval types           (Merged)  Edit │
- * │ Cache the grammars      (Waiting for you)  Plan │
+ * │ Split the grouping crate  (Running)  Opus 5.5 · Edit │ ─▶ its screen
+ * │    Move the eval types     (Merged)  Haiku 4.5 · Edit │
+ * │ Cache the grammars (Waiting for you)  Opus 5.5 · Plan │
  * ╰─────────────────────────────────────────────────╯
  * ```
  */
@@ -22,6 +22,7 @@ import { MODE_LABEL } from './logic';
 import {
   SUB_STATE_LABEL,
   SUB_STATE_TONE,
+  shortModel,
   subSpaceRows,
   type SubSpaceRow,
 } from './subSpaceTree';
@@ -45,10 +46,14 @@ const Row = memo(function Row({
   const { sub, depth, state } = row;
   const title = sub.title || sub.space;
   const label = SUB_STATE_LABEL[state];
+  const model = shortModel(sub.model);
+  const runs = model
+    ? `${model} · ${MODE_LABEL[sub.mode]}`
+    : MODE_LABEL[sub.mode];
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={`${title}, ${label}, ${MODE_LABEL[sub.mode]}`}
+      accessibilityLabel={`${title}, ${label}, ${runs}`}
       accessibilityHint="Opens the sub-space; long-press to copy its id"
       onPress={() => openSubSpace(root, sub.space)}
       onLongPress={() => {
@@ -67,8 +72,8 @@ const Row = memo(function Row({
       <View>
         <Badge label={label} tone={SUB_STATE_TONE[state]} />
       </View>
-      <Text style={[styles.mode, { color: p.muted }]}>
-        {MODE_LABEL[sub.mode]}
+      <Text numberOfLines={1} style={[styles.mode, { color: p.muted }]}>
+        {runs}
       </Text>
     </Pressable>
   );

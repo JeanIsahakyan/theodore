@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { MirroredSubSpace } from '../src/gen/fleet';
 import {
+  shortModel,
   subSpaceCounts,
   subSpaceRows,
   subSpaceState,
@@ -131,5 +132,17 @@ describe('subSpaceSummary', () => {
     expect(subSpaceSummary(byId(sub('a'), sub('b'), sub('c', 'a')))).toBe(
       '3 sub-spaces, 3 running',
     );
+  });
+});
+
+describe('shortModel', () => {
+  it('names a Claude model short and leaves others as they are', () => {
+    expect(shortModel('claude-opus-5-5')).toBe('Opus 5.5');
+    expect(shortModel('claude-haiku-4-5-20251001')).toBe('Haiku 4.5');
+    expect(shortModel('claude-fable-5')).toBe('Fable 5');
+    expect(shortModel('opus')).toBe('Opus');
+    expect(shortModel('gpt-5.5')).toBe('gpt-5.5');
+    expect(shortModel(null)).toBeNull();
+    expect(shortModel(undefined)).toBeNull();
   });
 });

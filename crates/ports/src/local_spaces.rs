@@ -46,6 +46,11 @@ pub struct LocalSpaceItem {
     /// `ask`, `plan`, `edit` or `run`.
     pub mode: String,
     pub agent: String,
+    /// The model its turns run on (`None`: an agent that lists none).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
     pub turns: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub parent: Option<LocalSpaceParent>,

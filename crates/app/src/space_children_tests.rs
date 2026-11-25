@@ -1048,3 +1048,176 @@ async fn a_merged_child_with_turns_since_still_counts_against_the_limit() {
         .await
         .unwrap();
 }
+
+fn model_info(
+    id: &str,
+    efforts: &[&str],
+    default_effort: Option<&str>,
+) -> theodore_ports::ModelInfo {
+    theodore_ports::ModelInfo {
+        id: id.into(),
+        label: id.into(),
+        description: None,
+        efforts: efforts.iter().map(|e| e.to_string()).collect(),
+        default_effort: default_effort.map(str::to_string),
+        older: false,
+    }
+}
+
+/// Claude lists opus then haiku; Codex lists gpt-a then gpt-b.
+fn set_catalog(e: &Env) {
+    use theodore_domain::AgentId;
+    e.f.agents.set_models(
+        AgentId::Claude,
+        vec![
+            model_info("claude-opus-5-5", &["low", "medium", "high"], Some("high")),
+            model_info("claude-haiku-5-5", &["low", "medium"], Some("low")),
+        ],
+    );
+    e.f.agents.set_models(
+        AgentId::Codex,
+        vec![
+            model_info("gpt-a", &["low", "medium"], Some("medium")),
+            model_info("gpt-b", &["low"], Some("low")),
+        ],
+    );
+}
+
+/// A parent pinned to haiku at medium (the settings when it started).
+async fn haiku_parent(e: &Env) -> Space {
+    set_catalog(e);
+    put_setting(
+        e,
+        "agents.claude.model",
+        serde_json::json!("claude-haiku-5-5"),
+    );
+    put_setting(e, "agents.claude.effort", serde_json::json!("medium"));
+    let p = parent(e).await;
+    assert_eq!(
+        (p.model.as_deref(), p.effort.as_deref()),
+        (Some("claude-haiku-5-5"), Some("medium"))
+    );
+    // The user's defaults move on; the parent's turns still run on haiku.
+    put_setting(
+        e,
+        "agents.claude.model",
+        serde_json::json!("claude-opus-5-5"),
+    );
+    put_setting(e, "agents.claude.effort", serde_json::json!("high"));
+    p
+}
+
+#[tokio::test]
+async fn a_child_inherits_the_parents_agent_model_and_effort() {
+    let e = start_env(true).await;
+    let p = haiku_parent(&e).await;
+    let child = e
+        .core
+        .sub_space_start(&p.id, SpaceMode::Edit, goal("Grep the callers"))
+        .await
+        .unwrap();
+    assert_eq!(child.agent, "claude");
+    assert_eq!(child.model.as_deref(), Some("claude-haiku-5-5"));
+    assert_eq!(child.effort.as_deref(), Some("medium"));
+    let row = settle(&e, &child.space).await;
+    assert_eq!(
+        (row.agent, row.model.as_deref(), row.effort.as_deref()),
+        (
+            theodore_domain::AgentId::Claude,
+            Some("claude-haiku-5-5"),
+            Some("medium")
+        )
+    );
+}
+
+#[tokio::test]
+async fn a_child_names_its_own_model_and_effort() {
+    let e = start_env(true).await;
+    let p = haiku_parent(&e).await;
+    let child = e
+        .core
+        .sub_space_start(
+            &p.id,
+            SpaceMode::Edit,
+            LocalSpaceStart {
+                model: Some("opus".into()),
+                effort: Some("high".into()),
+                ..goal("Design the migration")
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        child.model.as_deref(),
+        Some("claude-opus-5-5"),
+        "made concrete"
+    );
+    assert_eq!(child.effort.as_deref(), Some("high"));
+}
+
+#[tokio::test]
+async fn another_agent_without_a_model_gets_its_default_made_concrete() {
+    let e = start_env(true).await;
+    let p = haiku_parent(&e).await;
+    let child = e
+        .core
+        .sub_space_start(
+            &p.id,
+            SpaceMode::Edit,
+            LocalSpaceStart {
+                agent: Some("codex".into()),
+                ..goal("Port it")
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(child.agent, "codex");
+    // No agents.codex.model: its first listed model, at that model's effort.
+    assert_eq!(child.model.as_deref(), Some("gpt-a"));
+    assert_eq!(child.effort.as_deref(), Some("medium"));
+}
+
+#[tokio::test]
+async fn an_unknown_model_is_refused_with_the_valid_ids() {
+    let e = start_env(true).await;
+    let p = haiku_parent(&e).await;
+    let r = e
+        .core
+        .sub_space_start(
+            &p.id,
+            SpaceMode::Edit,
+            LocalSpaceStart {
+                model: Some("gpt-a".into()),
+                ..goal("x")
+            },
+        )
+        .await;
+    let Err(SpaceToolError::Unavailable(why)) = &r else {
+        panic!("not refused: {r:?}");
+    };
+    assert!(why.starts_with("sub_spaces.model"), "{why}");
+    assert!(why.contains("claude-opus-5-5, claude-haiku-5-5"), "{why}");
+    let all = e.core.local_spaces(None).await.unwrap();
+    assert!(
+        !all.iter().any(|s| s.parent.is_some()),
+        "nothing was started"
+    );
+}
+
+#[tokio::test]
+async fn a_parent_without_a_model_gives_its_child_a_concrete_one() {
+    let e = start_env(true).await;
+    set_catalog(&e);
+    // Nothing set: the parent ran on the CLI's default (an older space).
+    let p = parent(&e).await;
+    assert_eq!(p.model, None);
+    let child = e
+        .core
+        .sub_space_start(&p.id, SpaceMode::Edit, goal("x"))
+        .await
+        .unwrap();
+    assert_eq!(child.model.as_deref(), Some("claude-opus-5-5"));
+    assert_eq!(child.effort.as_deref(), Some("high"));
+    let row = settle(&e, &child.space).await;
+    assert_eq!(row.model.as_deref(), Some("claude-opus-5-5"));
+}

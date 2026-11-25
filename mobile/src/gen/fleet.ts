@@ -281,6 +281,11 @@ export type MirroredSubSpace = {
 	mode: FleetMode,
 	/**  Merged into its parent, or shipped. */
 	done: boolean,
+	/**
+	 *  The model its turns run on; `None` from an older host, or an
+	 *  agent that lists no models.
+	 */
+	model?: string | null,
 };
 
 export type ProjectRef = {
