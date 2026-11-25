@@ -73,6 +73,7 @@ fn item(id: &str, status: &str) -> LocalSpaceItem {
         remote: false,
         done: false,
         updated_at: 0,
+        fleet_space: None,
     }
 }
 

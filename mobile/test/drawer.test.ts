@@ -4,6 +4,7 @@ import {
   COMPUTERS_SECTION,
   computerSections,
   computerSpaceDot,
+  computerSubSummary,
   dayGroup,
   drawerClosesOn,
   initials,
@@ -163,6 +164,8 @@ describe('computerSections', () => {
     status: 'idle',
     mode: 'edit',
     activeAt: 1,
+    online: true,
+    subSpaces: [],
     ...over,
   });
 
@@ -188,5 +191,30 @@ describe('computerSections', () => {
     expect(computerSpaceDot(c('a', { status: 'setting_up' }))).toBe('running');
     expect(computerSpaceDot(c('a', { status: 'failed' }))).toBe('failed');
     expect(computerSpaceDot(c('a'))).toBeNull();
+  });
+});
+
+describe('computerSubSummary', () => {
+  const sub = (status: string) => ({ space: status, title: status, status });
+  const of = (subSpaces: { space: string; title: string; status: string }[]) =>
+    computerSubSummary({
+      hostDevice: 'dev_mac',
+      hostName: 'mac-A',
+      space: 'a',
+      name: 'a',
+      title: 'A',
+      project: '',
+      status: 'idle',
+      mode: null,
+      activeAt: 0,
+      online: true,
+      subSpaces,
+    });
+  it('counts them, and the running ones', () => {
+    expect(of([])).toBeNull();
+    expect(of([sub('idle')])).toBe('1 sub-space');
+    expect(of([sub('running'), sub('setting_up'), sub('idle')])).toBe(
+      '3 sub-spaces, 2 running',
+    );
   });
 });

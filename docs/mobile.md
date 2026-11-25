@@ -142,11 +142,14 @@ welcome ─▶ my_spaces{list} (newest first, ≤ 200)
                    ─▶ the host's signed started event and mirrored row replace them
    missing from the list ─▶ never dropped for that
 adopt sent ─▶ list_my_spaces (the welcome's list predates the move)
-first devices list of the link, pull-to-refresh
+first devices list of the link, back in the foreground, every minute while
+the list shows, pull-to-refresh
    ─▶ list_spaces (Ask) to each trusted computer online
-   ─▶ "On your computers": its other spaces, newest first, without
-      archived / done ones, mirrors of spaces running elsewhere, sub-spaces,
-      and the spaces tracked here (matched by the host's name for them)
+   ─▶ "On your computers": every space on it, online computers first, then
+      newest; without archived / done ones and mirrors of spaces running
+      elsewhere; a sub-space counted under its top parent ("2 sub-spaces,
+      1 running"); a space tracked here left out: the computer names its
+      fleet id (`fleet_space`), an older one is matched by its name for it
    ─▶ a row opens the sub-space screen (/sub-space/<computer id>/<local id>):
       read_space every 3 s, send_to, answer_space
 pull-to-refresh ─▶ list_my_spaces + the computers again (`refreshSpaces`)
@@ -155,7 +158,10 @@ pull-to-refresh ─▶ list_my_spaces + the computers again (`refreshSpaces`)
 - A computer that refuses (`fleet.untrusted_device`: it doesn't trust this
   phone yet) or doesn't answer keeps the rows it gave last; one no longer
   trusted here loses them.
-- The computers' rows aren't saved: they come with every link.
+- An offline computer keeps its last rows, dimmed ("mac-A, offline"). They
+  are saved per `<user>.<org>` (`theodore.fleet.computers.<user>.<org>`,
+  ≤ 50 per computer, shape-checked on load), listed at launch before the
+  socket, and removed with the account's other sets.
 
 ## Protocol additions (crates/fleet-protocol, v4)
 

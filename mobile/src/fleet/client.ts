@@ -125,6 +125,7 @@ import type { FleetPlatform, FleetSocket } from './platform-types';
 import {
   cloudSpaceOf,
   listedSpacesOf,
+  listedWire,
   type ListedSpace,
   ERROR_TEXT_MAX,
   LINES_KEPT,
@@ -504,10 +505,13 @@ export function createFleetClient(
       computerSpaces: computerViews(),
     });
   /**
-   * The computers' own spaces without those tracked here: a space this
-   * device started or follows is on its host under its local id, which
-   * the host never says; the host's name for it (the signed `started`
-   * name, the mirrored row's) is what matches it.
+   * The computers' own spaces without those tracked here, sub-spaces under
+   * their top parent. A space this device started or follows is on its
+   * host under a local id: the host names its `rs_` id (`fleet_space`), an
+   * older host doesn't, and then its name for it (the signed `started`
+   * name, the mirrored row's) matches it. A sub-space of one tracked here
+   * is in that space's own tree already. A computer offline keeps its last
+   * rows, `online: false`.
    */
   const computerViews = (): ComputerSpaceView[] => {
     const known = new Set<string>();
@@ -517,12 +521,51 @@ export function createFleetClient(
         if (n) known.add(`${host}\n${n}`);
     }
     const out: ComputerSpaceView[] = [];
-    for (const [hostDevice, c] of computers)
+    for (const [hostDevice, c] of computers) {
+      const online =
+        devices.find((d) => d.device_id === hostDevice)?.online === true;
+      const byId = new Map(c.spaces.map((s) => [s.space, s]));
+      const followedHere = (s: ListedSpace) =>
+        (s.fleetSpace !== null && tracked.has(s.fleetSpace)) ||
+        (!!s.name && known.has(`${hostDevice}\n${s.name}`));
+      /** The top of its tree as listed (a parent not listed: itself). */
+      const topOf = (s: ListedSpace): ListedSpace => {
+        let at = s;
+        for (let i = 0; i < 10 && at.parent; i++) {
+          const up = byId.get(at.parent);
+          if (!up) break;
+          at = up;
+        }
+        return at;
+      };
+      const rows = new Map<string, ComputerSpaceView>();
       for (const s of c.spaces) {
-        if (s.name && known.has(`${hostDevice}\n${s.name}`)) continue;
-        out.push({ ...s, hostDevice, hostName: c.hostName });
+        if (s.parent && byId.has(s.parent)) continue;
+        if (followedHere(s)) continue;
+        const { parent: _p, fleetSpace: _f, ...rest } = s;
+        rows.set(s.space, {
+          ...rest,
+          hostDevice,
+          hostName: c.hostName,
+          online,
+          subSpaces: [],
+        });
       }
-    return out.sort((a, b) => b.activeAt - a.activeAt);
+      for (const s of c.spaces) {
+        if (!s.parent || !byId.has(s.parent)) continue;
+        const row = rows.get(topOf(s).space);
+        if (row)
+          row.subSpaces.push({
+            space: s.space,
+            title: s.title,
+            status: s.status,
+          });
+      }
+      out.push(...rows.values());
+    }
+    return out.sort(
+      (a, b) => Number(b.online) - Number(a.online) || b.activeAt - a.activeAt,
+    );
   };
   const publishLines = (space: string) => {
     const x = tracked.get(space);
@@ -651,6 +694,45 @@ export function createFleetClient(
     return queue(() => saved.write(s, device, list, changed));
   };
 
+  /** Where the computers' last rows are kept, per `<user>.<org>`. */
+  const computersKey = (sc: string) => `theodore.fleet.computers.${sc}`;
+  /** The computers' rows, kept for when they are offline or the app restarts. */
+  const saveComputers = () => {
+    const sc = scope;
+    if (!sc) return;
+    const text = JSON.stringify({
+      v: 1,
+      hosts: Object.fromEntries(
+        [...computers].map(([id, c]) => [
+          id,
+          { hostName: c.hostName, spaces: c.spaces.map(listedWire) },
+        ]),
+      ),
+    });
+    void queue(() => deps.data.set(computersKey(sc), text));
+  };
+  /** The computers' rows kept for `sc`, shape-checked again. */
+  const loadComputers = async (sc: string) => {
+    const text = await deps.data.get(computersKey(sc)).catch(() => null);
+    let v: unknown = null;
+    try {
+      v = text ? JSON.parse(text) : null;
+    } catch {
+      v = null;
+    }
+    if (!isObj(v) || v.v !== 1 || !isObj(v.hosts)) return;
+    for (const [id, c] of Object.entries(v.hosts).slice(0, 20)) {
+      if (!validDeviceId(id) || !isObj(c) || computers.has(id)) continue;
+      computers.set(id, {
+        hostName: truncate(
+          typeof c.hostName === 'string' ? c.hostName : '',
+          100,
+        ),
+        spaces: listedSpacesOf(c),
+      });
+    }
+  };
+
   const scheduleSave = () => {
     saveTimer ??= setTimeout(() => void flush(), deps.saveDelayMs);
   };
@@ -674,7 +756,10 @@ export function createFleetClient(
     dirty = new Set();
     if (saveTimer) clearTimeout(saveTimer);
     saveTimer = null;
-    if (old && forget) void queue(() => saved.clear(old));
+    if (old && forget) {
+      void queue(() => saved.clear(old));
+      void queue(() => deps.data.remove(computersKey(old)).catch(() => {}));
+    }
   };
 
   /** Spaces gone from the list: their lines and mirror leave the store too. */
@@ -715,6 +800,7 @@ export function createFleetClient(
     });
     scope = next;
     savedFor = device;
+    await loadComputers(next);
     const lines: Record<string, SpaceLine[]> = {};
     const mirrors: Record<string, SpaceMirror> = {};
     for (const r of list) {
@@ -741,7 +827,10 @@ export function createFleetClient(
       lines[r.view.space] = [...x.lines];
       mirrors[r.view.space] = x.mirror;
     }
-    if (!list.length) return;
+    if (!list.length) {
+      if (computers.size) publishSpaces();
+      return;
+    }
     publishSpaces();
     set((s) => ({
       lines: { ...s.lines, ...lines },
@@ -1154,6 +1243,8 @@ export function createFleetClient(
           : [];
         await verifyDelegations();
         await publishDevices();
+        // Who is online changed: the computers' rows dim or light up.
+        if (computers.size) publishSpaces();
         // The first list of this run: Home and the drawer leave their
         // loading state (src/ui/load.ts).
         if (!superseded) set({ welcomed: true });
@@ -1423,7 +1514,10 @@ export function createFleetClient(
               }
             }),
         );
-        if (live()) publishSpaces();
+        if (live()) {
+          publishSpaces();
+          saveComputers();
+        }
       } finally {
         listing = null;
       }
@@ -2132,8 +2226,9 @@ export function createFleetClient(
       await ops;
     },
 
-    async refreshSpaces() {
+    async refreshSpaces(opts = {}) {
       if (!link?.welcomed) return;
+      if (opts.quiet) return listComputers();
       set({ refreshing: true });
       try {
         sendMsg({ type: 'list_my_spaces' });
@@ -2402,8 +2497,11 @@ export function createFleetClient(
       }
       return;
     }
-    // Back in front: this app (or tab) takes the link again.
+    // Back in front: this app (or tab) takes the link again, and a link
+    // that stayed up asks the computers again (a new one does it on its
+    // first devices list).
     heldOff = false;
+    if (link?.welcomed) void listComputers();
     if (!wanted || fatal || link) return;
     if (redial) clearTimeout(redial);
     redial = null;

@@ -245,6 +245,10 @@ export interface ComputerSpaceView {
   mode: FleetMode | null;
   /** Unix ms of its last activity. */
   activeAt: number;
+  /** The computer is online now; else its last known rows, dimmed. */
+  online: boolean;
+  /** Its sub-spaces on that computer (any depth), as listed. */
+  subSpaces: { space: string; title: string; status: string }[];
 }
 
 export interface FleetSnapshot {
@@ -302,10 +306,14 @@ export interface FleetClient {
   /**
    * The list's pull-to-refresh: asks the cloud for this device's spaces
    * again (`list_my_spaces`) and every trusted computer for its own
-   * (`list_spaces`). Resolves once the computers answered (or timed out);
+   * (`list_spaces`); `quiet` (every minute while the list shows) asks the
+   * computers only, without the spinner. Resolves once the computers answered (or timed out);
    * a computer that refuses keeps its last rows.
    */
-  refreshSpaces(): Promise<void>;
+  refreshSpaces(opts?: {
+    /** The periodic one: no spinner, the computers only. */
+    quiet?: boolean;
+  }): Promise<void>;
   /** `agent` / `model` / `effort`: only what was picked; the host's
    *  defaults run for the rest. `attachments`: blobs uploaded for that
    *  computer (`uploadAttachment`), for the space's `.context/`. */

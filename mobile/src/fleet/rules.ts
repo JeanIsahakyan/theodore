@@ -446,27 +446,31 @@ export interface ListedSpace {
   status: string;
   mode: FleetMode | null;
   activeAt: number;
+  /** Its parent's local id on that computer: a sub-space. */
+  parent: string | null;
+  /** The fleet's `rs_` id when the computer hosts it for a device. */
+  fleetSpace: string | null;
 }
 
 /**
  * The host's `ok` value for `list_spaces` as the list takes it, field by
  * field (`crates/ports/src/local_spaces.rs` `LocalSpaceList`): at most
  * COMPUTER_SPACES_MAX rows, ids that may name a route, known statuses.
- * Left out: archived and done ones, mirrors of spaces running on another
- * device (`remote`), and sub-spaces (shown under their parent).
+ * Left out: archived and done ones, and mirrors of spaces running on
+ * another device (`remote`). Sub-spaces stay, with their parent's id.
  */
 export function listedSpacesOf(value: unknown): ListedSpace[] {
   if (!isObj(value) || !Array.isArray(value.spaces)) return [];
+  const id = (v: unknown): string | null =>
+    typeof v === 'string' && LOCAL_ID.test(v) ? v : null;
   return value.spaces
     .slice(0, COMPUTER_SPACES_MAX)
     .filter(isObj)
     .filter(
       (s) =>
-        typeof s.space === 'string' &&
-        LOCAL_ID.test(s.space) &&
+        id(s.space) !== null &&
         s.remote !== true &&
         s.done !== true &&
-        !s.parent &&
         s.status !== 'archived',
     )
     .map((s) => ({
@@ -479,8 +483,23 @@ export function listedSpacesOf(value: unknown): ListedSpace[] {
         : 'unknown',
       mode: isMode(s.mode) ? s.mode : null,
       activeAt: num(s.updated_at),
+      parent: isObj(s.parent) ? id(s.parent.space) : null,
+      fleetSpace: id(s.fleet_space),
     }));
 }
+
+/** A listed space back in the wire shape: how it is saved, read with `listedSpacesOf`. */
+export const listedWire = (s: ListedSpace) => ({
+  space: s.space,
+  name: s.name,
+  title: s.title,
+  project: s.project,
+  status: s.status,
+  mode: s.mode,
+  updated_at: s.activeAt,
+  parent: s.parent ? { space: s.parent } : null,
+  fleet_space: s.fleetSpace,
+});
 
 /** One `my_spaces` row as the list takes it; `null` when it can't be one. */
 export interface CloudSpace {

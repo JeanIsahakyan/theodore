@@ -162,3 +162,17 @@ export function computerSpaceDot(s: ComputerSpaceView): SpaceDot | null {
   if (s.status === 'failed') return 'failed';
   return null;
 }
+
+/** "2 sub-spaces, 1 running" under a computer's own space; `null`: none. */
+export function computerSubSummary(s: ComputerSpaceView): string | null {
+  const n = s.subSpaces.length;
+  if (!n) return null;
+  const running = s.subSpaces.filter(
+    (c) => c.status === 'running' || c.status === 'setting_up',
+  ).length;
+  const head = n === 1 ? '1 sub-space' : `${n} sub-spaces`;
+  return running ? `${head}, ${running} running` : head;
+}
+
+/** While the list shows, the computers are asked again this often. */
+export const COMPUTERS_REFRESH_MS = 60_000;

@@ -500,7 +500,7 @@ request ─▶ the gate above (pin, target_key, fresh, accept_remote, claim)
 
 | Op | Counts as | Does | Value |
 | --- | --- | --- | --- |
-| `list_spaces {project?}` | Ask | every space here not archived nor done, newest first, ≤ 50 | `spaces_list`'s: `{note, spaces, truncated}` |
+| `list_spaces {project?}` | Ask | every space here not archived nor done, newest first, ≤ 50 | `spaces_list`'s: `{note, spaces, truncated}`; a space hosted here for the fleet also carries its `fleet_space` (`rs_` id) |
 | `read_space {space, messages?}` | Ask | goal, status, last messages (10, ≤ 50), running text, question, progress, diff stat | `space_read`'s |
 | `ask_space {space, question}` | Ask | its agent answers from a read-only fork of its session (or a fresh read-only agent); the space is left as it was; ≤ 2 at once per asking device; `fleet.timeout` after `spaces.ask_timeout_secs` | `space_ask`'s: `{note, space, answer, agent, model, how}` |
 | `send_to {space, message}` | the space's own mode | its next turn, as from you; its mode never changes; queued while it runs ("Sends queue") | `{message}`, queued: `{message, queued: true, position}` |
@@ -900,6 +900,9 @@ The phone also lists each trusted computer's other spaces: after its first
 what they answer, without the spaces it already follows, under "On your
 computers" (docs/mobile.md "The list comes from the cloud"). A computer
 keeps its own list (its `fleet.follow:<rs_>` rows) and ignores `my_spaces`.
+In a `list_spaces` answer a space the computer hosts for the fleet carries
+its `rs_` id (`fleet_space`), so the device that follows it under that id
+lists it once.
 
 ## Files (blobs)
 

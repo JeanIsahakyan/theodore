@@ -11,7 +11,8 @@
  *   3 sub-spaces, 1 running          its sub-spaces, when it has any
  * Yesterday · Previous 7 days · Older
  * On your computers                 the trusted computers' other spaces
- *   Port the parser · mac-A  ●       ─▶ the sub-space screen (read_space)
+ *   Port the parser  ●               ─▶ the sub-space screen (read_space)
+ *   mac-A · 2 sub-spaces              a computer offline: its last rows, dimmed
  * ──────────────────────────────
  * ▢ Devices
  * (JI) Jean · Acme         ⇅  ⚙     account row ─▶ the Accounts sheet (switch
@@ -28,7 +29,8 @@
  * this phone can't archive have no menu.
  *
  * Pull down to refresh: the cloud's list of this device's spaces again
- * (`list_my_spaces`) and each trusted computer's own (`list_spaces`).
+ * (`list_my_spaces`) and each trusted computer's own (`list_spaces`); the
+ * computers are asked again every minute while the list shows.
  *
  * Before this run's first devices list (src/ui/load.ts) an empty list is
  * skeleton rows, not "Spaces you start or follow show here."; the server
@@ -55,8 +57,10 @@ import { useAuthState } from '../shell/AppProviders';
 import { spaceHref, subSpaceHref } from '../shell/navigate';
 import { useFleetState } from '../state/fleet';
 import {
+  COMPUTERS_REFRESH_MS,
   computerSections,
   computerSpaceDot,
+  computerSubSummary,
   initials,
   spaceDot,
   spaceSections,
@@ -258,7 +262,9 @@ function ComputerItem({
   const p = usePalette();
   const dot = computerSpaceDot(space);
   const title = space.title || space.name || 'Untitled space';
-  const label = [title, `on ${space.hostName}`, dot ? DOT_LABEL[dot] : null]
+  const subs = computerSubSummary(space);
+  const where = space.online ? space.hostName : `${space.hostName}, offline`;
+  const label = [title, `on ${where}`, dot ? DOT_LABEL[dot] : null, subs]
     .filter(Boolean)
     .join(', ');
   return (
@@ -274,6 +280,7 @@ function ComputerItem({
           ? `mx-3 h-14 flex-row items-center gap-2 overflow-hidden rounded-full px-4 ${active ? 'bg-primary/15' : ''}`
           : `mx-2 flex-row items-center gap-2 rounded-[10px] px-4 py-2.5 active:bg-accent ${active ? 'bg-muted' : ''}`
       }
+      style={space.online ? undefined : { opacity: 0.5 }}
     >
       <View className="flex-1">
         <Text
@@ -283,7 +290,7 @@ function ComputerItem({
           {title}
         </Text>
         <Text numberOfLines={1} className="text-xs text-muted-foreground">
-          {space.hostName}
+          {[where, subs].filter(Boolean).join(' · ')}
         </Text>
       </View>
       {dot ? (
@@ -389,6 +396,14 @@ export function DrawerContent({
   const computerSpaces = useFleetState((s) => s.computerSpaces);
   const refreshing = useFleetState((s) => s.refreshing);
   const archive = useArchive('row_menu');
+  // While the list shows: the computers' spaces stay current.
+  useEffect(() => {
+    const t = setInterval(
+      () => void fleet.refreshSpaces({ quiet: true }),
+      COMPUTERS_REFRESH_MS,
+    );
+    return () => clearInterval(t);
+  }, [fleet]);
   const load = useLoadState();
   const [query, setQuery] = useState('');
   const now = useMinute();

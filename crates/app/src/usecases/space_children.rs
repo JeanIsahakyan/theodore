@@ -371,6 +371,7 @@ fn item(s: &Space, caller: Option<&Space>) -> LocalSpaceItem {
         remote: s.remote.is_some(),
         done: s.done_at.is_some(),
         updated_at: s.updated_at,
+        fleet_space: None,
     }
 }
 

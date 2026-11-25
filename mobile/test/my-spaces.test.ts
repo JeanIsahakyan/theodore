@@ -285,7 +285,7 @@ describe('refresh and the computers’ own spaces', () => {
         item('mine'),
         item('0000000000aa', { remote: true }),
         item('0000000000bb', { done: true }),
-        item('0000000000cc', { parent: { space: 'x', title: 'X' } }),
+        item('0000000000ee', { status: 'archived' }),
         item('../bad'),
         item('0000000000dd', { status: 'running', updated_at: 30 }),
       ]),
@@ -298,6 +298,7 @@ describe('refresh and the computers’ own spaces', () => {
       ['0000000000dd', HOST, 'running'],
       ['a1b2c3d4e5f6', HOST, 'idle'],
     ]);
+    expect(state().computerSpaces[0]!.online).toBe(true);
     expect(state().computerSpaces[1]!.title).toBe('Title a1b2c3d4e5f6');
   });
 
@@ -313,6 +314,97 @@ describe('refresh and the computers’ own spaces', () => {
     // The reply never comes: it times out, the list stays empty.
     expect(state().computerSpaces).toEqual([]);
     expect(sock.of('request')).toHaveLength(1);
+  });
+
+  it('dedupes by the fleet id the computer names, and nests sub-spaces', async () => {
+    const { client, sock } = await connected();
+    // Tracked here under its fleet id; the computer calls it otherwise.
+    sock.deliver({ type: 'my_spaces', list: [row('rs_1')] });
+    await waitFor(() => state().spaces.length === 1, 'tracked');
+    const done = client.refreshSpaces();
+    await answerList(
+      sock,
+      listing([
+        item('aaaaaaaaaaaa', { fleet_space: 'rs_1', name: 'other-name' }),
+        // Its sub-space: in the followed space's own tree, not here.
+        item('aaaaaaaaaaa1', { parent: { space: 'aaaaaaaaaaaa', depth: 1 } }),
+        item('bbbbbbbbbbbb', { updated_at: 5 }),
+        item('bbbbbbbbbbb1', {
+          status: 'running',
+          parent: { space: 'bbbbbbbbbbbb', depth: 1 },
+        }),
+        item('bbbbbbbbbbb2', { parent: { space: 'bbbbbbbbbbb1', depth: 2 } }),
+        // Its parent isn't listed: a row of its own.
+        item('cccccccccccc', { parent: { space: 'gone', depth: 1 } }),
+      ]),
+    );
+    await done;
+    const rows = state().computerSpaces;
+    expect(rows.map((c) => c.space).sort()).toEqual([
+      'bbbbbbbbbbbb',
+      'cccccccccccc',
+    ]);
+    const b = rows.find((c) => c.space === 'bbbbbbbbbbbb')!;
+    expect(b.subSpaces.map((c) => [c.space, c.status])).toEqual([
+      ['bbbbbbbbbbb1', 'running'],
+      ['bbbbbbbbbbb2', 'idle'],
+    ]);
+  });
+
+  it('keeps an offline computer’s rows, dimmed, across a restart', async () => {
+    const { client, sock, hub } = await connected();
+    const done = client.refreshSpaces();
+    await answerList(sock, listing([item('a1b2c3d4e5f6')]));
+    await done;
+    expect(state().computerSpaces.map((c) => c.online)).toEqual([true]);
+    // The computer goes offline: its rows stay, dimmed.
+    sock.deliver({
+      type: 'devices',
+      devices: [{ ...device(HOST, hostKey), online: false }],
+    });
+    await waitFor(() => state().computerSpaces[0]?.online === false, 'dim');
+    expect(state().computerSpaces.map((c) => c.space)).toEqual([
+      'a1b2c3d4e5f6',
+    ]);
+    // Asked again while it is away: nothing sent to it, its rows stay.
+    const before = sock.of('request').length;
+    await client.refreshSpaces({ quiet: true });
+    expect(sock.of('request')).toHaveLength(before);
+    expect(state().computerSpaces).toHaveLength(1);
+
+    // A restart lists them before the socket says anything.
+    await sleep(10);
+    clients.forEach((c) => c.stop());
+    useFleetState.setState(initialFleet, true);
+    const r = setup({ storage: hub.storage, data: hub.data });
+    await r.client.start();
+    expect(state().computerSpaces.map((c) => [c.space, c.online])).toEqual([
+      ['a1b2c3d4e5f6', false],
+    ]);
+  });
+
+  it('a quiet refresh asks the computers only, without the spinner', async () => {
+    const { client, sock } = await connected();
+    sock.sent = [];
+    const done = client.refreshSpaces({ quiet: true });
+    expect(state().refreshing).toBe(false);
+    await answerList(sock, listing([item('a1b2c3d4e5f6')]));
+    await done;
+    expect(sock.of('list_my_spaces')).toEqual([]);
+    expect(state().computerSpaces).toHaveLength(1);
+  });
+
+  it('asks the computers again back in the foreground', async () => {
+    const { hub, sock } = await connected();
+    await sleep(TIMING.replyWaitMs + 20);
+    const before = sock.of('request').length;
+    hub.setActive(false);
+    hub.setActive(true);
+    await waitFor(
+      () => sock.of('request').length === before + 1,
+      'asked again',
+    );
+    expect(lastRequest(sock).op).toEqual({ op: 'list_spaces', project: null });
   });
 
   it('does nothing without a welcomed link', async () => {

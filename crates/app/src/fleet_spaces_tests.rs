@@ -966,3 +966,34 @@ mod queue;
 
 #[path = "fleet_files_tests.rs"]
 mod files;
+
+#[tokio::test]
+async fn list_spaces_names_the_fleet_id_of_a_space_hosted_here() {
+    let f = fixtures();
+    let h = host(&f, DeviceKind::Desktop, SpaceMode::Edit).await;
+    let own = own_space(&f, &h, "Pick a store", SpaceMode::Edit).await;
+    f.agents.push_script(done("ok"));
+    run(
+        &f,
+        &h.key,
+        start_with(&h.project.id, "rs_h", FleetMode::Edit, None, 0),
+    )
+    .await;
+    let local = local_of(&f, "rs_h");
+    settled(&f, &local).await;
+
+    let list = ok_value(run(&f, &h.key, RemoteOp::ListSpaces { project: None }).await);
+    let row = |id: &str| {
+        list["spaces"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|s| s["space"] == id)
+            .cloned()
+            .unwrap_or_else(|| panic!("{id} not listed: {list}"))
+    };
+    // Hosted for the fleet: its `rs_` id, so its follower lists it once.
+    assert_eq!(row(&local)["fleet_space"], "rs_h");
+    // This computer's own: no such field at all.
+    assert!(row(&own.id).get("fleet_space").is_none());
+}

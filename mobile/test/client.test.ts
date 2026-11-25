@@ -371,7 +371,12 @@ describe('connect', () => {
     }
     // A send waits for the host's word when the account changes.
     const sending = client.send(space, 'hello');
-    await waitFor(() => sock.of('request').length === 2, 'send request');
+    // (Back in front, the computers were asked for their spaces too.)
+    await waitFor(
+      () =>
+        sock.of('request').some((r) => r.envelope.body.includes('"op":"send"')),
+      'send request',
+    );
     account.emit({ ...session('tok-b', 'org_test'), userId: 'user_2' });
     expect(sock.closed).not.toBeNull();
     await expect(sending).rejects.toThrow(/didn't answer in time/);

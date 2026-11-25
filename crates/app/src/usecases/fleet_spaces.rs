@@ -312,10 +312,21 @@ impl Core {
         };
         let value = match req.op.clone() {
             RemoteOp::ListSpaces { project } => {
-                let list = self
+                let mut list = self
                     .spaces_list_for(None, project.as_deref(), false)
                     .await
                     .map_err(tool_refusal)?;
+                // The `rs_` id of a space hosted here for the fleet: the
+                // device that follows it under that id lists it once.
+                let by_local: std::collections::HashMap<String, String> = self
+                    .fleet()
+                    .hosted
+                    .iter()
+                    .map(|(rs, h)| (h.row.local_space.clone(), rs.clone()))
+                    .collect();
+                for item in &mut list.spaces {
+                    item.fleet_space = by_local.get(&item.space).cloned();
+                }
                 json(serde_json::to_value(list))?
             }
             RemoteOp::ReadSpace { space, messages } => {
