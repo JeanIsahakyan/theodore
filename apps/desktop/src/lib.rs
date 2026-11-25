@@ -175,6 +175,7 @@ pub fn specta_builder() -> Builder<tauri::Wry> {
             commands::account_accounts,
             commands::account_switch,
             commands::account_sign_out_of,
+            commands::account_delete,
             commands::fleet_status,
             commands::fleet_set_settings,
             commands::fleet_trust_device,

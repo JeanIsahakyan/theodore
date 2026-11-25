@@ -21,6 +21,11 @@
 # (or the deploy steps pending in docs/cloud.md). Without both, nothing
 # leaves the Worker and the relay drops what it gets.
 # THEODORE_ENV names deployment.environment.name.
+#
+# Account deletion (docs/telemetry.md "Account deletion"), optional: the
+# secret POSTHOG_PERSONAL_API_KEY (person:write) and the vars
+# POSTHOG_PROJECT_ID / POSTHOG_API_HOST delete the user's PostHog person.
+# Without them the deletion skips PostHog.
 name = "theodore-cloud"
 main = "src/index.ts"
 compatibility_date = "2026-11-01"

@@ -275,6 +275,50 @@ async function deleteBlob(_request: Request, c: Call): Promise<Response> {
   return noContent();
 }
 
+/** R2 deletes at most this many keys per call. */
+const DELETE_BATCH = 1000;
+
+/**
+ * Account deletion (src/account.ts): the chunks under `org` and their
+ * owner marks. `uploader` set: only the chunks that user uploaded (an org
+ * that stays); `null`: every chunk (an org that goes). Returns how many
+ * objects went. Idempotent: nothing left, nothing deleted.
+ */
+export async function purgeBlobs(
+  bucket: BlobBucket,
+  org: string,
+  uploader: string | null,
+): Promise<number> {
+  const prefix = `${BLOBS_PREFIX}${org}/`;
+  const keys: string[] = [];
+  const blobs = new Set<string>();
+  let cursor: string | undefined;
+  do {
+    const page = await bucket.list({
+      prefix,
+      cursor,
+      include: ['customMetadata'],
+    });
+    for (const o of page.objects) {
+      if (uploader !== null && o.customMetadata?.['uploader'] !== uploader) {
+        continue;
+      }
+      keys.push(o.key);
+      const blob = o.key.slice(prefix.length).split('/')[0];
+      if (blob) blobs.add(blob);
+    }
+    cursor = page.truncated ? page.cursor : undefined;
+  } while (cursor);
+  for (const blob of blobs) {
+    const owner = await bucket.head(ownerKey(blob));
+    if (owner?.customMetadata?.['org_id'] === org) keys.push(ownerKey(blob));
+  }
+  for (let i = 0; i < keys.length; i += DELETE_BATCH) {
+    await bucket.delete(keys.slice(i, i + DELETE_BATCH));
+  }
+  return keys.length;
+}
+
 // ─── The daily counter, in the org's hub ────────────────────────────────────
 
 /** What one day may take; tests pass smaller ones. */

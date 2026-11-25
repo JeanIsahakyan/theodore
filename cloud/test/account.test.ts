@@ -29,7 +29,7 @@ import {
   type Device,
 } from './fleet-harness';
 import { API, CLIENT, signer } from './keys';
-import { doState, FakeKv } from './workers-fakes';
+import { doState, FakeKv, FakeR2 } from './workers-fakes';
 
 const ORIGIN = 'https://cloud.test';
 const WEB = 'https://web.test';
@@ -310,7 +310,9 @@ describe('purge in a hub', () => {
 describe('DELETE /v1/account', async () => {
   const { keys, sign } = await signer();
 
-  async function setup(o: { failHub?: boolean } = {}) {
+  async function setup(
+    o: { failHub?: boolean; forgetPerson?: (id: string) => Promise<void> } = {},
+  ) {
     const workos = new FakeWorkos();
     workos.orgs.push(
       {
@@ -319,25 +321,43 @@ describe('DELETE /v1/account', async () => {
         external_id: `personal:${ALICE}`,
       },
       { id: 'org_team', name: 'Team' },
+      { id: 'org_solo', name: 'Side project' },
       { id: 'org_bob', name: 'Personal', external_id: `personal:${BOB}` },
     );
     workos.addMembership(ALICE, 'org_personal');
     workos.addMembership(ALICE, 'org_team', 'member');
+    workos.addMembership(ALICE, 'org_solo');
     workos.addMembership(BOB, 'org_team');
     workos.addMembership(BOB, 'org_bob');
 
     const team = new Harness(new DatabaseSync(':memory:'), { mcp: true });
     const personal = new Harness(new DatabaseSync(':memory:'), { mcp: true });
+    const solo = new Harness(new DatabaseSync(':memory:'), { mcp: true });
     const bobs = new Harness(new DatabaseSync(':memory:'), { mcp: true });
     const alice = await seed(team, ALICE, 'alice');
     const bob = await seed(team, BOB, 'bob');
     await seed(personal, ALICE, 'alice');
+    await seed(solo, ALICE, 'alice');
     await seed(bobs, BOB, 'bob');
     const hubs: Record<string, Harness> = {
       org_team: team,
       org_personal: personal,
+      org_solo: solo,
       org_bob: bobs,
     };
+
+    // A blob chunk per org and uploader, with its owner mark.
+    const r2 = new FakeR2();
+    const blob = async (org: string, uploader: string, id: string) => {
+      const customMetadata = { uploader, org_id: org, chunks: '1' };
+      await r2.put(`blobs/_owner/${id}`, '', { customMetadata });
+      await r2.put(`blobs/${org}/${id}/0`, 'sealed', { customMetadata });
+    };
+    await blob('org_personal', ALICE, 'b1');
+    await blob('org_solo', ALICE, 'b2');
+    await blob('org_team', ALICE, 'b3');
+    await blob('org_team', BOB, 'b4');
+    await blob('org_bob', BOB, 'b5');
 
     const kv = new FakeKv();
     const grant = (user: string, id: string) =>
@@ -367,6 +387,8 @@ describe('DELETE /v1/account', async () => {
         verifyAccessToken(t, { apiBase: API, clientId: CLIENT, keys }),
       hub: (org) => harnessHub(hubs[org]!, { fail: o.failHub }),
       oauthKv: kv as unknown as KVNamespace,
+      blobs: r2 as unknown as R2Bucket,
+      forgetPerson: o.forgetPerson,
     };
     const call = (token?: string, init: RequestInit = {}) =>
       handle(
@@ -381,7 +403,7 @@ describe('DELETE /v1/account', async () => {
         () => deps,
         [WEB],
       );
-    return { workos, team, personal, bobs, alice, bob, kv, call };
+    return { workos, team, personal, solo, bobs, alice, bob, kv, r2, call };
   }
 
   const code = async (r: Response) =>
@@ -411,9 +433,12 @@ describe('DELETE /v1/account', async () => {
     const left = mentions(s.team, s.alice.ids);
     for (const t of TABLES) expect([t, left[t]]).toEqual([t, 0]);
     expect(mentions(s.team, s.bob.ids)).toEqual(bobBefore);
-    // Her personal org's hub: empty. Bob's own org: never touched.
-    for (const t of TABLES)
+    // Her personal org's hub and the org only she was in: empty. Bob's own
+    // org: never touched.
+    for (const t of TABLES) {
       expect([t, rowCount(s.personal, t)]).toEqual([t, 0]);
+      expect([t, rowCount(s.solo, t)]).toEqual([t, 0]);
+    }
     expect(TABLES.map((t) => rowCount(s.bobs, t))).toEqual(bobsOwn);
 
     // MCP grants and their tokens: hers gone, his kept.
@@ -422,11 +447,30 @@ describe('DELETE /v1/account', async () => {
       `token:${BOB}:g3:t3`,
     ]);
 
-    // WorkOS: the personal org, then the user, last; the team org stays.
+    // Blobs: hers gone with their owner marks, Bob's kept, in the team too.
+    expect(s.r2.keys()).toEqual([
+      'blobs/_owner/b4',
+      'blobs/_owner/b5',
+      'blobs/org_bob/b5/0',
+      'blobs/org_team/b4/0',
+    ]);
+
+    // WorkOS: the personal org and the org only she was in, then the user,
+    // last; the team org (Bob is in it) stays.
     const deletes = s.workos.calls.filter((c) => c.startsWith('delete'));
-    expect(deletes).toEqual(['deleteOrg org_personal', `deleteUser ${ALICE}`]);
+    expect(deletes).toEqual([
+      'deleteOrg org_personal',
+      'deleteOrg org_solo',
+      `deleteUser ${ALICE}`,
+    ]);
     expect(s.workos.calls.at(-1)).toBe(`deleteUser ${ALICE}`);
     expect(s.workos.orgs.map((o) => o.id)).toEqual(['org_team', 'org_bob']);
+    expect(
+      s.workos.memberships_.map((m) => [m.user_id, m.organization_id]),
+    ).toEqual([
+      [BOB, 'org_team'],
+      [BOB, 'org_bob'],
+    ]);
   });
 
   it('is idempotent: a retry after success is a 204 that does nothing', async () => {
@@ -457,6 +501,28 @@ describe('DELETE /v1/account', async () => {
     expect(s.workos.calls.filter((c) => c.startsWith('delete'))).toEqual([
       `deleteUser ${ALICE}`,
     ]);
+  });
+
+  it('deletes the PostHog person before the user, by the user id', async () => {
+    const forgotten: string[] = [];
+    const s = await setup({
+      forgetPerson: async (id) => {
+        forgotten.push(id);
+        expect(s.workos.deletedUsers.has(ALICE)).toBe(false);
+      },
+    });
+    expect((await s.call(await sign({ sub: ALICE }))).status).toBe(204);
+    expect(forgotten).toEqual([ALICE]);
+  });
+
+  it('a PostHog failure never blocks the deletion', async () => {
+    const s = await setup({
+      forgetPerson: async () => {
+        throw new Error('posthog down');
+      },
+    });
+    expect((await s.call(await sign({ sub: ALICE }))).status).toBe(204);
+    expect(s.workos.deletedUsers.has(ALICE)).toBe(true);
   });
 
   it('a hub that fails stops before anything is deleted in WorkOS', async () => {

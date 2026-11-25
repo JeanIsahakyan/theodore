@@ -22,6 +22,11 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useServices } from '../../src/services';
 import { useAuthState } from '../../src/shell/AppProviders';
 import { log, track } from '../../src/telemetry/log';
+import {
+  ACCOUNT_DELETED_NOTICE,
+  clearAccountDeleted,
+  useAccountDeleted,
+} from '../../src/ui/deleteAccount';
 import { Notice } from '../../src/ui/kit';
 import { Button } from '../../src/ui/native';
 import { usePalette } from '../../src/ui/theme';
@@ -34,11 +39,13 @@ export default function SignIn() {
   const p = usePalette();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const deleted = useAccountDeleted((s) => s.deleted);
 
   // Not async before signIn(): on the web the popup must open in the
   // press's own task.
   const signIn = () => {
     setError(null);
+    clearAccountDeleted();
     setBusy(true);
     auth
       .signIn()
@@ -97,6 +104,9 @@ export default function SignIn() {
           </Text>
         </View>
         <View style={styles.actions}>
+          {deleted ? (
+            <Notice tone="neutral">{ACCOUNT_DELETED_NOTICE}</Notice>
+          ) : null}
           {error ? <Notice tone="danger">{error}</Notice> : null}
           <Button
             variant="primary"

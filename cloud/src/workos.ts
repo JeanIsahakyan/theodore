@@ -47,6 +47,8 @@ export interface Workos {
     organizationId?: string;
   }): Promise<Membership[]>;
   organization(id: string): Promise<Organization>;
+  /** Every membership of one organization, any user and status (one page, 100). */
+  organizationMembers(organizationId: string): Promise<Membership[]>;
   createMembership(o: {
     userId: string;
     organizationId: string;
@@ -211,6 +213,18 @@ export class WorkosClient implements Workos {
 
   organization(id: string): Promise<Organization> {
     return this.call('GET', `/organizations/${encodeURIComponent(id)}`);
+  }
+
+  async organizationMembers(organizationId: string): Promise<Membership[]> {
+    const q = new URLSearchParams({
+      organization_id: organizationId,
+      limit: '100',
+    });
+    const page = await this.call<{ data: Membership[] }>(
+      'GET',
+      `/user_management/organization_memberships?${q}`,
+    );
+    return page.data;
   }
 
   deleteOrganization(id: string): Promise<void> {

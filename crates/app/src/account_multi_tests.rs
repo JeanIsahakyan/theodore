@@ -669,3 +669,61 @@ async fn account_accounts_lists_every_accounts_organizations_with_its_own_token(
             .all(|a| !a.organizations.is_empty())
     );
 }
+
+// ── delete the account ───────────────────────────────────────────────────
+
+#[tokio::test]
+async fn deleting_the_active_account_asks_the_cloud_then_forgets_it_here() {
+    let f = fixtures();
+    let (core, _recv) = two(&f).await;
+
+    let status = core.account_delete().await.unwrap();
+    assert!(called(&f, "delete_account:at-rt_b"), "with Bob's own token");
+    assert_eq!(status.user.as_ref().map(|u| u.id.as_str()), Some(ADA));
+    assert!(!status.session_ended);
+    assert_eq!(status.accounts.len(), 1);
+    assert_eq!(stored(&f, BOB), None);
+    assert_eq!(stored(&f, ADA).unwrap().refresh_token, "rt_a");
+    assert_eq!(index(&f)["active"], ADA);
+    // The sessions went with the account: no provider sign-out for it.
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert!(!called(&f, "sign_out:session_02"));
+    assert!(!called(&f, "delete_account:at-rt_a"), "Ada's untouched");
+}
+
+#[tokio::test]
+async fn deleting_the_only_account_closes_the_gate() {
+    let f = fixtures();
+    store_legacy(&f, &ada(&f, "rt_a", "org_a"));
+    let (core, _recv) = start(&f);
+    core.account_status().await.unwrap();
+
+    let status = core.account_delete().await.unwrap();
+    assert!(status.user.is_none() && status.required);
+    assert!(!status.session_ended);
+    assert!(status.accounts.is_empty());
+    assert_eq!(stored(&f, ADA), None);
+    assert_eq!(
+        core.account_gate().await,
+        crate::usecases::account::AccountGate::SignedOut
+    );
+}
+
+#[tokio::test]
+async fn a_failed_deletion_keeps_the_account_signed_in() {
+    let f = fixtures();
+    let (core, _recv) = two(&f).await;
+    f.account
+        .push_delete(Err(AccountError::Network("cloud down".into())));
+
+    let e = core.account_delete().await.unwrap_err();
+    assert_eq!(e.code(), "account.network");
+    let status = core.account_status().await.unwrap();
+    assert_eq!(status.user.as_ref().map(|u| u.id.as_str()), Some(BOB));
+    assert_eq!(status.accounts.len(), 2);
+    assert_eq!(stored(&f, BOB).unwrap().refresh_token, "rt_b");
+
+    // A retry finishes it.
+    core.account_delete().await.unwrap();
+    assert_eq!(stored(&f, BOB), None);
+}

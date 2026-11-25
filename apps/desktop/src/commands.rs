@@ -1254,6 +1254,17 @@ pub async fn account_sign_out_of(
         .await
 }
 
+/// Deletes the active Theodore account in the cloud, then signs it out here
+/// (docs/cloud.md "Account deletion"); local projects and spaces stay.
+#[tauri::command]
+#[specta::specta]
+pub async fn account_delete(
+    op: crate::op::Op,
+    core: State<'_, Arc<dyn CoreApi>>,
+) -> Result<theodore_contract::AccountStatus, CommandError> {
+    op.run(async move { core.account_delete().await }).await
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn fleet_status(
