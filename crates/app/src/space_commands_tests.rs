@@ -19,11 +19,17 @@ use crate::testkit::{FakeScript, Fixtures, fixtures};
 use crate::{Core, Receivers};
 
 pub(crate) async fn wait_until(mut cond: impl FnMut() -> bool) {
-    for _ in 0..2000 {
+    // Up to 30 s of wall time, counted by the clock: sleeps stretch on a
+    // loaded runner, and a condition met during the last stretch still counts.
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    while std::time::Instant::now() < deadline {
         if cond() {
             return;
         }
         tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    if cond() {
+        return;
     }
     panic!("condition not met in time");
 }
@@ -55,7 +61,7 @@ pub(crate) async fn start_env_with(deps: impl FnOnce(&Fixtures) -> crate::Deps) 
     let spaces = tempfile::tempdir().unwrap();
     f.git.set_space_root(spaces.path());
     let (core, recv) = Core::start(deps(&f));
-    tokio::time::sleep(Duration::from_millis(30)).await;
+    f.startup_refresh_done().await;
     let project = core
         .add_project(AddProjectRequest {
             repo: None,

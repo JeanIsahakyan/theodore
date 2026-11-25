@@ -4,7 +4,7 @@
 //! "Who a record is from").
 
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use theodore_telemetry::config::CONSENT_LINKED;
 use theodore_telemetry::layer::{Shared, TelemetryLayer};
@@ -95,9 +95,34 @@ impl Rig {
             .unwrap();
     }
 
+    async fn received(&self) -> Vec<wiremock::Request> {
+        self.server.received_requests().await.unwrap()
+    }
+
+    /// Polls the mock server until `done` holds for what it received.
+    /// Never a fixed sleep: a quiet machine passes at once, a loaded one
+    /// gets up to 30s.
+    async fn wait_until(&self, what: &str, done: impl Fn(&[wiremock::Request]) -> bool) {
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            let reqs = self.received().await;
+            if done(&reqs) {
+                return;
+            }
+            let paths: Vec<_> = reqs.iter().map(|r| r.url.path().to_string()).collect();
+            assert!(
+                Instant::now() < deadline,
+                "{what} never arrived; got {paths:?}"
+            );
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
+
     /// One product event and one error, as the app would emit them, inside
-    /// a span that carries the account id.
+    /// a span that carries the account id. Returns once every remote sink
+    /// that's on has delivered them to the server.
     async fn emit_and_flush(&self) {
+        let logs_before = count(&self.received().await, "/v1/logs");
         let sub = tracing_subscriber::registry().with(TelemetryLayer::new(self.shared.clone()));
         tracing::subscriber::with_default(sub, || {
             let span = tracing::info_span!("op", op_id = "op1", user_id = ACCOUNT_ID);
@@ -119,6 +144,16 @@ impl Rig {
         tokio::task::spawn_blocking(move || t.flush(Duration::from_secs(60)))
             .await
             .unwrap();
+        // PostHog's flush is acknowledged after the send. OTLP's goes
+        // through the SDK's `force_flush`, which gives up after a fixed 5s:
+        // under load it returns before the export lands, so wait for the
+        // request itself (the warning above is one log record).
+        if self.shared.otlp().is_some() {
+            self.wait_until("the OTLP log export", |r| {
+                count(r, "/v1/logs") > logs_before
+            })
+            .await;
+        }
     }
 
     async fn posthog_events(&self) -> Vec<serde_json::Value> {
@@ -242,6 +277,10 @@ async fn turning_a_choice_off_stops_its_sink() {
     rig.emit_and_flush().await;
     assert_eq!(rig.paths().await, Vec::<String>::new());
     rig.shutdown().await;
+}
+
+fn count(reqs: &[wiremock::Request], path: &str) -> usize {
+    reqs.iter().filter(|r| r.url.path() == path).count()
 }
 
 /// Both switches, agreed under terms that allow the account id.

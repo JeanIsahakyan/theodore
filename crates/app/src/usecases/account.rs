@@ -865,9 +865,12 @@ impl Core {
             return !self.0.shutdown.is_cancelled();
         }
         loop {
-            // Registered before the check, so a sign-in in between still
-            // wakes it.
+            // Registered (enabled) before the check, so a sign-in in between
+            // still wakes it: `notify_waiters` skips a `Notified` that was
+            // never polled.
             let changed = self.0.account.gate_changed.notified();
+            tokio::pin!(changed);
+            changed.as_mut().enable();
             if self.account_gate().await.is_open() {
                 return !self.0.shutdown.is_cancelled();
             }

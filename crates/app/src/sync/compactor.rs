@@ -27,9 +27,14 @@ pub(crate) async fn run(inner: Arc<Inner>) {
         if inner.shutdown.is_cancelled() {
             return;
         }
-        if inner.deps.clock.now() >= next_due {
+        let now = inner.deps.clock.now();
+        if now >= next_due {
+            // Armed before the pass, like the poller's loops: the next hour
+            // counts from when this pass was due, not from when the store
+            // finished (a test that sees the pass land can move the clock
+            // at once).
+            next_due = now + INTERVAL_MS;
             let _ = compact_once(&inner).await;
-            next_due = inner.deps.clock.now() + INTERVAL_MS;
         }
         tokio::select! {
             _ = inner.shutdown.cancelled() => return,

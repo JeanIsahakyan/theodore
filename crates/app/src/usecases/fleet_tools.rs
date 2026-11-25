@@ -424,8 +424,12 @@ impl Core {
         let deadline =
             tokio::time::Instant::now() + Duration::from_millis(timeout_ms.min(FLEET_WAIT_MAX_MS));
         loop {
-            // Registered before the look, so a change in between still wakes.
+            // Registered (enabled) before the look, so a change in between
+            // still wakes: `notify_waiters` skips a `Notified` that was never
+            // polled, and the wait would sleep out its whole deadline.
             let changed = self.0.fleet.changed.notified();
+            tokio::pin!(changed);
+            changed.as_mut().enable();
             let (all, views) = {
                 let mem = self.fleet();
                 let views: Vec<FleetToolSpace> = spaces

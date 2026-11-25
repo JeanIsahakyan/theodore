@@ -133,25 +133,47 @@ impl RotatingFile {
         self.file = None;
         let current = self.dir.join(FILE_NAME);
         if std::fs::metadata(&current).map(|m| m.len()).unwrap_or(0) > 0 {
-            let stamp = format!(
-                "{}{}",
-                self.day.format("%Y%m%d"),
-                Utc::now().format("-%H%M%S%3f")
-            );
-            // Always numbered, zero-padded: two rotations in the same
-            // millisecond (a fast disk) must still sort oldest first. A bare
-            // name and a `-1` one sorted the newer first ('-' < '.'), and
-            // pruning then dropped the newest file instead of the oldest.
-            let mut n = 0;
-            let mut target = self.dir.join(format!("{PREFIX}{stamp}-{n:03}{SUFFIX}"));
-            while target.exists() {
-                n += 1;
-                target = self.dir.join(format!("{PREFIX}{stamp}-{n:03}{SUFFIX}"));
-            }
-            std::fs::rename(&current, &target)?;
+            std::fs::rename(&current, self.next_rotated())?;
         }
         prune(&self.dir, &self.rotation);
         Ok(())
+    }
+
+    /// The name for the file rotated now, `theodore-<day>-<time>-<n>.jsonl`,
+    /// sorting after every rotated file already there. Pruning deletes in
+    /// name order, so a name must never fall behind the last one: the time
+    /// is the wall clock's, which a step back turns around, and so does
+    /// midnight (the day is the file's, the time the clock's); a fast disk
+    /// rotates twice in one millisecond. A name that would fall behind, or
+    /// tie, takes the last file's stamp and the number after its.
+    fn next_rotated(&self) -> PathBuf {
+        let mut stamp = format!(
+            "{}{}",
+            self.day.format("%Y%m%d"),
+            Utc::now().format("-%H%M%S%3f")
+        );
+        let mut n = 0;
+        if let Some((last, _)) = rotated_files(&self.dir).last() {
+            let name = last.file_name().unwrap_or_default().to_string_lossy();
+            let inner = &name[PREFIX.len()..name.len() - SUFFIX.len()];
+            if let Some((last_stamp, last_n)) = inner.rsplit_once('-')
+                && last_stamp >= stamp.as_str()
+                && let Ok(last_n) = last_n.parse::<u32>()
+            {
+                stamp = last_stamp.to_string();
+                n = last_n + 1;
+            }
+        }
+        // Always numbered, zero-padded: a bare name and a `-1` one sorted
+        // the newer first ('-' < '.'), and pruning then dropped the newest
+        // file instead of the oldest.
+        loop {
+            let target = self.dir.join(format!("{PREFIX}{stamp}-{n:03}{SUFFIX}"));
+            if !target.exists() {
+                return target;
+            }
+            n += 1;
+        }
     }
 }
 
@@ -358,6 +380,44 @@ mod tests {
         assert_eq!(firsts, sorted, "rotated files sort by age");
     }
 
+    /// A rotated file from "later" than the clock says (a clock stepped
+    /// back, or past midnight): the next names still sort after it, so
+    /// pruning removes it, the oldest, and not the newest.
+    #[test]
+    fn rotated_names_never_fall_behind_the_last_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let later = dir
+            .path()
+            .join(format!("{PREFIX}20261001-235959999-007{SUFFIX}"));
+        std::fs::write(&later, "from the future\n").unwrap();
+        let rotation = Rotation {
+            max_file_bytes: 10,
+            max_total_bytes: 10_000,
+            max_files: 2,
+        };
+        let mut f = RotatingFile::with_clock(dir.path(), rotation, Box::new(|| day(0))).unwrap();
+        for i in 0..4 {
+            f.write_line(&format!("{i:02}{}", "x".repeat(10))).unwrap();
+        }
+        let rotated: Vec<String> = rotated_files(dir.path())
+            .iter()
+            .map(|(p, _)| p.file_name().unwrap().to_string_lossy().to_string())
+            .collect();
+        assert_eq!(rotated.len(), 2, "{rotated:?}");
+        assert!(!later.exists(), "the oldest went: {rotated:?}");
+        assert_eq!(
+            rotated,
+            vec![
+                format!("{PREFIX}20261001-235959999-009{SUFFIX}"),
+                format!("{PREFIX}20261001-235959999-010{SUFFIX}")
+            ]
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join(&rotated[1])).unwrap()[..2],
+            *"02"
+        );
+    }
+
     #[test]
     fn rotation_caps_the_total_size() {
         let dir = tempfile::tempdir().unwrap();
@@ -416,7 +476,9 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let sink = FileSink::start(RotatingFile::open(dir.path(), Rotation::default()).unwrap());
         sink.write(&Record::new(tracing::Level::INFO, "theodore_app", "hello").with_field("n", 1));
-        sink.flush(Duration::from_secs(5));
+        // Acknowledged once the writer thread has the line on disk; the
+        // deadline only matters on a machine too loaded to start it.
+        sink.flush(Duration::from_secs(30));
         let text = std::fs::read_to_string(dir.path().join(FILE_NAME)).unwrap();
         let v: serde_json::Value = serde_json::from_str(text.trim()).unwrap();
         assert_eq!(v["msg"], "hello");

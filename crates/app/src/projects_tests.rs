@@ -24,6 +24,11 @@ async fn wait_until(mut cond: impl FnMut() -> bool) {
         }
         tokio::time::sleep(Duration::from_millis(5)).await;
     }
+    // One last look: the condition may have been met during the final sleep,
+    // which a loaded runner stretches past the deadline.
+    if cond() {
+        return;
+    }
     panic!("condition not met in time");
 }
 
@@ -31,7 +36,7 @@ async fn started_core(f: &Fixtures) -> (Core, Receivers) {
     let (core, recv) = Core::start(f.deps());
     // Let the startup inbox refresh drain: it shares `FakeHost`'s search
     // queue with a project's own refresh.
-    tokio::time::sleep(Duration::from_millis(30)).await;
+    f.startup_refresh_done().await;
     (core, recv)
 }
 
