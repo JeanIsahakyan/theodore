@@ -1291,7 +1291,7 @@ configured commands, never a shell of the agent's choosing.
 | `space_start`, `space_wait`, `space_stop`, `space_merge` | sub-spaces of this one: start, wait for, stop, bring their work back (below). While `spaces.sub_spaces` is on |
 | `space_archive`, `space_unarchive` | sub-spaces of this one: archive one (as Archive does, §7) when you ask to archive or clean up, bring one back (below). While `spaces.sub_spaces` is on |
 | `theodore_version` | Theodore's running version, channel (stable · beta · staging), build commit, and where the updater stands: up to date, an update available (version), downloading (percent), downloaded and ready (version), or unavailable (a nightly, the sandbox, a failed check). Read only, every mode |
-| `theodore_update` | only when you ask to update Theodore, never on the agent's own: a downloaded update restarts Theodore the graceful way (§7 "Restart with turns running": every running turn, the caller's included, pauses and resumes after; the call answers "restarting to update to X; this turn continues after the restart"); an available one starts downloading; up to date says so. Not for a space hosted here for another device (docs/fleet.md) |
+| `theodore_update` | only when you ask to update Theodore, never on the agent's own: a downloaded update restarts Theodore the graceful way (§7 "Restart with turns running": every running turn, the caller's included, pauses and resumes after; the call answers "restarting to update to X; this turn continues after the restart"); an available one starts downloading; up to date says so. For a space hosted here for another device only when that device is the user's own trusted phone, web app or computer, never an `mcp` origin (docs/fleet.md) |
 
 ```
 turn ─▶ token for this space ─▶ agent ─▶ run_check ─▶ check ─▶ result ─▶ agent fixes ─▶ …
@@ -2010,8 +2010,12 @@ tool payloads);
 **Restart with turns running** (docs/releasing.md "Graceful update")
 
 An update's restart, "Restart to update", `theodore_update`, and a plain
-quit (⌘Q, SIGTERM) with turns running pause the agents instead of killing
-them, and the next launch resumes each where it stopped:
+quit with turns running (⌘Q, Dock → Quit, an AppleEvent quit, a log out,
+SIGTERM / SIGINT) pause the agents instead of killing them, and the next
+launch resumes each where it stopped. On macOS those quits reach the app as
+`terminate:`, outside Tauri's exit events; the shell hooks
+`applicationShouldTerminate:` so they pause first (docs/releasing.md
+"Graceful update"):
 
 ```
 restart asked ─▶ restarting: no turn starts, sends queue

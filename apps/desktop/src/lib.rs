@@ -19,6 +19,7 @@ pub mod quit;
 pub mod relocate;
 pub mod restart;
 pub mod shell_path;
+pub mod terminate;
 pub mod updater;
 
 use std::path::Path;
@@ -322,7 +323,11 @@ pub fn run(
                 });
             }
             app.manage(notify::for_app(&handle));
-            // SIGTERM / SIGINT quit like ⌘Q, with the same cleanup.
+            // Every quit pauses the running agents first, then exits
+            // (`restart`): ⌘Q / Dock / AppleEvent / log out on macOS go
+            // through `terminate`, signals through `quit`, the rest through
+            // `ExitRequested` below.
+            terminate::hook(core.clone());
             quit::exit_on_signal(handle.clone(), core.clone());
             forward(emitter(handle.clone()));
             // `theodore_version` / `theodore_update` read and act on this
@@ -354,6 +359,11 @@ pub fn run(
             // A clean quit stops every space's `run` command first, then
             // flushes telemetry; each step has a time limit, so a hung one
             // never keeps the app from exiting (`quit`).
+            if let tauri::RunEvent::Exit = event {
+                // A quit no hook saw (there is no preventing it here): the
+                // pause runs now, before anything stops the agents.
+                restart::pause_before_teardown(exit_core.clone());
+            }
             if let tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit = event {
                 quit::stop_spaces(exit_core.clone());
             }

@@ -463,7 +463,7 @@ Theodore itself (docs/releasing.md "Graceful update"):
 | Tool | Takes | Returns |
 | --- | --- | --- |
 | `theodore_version` | — | `version`, `channel`, `commit`, `build_env`, `updater` (`state`: `unknown · up_to_date · available · downloading · ready · unavailable`, with `version`, `percent`, `reason`), a one-line `summary` |
-| `theodore_update` | — | `outcome`: `restarting` (the turns pause and resume after the restart) · `downloading` · `up_to_date` · `unavailable`, with `version` / `reason`, and a `message` for the user. Only when the user asks; refused from a space hosted for another device |
+| `theodore_update` | — | `outcome`: `restarting` (the turns pause and resume after the restart) · `downloading` · `up_to_date` · `unavailable`, with `version` / `reason`, and a `message` for the user. Only when the user asks; from a space hosted for another device only when that device is the user's own trusted phone, web app or computer, never an `mcp` origin |
 
 ```
 ship ─▶ same turn? ─no──▶ error: the agent is still working
