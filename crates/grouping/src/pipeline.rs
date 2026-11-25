@@ -489,10 +489,12 @@ impl<'a> Board<'a> {
     }
 
     /// Publishes what the board shows, under the lock: publications go out
-    /// in the order they were made.
-    fn publish(&self, st: &mut BoardState, stage: Stage) {
+    /// in the order they were made. `ms`: when the publication's cause
+    /// happened, the same instant the caller records in its timings, so
+    /// `first_shown_ms` is `group_ms[0]` for a run whose first publication
+    /// is a streamed group.
+    fn publish(&self, st: &mut BoardState, stage: Stage, ms: u64) {
         let Some(on) = self.on else { return };
-        let ms = self.ms();
         let now = st.compose();
         if now.groups.iter().all(|g| st.hidden.contains(g)) {
             return;
@@ -522,7 +524,7 @@ impl<'a> Board<'a> {
         st.streamed[chunk].push(g);
         let groups = st.streamed[chunk].len();
         st.timings.group_ms.push(ms);
-        self.publish(&mut st, Stage::Streamed { chunk, groups });
+        self.publish(&mut st, Stage::Streamed { chunk, groups }, ms);
     }
 
     /// Chunk `chunk`'s first answer ended.
@@ -536,11 +538,12 @@ impl<'a> Board<'a> {
     /// Chunk `chunk` landed with `groups` (validated, maybe repaired): they
     /// replace its previews. Published when it isn't the PR's only chunk.
     fn land(&self, chunk: usize, mut groups: Vec<Group>, stage: Stage) {
+        let ms = self.ms();
         let mut st = self.lock();
         st.ids.assign(chunk, &mut groups);
         st.finals[chunk] = Some(groups);
         if st.finals.len() > 1 {
-            self.publish(&mut st, stage);
+            self.publish(&mut st, stage, ms);
         }
     }
 

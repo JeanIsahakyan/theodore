@@ -290,7 +290,7 @@ update notification) or an agent's for the user (`theodore_update`). A
 restart never kills a running agent turn: the core pauses every turn,
 marks its space, and the next launch resumes each where it stopped
 (docs/spaces.md §7 "Restart with turns running"). A plain quit with turns
-running does the same.
+running does the same, whichever way it comes.
 
 ```
 phase   unknown ─▶ check ─┬─ up to date
@@ -298,18 +298,32 @@ phase   unknown ─▶ check ─┬─ up to date
                                                                         │
 Restart to update ───────────────────────────────────────────────────┐  │
 theodore_update (ready) ─ answer "restarting to update to X" ─ 1.5 s ┼──┤
-⌘Q / SIGTERM, turns running ─────────────────────────────────────────┘  │
+⌘Q · Dock Quit · quit app · log out (macOS: terminate:) ─────────────┤  │
+SIGTERM / SIGINT · process.exit, turns running ──────────────────────┘  │
    ─▶ core.pause_for_restart: interrupt each agent, ≤ 20 s, checkpoint, mark
-   ─▶ kept processes stopped ─▶ request_restart / exit (≤ 45 s in all)
+   ─▶ kept processes stopped ─▶ request_restart / exit (≤ 45 s + 5 s grace)
 next launch ─▶ resume each marked turn (--resume its session) ─▶ queue after
 ```
+
+On macOS, ⌘Q (the menu's Quit), Dock → Quit, an AppleEvent `quit app
+"Theodore"` and a log out all go through `NSApplication terminate:`, not
+through Tauri's `ExitRequested`: tao's app delegate only answers
+`applicationWillTerminate:`, which is already the `Exit` event. `terminate.rs`
+adds `applicationShouldTerminate:` to that delegate: with turns running it
+answers `NSTerminateLater`, pauses them on a thread, then replies `YES` from
+the main thread and the quit goes on (`Exit`: stop the spaces' commands,
+flush telemetry). A quit asked again while that pause runs is cancelled (the
+first one exits); `Exit` reached without any pause (a path no hook saw)
+pauses on the spot before anything is torn down.
 
 | | |
 | --- | --- |
 | `UpdateState` (`apps/desktop/src/updater.rs`) | the phase above; `app_info.update` and the `update` event follow it, `theodore_version` reads it |
 | `theodore_version` | version · channel · commit · build env · the phase (version, percent) |
-| `theodore_update` | ready → the graceful restart (after its answer reaches the agent); downloading → says so; else a check now: found → the download starts, says so; none → up to date. Only when the user asks; refused for a space hosted for another device |
-| `restart.rs` | `restart_after_pausing` (update) and `exit_after_pausing` (`ExitRequested` with turns running: the exit waits for the pause, then comes again) |
+| `theodore_update` | ready → the graceful restart (after its answer reaches the agent); downloading → says so; else a check now: found → the download starts, says so; none → up to date. Only when the user asks; for a space hosted for another device only when that device is the user's own trusted phone, web app or computer (never an `mcp` origin, never one not trusted here) |
+| `restart.rs` | `pause_then`: the one question every quit asks (turns running and not paused yet? pause, then exit; a pause under way is joined, never doubled); `restart_after_pausing` (update), `exit_after_pausing` (`ExitRequested`: the exit waits for the pause, then comes again), `pause_before_teardown` (`Exit` without a pause first) |
+| `terminate.rs` | macOS `applicationShouldTerminate:` (above); nothing elsewhere |
+| `quit.rs` | SIGTERM / SIGINT: pause (its own deadline), stop the spaces' commands (≤ 4 s), telemetry (≤ 3 s), exit; a second signal exits at once |
 | a host write still queued (outbox) | holds "Restart to update" off as before; the pill asks again every few seconds |
 | a nightly, the sandbox | no updater: `theodore_version` says `unavailable` and why, `theodore_update` does nothing |
 

@@ -24,10 +24,13 @@ case "$mode" in
     exit 0
     ;;
   offline_recovered)
+    # The gaps are read against the test's stall_after_ms (1000): the first
+    # stays under it by a wide margin, so stderr and stdout (read apart)
+    # keep their order even under load; the second goes well past it.
     echo "Error: connect ECONNREFUSED 104.18.0.1:443 (retrying)" 1>&2
-    sleep 0.1
+    sleep 0.5
     echo '{"line":1}'
-    sleep 1.5
+    sleep 2.5
     echo '{"line":2}'
     exit 0
     ;;

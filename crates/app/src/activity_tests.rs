@@ -21,18 +21,24 @@ const PROMPT: &str = "SECRET-PROMPT in src/secret/path.rs";
 const REPLY: &str = "SECRET-REPLY about acme/secret-repo";
 
 async fn wait_until(mut cond: impl FnMut() -> bool) {
-    for _ in 0..400 {
+    // Up to 30 s of wall time, counted by the clock: sleeps stretch on a
+    // loaded runner, and a condition met during the last stretch still counts.
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    while std::time::Instant::now() < deadline {
         if cond() {
             return;
         }
         tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    if cond() {
+        return;
     }
     panic!("condition not met in time");
 }
 
 async fn started(f: &Fixtures) -> (Core, Receivers, Project) {
     let (core, recv) = Core::start(f.deps());
-    tokio::time::sleep(Duration::from_millis(30)).await;
+    f.startup_refresh_done().await;
     let project = core
         .add_project(AddProjectRequest {
             repo: None,
@@ -173,7 +179,7 @@ async fn a_vote_survives_a_restart() {
     drop(core);
 
     let (again, _recv) = Core::start(f.deps());
-    tokio::time::sleep(Duration::from_millis(30)).await;
+    f.startup_refresh_done().await;
     assert_eq!(stored_vote(&f, &id), Some(MessageVote::Down));
     vote(&again, &id, None).await;
     assert_eq!(stored_vote(&f, &id), None);

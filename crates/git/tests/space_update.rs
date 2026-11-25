@@ -4,7 +4,7 @@
 //! fast-forward, whose PR diff is the space's change alone.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
+mod support;
 use std::sync::Arc;
 
 use tempfile::TempDir;
@@ -34,8 +34,7 @@ const PLAIN: [&str; 8] = [
 ];
 
 fn git(dir: &Path, args: &[&str]) -> String {
-    let out = Command::new("git")
-        .current_dir(dir)
+    let out = support::git_cmd(dir)
         .args(PLAIN)
         .args(args)
         .output()

@@ -563,8 +563,10 @@ idle code_intel.idle_minutes ─▶ shutdown ─▶ exit ─▶ kill after 5 s
   `workspace/symbol`) is not sent, and a "method not found" answer counts the
   same: the syntax layer answers, with no note about it.
 - JVM servers start slowly and answer empty while they import. `warming` holds
-  until no `$/progress` token is in flight for `ready_settle` (1.5 s), so a
-  question meanwhile goes to the syntax layer, not to an empty answer. A slow
+  until no `$/progress` token is in flight (and none was just created with
+  `window/workDoneProgress/create`, whose `begin` is still on its way) for
+  `ready_settle` (1.5 s), so a question meanwhile goes to the syntax layer,
+  not to an empty answer. A slow
   server sets its own in the manifest:
 
   | | `initialize` + warm-up | settle | Why |

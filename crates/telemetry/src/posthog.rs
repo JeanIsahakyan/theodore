@@ -517,7 +517,9 @@ mod tests {
         for _ in 0..50 {
             s.write(&pr_opened());
         }
-        assert!(start.elapsed() < Duration::from_millis(250));
+        // Blocked behind the 300ms responses, 50 writes would take ~15s;
+        // a loaded machine alone can't make 50 `try_send`s take this long.
+        assert!(start.elapsed() < Duration::from_secs(5));
         assert!(s.stats().dropped.load(Ordering::Relaxed) > 0);
         s.shutdown(false);
     }

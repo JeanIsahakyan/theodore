@@ -18,11 +18,17 @@ use crate::testkit::{Fixtures, fixtures, sample_pr_detail};
 use crate::{Core, Receivers};
 
 async fn wait_until(mut cond: impl FnMut() -> bool) {
-    for _ in 0..400 {
+    // Up to 30 s of wall time, counted by the clock: sleeps stretch on a
+    // loaded runner, and a condition met during the last stretch still counts.
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    while std::time::Instant::now() < deadline {
         if cond() {
             return;
         }
         tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    if cond() {
+        return;
     }
     panic!("condition not met in time");
 }
@@ -38,7 +44,7 @@ fn widget() -> RepoRef {
 /// A ready GitHub project whose default branch `main` is at `base000`.
 async fn host_project(f: &Fixtures) -> (Core, Receivers, Project) {
     let (core, recv) = Core::start(f.deps());
-    tokio::time::sleep(Duration::from_millis(30)).await;
+    f.startup_refresh_done().await;
     let project = Project {
         id: "github:acme/widget".into(),
         repo: widget(),
@@ -67,7 +73,7 @@ async fn host_project(f: &Fixtures) -> (Core, Receivers, Project) {
 /// A local folder project on a real (empty) directory, on `main`, clean.
 async fn folder_project(f: &Fixtures, dir: &Path) -> (Core, Receivers, Project) {
     let (core, recv) = Core::start(f.deps());
-    tokio::time::sleep(Duration::from_millis(30)).await;
+    f.startup_refresh_done().await;
     let project = core
         .add_project(AddProjectRequest {
             repo: None,

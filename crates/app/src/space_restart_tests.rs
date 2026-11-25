@@ -15,12 +15,14 @@ use theodore_contract::{
     SpaceSendRequest, SpaceStatus, models,
 };
 use theodore_domain::{Author, Sha, Usage};
+use theodore_fleet_protocol::McpAuto;
 use theodore_ports::{
     AgentEvent, NO_UPDATER, NewAction, SpaceToolError, Store, SyncActionCode, UpdateStart,
     UpdaterState,
 };
 
 use crate::testkit::{FakeLive, FakeUpdater, Fixtures, fixtures};
+use crate::usecases::fleet::TrustedDevice;
 use crate::usecases::space_restart::{PAUSED_FOR_RESTART, continuation_text};
 use crate::usecases::spaces::space_chat_key;
 use crate::{Core, Receivers};
@@ -33,12 +35,17 @@ async fn wait_until(mut cond: impl FnMut() -> bool) {
         }
         tokio::time::sleep(Duration::from_millis(5)).await;
     }
+    // One last look: the condition may have been met during the final sleep,
+    // which a loaded runner stretches past the deadline.
+    if cond() {
+        return;
+    }
     panic!("condition not met in time");
 }
 
 async fn started(f: &Fixtures) -> (Core, Receivers, Project) {
     let (core, recv) = Core::start(f.deps());
-    tokio::time::sleep(Duration::from_millis(30)).await;
+    f.startup_refresh_done().await;
     let project = core
         .add_project(AddProjectRequest {
             repo: None,
@@ -406,7 +413,7 @@ async fn the_version_and_update_tools_follow_the_updater() {
     );
     assert_eq!(updater.updates(), 4);
 
-    // Hosted here for another device: never.
+    // Hosted here for a device not trusted here: never.
     core.fleet().hosting.insert(s.id.clone(), "dev-2".into());
     let hosted = core.space_tool_theodore_update(&s.id, "r1").await;
     assert!(
@@ -416,4 +423,34 @@ async fn the_version_and_update_tools_follow_the_updater() {
     assert_eq!(updater.updates(), 4, "nothing was asked");
     // Reading the version is fine from anywhere.
     assert!(core.space_tool_theodore_version(&s.id).await.is_ok());
+
+    // Hosted for the user's own trusted phone (someone drives this
+    // computer from it): allowed, the same way. For a trusted `mcp` origin
+    // (Claude via cloud): still never.
+    let pin = |id: &str, kind: &str| TrustedDevice {
+        device_id: id.into(),
+        public_key: "k".into(),
+        name: id.into(),
+        kind: Some(kind.into()),
+        auto: McpAuto::Off,
+        auto_until_ms: None,
+    };
+    let mut settings = core.fleet_settings().await;
+    settings.trusted_devices = vec![pin("phone-1", "mobile"), pin("mcp-1", "mcp")];
+    core.fleet_save_settings(&settings).await.unwrap();
+    core.fleet().hosting.insert(s.id.clone(), "phone-1".into());
+    assert_eq!(
+        core.space_tool_theodore_update(&s.id, "r1").await.unwrap(),
+        UpdateStart::Restarting {
+            version: "0.2.0".into()
+        }
+    );
+    assert_eq!(updater.updates(), 5);
+    core.fleet().hosting.insert(s.id.clone(), "mcp-1".into());
+    let mcp = core.space_tool_theodore_update(&s.id, "r1").await;
+    assert!(
+        matches!(&mcp, Err(SpaceToolError::Unavailable(m)) if m.contains("another device")),
+        "{mcp:?}"
+    );
+    assert_eq!(updater.updates(), 5, "nothing was asked");
 }

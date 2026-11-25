@@ -3,7 +3,8 @@
 //! ```text
 //! start ─▶ spawn (stdio, cwd = root) ─▶ initialize ─▶ initialized    Warming
 //!            │                                  │
-//!            │      $/progress begin … end ─────┤ no work in flight for
+//!            │      workDoneProgress/create ────┤ no work in flight and no
+//!            │      $/progress begin … end ─────┤ token created for
 //!            │      experimental/serverStatus ──┤ `ready_settle`, or quiescent,
 //!            │                                  ▼ or `ready_max_wait` passed
 //!            │                                Ready
@@ -242,8 +243,17 @@ impl Handler for Shared {
             }
             "workspace/workspaceFolders" => Ok(self.folders_json()),
             "workspace/applyEdit" => Ok(json!({ "applied": false })),
+            "window/workDoneProgress/create" => {
+                // Work is about to be announced on this token: the settle
+                // window starts over, so its `begin` is not missed by a
+                // readiness decided between the token and the announcement.
+                let mut p = lock(&self.progress);
+                p.last_change = Instant::now();
+                drop(p);
+                self.progress_changed.notify_one();
+                Ok(Value::Null)
+            }
             "client/unregisterCapability"
-            | "window/workDoneProgress/create"
             | "window/showMessageRequest"
             | "window/showDocument"
             | "workspace/semanticTokens/refresh"
@@ -1276,6 +1286,10 @@ impl LspSession {
 async fn readiness(shared: Arc<Shared>, options: SessionOptions) {
     let deadline = Instant::now() + options.ready_max_wait;
     loop {
+        let notified = shared.progress_changed.notified();
+        tokio::pin!(notified);
+        // Registered before the check: a change in between wakes it.
+        notified.as_mut().enable();
         if *shared.state.borrow() != ServerState::Warming {
             return;
         }
@@ -1308,7 +1322,7 @@ async fn readiness(shared: Arc<Shared>, options: SessionOptions) {
             deadline
         };
         tokio::select! {
-            _ = shared.progress_changed.notified() => {}
+            _ = &mut notified => {}
             _ = tokio::time::sleep_until(wake) => {}
         }
     }

@@ -50,6 +50,11 @@ async fn wait_until(what: &str, mut cond: impl FnMut() -> bool) {
         }
         tokio::time::sleep(Duration::from_millis(5)).await;
     }
+    // One last look: the condition may have been met during the final sleep,
+    // which a loaded runner stretches past the deadline.
+    if cond() {
+        return;
+    }
     panic!("not in time: {what}");
 }
 
@@ -64,6 +69,11 @@ where
             return;
         }
         tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    // One last look: the condition may have been met during the final sleep,
+    // which a loaded runner stretches past the deadline.
+    if cond().await {
+        return;
     }
     panic!("not in time: {what}");
 }

@@ -25,7 +25,10 @@ use tokio_tungstenite::tungstenite::protocol::CloseFrame;
 use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
 use tokio_tungstenite::tungstenite::{Message, protocol::WebSocketConfig};
 
-const WAIT: Duration = Duration::from_secs(5);
+/// How long a test waits for the link or the fake cloud to act. Generous:
+/// a loaded CI runner can take seconds to schedule a socket task, and a
+/// passing test moves on as soon as the frame lands.
+const WAIT: Duration = Duration::from_secs(30);
 const NONCE: [u8; 32] = [7; 32];
 
 // ── the fake cloud ──────────────────────────────────────────────────────────

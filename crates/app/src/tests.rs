@@ -30,11 +30,17 @@ use crate::testkit::{self, Fixtures, fixtures};
 use crate::{AppError, Core, Receivers};
 
 async fn wait_until(mut cond: impl FnMut() -> bool) {
-    for _ in 0..400 {
+    // Up to 30 s of wall time, counted by the clock: sleeps stretch on a
+    // loaded runner, and a condition met during the last stretch still counts.
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    while std::time::Instant::now() < deadline {
         if cond() {
             return;
         }
         tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    if cond() {
+        return;
     }
     panic!("condition not met in time");
 }
@@ -1685,7 +1691,7 @@ async fn refresh_inbox_writes_pr_rows_and_seeds_inbox_state_once() {
     let f = fixtures();
     let (core, _recv) = Core::start(f.deps());
     // Let the one-shot startup refresh (empty fixtures) drain first.
-    tokio::time::sleep(Duration::from_millis(30)).await;
+    f.startup_refresh_done().await;
 
     let pr_ref = fixture_pr_ref();
     let head = Sha::new("head111");
@@ -1723,7 +1729,7 @@ async fn refresh_inbox_writes_pr_rows_and_seeds_inbox_state_once() {
 async fn the_authored_poll_adds_a_new_pr_and_settles_one_closed_elsewhere() {
     let f = fixtures();
     let (core, _recv) = Core::start(f.deps());
-    tokio::time::sleep(Duration::from_millis(30)).await;
+    f.startup_refresh_done().await;
     f.host
         .search_complete
         .store(true, std::sync::atomic::Ordering::SeqCst);
@@ -1802,7 +1808,7 @@ async fn the_authored_poll_adds_a_new_pr_and_settles_one_closed_elsewhere() {
 async fn an_inbox_refresh_that_sees_a_new_head_wakes_a_next_push_snooze() {
     let f = fixtures();
     let (core, _recv) = Core::start(f.deps());
-    tokio::time::sleep(Duration::from_millis(30)).await;
+    f.startup_refresh_done().await;
 
     // Never opened this session: not in `current_head`, so the open-PR
     // poller never sees its pushes.
@@ -1847,7 +1853,7 @@ async fn an_inbox_refresh_that_sees_a_new_head_wakes_a_next_push_snooze() {
 async fn refresh_inbox_links_stacked_prs_in_the_same_repo() {
     let f = fixtures();
     let (core, _recv) = Core::start(f.deps());
-    tokio::time::sleep(Duration::from_millis(30)).await;
+    f.startup_refresh_done().await;
 
     let repo = fixture_pr_ref().repo;
     let parent_ref = PrRef {
@@ -3290,7 +3296,7 @@ async fn started_core(f: &Fixtures) -> (Core, Receivers) {
     let (core, recv) = Core::start(f.deps());
     // Let the one-shot startup inbox refresh (empty fixtures) drain first —
     // it shares `FakeHost`'s search queue with a project's own refresh.
-    tokio::time::sleep(Duration::from_millis(30)).await;
+    f.startup_refresh_done().await;
     (core, recv)
 }
 

@@ -10,7 +10,7 @@
 
 use std::future::Future;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use theodore_app::Receivers;
 use theodore_contract::{
@@ -105,21 +105,27 @@ impl SyncWatcher {
     }
 }
 
+/// How long a condition may take to land. Generous: the poller and the
+/// outbox do their work in the background, and CI runs every test binary
+/// at once on a loaded machine.
+const WAIT_FOR: Duration = Duration::from_secs(30);
+
 /// Polls `probe` every 10ms (draining the sync stream on every attempt)
-/// until it returns `Some`, or panics after ~5s.
+/// until it returns `Some`, or panics after [`WAIT_FOR`].
 async fn wait_for<T, F, Fut>(recv: &mut Receivers, watcher: &mut SyncWatcher, mut probe: F) -> T
 where
     F: FnMut() -> Fut,
     Fut: Future<Output = Option<T>>,
 {
-    for _ in 0..500 {
+    let until = Instant::now() + WAIT_FOR;
+    while Instant::now() < until {
         watcher.drain(recv);
         if let Some(v) = probe().await {
             return v;
         }
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
-    panic!("condition not met within the timeout");
+    panic!("condition not met within {WAIT_FOR:?}");
 }
 
 async fn pr_row<T: serde::de::DeserializeOwned>(

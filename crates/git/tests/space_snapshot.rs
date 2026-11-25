@@ -3,7 +3,7 @@
 //! worktree's own index, `HEAD` and the checkpoint ref stay put.
 
 use std::path::Path;
-use std::process::Command;
+mod support;
 use std::sync::Arc;
 
 use tempfile::TempDir;
@@ -19,8 +19,7 @@ impl CredentialSource for NoAuth {
 }
 
 fn git(dir: &Path, args: &[&str]) -> String {
-    let out = Command::new("git")
-        .current_dir(dir)
+    let out = support::git_cmd(dir)
         .args(args)
         .output()
         .expect("git installed");

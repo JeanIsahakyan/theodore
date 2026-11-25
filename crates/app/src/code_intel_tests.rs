@@ -728,7 +728,7 @@ async fn a_switch_refuses_a_committed_local_file() {
 async fn a_host_projects_switch_writes_its_local_file_in_the_data_dir() {
     let f = fixtures();
     let (core, _recv) = Core::start(f.deps_with_code());
-    tokio::time::sleep(Duration::from_millis(30)).await;
+    f.startup_refresh_done().await;
     let project = theodore_contract::Project {
         id: "github:acme/widget".into(),
         repo: RepoRef {

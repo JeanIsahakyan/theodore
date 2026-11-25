@@ -16,7 +16,7 @@ use crate::core::Core;
 use crate::error::{AppError, AppResult};
 use crate::usecases::reconcile::SearchedRows;
 
-const SECTIONS: [InboxSection; 4] = [
+pub(crate) const SECTIONS: [InboxSection; 4] = [
     InboxSection::ReviewRequested,
     InboxSection::Assigned,
     InboxSection::Authored,
