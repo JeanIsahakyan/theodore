@@ -19,7 +19,7 @@ export const CATALOG = {
     answers: 'Is the app used, on what version, cold or warm?',
     props: ['cold'],
   },
-  signed_in: { answers: 'Do people get past sign-in?', props: ['how'] },
+  signed_in: { answers: 'Do people get past sign-in?', props: [] },
   sign_in_failed: {
     answers: 'Why does sign-in fail?',
     props: ['reason'],

@@ -34,7 +34,7 @@ import { usePalette } from './theme';
 
 export function SharingCard() {
   const p = usePalette();
-  const { session, demo } = useAuthState();
+  const { session } = useAuthState();
   const { choice, loaded } = useConsent();
   const [picked, setPicked] = useState({ usage: true, errors: true });
   const [saving, setSaving] = useState(false);
@@ -43,9 +43,8 @@ export function SharingCard() {
     usage: status.usageAvailable,
     errors: status.errorsAvailable,
   };
-  // Signed in to a real account: linking means an account to link.
-  if (!session || demo || !needsSharingChoice(choice, available, loaded))
-    return null;
+  // Signed in: linking means an account to link.
+  if (!session || !needsSharingChoice(choice, available, loaded)) return null;
 
   const save = (c: { usage: boolean; errors: boolean }) => {
     setSaving(true);

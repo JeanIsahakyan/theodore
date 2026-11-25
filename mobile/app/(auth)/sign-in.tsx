@@ -11,7 +11,6 @@
  * │                              │
  * │  [         Sign in        ]  │   native prominent button, full width,
  * │  You continue in a secure…   │   pinned to the bottom (safe area)
- * │        Try the demo          │   plain: sample data, no account
  * └──────────────────────────────┘
  * ```
  */
@@ -30,7 +29,7 @@ const android = process.env.EXPO_OS === 'android';
 
 export default function SignIn() {
   const { auth } = useServices();
-  const { setChoices, startDemo } = useAuthState();
+  const { setChoices } = useAuthState();
   const p = usePalette();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -109,14 +108,6 @@ export default function SignIn() {
           <Text style={[styles.hint, { color: p.muted }]}>
             You continue in a secure browser window and come back here.
           </Text>
-          <Button
-            variant="plain"
-            label="Try the demo"
-            accessibilityLabel="Try the demo with sample data, no account"
-            fullWidth
-            disabled={busy}
-            onPress={startDemo}
-          />
         </View>
       </View>
     </SafeAreaView>

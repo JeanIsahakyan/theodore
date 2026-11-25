@@ -661,7 +661,7 @@ no choice recorded ─▶ nothing sent, nothing queued; a switch off ─▶ its 
   changeable under Settings → Privacy, each switch independent; stored per
   install (`theodore.telemetry.choice`), kept across sign-out. Turning a switch
   on is consent 2; the app never had older words, so there is no "ask again"
-  prompt. The demo account is never linked.
+  prompt.
 - **Identity**: `theodore.telemetry.install_id` (never changes: the hashing key,
   `service.instance.id`), `theodore.telemetry.anon_id` (absent, so the install
   id, until linking starts or the first sign-out; sign-out makes a new one),
