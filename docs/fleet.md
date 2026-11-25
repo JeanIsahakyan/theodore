@@ -804,11 +804,12 @@ pins down what this doc leaves open:
   first, then their mirrors, else `error{fleet.busy}` and the host keeps
   the event in its journal). Only ring loss is a `space_gap`; seq holes
   from compaction or relayed `turn_step`s are not.
-- Protocols 3 to 7 are accepted. A protocol-3 connection never sees
+- Protocols 3 to 11 are accepted. A protocol-3 connection never sees
   `mobile` / `web` devices in `devices` nor gets `delegations`, one below 5
   never sees the `mcp` device ("MCP over the cloud"); a request to a
   `mobile` / `web` / `mcp` device is `refused{fleet.invalid}`; an op on
-  any space to a computer below 7 is `refused{fleet.upgrade_required}`.
+  any space to a computer below 7 is `refused{fleet.upgrade_required}`; a
+  host below 11 never hears `device_adopted` ("A device id changes").
 - A space's followers are its origin and the origin's live delegates
   (`docs/mobile.md`): they may subscribe, and its questions reach them as
   they reach the origin (escalation too). A delegation is signed by the
@@ -822,6 +823,52 @@ pins down what this doc leaves open:
   `fleet.too_many_devices` (20 per user), `fleet.too_many_connections` (10
   sockets per user), `fleet.too_many_spaces` (200 per user),
   `fleet.upgrade_required` (HTTP 426).
+
+### A device id changes
+
+Protocol 11. The cloud matches a hello to a device by `(user, public key)`
+and issues a new `dev_<uuid>` when nothing matches: the device was removed
+from the fleet while it was away (`remove_device`, which another device
+may do to an offline one), or its key changed (a new install, a lost
+keychain). Everything it started then names an id nobody has, and a phone
+whose saved list belonged to the old id would come up empty. So a device
+that gets another id than it had takes its earlier ids' spaces over:
+
+```
+device: kept id ≠ welcome.device_id, or the saved set's id ≠ it (phone)
+  ─▶ adopt{previous: [the ids it had, ≤ 10]} ─▶ before any subscribe
+cloud:  for each previous ≠ me:
+          a devices row for it of ANOTHER user ─▶ skipped (never another user's)
+          a devices row for it online now      ─▶ skipped (a live device isn't earlier)
+          nothing known about it at all        ─▶ skipped
+          else ─▶ spaces, asks WHERE origin_device = previous AND user_id = me's
+                  ─▶ origin_device = me
+               ─▶ every online host of the user on ≥ 11:
+                  device_adopted{device: me, previous}
+host:   hosted rows for previous ─▶ origin device
+        previous pinned AND device listed with the very same key
+          ─▶ the pin moves (auto mode included), fleet.delegates too: a
+             revocation signed for previous, a delegation for device
+        another key ─▶ nothing moves: the person compares the fingerprint
+                       and trusts the new id (as for any new device)
+device: tracked spaces of previous ─▶ origin = me; subscribe{since} as usual;
+        followed ones wait 30 s for a delegation to the new id, then go
+```
+
+| Guard | Holds |
+| --- | --- |
+| Rows move only within one user: `user_id` on every `spaces` / `asks` row is checked, and a `previous` that is another user's device is ignored | the cloud |
+| A `device_adopted` grants nothing: a request from the new id still needs its key pinned on the host, like any origin's; the rows' origin only says whose `send` / `stop` / `archive_space` on that `rs_` id are taken once it is pinned | host |
+| The pin follows an id only for the identical public key: trust stays trust in a key, never in an id the cloud assigns | host |
+| Replies, pending requests and subscriptions of the old id are not moved: short-lived, remade by the device | — |
+
+What a user sees on the Mac after their phone was removed and came back:
+"iPhone wants to run spaces here" once more (a new id, same key: the
+fingerprint is the same), and after Trust the phone's spaces list is what
+it was; "Send my spaces' questions here" has to be turned on again (the
+removal revoked it). A phone that merely lost its id (the cloud forgot it,
+the Mac still pins the key) needs nothing: the pin and the delegation
+follow it.
 
 ## Files (blobs)
 
@@ -1058,12 +1105,15 @@ events and replies a pinned computer signed, refusals as codes
   the `sub_space` mirror, `ConfirmAction::Merge` and `fleet.timeout`; 8
   adds files: `attachments` on `start_space` / `send` / `send_to`, the
   `read_file` op and the blob HTTP routes, "Files (blobs)"; 9 adds
-  `archive_space` / `unarchive_space`, "Archive from another device").
-  Hub: protocols 3 to 9; `mcp` hidden from connections below 5
+  `archive_space` / `unarchive_space`, "Archive from another device"; 10
+  adds `queued_message`, "Sends queue"; 11 adds `adopt` /
+  `device_adopted`, "A device id changes").
+  Hub: protocols 3 to 11; `mcp` hidden from connections below 5
   (`devices`); the confirm frames never sent below 6; the confirm ops to a
-  computer below 6, the ops on any space to one below 7, and the archive
-  ops to one below 9, are `refused{fleet.upgrade_required}`; never
-  accepted as a socket's kind (hello, `announce`).
+  computer below 6, the ops on any space to one below 7, the archive
+  ops to one below 9, and `queued_message` to one below 10, are
+  `refused{fleet.upgrade_required}`; `device_adopted` never sent below 11;
+  never accepted as a socket's kind (hello, `announce`).
 - Its requests are ordinary `SignedEnvelope`s (`Domain::Request`, the
   Rust field order), checked against `src/gen/fleet-vectors.json`.
 - To a computer below protocol 5: `refused{fleet.upgrade_required}` (it

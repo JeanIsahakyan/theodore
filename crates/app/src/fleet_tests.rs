@@ -4370,3 +4370,127 @@ mod auto;
 
 #[path = "fleet_spaces_tests.rs"]
 mod spaces;
+
+// ── a device id changes (protocol 11) ─────────────────────────────────────
+
+/// A `device_adopted` from the cloud moves the spaces hosted for the old id
+/// to the new one; the pin and the delegation follow only the very same key.
+#[tokio::test]
+async fn an_adopted_device_id_takes_over_the_hosted_spaces_pin_and_delegation() {
+    let f = fixtures();
+    let (core, _recv, project, origin) = target(&f).await;
+    f.agents.push_script(done("one"));
+    run(&f, &origin, start_op(&project.id, "rs_1")).await;
+    let local = local_of(&f, "rs_1");
+    wait_until("idle", || space(&f, &local).status == SpaceStatus::Idle).await;
+    core.fleet_delegate(ORIGIN, true).await.unwrap();
+
+    // The phone is back under a new id, with the same key; the old id is gone.
+    let stranger = DeviceKey::generate().unwrap();
+    f.fleet.push(FleetInbound::Message(ServerMessage::Devices {
+        devices: vec![
+            summary(DEV_A, &origin, "mac1", vec![]),
+            summary(DEV_B, &stranger, "other", vec![]),
+        ],
+    }));
+    eventually("the devices", || async {
+        core.fleet_status().await.unwrap().devices.len() == 2
+    })
+    .await;
+    // Not two device ids, or this device itself: dropped.
+    f.fleet
+        .push(FleetInbound::Message(ServerMessage::DeviceAdopted {
+            device: "phone".into(),
+            previous: ORIGIN.into(),
+        }));
+    f.fleet
+        .push(FleetInbound::Message(ServerMessage::DeviceAdopted {
+            device: DEV_A.into(),
+            previous: ME.into(),
+        }));
+    f.fleet
+        .push(FleetInbound::Message(ServerMessage::DeviceAdopted {
+            device: DEV_A.into(),
+            previous: ORIGIN.into(),
+        }));
+    eventually("the row moved", || async {
+        f.store
+            .fleet_hosted_all()
+            .unwrap()
+            .iter()
+            .any(|r| r.space == "rs_1" && r.origin_device == DEV_A)
+    })
+    .await;
+    let s = core.fleet_settings().await;
+    assert_eq!(
+        s.trusted_devices
+            .iter()
+            .map(|t| (t.device_id.as_str(), t.public_key == origin.public_key()))
+            .collect::<Vec<_>>(),
+        vec![(DEV_A, true)]
+    );
+    assert_eq!(s.delegates, vec![DEV_A.to_string()]);
+    wait_until("the delegation moved", || {
+        let d = delegations_sent(&f);
+        d.iter().any(|d| d.delegate_device == ORIGIN && d.revoke)
+            && d.iter().any(|d| d.delegate_device == DEV_A && !d.revoke)
+    })
+    .await;
+    let listed = core.fleet_spaces().await.unwrap();
+    assert_eq!(
+        listed
+            .iter()
+            .map(|h| (h.space.as_str(), h.origin_device.as_str()))
+            .collect::<Vec<_>>(),
+        vec![("rs_1", DEV_A)]
+    );
+
+    // The new id steers the space it took over, signed with the same key.
+    let (id, env) = sealed_from(
+        &f,
+        DEV_A,
+        &origin,
+        RemoteOp::Stop {
+            space: "rs_1".into(),
+        },
+    );
+    deliver(&f, env);
+    wait_until("the claim", || claimed(&f, &id)).await;
+    claim_result(&f, &id, true);
+    wait_until("the reply", || reply_of(&f, &id).is_some()).await;
+    assert!(matches!(reply_of(&f, &id), Some(ReplyOutcome::Ok { .. })));
+
+    // Another key under yet another id: the rows move, trust doesn't.
+    f.fleet
+        .push(FleetInbound::Message(ServerMessage::DeviceAdopted {
+            device: DEV_B.into(),
+            previous: DEV_A.into(),
+        }));
+    eventually("the row moved again", || async {
+        f.store
+            .fleet_hosted_all()
+            .unwrap()
+            .iter()
+            .any(|r| r.space == "rs_1" && r.origin_device == DEV_B)
+    })
+    .await;
+    let s = core.fleet_settings().await;
+    assert_eq!(
+        s.trusted_devices
+            .iter()
+            .map(|t| t.device_id.as_str())
+            .collect::<Vec<_>>(),
+        vec![DEV_A]
+    );
+    assert_eq!(s.delegates, vec![DEV_A.to_string()]);
+    let (id, env) = sealed_from(
+        &f,
+        DEV_B,
+        &stranger,
+        RemoteOp::Stop {
+            space: "rs_1".into(),
+        },
+    );
+    deliver(&f, env);
+    assert_eq!(refusal(&f, &id).await, codes::UNTRUSTED_DEVICE);
+}

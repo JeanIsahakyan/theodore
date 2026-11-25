@@ -142,6 +142,26 @@ fn messages_are_tagged_json() {
 }
 
 #[test]
+fn adopt_frames_are_protocol_11() {
+    let m = ClientMessage::Adopt {
+        previous: vec!["dev_a".into(), "dev_b".into()],
+    };
+    let json = serde_json::json!({"type": "adopt", "previous": ["dev_a", "dev_b"]});
+    assert_eq!(serde_json::to_value(&m).unwrap(), json);
+    assert_eq!(serde_json::from_value::<ClientMessage>(json).unwrap(), m);
+    let s = ServerMessage::DeviceAdopted {
+        device: "dev_new".into(),
+        previous: "dev_old".into(),
+    };
+    let json =
+        serde_json::json!({"type": "device_adopted", "device": "dev_new", "previous": "dev_old"});
+    assert_eq!(serde_json::to_value(&s).unwrap(), json);
+    assert_eq!(serde_json::from_value::<ServerMessage>(json).unwrap(), s);
+    assert_eq!(PROTOCOL_VERSION, 11);
+    assert_eq!(MAX_ADOPT_PREVIOUS, 10);
+}
+
+#[test]
 fn a_hello_signature_never_verifies_as_a_request() {
     // The attack: a cloud passes a request body off as a challenge nonce.
     let key = DeviceKey::generate().unwrap();
@@ -508,7 +528,7 @@ fn ops_on_any_space_are_tagged_and_on_no_cloud_space() {
         .protocol(),
         10
     );
-    assert_eq!(PROTOCOL_VERSION, 10);
+    assert_eq!(PROTOCOL_VERSION, 11);
     assert!(
         !RemoteOp::Stop {
             space: "rs_1".into()
@@ -544,7 +564,7 @@ fn archive_ops_are_on_a_hosted_space_and_need_protocol_9() {
         assert_eq!(serde_json::to_value(&op).unwrap(), json);
         assert_eq!(serde_json::from_value::<RemoteOp>(json).unwrap(), op);
     }
-    assert_eq!(PROTOCOL_VERSION, 10);
+    assert_eq!(PROTOCOL_VERSION, 11);
     assert_eq!(
         RemoteOp::Stop {
             space: "rs_1".into()
@@ -1108,7 +1128,7 @@ mod blobs {
         assert_eq!(ok.validate_blobs(), Ok(()));
         let v = serde_json::to_value(ReadFileResult { blob: good() }).unwrap();
         assert_eq!(v["blob"]["name"], "notes.md");
-        assert_eq!(PROTOCOL_VERSION, 10);
+        assert_eq!(PROTOCOL_VERSION, 11);
         assert_eq!(codes::BLOB_NOT_FOUND, "fleet.blob_not_found");
         assert_eq!(codes::QUOTA, "fleet.quota");
     }

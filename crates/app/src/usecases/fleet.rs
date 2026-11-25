@@ -823,6 +823,93 @@ impl Core {
         Ok(status)
     }
 
+    /// `device_adopted{device, previous}` (protocol 11, docs/fleet.md "A
+    /// device id changes"): one of the user's devices took over an earlier
+    /// id of its own. On the cloud's word, and bounded by what the cloud
+    /// already decides (it assigns ids and routes): the spaces hosted here
+    /// for `previous` are `device`'s now, which lets it steer them only once
+    /// it is pinned here like any origin. The pin and the delegation follow
+    /// only when `device` lists the very same key `previous` was pinned
+    /// with: the key is the trust, the id is the cloud's.
+    pub(crate) async fn fleet_on_device_adopted(&self, device: &str, previous: &str) {
+        if !valid_device_id(device) || !valid_device_id(previous) || device == previous {
+            tracing::warn!("dropped a device_adopted that doesn't name two device ids");
+            return;
+        }
+        let me = self.fleet().device_id.clone();
+        if me.as_deref() == Some(device) || me.as_deref() == Some(previous) {
+            return;
+        }
+        let moved: Vec<FleetHostedRow> = {
+            let mut mem = self.fleet();
+            let mut rows = Vec::new();
+            for h in mem.hosted.values_mut() {
+                if h.row.origin_device == previous {
+                    h.row.origin_device = device.to_string();
+                    h.view.origin_device = device.to_string();
+                    rows.push(h.row.clone());
+                }
+            }
+            for origin in mem.hosting.values_mut() {
+                if origin == previous {
+                    *origin = device.to_string();
+                }
+            }
+            rows
+        };
+        for row in &moved {
+            self.fleet_put_hosted(row).await;
+        }
+        let (pinned, delegated) = {
+            let _g = self.0.fleet.settings_lock.lock().await;
+            let mut s = self.fleet_settings().await;
+            let listed_key = self
+                .fleet()
+                .devices
+                .iter()
+                .find(|d| d.device_id == device)
+                .map(|d| d.public_key.clone());
+            let same_key = s
+                .trusted_devices
+                .iter()
+                .find(|t| t.device_id == previous)
+                .is_some_and(|t| listed_key.as_deref() == Some(t.public_key.as_str()));
+            let delegated = same_key && s.delegates.iter().any(|d| d == previous);
+            if same_key {
+                // The pin moves as it is (auto mode included: the same key).
+                s.trusted_devices.retain(|t| t.device_id != device);
+                for t in &mut s.trusted_devices {
+                    if t.device_id == previous {
+                        t.device_id = device.to_string();
+                    }
+                }
+                s.delegates.retain(|d| d != previous && d != device);
+                if delegated {
+                    s.delegates.push(device.to_string());
+                }
+                if let Err(e) = self.fleet_save_settings(&s).await {
+                    tracing::warn!(error.code = e.code(), error = %e, "couldn't move a pin to an adopted device id");
+                }
+            }
+            (same_key, delegated)
+        };
+        if delegated {
+            self.fleet_send_delegation(previous, true).await;
+            self.fleet_send_delegation(device, false).await;
+        }
+        tracing::info!(
+            device,
+            previous,
+            spaces = moved.len(),
+            pinned,
+            delegated,
+            "a fleet device took over an earlier id of its own"
+        );
+        if !moved.is_empty() || pinned {
+            self.fleet_emit_status().await;
+        }
+    }
+
     /// The pin of `device`, if this device trusts it.
     pub(crate) async fn fleet_pinned(&self, device: &str) -> Option<TrustedDevice> {
         self.fleet_settings()
@@ -1434,6 +1521,9 @@ impl Core {
             ServerMessage::Confirm { envelope } => self.fleet_on_remote_confirm(envelope).await,
             ServerMessage::ConfirmDismissed { confirm_id } => {
                 self.fleet_on_confirm_dismissed(&confirm_id)
+            }
+            ServerMessage::DeviceAdopted { device, previous } => {
+                self.fleet_on_device_adopted(&device, &previous).await
             }
             // Challenge and welcome are the adapter's.
             ServerMessage::Challenge { .. } | ServerMessage::Welcome { .. } => {}

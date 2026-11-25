@@ -24,6 +24,8 @@
  *      below 7 ─▶ refused{fleet.upgrade_required}
  *   ─▶ archive_space / unarchive_space (protocol 9) ─▶ routed like stop; a
  *      target below 9 ─▶ refused{fleet.upgrade_required}
+ *   ─▶ adopt{previous} (protocol 11) ─▶ the same user's spaces started from
+ *      those earlier ids are the sender's ─▶ device_adopted to its hosts on 11
  * POST /v1/fleet/request ─▶ routed like a socket request
  * ```
  *
@@ -129,6 +131,7 @@ import {
   protocolToSee,
   unb64,
   V6,
+  V11,
   verifyEnvelope,
   verifyHello,
 } from './wire';
@@ -399,6 +402,8 @@ export class Hub {
           return this.confirm(r, msg.envelope);
         case 'confirm_resolved':
           return this.confirmResolved(r, msg.confirm_id);
+        case 'adopt':
+          return this.adopt(r, msg.previous);
       }
     });
   }
@@ -1999,6 +2004,71 @@ export class Hub {
       user,
       named.flatMap((d) => [d.origin_device, d.delegate_device]),
     );
+  }
+
+  /**
+   * `adopt{previous}` (protocol 11, docs/fleet.md "A device id changes"):
+   * the sender had these ids before (removed from the fleet while away, or
+   * its key changed) and takes over what the same user started from them:
+   * the spaces' origin and the questions routed to it. Only rows of the
+   * sender's own user move, and only from an id that is no live device of
+   * theirs now (a device online under that id isn't "earlier"); the
+   * sender's own id, another user's device, and an id nothing is known
+   * about are skipped. The user's hosts on protocol 11 then hear
+   * `device_adopted` for each id taken over, so their hosted rows, pins
+   * and delegations can follow the device.
+   */
+  private adopt(r: Ready, previous: string[]) {
+    const user = r.state.user;
+    const me = r.state.device;
+    const taken: string[] = [];
+    let spaces = 0;
+    for (const prev of new Set(previous)) {
+      if (prev === me) continue;
+      const dev = this.store.device(prev);
+      if (dev && (dev.user_id !== user || this.readyDevice(user, prev))) {
+        continue;
+      }
+      const owned = this.store.num(
+        'SELECT COUNT(*) AS n FROM spaces WHERE origin_device = ? AND user_id = ?',
+        prev,
+        user,
+      );
+      if (!dev && !owned) continue;
+      this.store.run(
+        'UPDATE spaces SET origin_device = ? WHERE origin_device = ? AND user_id = ?',
+        me,
+        prev,
+        user,
+      );
+      this.store.run(
+        'UPDATE asks SET origin_device = ? WHERE origin_device = ? AND user_id = ?',
+        me,
+        prev,
+        user,
+      );
+      spaces += owned ?? 0;
+      taken.push(prev);
+    }
+    if (taken.length === 0) return;
+    for (const c of this.ready(user)) {
+      const dev = this.store.device(c.state.device);
+      if (!dev || !hosts(infoOf(dev).kind) || protocolOf(c.state) < V11) {
+        continue;
+      }
+      for (const prev of taken) {
+        this.send(c.conn, {
+          type: 'device_adopted',
+          device: me,
+          previous: prev,
+        });
+      }
+    }
+    this.log.info('fleet device adopted', {
+      ...this.connAttrs(r.state),
+      previous: taken.length,
+      spaces,
+    });
   }
 
   // ── push and delegations ───────────────────────────────────────────────

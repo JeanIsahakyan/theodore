@@ -46,19 +46,19 @@ describe('per-account storage', () => {
     const b = savedScope('u_b', 'org_1');
     await store.write(a, DEVICE, [saved('rs_a1'), saved('rs_a2')], new Set());
     await store.write(b, DEVICE, [saved('rs_b1')], new Set());
-    expect((await store.load(a, DEVICE)).map((s) => s.view.space)).toEqual([
+    expect((await store.load(a)).spaces.map((s) => s.view.space)).toEqual([
       'rs_a1',
       'rs_a2',
     ]);
-    expect((await store.load(b, DEVICE)).map((s) => s.view.space)).toEqual([
+    expect((await store.load(b)).spaces.map((s) => s.view.space)).toEqual([
       'rs_b1',
     ]);
     expect(await store.spacesOf(a)).toEqual(['rs_a1', 'rs_a2']);
     expect(await store.spacesOf(savedScope('u_c', 'org_1'))).toEqual([]);
     await store.clear(a);
-    expect(await store.load(a, DEVICE)).toEqual([]);
+    expect((await store.load(a)).spaces).toEqual([]);
     expect(await store.spacesOf(a)).toEqual([]);
-    expect((await store.load(b, DEVICE)).map((s) => s.view.space)).toEqual([
+    expect((await store.load(b)).spaces.map((s) => s.view.space)).toEqual([
       'rs_b1',
     ]);
   });

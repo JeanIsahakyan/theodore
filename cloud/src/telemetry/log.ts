@@ -49,6 +49,7 @@ export const REMOTE_INFO: ReadonlySet<string> = new Set([
   'quota hit',
   'fleet connected',
   'fleet disconnected',
+  'fleet device adopted',
   'fleet request',
   'push sent',
   'telemetry relayed',
