@@ -157,8 +157,61 @@ fn adopt_frames_are_protocol_11() {
         serde_json::json!({"type": "device_adopted", "device": "dev_new", "previous": "dev_old"});
     assert_eq!(serde_json::to_value(&s).unwrap(), json);
     assert_eq!(serde_json::from_value::<ServerMessage>(json).unwrap(), s);
-    assert_eq!(PROTOCOL_VERSION, 11);
     assert_eq!(MAX_ADOPT_PREVIOUS, 10);
+}
+
+#[test]
+fn my_spaces_frames_are_protocol_12() {
+    assert_eq!(PROTOCOL_VERSION, 12);
+    assert_eq!(MAX_MY_SPACES, 200);
+    // A unit variant still carries its tag, and nothing else.
+    let m = ClientMessage::ListMySpaces;
+    let json = serde_json::json!({"type": "list_my_spaces"});
+    assert_eq!(serde_json::to_value(&m).unwrap(), json);
+    assert_eq!(serde_json::from_value::<ClientMessage>(json).unwrap(), m);
+    let s = ServerMessage::MySpaces {
+        list: vec![MySpace {
+            space: "rs_1".into(),
+            host_device: "dev_host".into(),
+            origin_device: "dev_me".into(),
+            name: Some("Fix login".into()),
+            mode: Some(FleetMode::Edit),
+            status: Some(RemoteSpaceStatus::Idle),
+            last_seq: 7,
+            last_ms: 1_700_000_000_000,
+        }],
+    };
+    let json = serde_json::json!({
+        "type": "my_spaces",
+        "list": [{
+            "space": "rs_1",
+            "host_device": "dev_host",
+            "origin_device": "dev_me",
+            "name": "Fix login",
+            "mode": "edit",
+            "status": "idle",
+            "last_seq": 7,
+            "last_ms": 1_700_000_000_000u64,
+        }],
+    });
+    assert_eq!(serde_json::to_value(&s).unwrap(), json);
+    assert_eq!(serde_json::from_value::<ServerMessage>(json).unwrap(), s);
+    // A space the cloud knows little about: the optional fields may be absent.
+    let bare: ServerMessage = serde_json::from_value(serde_json::json!({
+        "type": "my_spaces",
+        "list": [{"space": "rs_2", "host_device": "dev_host", "origin_device": "dev_me",
+                  "last_seq": 0, "last_ms": 0}],
+    }))
+    .unwrap();
+    match bare {
+        ServerMessage::MySpaces { list } => {
+            assert_eq!(list.len(), 1);
+            assert_eq!(list[0].name, None);
+            assert_eq!(list[0].mode, None);
+            assert_eq!(list[0].status, None);
+        }
+        other => panic!("{other:?}"),
+    }
 }
 
 #[test]
@@ -528,7 +581,7 @@ fn ops_on_any_space_are_tagged_and_on_no_cloud_space() {
         .protocol(),
         10
     );
-    assert_eq!(PROTOCOL_VERSION, 11);
+    assert_eq!(PROTOCOL_VERSION, 12);
     assert!(
         !RemoteOp::Stop {
             space: "rs_1".into()
@@ -564,7 +617,7 @@ fn archive_ops_are_on_a_hosted_space_and_need_protocol_9() {
         assert_eq!(serde_json::to_value(&op).unwrap(), json);
         assert_eq!(serde_json::from_value::<RemoteOp>(json).unwrap(), op);
     }
-    assert_eq!(PROTOCOL_VERSION, 11);
+    assert_eq!(PROTOCOL_VERSION, 12);
     assert_eq!(
         RemoteOp::Stop {
             space: "rs_1".into()
@@ -1128,7 +1181,7 @@ mod blobs {
         assert_eq!(ok.validate_blobs(), Ok(()));
         let v = serde_json::to_value(ReadFileResult { blob: good() }).unwrap();
         assert_eq!(v["blob"]["name"], "notes.md");
-        assert_eq!(PROTOCOL_VERSION, 11);
+        assert_eq!(PROTOCOL_VERSION, 12);
         assert_eq!(codes::BLOB_NOT_FOUND, "fleet.blob_not_found");
         assert_eq!(codes::QUOTA, "fleet.quota");
     }

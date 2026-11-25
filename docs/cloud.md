@@ -480,7 +480,10 @@ Later protocols add ops the cloud routes only to a target that reads them
 (else `refused{fleet.upgrade_required}`): 8 the blob transfer
 (attachments, `read_file`), 9 `archive_space` / `unarchive_space`, 10
 `queued_message` (Send now / Remove on a queued message, docs/fleet.md
-"Sends queue").
+"Sends queue"). Frames only a device on a later protocol gets: 11
+`device_adopted` (hosts), 12 `my_spaces` after the welcome and on
+`list_my_spaces` (docs/fleet.md "The list comes from the cloud"); below 12
+`list_my_spaces` is `fleet.bad_message`.
 
 Kind `mcp` is the cloud's own device ("MCP" below): only its in-process
 connection says it, and says nothing else; a socket's hello or `announce`

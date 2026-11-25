@@ -1527,6 +1527,9 @@ impl Core {
             }
             // Challenge and welcome are the adapter's.
             ServerMessage::Challenge { .. } | ServerMessage::Welcome { .. } => {}
+            // The phone's list (protocol 12): a computer keeps its own
+            // `fleet.follow:<rs_>` rows and the cloud's `resume`.
+            ServerMessage::MySpaces { .. } => {}
             ServerMessage::Error { code, message } => {
                 tracing::warn!(error.code = %code, error = %message, "the fleet cloud reported an error");
                 // The cloud's text is unsigned: the user hears our words.

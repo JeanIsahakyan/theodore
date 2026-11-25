@@ -224,6 +224,29 @@ export interface SubSpaceRead {
   error: string | null;
 }
 
+/**
+ * A space on one of the user's computers that this phone neither started
+ * nor follows, as that computer lists it (`list_spaces`, docs/mobile.md
+ * "The list comes from the cloud"): its verified, shape-checked word. It
+ * opens like a sub-space, read by its local id (`read_space`, `send_to`).
+ */
+export interface ComputerSpaceView {
+  hostDevice: string;
+  /** The computer's pinned name. */
+  hostName: string;
+  /** Its local id on that computer. */
+  space: string;
+  /** The space's name there (its branch-like slug). */
+  name: string;
+  title: string;
+  project: string;
+  /** As `spaces_list` says it: `setting_up`, `running`, `question`, … */
+  status: string;
+  mode: FleetMode | null;
+  /** Unix ms of its last activity. */
+  activeAt: number;
+}
+
 export interface FleetSnapshot {
   connection: ConnectionState;
   error: string | null;
@@ -244,6 +267,14 @@ export interface FleetSnapshot {
   questions: QuestionView[];
   /** Claude via cloud's requests waiting on a computer for Allow / Deny. */
   confirms: ConfirmView[];
+  /**
+   * The other spaces on the trusted computers (`list_spaces`), without
+   * those already in `spaces`; the newest first. Refreshed after each
+   * welcome and by `refreshSpaces`.
+   */
+  computerSpaces: ComputerSpaceView[];
+  /** `refreshSpaces` is under way (the list's pull-to-refresh spinner). */
+  refreshing: boolean;
 }
 
 /**
@@ -268,6 +299,13 @@ export interface FleetClient {
   dropPushHere(): Promise<void>;
   /** Removes the saved sets of these `<user>.<org>` scopes (an account left). */
   forgetSaved(scopes: readonly string[]): Promise<void>;
+  /**
+   * The list's pull-to-refresh: asks the cloud for this device's spaces
+   * again (`list_my_spaces`) and every trusted computer for its own
+   * (`list_spaces`). Resolves once the computers answered (or timed out);
+   * a computer that refuses keeps its last rows.
+   */
+  refreshSpaces(): Promise<void>;
   /** `agent` / `model` / `effort`: only what was picked; the host's
    *  defaults run for the rest. `attachments`: blobs uploaded for that
    *  computer (`uploadAttachment`), for the space's `.context/`. */

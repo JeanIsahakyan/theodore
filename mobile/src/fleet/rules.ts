@@ -430,3 +430,86 @@ export function sendResult(value: unknown): SendResult {
       : null;
   return { message: pickId(v.message, NAME_MAX), queued, position };
 }
+
+/** Spaces one computer's `list_spaces` answer is read for, at most. */
+export const COMPUTER_SPACES_MAX = 50;
+
+/** A space id a host issues (12 hex, or an `rs_` id): what may name a route. */
+const LOCAL_ID = /^[A-Za-z0-9_-]{1,100}$/;
+
+/** One row of a computer's `list_spaces` answer, before it gets its host. */
+export interface ListedSpace {
+  space: string;
+  name: string;
+  title: string;
+  project: string;
+  status: string;
+  mode: FleetMode | null;
+  activeAt: number;
+}
+
+/**
+ * The host's `ok` value for `list_spaces` as the list takes it, field by
+ * field (`crates/ports/src/local_spaces.rs` `LocalSpaceList`): at most
+ * COMPUTER_SPACES_MAX rows, ids that may name a route, known statuses.
+ * Left out: archived and done ones, mirrors of spaces running on another
+ * device (`remote`), and sub-spaces (shown under their parent).
+ */
+export function listedSpacesOf(value: unknown): ListedSpace[] {
+  if (!isObj(value) || !Array.isArray(value.spaces)) return [];
+  return value.spaces
+    .slice(0, COMPUTER_SPACES_MAX)
+    .filter(isObj)
+    .filter(
+      (s) =>
+        typeof s.space === 'string' &&
+        LOCAL_ID.test(s.space) &&
+        s.remote !== true &&
+        s.done !== true &&
+        !s.parent &&
+        s.status !== 'archived',
+    )
+    .map((s) => ({
+      space: s.space as string,
+      name: str(s.name, NAME_MAX),
+      title: str(s.title, NAME_MAX) || str(s.name, NAME_MAX),
+      project: str(s.project, NAME_MAX),
+      status: (READ_STATUSES as readonly unknown[]).includes(s.status)
+        ? (s.status as string)
+        : 'unknown',
+      mode: isMode(s.mode) ? s.mode : null,
+      activeAt: num(s.updated_at),
+    }));
+}
+
+/** One `my_spaces` row as the list takes it; `null` when it can't be one. */
+export interface CloudSpace {
+  space: string;
+  hostDevice: string;
+  originDevice: string;
+  /** The cloud's copy of the host-signed `started` name: a placeholder. */
+  name: string;
+  mode: FleetMode | null;
+  status: SpaceStatus | null;
+  lastMs: number;
+}
+
+/**
+ * A `my_spaces` row, shape-checked: the cloud's word, unsigned, so only
+ * what lists the space and subscribes to it is kept, every text cut.
+ */
+export function cloudSpaceOf(v: unknown): CloudSpace | null {
+  if (!isObj(v)) return null;
+  if (typeof v.space !== 'string' || !LOCAL_ID.test(v.space)) return null;
+  if (!validDeviceId(v.host_device) || !validDeviceId(v.origin_device))
+    return null;
+  return {
+    space: v.space,
+    hostDevice: v.host_device,
+    originDevice: v.origin_device,
+    name: typeof v.name === 'string' ? truncate(v.name, NAME_MAX) : '',
+    mode: isMode(v.mode) ? v.mode : null,
+    status: remoteStatus(v.status),
+    lastMs: num(v.last_ms),
+  };
+}

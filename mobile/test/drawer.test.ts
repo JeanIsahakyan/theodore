@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import type { SpaceView } from '../src/fleet/types';
+import type { ComputerSpaceView, SpaceView } from '../src/fleet/types';
 import {
+  COMPUTERS_SECTION,
+  computerSections,
+  computerSpaceDot,
   dayGroup,
   drawerClosesOn,
   initials,
@@ -143,5 +146,47 @@ describe('drawerClosesOn', () => {
 
   it('the same route: nothing', () => {
     expect(drawerClosesOn('/', '/')).toBe(false);
+  });
+});
+
+describe('computerSections', () => {
+  const c = (
+    id: string,
+    over: Partial<ComputerSpaceView> = {},
+  ): ComputerSpaceView => ({
+    hostDevice: 'dev_mac',
+    hostName: 'mac-A',
+    space: id,
+    name: id,
+    title: `Title ${id}`,
+    project: 'theodore',
+    status: 'idle',
+    mode: 'edit',
+    activeAt: 1,
+    ...over,
+  });
+
+  it('is one section after the days, or none', () => {
+    expect(computerSections([])).toEqual([]);
+    expect(computerSections([c('a'), c('b')])).toEqual([
+      { title: COMPUTERS_SECTION, data: [c('a'), c('b')] },
+    ]);
+  });
+
+  it('filters by title, name, project or computer', () => {
+    const list = [c('a', { hostName: 'studio' }), c('b', { project: 'site' })];
+    const ids = (q: string) =>
+      computerSections(list, q).flatMap((s) => s.data.map((x) => x.space));
+    expect(ids('STUDIO')).toEqual(['a']);
+    expect(ids('site')).toEqual(['b']);
+    expect(ids('title b')).toEqual(['b']);
+    expect(ids('nothing')).toEqual([]);
+  });
+
+  it('dots by the listed status', () => {
+    expect(computerSpaceDot(c('a', { status: 'question' }))).toBe('waiting');
+    expect(computerSpaceDot(c('a', { status: 'setting_up' }))).toBe('running');
+    expect(computerSpaceDot(c('a', { status: 'failed' }))).toBe('failed');
+    expect(computerSpaceDot(c('a'))).toBeNull();
   });
 });

@@ -629,7 +629,8 @@ no choice recorded ─▶ nothing sent, nothing queued; a switch off ─▶ its 
   the Home start flow (computer kind, mode, agent, model, effort, latency,
   refusal code), sends (queued or not, latency, retries, surface), answers, plan
   approvals, picks, sheets, the activity strip, sub-space opens and read
-  failures, saved-spaces restore (count, ms), trust changes, archive from the
+  failures, saved-spaces restore (count, ms), the cloud's list of this
+  device's spaces after a welcome (`my_spaces_listed`: count, added), trust changes, archive from the
   phone (`space_archived`: `action` archive / unarchive, `surface` `row_menu`:
   the drawer row's long-press menu, or `merged_chip`: the space screen's
   "Merged #n" chip, whether the space was stopped first,

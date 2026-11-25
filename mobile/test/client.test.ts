@@ -131,7 +131,7 @@ describe('connect', () => {
       device(ME, myKey, { kind: 'mobile' }),
     ]);
     const hello = sock.of('hello')[0]!;
-    expect(hello.protocol).toBe(11);
+    expect(hello.protocol).toBe(12);
     expect(hello.device_id).toBeNull();
     expect(hello.public_key).toBe(myKey.publicKey);
     expect(hello.spaces).toEqual([]);

@@ -6,12 +6,19 @@
  *
  * ```text
  * start ─▶ session + org ─▶ WSS <cloud>/v1/fleet/ws (Bearer header | bearer.<token> subprotocol)
- *   challenge{nonce: 32 bytes} ─▶ hello{protocol 11, kind mobile|web, accepts_remote false,
+ *   challenge{nonce: 32 bytes} ─▶ hello{protocol 12, kind mobile|web, accepts_remote false,
  *                                       max_mode ask, projects [], spaces []}
  *   welcome ─▶ device id kept per org ─▶ reauth if the token changed meanwhile,
  *              another id than the one kept or the saved set's ─▶ adopt{previous}
  *              (docs/fleet.md "A device id changes"; logged fleet.device_id_changed),
  *              register_push again, subscribe{space, since: last seq} again
+ *   my_spaces (after every welcome; list_my_spaces asks again, e.g. after an
+ *     adopt) ─▶ the cloud's list of the spaces this device may follow: one not
+ *     tracked here is tracked (the cloud's name as a placeholder) and
+ *     subscribed from 0; one tracked here stays; one missing from the list
+ *     is never dropped for that (docs/fleet.md "The list comes from the cloud")
+ *   devices (the first of each link), refreshSpaces ─▶ list_spaces to every
+ *     trusted computer online ─▶ its other spaces, published as computerSpaces
  *   close 4001/4003, error{fatal code} ─▶ error state, no redial until start()
  *                                          (or a refreshed token)
  *   close 4000 (another connection of this device took over)
@@ -116,6 +123,9 @@ import { SAVED_LINES, savedScope, savedSpaces, type SavedSpace } from './saved';
 import { defaultPlatform } from './platform';
 import type { FleetPlatform, FleetSocket } from './platform-types';
 import {
+  cloudSpaceOf,
+  listedSpacesOf,
+  type ListedSpace,
   ERROR_TEXT_MAX,
   LINES_KEPT,
   NAME_MAX,
@@ -138,6 +148,7 @@ import {
   validDeviceId,
 } from './rules';
 import type {
+  ComputerSpaceView,
   ConfirmView,
   FleetClient,
   FleetDeviceView,
@@ -150,7 +161,7 @@ import type {
 
 export { FleetError } from './errors';
 
-export const PROTOCOL_VERSION = 11;
+export const PROTOCOL_VERSION = 12;
 /** Most confirms kept at once (the oldest go first). */
 export const CONFIRMS_KEPT = 20;
 /** Earlier device ids remembered per org, and named in one `adopt`
@@ -327,6 +338,8 @@ interface Link {
   ping: ReturnType<typeof setInterval> | null;
   /** Frames are handled one at a time, in order (handlers await storage). */
   inbox: Promise<void>;
+  /** The computers' spaces were asked for on this link (its first devices list). */
+  listed: boolean;
 }
 
 const deviceIdKey = (org: string) =>
@@ -419,6 +432,13 @@ export function createFleetClient(
     string,
     { view: ConfirmView; expiry: ReturnType<typeof setTimeout> }
   >();
+  /** Each trusted computer's own spaces, as its last `list_spaces` said. */
+  const computers = new Map<
+    string,
+    { hostName: string; spaces: ListedSpace[] }
+  >();
+  /** The computers' lists being asked for (one run at a time). */
+  let listing: Promise<void> | null = null;
   /** `<user>.<org>` whose saved set is loaded and written; `null`: none yet. */
   let scope: string | null = null;
   /** The device id the loaded set was written for. */
@@ -481,7 +501,29 @@ export function createFleetClient(
           ...x.view,
           activeAt: x.mirror.space?.updated_at || x.seenAt,
         })),
+      computerSpaces: computerViews(),
     });
+  /**
+   * The computers' own spaces without those tracked here: a space this
+   * device started or follows is on its host under its local id, which
+   * the host never says; the host's name for it (the signed `started`
+   * name, the mirrored row's) is what matches it.
+   */
+  const computerViews = (): ComputerSpaceView[] => {
+    const known = new Set<string>();
+    for (const x of tracked.values()) {
+      const host = x.view.hostDevice;
+      for (const n of [x.startedName, x.mirror.space?.name])
+        if (n) known.add(`${host}\n${n}`);
+    }
+    const out: ComputerSpaceView[] = [];
+    for (const [hostDevice, c] of computers)
+      for (const s of c.spaces) {
+        if (s.name && known.has(`${hostDevice}\n${s.name}`)) continue;
+        out.push({ ...s, hostDevice, hostName: c.hostName });
+      }
+    return out.sort((a, b) => b.activeAt - a.activeAt);
+  };
   const publishLines = (space: string) => {
     const x = tracked.get(space);
     if (x) set((s) => ({ lines: { ...s.lines, [space]: [...x.lines] } }));
@@ -567,6 +609,7 @@ export function createFleetClient(
     }
     pending.clear();
     tracked.clear();
+    computers.clear();
     questions.clear();
     clearConfirms();
     devices = [];
@@ -880,6 +923,7 @@ export function createFleetClient(
         handshake: null,
         ping: null,
         inbox: Promise.resolve(),
+        listed: false,
       };
       link = l;
       l.handshake = setTimeout(() => lost(l), t.handshakeMs);
@@ -1047,6 +1091,8 @@ export function createFleetClient(
               : 'saved_set_of_another_id',
         });
         sendMsg({ type: 'adopt', previous: list });
+        // The welcome's my_spaces was made before the cloud moved them.
+        sendMsg({ type: 'list_my_spaces' });
         for (const x of tracked.values()) {
           if (previous.has(x.view.originDevice)) {
             x.view.originDevice = me;
@@ -1111,6 +1157,11 @@ export function createFleetClient(
         // The first list of this run: Home and the drawer leave their
         // loading state (src/ui/load.ts).
         if (!superseded) set({ welcomed: true });
+        // Once per link: the trusted computers' own spaces.
+        if (!l.listed) {
+          l.listed = true;
+          void listComputers();
+        }
         return;
       case 'reply':
         return onReply(msg.envelope);
@@ -1137,6 +1188,8 @@ export function createFleetClient(
       case 'confirm_dismissed':
         dropConfirm(String(msg.confirm_id));
         return;
+      case 'my_spaces':
+        return onMySpaces(msg.list);
       default:
         // `request` / `claim_result`, or a type this build doesn't know:
         // never a target, nothing to run.
@@ -1257,6 +1310,125 @@ export function createFleetClient(
       }
     }
     dropShown(gone);
+  };
+
+  /**
+   * `my_spaces{list}`: the spaces this device may follow, as the cloud
+   * holds them (docs/fleet.md "The list comes from the cloud"). One not
+   * tracked here is tracked and subscribed from 0, so the subscription
+   * replays its signed history (the `started` name, the mirrored space row)
+   * over the cloud's placeholder; one tracked here keeps what it has (a
+   * followed one read back after a restart is subscribed: the cloud lists
+   * it only while its origin delegates here). Nothing is dropped for
+   * missing from the list.
+   */
+  const onMySpaces = async (list: unknown) => {
+    if (!Array.isArray(list) || !me) return;
+    const pinned = new Map((await pins.list()).map((p) => [p.deviceId, p]));
+    let added = 0;
+    for (const raw of list) {
+      const c = cloudSpaceOf(raw);
+      if (!c) continue;
+      const x = tracked.get(c.space);
+      if (x) {
+        if (x.awaiting) {
+          x.awaiting = false;
+          x.subscribed = true;
+          sendMsg({ type: 'subscribe', space: c.space, since: x.lastSeq });
+        }
+        continue;
+      }
+      const listed = devices.find((d) => d.device_id === c.hostDevice);
+      const hostName =
+        pinned.get(c.hostDevice)?.name ??
+        (listed ? pinName(String(listed.info?.name ?? '')) : 'a computer');
+      const started = c.originDevice === me;
+      const y: Tracked = {
+        view: {
+          space: c.space,
+          hostDevice: c.hostDevice,
+          hostName,
+          originDevice: c.originDevice,
+          projectName: '',
+          // A placeholder until the host's signed rows arrive.
+          name: c.name,
+          branch: '',
+          status: c.status ?? 'idle',
+          mode: c.mode ?? 'ask',
+          lastReply: null,
+          question: null,
+          startedHere: started,
+          error: null,
+        },
+        lines: [],
+        lastSeq: 0,
+        startedName: null,
+        mirror: emptyMirror(),
+        subscribed: true,
+        awaiting: false,
+        seenAt: c.lastMs || deps.now(),
+      };
+      tracked.set(c.space, y);
+      dirty.add(c.space);
+      sendMsg({ type: 'subscribe', space: c.space, since: 0 });
+      added++;
+    }
+    track('my_spaces_listed', { count: list.length, added });
+    if (!added) return;
+    publishSpaces();
+    scheduleSave();
+  };
+
+  /**
+   * Every trusted computer online is asked for its own spaces
+   * (`list_spaces`, Ask: read only). One that refuses or doesn't answer
+   * keeps the rows it gave last; one no longer listed or trusted loses
+   * them. One run at a time.
+   */
+  const listComputers = (): Promise<void> => {
+    listing ??= (async () => {
+      // Its link: a stop, an account or org switch meanwhile drops the answers.
+      const l = link;
+      const mine = epoch;
+      const live = () => link === l && epoch === mine && wanted && !superseded;
+      try {
+        const pinned = new Map((await pins.list()).map((p) => [p.deviceId, p]));
+        const hostsNow = devices.filter((d) => {
+          const pin = pinned.get(d.device_id);
+          return (
+            hosts(String(d.info?.kind ?? '')) &&
+            !!pin &&
+            pin.publicKey === d.public_key
+          );
+        });
+        const keep = new Set(hostsNow.map((d) => d.device_id));
+        for (const id of [...computers.keys()])
+          if (!keep.has(id)) computers.delete(id);
+        await Promise.all(
+          hostsNow
+            .filter((d) => d.online === true)
+            .map(async (d) => {
+              try {
+                const value = await steerOn(d.device_id, {
+                  op: 'list_spaces',
+                  project: null,
+                });
+                if (!live()) return;
+                computers.set(d.device_id, {
+                  hostName: pinned.get(d.device_id)!.name,
+                  spaces: listedSpacesOf(value),
+                });
+              } catch {
+                // Refused (not trusted there, too old) or away: its last rows stay.
+              }
+            }),
+        );
+        if (live()) publishSpaces();
+      } finally {
+        listing = null;
+      }
+    })();
+    return listing;
   };
 
   const delegated = () => {
@@ -1958,6 +2130,17 @@ export function createFleetClient(
         else await queue(() => saved.clear(s));
       }
       await ops;
+    },
+
+    async refreshSpaces() {
+      if (!link?.welcomed) return;
+      set({ refreshing: true });
+      try {
+        sendMsg({ type: 'list_my_spaces' });
+        await listComputers();
+      } finally {
+        if (!superseded) set({ refreshing: false });
+      }
     },
 
     async answerOverHttp(space, askId, answers, hostDevice, as = null) {
