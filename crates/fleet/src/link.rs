@@ -518,6 +518,7 @@ fn kind(msg: &ClientMessage) -> &'static str {
         ClientMessage::Delegate { .. } => "delegate",
         ClientMessage::Confirm { .. } => "confirm",
         ClientMessage::ConfirmResolved { .. } => "confirm_resolved",
+        ClientMessage::Adopt { .. } => "adopt",
     }
 }
 
@@ -538,5 +539,6 @@ fn server_kind(msg: &ServerMessage) -> &'static str {
         ServerMessage::Delegations { .. } => "delegations",
         ServerMessage::Confirm { .. } => "confirm",
         ServerMessage::ConfirmDismissed { .. } => "confirm_dismissed",
+        ServerMessage::DeviceAdopted { .. } => "device_adopted",
     }
 }

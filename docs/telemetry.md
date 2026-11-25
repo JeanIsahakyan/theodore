@@ -341,6 +341,7 @@ lists ids, kinds, codes and numbers, nothing a person wrote.
 | `quota hit` | info | `code` (`fleet.too_many_devices`, `fleet.too_many_connections`, `fleet.too_many_spaces`, `fleet.busy`), `op`, the connection's ids | yes |
 | `fleet connected` | info | `user_id`, `org_id`, `device_id`, `device_kind`, `protocol`, `os`, `app_version`, `new_device` | yes |
 | `fleet disconnected` | info | the same ids, `by` (`device` with its `close_code`; `cloud` with `code` and `close_code`), `phase` | yes |
+| `fleet device adopted` | info | the same ids, `previous` (earlier ids taken over), `spaces` (moved to the new id; docs/fleet.md "A device id changes") | yes |
 | `fleet request` | info | `op`, `via` (`ws`, `http`), `outcome` (`routed`, `refused`, `error`), `code`, `origin_kind`, `ms` | yes |
 | `push sent` | info | `provider` (`expo`), `kind` (`ask`, `finished`, `confirm`), `sent`, `ok`, `unregistered`, `failed` | yes |
 | `push failed` | warn / error | `provider`, `count`, `status` or the exception | yes |
@@ -633,7 +634,11 @@ no choice recorded ─▶ nothing sent, nothing queued; a switch off ─▶ its 
   the drawer row's long-press menu, or `merged_chip`: the space screen's
   "Merged #n" chip, whether the space was stopped first,
   outcome, code), diagnostics exports,
-  JS errors (`ui.uncaught`, `ui.unhandled_rejection`, `ui.render_crash`). The
+  JS errors (`ui.uncaught`, `ui.unhandled_rejection`, `ui.render_crash`), and
+  the device's fleet identity at warn: `fleet.key_generated` (a device key
+  made, with `reason` and whether two stores raced) and
+  `fleet.device_id_changed` (the cloud gave this device another id than it
+  had: `previous` ids named in its `adopt`, `spaces` kept, `reason`). The
   file flows (protocol v8) have their events in the catalog (`file_attached`,
   `file_uploaded`, `file_viewed`: kind, size, chunks, latency, outcome, and for
   `file_viewed` the `surface`: `viewer` or `step_thumbnail`, an image the agent

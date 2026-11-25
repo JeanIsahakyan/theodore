@@ -7,10 +7,11 @@
 //! device ─▶ cloud   ClientMessage   hello, reauth, presence, announce, request,
 //!                                   claim, reply, space_event, ask, ask_resolved,
 //!                                   subscribe, unsubscribe, confirm,
-//!                                   confirm_resolved
+//!                                   confirm_resolved, adopt
 //! cloud  ─▶ device  ServerMessage   challenge, welcome, devices, request,
 //!                                   claim_result, reply, space_event, ask,
-//!                                   dismiss, error, confirm, confirm_dismissed
+//!                                   dismiss, error, confirm, confirm_dismissed,
+//!                                   device_adopted
 //! ```
 //!
 //! Requests are signed by the origin device ([`SignedEnvelope`]); the cloud
@@ -31,7 +32,7 @@ pub use keys::{DeviceKey, KeyError, fingerprint, verify};
 
 /// Protocol version sent in `hello`; the cloud refuses others with
 /// `fleet.version`.
-pub const PROTOCOL_VERSION: u32 = 10;
+pub const PROTOCOL_VERSION: u32 = 11;
 /// The oldest protocol the cloud still accepts (it hides `mobile` / `web`
 /// devices from protocol-3 connections and `mcp` ones from protocol < 5,
 /// whose `DeviceKind` can't read them; `confirm` / `confirm_dismissed` and
@@ -39,8 +40,11 @@ pub const PROTOCOL_VERSION: u32 = 10;
 /// space of a computer ([`RemoteOp::on_any_space`]) need protocol 7;
 /// attachments and `read_file` ([`BlobRef`]) need protocol 8; the
 /// `archive_space` / `unarchive_space` ops need protocol 9; the
-/// `queued_message` op needs protocol 10).
+/// `queued_message` op needs protocol 10; `adopt` / `device_adopted`
+/// (a device taking over an earlier id of its own) need protocol 11).
 pub const MIN_PROTOCOL_VERSION: u32 = 3;
+/// Most earlier device ids one `adopt` may name.
+pub const MAX_ADOPT_PREVIOUS: usize = 10;
 /// A signed request older or newer than this is refused (`fleet.stale_request`).
 pub const REQUEST_WINDOW_MS: u64 = 5 * 60 * 1000;
 /// How long a target remembers `req_id`s to refuse replays.
@@ -1290,6 +1294,13 @@ pub enum ClientMessage {
     ConfirmResolved {
         confirm_id: String,
     },
+    /// This device had these ids before (the cloud forgot it, or its key
+    /// changed): the spaces the same user started from them are its now
+    /// (protocol 11, docs/fleet.md "A device id changes"). Never another
+    /// user's; a live device's are left alone.
+    Adopt {
+        previous: Vec<DeviceId>,
+    },
 }
 
 /// Device ⇄ cloud, cloud side.
@@ -1374,6 +1385,14 @@ pub enum ServerMessage {
     /// The confirm is no longer waiting on its host.
     ConfirmDismissed {
         confirm_id: String,
+    },
+    /// One of the user's devices took over an earlier id of its own
+    /// (`adopt`): the spaces this device hosts for `previous` are
+    /// `device`'s now, and a pin or delegation of `previous` may follow it
+    /// when `device` lists the very same key (protocol 11).
+    DeviceAdopted {
+        device: DeviceId,
+        previous: DeviceId,
     },
 }
 

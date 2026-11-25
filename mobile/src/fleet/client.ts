@@ -6,9 +6,11 @@
  *
  * ```text
  * start ─▶ session + org ─▶ WSS <cloud>/v1/fleet/ws (Bearer header | bearer.<token> subprotocol)
- *   challenge{nonce: 32 bytes} ─▶ hello{protocol 6, kind mobile|web, accepts_remote false,
+ *   challenge{nonce: 32 bytes} ─▶ hello{protocol 11, kind mobile|web, accepts_remote false,
  *                                       max_mode ask, projects [], spaces []}
  *   welcome ─▶ device id kept per org ─▶ reauth if the token changed meanwhile,
+ *              another id than the one kept or the saved set's ─▶ adopt{previous}
+ *              (docs/fleet.md "A device id changes"; logged fleet.device_id_changed),
  *              register_push again, subscribe{space, since: last seq} again
  *   close 4001/4003, error{fatal code} ─▶ error state, no redial until start()
  *                                          (or a refreshed token)
@@ -33,14 +35,19 @@
  * Kept across restarts (src/fleet/saved.ts), per account and organization:
  *
  * ```text
- * connect ─▶ session ─▶ saved set of <user>.<org>, written for this org's device id
+ * connect ─▶ session ─▶ saved set of <user>.<org>, whatever device id it was written for
  *   ─▶ listed at once (last known status), before the socket opens
- * welcome ─▶ started here: subscribe{since: last seq} (with the rest)
+ * welcome ─▶ the set's device id isn't this one's ─▶ adopt{previous: [it, the kept id, …]}
+ *            first: the cloud makes the spaces the same user started from those ids
+ *            this device's, and tells their hosts (never another user's)
+ *         ─▶ started here: subscribe{since: last seq} (with the rest)
  * delegations ─▶ followed: its origin still delegates here ─▶ subscribe{since}
- *                          else ─▶ dropped
+ *                          else ─▶ dropped (after an id change: kept 30 s more, the
+ *                          origin may delegate to the new id meanwhile)
  * a change ─▶ saved within a second; the app going to the background ─▶ now
- * sign-out ─▶ the set is removed; org or account switch ─▶ kept, another listed
- *   (`forgetSaved` removes an account's sets once it left this device)
+ * the session goes (sign-out, a refresh refused) ─▶ nothing shown, the set kept;
+ *   `forgetSaved` removes an account's sets once it left this device
+ * org or account switch ─▶ kept, another listed
  * ```
  *
  * Archiving (docs/mobile.md "Archive"): `archiveSpace` signs `archive_space`
@@ -143,9 +150,20 @@ import type {
 
 export { FleetError } from './errors';
 
-export const PROTOCOL_VERSION = 6;
+export const PROTOCOL_VERSION = 11;
 /** Most confirms kept at once (the oldest go first). */
 export const CONFIRMS_KEPT = 20;
+/** Earlier device ids remembered per org, and named in one `adopt`
+ *  (`MAX_ADOPT_PREVIOUS`). */
+export const FORMER_IDS_MAX = 10;
+/**
+ * After a device id change, followed spaces wait this long for their
+ * origins to delegate to the new id (a host hears `device_adopted` and
+ * signs again) before they are dropped as not delegated.
+ */
+export const ADOPT_GRACE_MS = 30_000;
+/** Logged (warn) when the cloud gives this device another id than it had. */
+export const DEVICE_ID_CHANGED = 'fleet.device_id_changed';
 /** A late answer to a confirm: answered elsewhere, or expired. */
 const LATE_CONFIRM = 'fleet.invalid';
 export const MAX_FRAME_BYTES = 256 * 1024;
@@ -313,6 +331,18 @@ interface Link {
 
 const deviceIdKey = (org: string) =>
   storageKey('theodore.fleet.device_id', org);
+/** JSON list of the ids this device had before in `org`, oldest first. */
+const formerIdsKey = (org: string) =>
+  storageKey('theodore.fleet.former_ids', org);
+const parseIds = (text: string | null): string[] => {
+  if (!text) return [];
+  try {
+    const v: unknown = JSON.parse(text);
+    return Array.isArray(v) ? v.filter(validDeviceId) : [];
+  } catch {
+    return [];
+  }
+};
 const wsUrl = (cloud: string) =>
   `${cloud.replace(/\/+$/, '').replace(/^http/, 'ws')}/v1/fleet/ws`;
 const isObj = (v: unknown): v is Record<string, unknown> =>
@@ -393,6 +423,10 @@ export function createFleetClient(
   let scope: string | null = null;
   /** The device id the loaded set was written for. */
   let savedFor: string | null = null;
+  /** When this link's welcome gave this device a new id (0: it didn't):
+   *  followed spaces wait ADOPT_GRACE_MS for a delegation to the new id. */
+  let adoptedAt = 0;
+  let adoptGrace: ReturnType<typeof setTimeout> | null = null;
   let dirty = new Set<string>();
   let saveTimer: ReturnType<typeof setTimeout> | null = null;
   /** Storage writes, one at a time and in order (a clear after a write). */
@@ -617,11 +651,12 @@ export function createFleetClient(
   };
 
   /**
-   * The saved set of `next`, listed before the socket opens. One written
-   * for another device id (a backup restored on another phone, this one
-   * removed and joined again) is dropped.
+   * The saved set of `next`, listed before the socket opens, whatever
+   * device id it was written for: one written for another id (this device
+   * removed from the fleet while away and joined again, a backup restored
+   * on a new phone) is adopted at the welcome, not dropped.
    */
-  const restore = async (next: string, device: string | null) => {
+  const restore = async (next: string) => {
     if (scope === next) return;
     if (scope !== null) {
       // Another account or org than the one listed: none of it stays shown
@@ -630,7 +665,7 @@ export function createFleetClient(
       forgetFleet();
     }
     const restoreStart = deps.now();
-    const list = await saved.load(next, device);
+    const { device, spaces: list } = await saved.load(next);
     track('saved_spaces_restored', {
       count: list.length,
       ms: Math.max(0, deps.now() - restoreStart),
@@ -704,6 +739,9 @@ export function createFleetClient(
     link = null;
     if (redial) clearTimeout(redial);
     redial = null;
+    if (adoptGrace) clearTimeout(adoptGrace);
+    adoptGrace = null;
+    adoptedAt = 0;
     if (!l) return;
     clearLinkTimers(l);
     try {
@@ -813,14 +851,18 @@ export function createFleetClient(
         setConnection('off');
         return;
       }
+      // A key that can't be read now (the keychain locked, a failing store)
+      // ends this dial: it is retried, and never replaced by a new one.
       const key = await keys.deviceKey();
       set({ fingerprint: fingerprint(key.publicKey) });
       const stored = await deps.storage.get(deviceIdKey(s.organizationId));
-      if (mine !== epoch) return;
-      await restore(
-        savedScope(s.userId, s.organizationId),
-        validDeviceId(stored) ? stored : null,
+      const former = parseIds(
+        await deps.storage
+          .get(formerIdsKey(s.organizationId))
+          .catch(() => null),
       );
+      if (mine !== epoch) return;
+      await restore(savedScope(s.userId, s.organizationId));
       if (mine !== epoch || !wanted || fatal || heldOff || link) return;
       if (background && platform.closeInBackground) return;
       setConnection('connecting');
@@ -883,7 +925,13 @@ export function createFleetClient(
           l.inbox = l.inbox
             .then(() =>
               link === l
-                ? onFrame(l, frame, key, validDeviceId(stored) ? stored : null)
+                ? onFrame(
+                    l,
+                    frame,
+                    key,
+                    validDeviceId(stored) ? stored : null,
+                    former,
+                  )
                 : undefined,
             )
             .catch(() => {});
@@ -909,6 +957,7 @@ export function createFleetClient(
     msg: ServerMessage,
     key: DeviceKey,
     storedId: string | null,
+    former: string[],
   ) => {
     if (msg.type === 'error') {
       if ((FATAL_CODES as readonly string[]).includes(msg.code)) {
@@ -974,13 +1023,55 @@ export function createFleetClient(
           spaces: tracked.size,
         });
       }
+      // Another id than this device had (or its saved set was written
+      // for): removed from the fleet while away, a backup restored on a new
+      // phone, a new key. What was kept is this device's still: the cloud
+      // moves the same user's spaces to the new id before anything is
+      // subscribed, and their hosts hear of it.
+      const previous = new Set<string>(former);
+      if (storedId && storedId !== me) previous.add(storedId);
+      if (savedFor && savedFor !== me) previous.add(savedFor);
+      previous.delete(me);
+      if (previous.size > 0) {
+        const list = [...previous].slice(-FORMER_IDS_MAX);
+        log.warn('this device has a new fleet id', {
+          'error.code': DEVICE_ID_CHANGED,
+          device_id: me,
+          previous: list.length,
+          spaces: tracked.size,
+          // What made the cloud forget it, as far as this device knows.
+          reason: !storedId
+            ? 'no_id_kept'
+            : storedId !== me
+              ? 'id_not_known_to_cloud'
+              : 'saved_set_of_another_id',
+        });
+        sendMsg({ type: 'adopt', previous: list });
+        for (const x of tracked.values()) {
+          if (previous.has(x.view.originDevice)) {
+            x.view.originDevice = me;
+            dirty.add(x.view.space);
+          }
+        }
+        if (storedId !== me || savedFor !== me) {
+          adoptedAt = deps.now();
+          if (adoptGrace) clearTimeout(adoptGrace);
+          adoptGrace = setTimeout(() => {
+            adoptGrace = null;
+            adoptedAt = 0;
+            if (link === l) resumeFollowed();
+          }, ADOPT_GRACE_MS);
+        }
+        await deps.storage
+          .set(formerIdsKey(l.org), JSON.stringify(list))
+          .catch(() => {});
+      }
       if (savedFor !== me) {
-        // What was kept belongs to another device id: the cloud won't
-        // let this one follow it.
-        const gone = savedFor ? [...tracked.keys()] : [];
-        for (const id of gone) tracked.delete(id);
         savedFor = me;
-        dropShown(gone);
+        if (tracked.size) {
+          publishSpaces();
+          scheduleSave();
+        }
       }
       await deps.storage.set(deviceIdKey(l.org), msg.device_id).catch(() => {});
       if (link !== l) return;
@@ -1146,10 +1237,13 @@ export function createFleetClient(
   /**
    * Followed spaces read back after a restart: subscribed again from the
    * last seq while their origin (not known: any origin) still delegates
-   * here; else forgotten.
+   * here; else forgotten. Right after a device id change they wait
+   * ADOPT_GRACE_MS instead: their origins delegate to the new id once they
+   * hear of it (`device_adopted`).
    */
   const resumeFollowed = () => {
     const gone: string[] = [];
+    const waiting = adoptedAt !== 0 && deps.now() - adoptedAt < ADOPT_GRACE_MS;
     for (const [space, x] of [...tracked]) {
       if (!x.awaiting) continue;
       const origin = x.view.originDevice;
@@ -1157,7 +1251,7 @@ export function createFleetClient(
         x.awaiting = false;
         x.subscribed = true;
         sendMsg({ type: 'subscribe', space, since: x.lastSeq });
-      } else {
+      } else if (!waiting) {
         tracked.delete(space);
         gone.push(space);
       }
@@ -2056,16 +2150,19 @@ export function createFleetClient(
     const before = session;
     session = s;
     if (!s) {
-      // Signed out: stop pushes to this phone first (the socket is still
-      // authenticated), then the link goes, and nothing of that fleet stays
-      // shown.
+      // Signed out, or the session refused (a refresh rejected): stop
+      // pushes to this phone first (the socket is still authenticated),
+      // then the link goes, and nothing of that fleet stays shown. The
+      // saved set stays for the same account's next sign-in; it goes when
+      // the account leaves this device (`forgetSaved`, the accounts
+      // client's `onRemoved`).
       if (push?.token)
         sendMsg({ type: 'register_push', provider: 'expo', token: '' });
       push = null;
       epoch++;
       closeLink();
       disconnected('account');
-      leaveScope(true);
+      leaveScope(false);
       forgetFleet();
       return;
     }

@@ -24,6 +24,7 @@ import type {
 import {
   codes,
   CONFIRM_TEXT_MAX,
+  MAX_ADOPT_PREVIOUS,
   MAX_AGENT_ID_CHARS,
   MAX_ANY_SPACE_ID_CHARS,
   MAX_ANY_SPACE_TEXT_CHARS,
@@ -142,6 +143,12 @@ export const V7 = 7;
 export const V9 = 9;
 /** Protocol 10: `queued_message` (Send now / Remove on a queued message). */
 export const V10 = 10;
+/** Protocol 11: `adopt` (a device takes over an earlier id of its own) and
+ *  the `device_adopted` frame hosts hear about it with. */
+export const V11 = 11;
+
+/** A device id as the cloud issues them. */
+const DEVICE_ID = /^dev_[0-9a-f-]{36}$/;
 
 /** Ops on a space the target hosts for the origin that archive it (protocol 9). */
 export const ARCHIVE_OPS = ['archive_space', 'unarchive_space'] as const;
@@ -480,6 +487,17 @@ export function parseClient(
     case 'confirm_resolved':
       if (protocol < V6) break;
       return { type: 'confirm_resolved', confirm_id: str(o, 'confirm_id') };
+    case 'adopt': {
+      // A frame a client sends it knows (protocol 11); the hub takes it from
+      // any client, as it takes `remove_device`.
+      const previous = arr(o, 'previous', MAX_ADOPT_PREVIOUS).map((v) => {
+        if (typeof v !== 'string' || !DEVICE_ID.test(v)) {
+          throw bad('previous must list device ids');
+        }
+        return v;
+      });
+      return { type: 'adopt', previous };
+    }
     default:
       break;
   }

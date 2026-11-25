@@ -77,7 +77,7 @@ describe('saved spaces', () => {
       view: { ...space('rs_b', 2).view, startedHere: false, status: 'waiting' },
     });
     await store.write(SCOPE, ME, [a, b], new Set(['rs_a', 'rs_b']));
-    const back = await store.load(SCOPE, ME);
+    const back = (await store.load(SCOPE)).spaces;
     expect(ids(back)).toEqual(['rs_a', 'rs_b']);
     expect(back[0]).toEqual(a);
     expect(back[1]!.view).toMatchObject({
@@ -85,7 +85,9 @@ describe('saved spaces', () => {
       status: 'waiting',
     });
     // Another account or org sees nothing of it.
-    expect(await store.load(savedScope('user_1', 'org_other'), ME)).toEqual([]);
+    expect(
+      (await store.load(savedScope('user_1', 'org_other'))).spaces,
+    ).toEqual([]);
   });
 
   it('keeps sub-spaces, shape-checked again', async () => {
@@ -103,7 +105,9 @@ describe('saved spaces', () => {
       mirror: { space: null, messages: [], subSpaces: [child] },
     });
     await store.write(SCOPE, ME, [a], new Set(['rs_a']));
-    expect((await store.load(SCOPE, ME))[0]!.mirror.subSpaces).toEqual([child]);
+    expect((await store.load(SCOPE)).spaces[0]!.mirror.subSpaces).toEqual([
+      child,
+    ]);
     // A tampered record: rows that aren't sub-spaces go.
     const key = `theodore.fleet.space.${SCOPE}.rs_a`;
     const rec = JSON.parse((await storage.get(key))!) as {
@@ -115,7 +119,9 @@ describe('saved spaces', () => {
       mode: 'god',
     });
     await storage.set(key, JSON.stringify(rec));
-    expect((await store.load(SCOPE, ME))[0]!.mirror.subSpaces).toEqual([child]);
+    expect((await store.load(SCOPE)).spaces[0]!.mirror.subSpaces).toEqual([
+      child,
+    ]);
   });
 
   it('writes only changed records, and new ones', async () => {
@@ -124,7 +130,7 @@ describe('saved spaces', () => {
     await store.write(SCOPE, ME, [space('rs_a', 1)], new Set(['rs_a']));
     const changed = space('rs_a', 3, { lastSeq: 9 });
     await store.write(SCOPE, ME, [changed, space('rs_b', 2)], new Set());
-    let back = await store.load(SCOPE, ME);
+    let back = (await store.load(SCOPE)).spaces;
     expect(back.map((s) => s.lastSeq)).toEqual([7, 7]);
     await store.write(
       SCOPE,
@@ -132,7 +138,7 @@ describe('saved spaces', () => {
       [changed, space('rs_b', 2)],
       new Set(['rs_a']),
     );
-    back = await store.load(SCOPE, ME);
+    back = (await store.load(SCOPE)).spaces;
     expect(back.map((s) => s.lastSeq)).toEqual([9, 7]);
   });
 
@@ -144,7 +150,7 @@ describe('saved spaces', () => {
       space(`rs_${i}`, i === 0 ? 1000 : i),
     );
     await store.write(SCOPE, ME, list, new Set(ids(list)));
-    const back = await store.load(SCOPE, ME);
+    const back = (await store.load(SCOPE)).spaces;
     expect(back).toHaveLength(SAVED_MAX);
     expect(ids(back)[0]).toBe('rs_0');
     for (const gone of ['rs_1', 'rs_2', 'rs_3', 'rs_4', 'rs_5'])
@@ -154,7 +160,7 @@ describe('saved spaces', () => {
     // Gone from the list: gone from storage.
     await store.write(SCOPE, ME, [list[0]!], new Set());
     expect(await storage.get(`theodore.fleet.space.${SCOPE}.rs_9`)).toBeNull();
-    expect(ids(await store.load(SCOPE, ME))).toEqual(['rs_0']);
+    expect(ids((await store.load(SCOPE)).spaces)).toEqual(['rs_0']);
   });
 
   it('clears a scope', async () => {
@@ -164,18 +170,34 @@ describe('saved spaces', () => {
     await store.clear(SCOPE);
     expect(await storage.get(`theodore.fleet.spaces.${SCOPE}`)).toBeNull();
     expect(await storage.get(`theodore.fleet.space.${SCOPE}.rs_a`)).toBeNull();
-    expect(await store.load(SCOPE, ME)).toEqual([]);
+    expect((await store.load(SCOPE)).spaces).toEqual([]);
   });
 
-  it('drops a set written for another device id, or none', async () => {
+  it('says which device id a set was written for, and keeps it whatever that is', async () => {
     const storage = memoryStorage();
     const store = savedSpaces(storage);
+    expect(await store.load(SCOPE)).toEqual({ device: null, spaces: [] });
     await store.write(SCOPE, ME, [space('rs_a', 1)], new Set(['rs_a']));
-    expect(await store.load(SCOPE, null)).toEqual([]);
-    expect(await storage.get(`theodore.fleet.space.${SCOPE}.rs_a`)).toBeNull();
-    await store.write(SCOPE, ME, [space('rs_a', 1)], new Set(['rs_a']));
-    expect(await store.load(SCOPE, HOST)).toEqual([]);
-    expect(await store.load(SCOPE, ME)).toEqual([]);
+    const back = await store.load(SCOPE);
+    expect(back.device).toBe(ME);
+    expect(ids(back.spaces)).toEqual(['rs_a']);
+    // Written again under a new id (adopted): the record isn't rewritten
+    // unless it changed, and the index names the new id.
+    await store.write(
+      SCOPE,
+      HOST,
+      [space('rs_a', 1, { lastSeq: 9 })],
+      new Set(),
+    );
+    const again = await store.load(SCOPE);
+    expect(again.device).toBe(HOST);
+    expect(again.spaces[0]!.lastSeq).toBe(7);
+    // An index naming something that isn't a device id: no device.
+    await storage.set(
+      `theodore.fleet.spaces.${SCOPE}`,
+      JSON.stringify({ v: 1, device: 'phone', spaces: ['rs_a'] }),
+    );
+    expect(await store.load(SCOPE)).toMatchObject({ device: null });
   });
 
   it('never keeps an id unfit for a file name, nor a record that is not one', async () => {
@@ -188,7 +210,7 @@ describe('saved spaces', () => {
       new Set(['../evil', 'rs_a', 'rs_b']),
     );
     await storage.set(`theodore.fleet.space.${SCOPE}.rs_b`, '{not json');
-    const back = await store.load(SCOPE, ME);
+    const back = (await store.load(SCOPE)).spaces;
     expect(ids(back)).toEqual(['rs_a']);
   });
 
@@ -207,7 +229,7 @@ describe('saved spaces', () => {
     });
     rec.lines.push({ seq: 8, kind: 'shell', text: 'rm -rf' });
     await storage.set(key, JSON.stringify(rec));
-    const [back] = await store.load(SCOPE, ME);
+    const [back] = (await store.load(SCOPE)).spaces;
     expect(back!.view.status).toBe('idle');
     expect(back!.view.hostName).toBe('');
     expect(back!.mirror.messages.map((m) => m.id)).toEqual(['m1']);
@@ -215,7 +237,7 @@ describe('saved spaces', () => {
     // Another host's id: not a record of this space.
     rec.view.hostDevice = 'dev_evil';
     await storage.set(key, JSON.stringify(rec));
-    expect(await store.load(SCOPE, ME)).toEqual([]);
+    expect((await store.load(SCOPE)).spaces).toEqual([]);
   });
 
   it('keeps a record within its size, newest messages first', () => {

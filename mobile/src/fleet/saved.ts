@@ -11,8 +11,10 @@
  *                                                     mirror {space, messages, subSpaces}}
  *
  * write: the SAVED_MAX most recently active, records of the others removed
- * load:  index.device ≠ this org's device id now (backup on another phone,
- *        removed from the fleet) ─▶ nothing, all removed
+ * load:  the set and the device id it was written for; the client compares
+ *        that id with the one the cloud gives it at the welcome and adopts
+ *        the set under its new id when they differ (docs/fleet.md "A device
+ *        id changes") — nothing is dropped for an id alone
  *        each record shape-checked again (it is still another device's text)
  * ```
  *
@@ -248,12 +250,20 @@ export function recordText(s: SavedSpace): string {
   return out;
 }
 
+/** A saved set as read back: list order, and the device id it was written for. */
+export interface SavedSet {
+  /** `null`: no set (or an unreadable index). */
+  device: string | null;
+  spaces: SavedSpace[];
+}
+
 export interface SavedSpaces {
   /**
-   * The set of `scope` if it was written for `device` (list order); else
-   * nothing, and whatever was there is removed.
+   * The set of `scope` (list order), with the device id it was written
+   * for. The caller decides what a different id means; nothing is removed
+   * here for it.
    */
-  load(scope: string, device: string | null): Promise<SavedSpace[]>;
+  load(scope: string): Promise<SavedSet>;
   /**
    * Keeps `spaces` (list order): the SAVED_MAX most recently active. Writes
    * the records in `changed` and any not written yet, removes the dropped.
@@ -290,13 +300,9 @@ export function savedSpaces(storage: DataStorage): SavedSpaces {
   };
 
   return {
-    async load(scope, device) {
+    async load(scope) {
       const index = await readIndex(scope);
-      if (!index) return [];
-      if (!device || index.device !== device) {
-        await clear(scope);
-        return [];
-      }
+      if (!index) return { device: null, spaces: [] };
       const out: SavedSpace[] = [];
       for (const space of index.spaces.slice(0, SAVED_MAX)) {
         const text = await storage
@@ -305,7 +311,10 @@ export function savedSpaces(storage: DataStorage): SavedSpaces {
         const rec = cleanSaved(parse(text), space);
         if (rec) out.push(rec);
       }
-      return out;
+      return {
+        device: validDeviceId(index.device) ? index.device : null,
+        spaces: out,
+      };
     },
 
     async write(scope, device, spaces, changed) {
@@ -317,7 +326,9 @@ export function savedSpaces(storage: DataStorage): SavedSpaces {
           .map((s) => s.view.space),
       );
       const before = await readIndex(scope);
-      const had = new Set(before?.device === device ? before.spaces : []);
+      // Records written under an earlier device id are this device's too
+      // (adopted at the welcome): only what changed is written again.
+      const had = new Set(before?.spaces ?? []);
       for (const s of ok) {
         const id = s.view.space;
         if (kept.has(id) && (changed.has(id) || !had.has(id)))

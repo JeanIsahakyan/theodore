@@ -55,6 +55,16 @@ phone: trusts mac-A the same way ─▶ only then targets it and believes its si
   ask and reply against keys it pinned, exactly like the desktop core.
 - Phone and web are never targets: `DeviceInfo.kind` is `mobile` or `web`,
   `accepts_remote` is always `false`, and the cloud refuses requests to them.
+- The key is the device's identity and is made once per install
+  (`src/keys/seed-store.ts`, `store.web.ts`): one key store per JS runtime
+  (every fleet client, the push sweep's short-lived ones included, shares
+  it), a read that throws (the keychain locked in the background, a failing
+  store) fails that dial and makes no key, an empty read is repeated once,
+  and a key just made is read back so two writers agree on one. Making one
+  is logged at warn with `fleet.key_generated` and why; a welcome with
+  another id than the device had is logged with `fleet.device_id_changed`
+  (docs/telemetry.md "Mobile"). The device then adopts its earlier ids'
+  spaces (docs/fleet.md "A device id changes").
 
 ## Following a computer's spaces (delegation)
 
@@ -88,11 +98,14 @@ a change (event, mirror row, start ok, follow) ─▶ saved within 1 s
 app to the background ─▶ saved now
 launch ─▶ the active account's session ─▶ saved set of <user>.<org> ─▶ listed at once, last known status
        ─▶ socket ─▶ welcome
+            the set's device id (or the kept one) isn't this one ─▶ adopt{previous} first
+                 (docs/fleet.md "A device id changes"): the spaces stay, under the new id
             started here ─▶ subscribe{since: last seq}
             followed     ─▶ delegations: its origin still delegates here ─▶ subscribe{since}
-                                         else ─▶ dropped
+                                         else ─▶ dropped (30 s later after an id change)
 account or org switch ─▶ the shown set goes, its storage is kept (sets are per <user>.<org>)
-sign-out of an account ─▶ its sets (every org) and picks are removed; the others' stay
+the session goes (sign-out, a refresh refused) ─▶ nothing shown, the set kept
+an account leaves this device ─▶ its sets (every org) and picks are removed; the others' stay
 ```
 
 | Kept per space | Not kept |
@@ -104,9 +117,13 @@ sign-out of an account ─▶ its sets (every org) and picks are removed; the ot
 - Where: files in the app's documents directory (`expo-file-system`) on
   native, IndexedDB on web, memory in tests. Not secure-store: Android caps
   a value near 2 KB.
-- A set names the fleet device id it was written for; one restored from a
-  backup onto another phone (no such id there) or kept by a device that
-  joined again is dropped, never resubscribed.
+- A set names the fleet device id it was written for. One restored from a
+  backup onto another phone, or kept by a device that joined again under a
+  new id (removed from the fleet while away), is listed as before and
+  adopted at the welcome: the cloud moves the same user's spaces to the new
+  id before anything is subscribed, never another user's. The earlier ids
+  are kept per org (`theodore.fleet.former_ids.<org>`, ≤ 10) and named
+  again at every welcome that gives yet another id.
 - What is read back is shape-checked again (it is still another device's text).
 
 ## Protocol additions (crates/fleet-protocol, v4)
@@ -119,7 +136,7 @@ sign-out of an account ─▶ its sets (every org) and picks are removed; the ot
 | `ServerMessage::Delegations{list}` | the delegations naming this device (as origin or delegate) |
 | `POST /v1/fleet/request` | Bearer JWT + `{device_id, envelope}`: a one-shot signed request (a notification action, no socket). Answers `{accepted}` or `refused{code}`; the reply comes later as push or over the socket |
 
-The app speaks protocol 6. Since v4 it also reads:
+The app speaks protocol 11. Since v4 it also reads (and sends):
 
 | Addition | What the app does |
 | --- | --- |
@@ -128,6 +145,7 @@ The app speaks protocol 6. Since v4 it also reads:
 | `ServerMessage::Confirm{envelope}` (v6) | `RemoteConfirm`, `Domain::Confirm`, opened with the host's pin, signer = `host_device`; kept until `confirm_dismissed`, its expiry, an answer, or the next welcome (the cloud sends the waiting ones again) |
 | `RemoteOp::Confirm{confirm_id, allow}` (v6) | the card's or the push's Allow / Deny, to the host; a late one (`fleet.invalid`) just drops the card |
 | `RemoteOp::ArchiveSpace{space}` / `UnarchiveSpace{space}` (v9) | Archive from a drawer row's long-press menu ("Archive" below), routed like a stop; a host below 9 ─▶ `fleet.upgrade_required` from the cloud |
+| `ClientMessage::Adopt{previous}` (v11) | sent right after a welcome that gives this device another id than it had (or than its saved set names): the cloud moves the same user's spaces to the new id ("Kept across restarts" above, docs/fleet.md "A device id changes") |
 
 ## Cloud (cloud/)
 
