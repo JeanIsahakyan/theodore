@@ -1247,20 +1247,6 @@ production  ─▶ eas submit --platform ios     ─▶ App Store Connect ─▶
   must say how to sign in (a test WorkOS account) and that the app needs a
   computer running Theodore to do anything.
 
-### Demo
-
-"Try the demo" on the sign-in screen swaps both clients for the mock
-services (`src/dev/demo.ts` over `src/dev/mock.ts`) under a neutral account:
-every screen works on sample data, nothing talks to a server, no push.
-Signing out (or "Delete account") leaves it and empties the store. It is
-what App Review uses (the app shows nothing without a computer running
-Theodore) and what the store screenshots are taken from.
-
-```
-sign-in ─▶ Try the demo ─▶ AppProviders: services = createDemo() ─▶ signed in (demo)
-settings ─▶ Sign out ─▶ mock auth: null ─▶ services = real, fleet store reset
-```
-
 ### Store listing
 
 - App Store Connect: "Theodore Code", Developer Tools, free, all territories,

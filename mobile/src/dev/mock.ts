@@ -518,7 +518,7 @@ export const mockSubSpaceReads: Record<string, SubSpaceRead> = {
   },
 };
 
-/** Files `readFile` answers with, by path (the demo's file viewer). */
+/** Files `readFile` answers with, by path (the mock's file viewer). */
 export const mockFiles: Record<string, { mime: string; bytes: Uint8Array }> = {
   'ui/AccountCard.tsx': {
     mime: 'text/typescript',
