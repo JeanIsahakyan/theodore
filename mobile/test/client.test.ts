@@ -131,7 +131,7 @@ describe('connect', () => {
       device(ME, myKey, { kind: 'mobile' }),
     ]);
     const hello = sock.of('hello')[0]!;
-    expect(hello.protocol).toBe(6);
+    expect(hello.protocol).toBe(11);
     expect(hello.device_id).toBeNull();
     expect(hello.public_key).toBe(myKey.publicKey);
     expect(hello.spaces).toEqual([]);
@@ -1753,12 +1753,21 @@ describe('kept across restarts', () => {
     await until(async () => (await savedIds(r3.hub))?.length === 0, 'unsaved');
   });
 
-  it('clears what it kept on sign-out', async () => {
+  it('keeps what it saved when the session goes; forgetSaved removes it', async () => {
     const t = await runningSpace();
     t.hub.setActive(false);
     await until(async () => (await savedIds(t.hub))?.length === 1, 'saved');
+    // Signed out, or a refresh refused: nothing shown, the set kept for
+    // the same account's next sign-in.
     t.account.emit(null);
-    await until(async () => (await savedIds(t.hub)) === null, 'cleared');
+    expect(state().spaces).toEqual([]);
+    await sleep(10);
+    expect(await savedIds(t.hub)).toHaveLength(1);
+    t.account.emit(session('tok-2'));
+    await waitFor(() => state().spaces.length === 1, 'listed again');
+    // The account leaves this device: its set goes.
+    await t.client.forgetSaved(['user_1.org_test']);
+    expect(await savedIds(t.hub)).toBeNull();
     expect(
       await t.hub.data.get(`theodore.fleet.space.user_1.org_test.${t.space}`),
     ).toBeNull();
@@ -1779,16 +1788,109 @@ describe('kept across restarts', () => {
     await waitFor(() => state().spaces.length === 1, 'listed again');
   });
 
-  it('drops a set written for another device id', async () => {
+  it('keeps a set written for another device id and adopts it at the welcome', async () => {
+    const NEW = 'dev_00000000-0000-4000-8000-0000000000d4';
     const t = await runningSpace();
     t.hub.setActive(false);
     await until(async () => (await savedIds(t.hub))?.length === 1, 'saved');
-    // A backup restored on a new phone: no device id of this org here.
+    // Removed from the fleet while away (`fleet.removed` dropped the id), or
+    // a backup restored on a new phone: no device id of this org here, and
+    // the cloud issues a new one. The list stays.
     await t.hub.storage.remove('theodore.fleet.device_id.org_test');
     const r = restart(t.hub);
     await r.client.start();
-    expect(state().spaces).toEqual([]);
-    expect(await savedIds(r.hub)).toBeNull();
+    expect(state().spaces.map((s) => s.space)).toEqual([t.space]);
+    expect(state().spaces[0]!.originDevice).toBe(ME);
+    await waitFor(() => r.hub.sockets.length >= 1, 'a socket');
+    const s = r.hub.last();
+    s.deliver({ type: 'challenge', nonce: NONCE });
+    await waitFor(() => s.of('hello').length === 1, 'hello');
+    expect(s.of('hello')[0]!.device_id).toBeNull();
+    s.deliver({ type: 'welcome', device_id: NEW, generation: 1, resume: {} });
+    s.deliver({ type: 'devices', devices: [device(HOST, hostKey)] });
+    await waitFor(() => s.of('subscribe').length === 1, 'resubscribed');
+    // Adopted first (the cloud moves the spaces), then subscribed.
+    const types = s.sent.map((m) => m.type);
+    expect(types.indexOf('adopt')).toBeGreaterThan(-1);
+    expect(types.indexOf('adopt')).toBeLessThan(types.indexOf('subscribe'));
+    expect(s.of('adopt')).toEqual([{ type: 'adopt', previous: [ME] }]);
+    expect(s.of('subscribe')[0]).toMatchObject({ space: t.space });
+    expect(state().deviceId).toBe(NEW);
+    expect(state().spaces[0]!.originDevice).toBe(NEW);
+    expect(await r.hub.storage.get('theodore.fleet.device_id.org_test')).toBe(
+      NEW,
+    );
+    expect(
+      JSON.parse(
+        (await r.hub.storage.get('theodore.fleet.former_ids.org_test'))!,
+      ),
+    ).toEqual([ME]);
+    // Saved again under the new id; the earlier id is still named next time.
+    r.hub.setActive(false);
+    await until(async () => {
+      const text = await r.hub.data.get(INDEX);
+      return !!text && (JSON.parse(text) as { device: string }).device === NEW;
+    }, 'saved for the new id');
+    r.hub.setActive(true);
+
+    const r2 = restart(r.hub);
+    await r2.client.start();
+    expect(state().spaces.map((s) => s.space)).toEqual([t.space]);
+    const s2 = await handshake(r2.hub, [device(HOST, hostKey)]);
+    // ME again at this welcome (`handshake` says so): NEW is an earlier id now.
+    await waitFor(() => s2.of('subscribe').length === 1, 'resubscribed again');
+    expect(s2.of('adopt')).toEqual([{ type: 'adopt', previous: [NEW] }]);
+  });
+
+  it('gives a followed space time for a delegation to the new id', async () => {
+    const NEW = 'dev_00000000-0000-4000-8000-0000000000d4';
+    const { hub, client } = setup();
+    await client.start();
+    const sock = await handshake(hub, [
+      device(HOST, hostKey),
+      device(OTHER, originKey),
+    ]);
+    await waitFor(() => state().devices.length === 2, 'devices');
+    await client.trust(HOST, hostKey.publicKey);
+    sock.deliver({ type: 'delegations', list: [await deleg()] });
+    sock.deliver({
+      type: 'space_event',
+      envelope: await event('rs_far', 1, { kind: 'status', status: 'running' }),
+    });
+    await waitFor(() => state().spaces.length === 1, 'followed');
+    hub.setActive(false);
+    await until(async () => (await savedIds(hub))?.[0] === 'rs_far', 'saved');
+    client.stop();
+
+    // Back under a new id: the first delegations list names the old one
+    // only (the Mac hasn't heard yet), so the space waits instead of going.
+    const r = restart(hub);
+    await r.client.start();
+    await waitFor(() => r.hub.sockets.length >= 1, 'a socket');
+    const s = r.hub.last();
+    s.deliver({ type: 'challenge', nonce: NONCE });
+    await waitFor(() => s.of('hello').length === 1, 'hello');
+    s.deliver({ type: 'welcome', device_id: NEW, generation: 1, resume: {} });
+    s.deliver({
+      type: 'devices',
+      devices: [device(HOST, hostKey), device(OTHER, originKey)],
+    });
+    s.deliver({ type: 'delegations', list: [] });
+    await sleep(10);
+    expect(state().spaces.map((x) => x.space)).toEqual(['rs_far']);
+    expect(s.of('subscribe')).toEqual([]);
+    // The Mac delegates to the new id: followed again from its seq.
+    s.deliver({
+      type: 'delegations',
+      list: [await deleg({ delegate_device: NEW })],
+    });
+    await waitFor(() => s.of('subscribe').length === 1, 'resubscribed');
+    // Followed on its first event, which the subscription replays: from 0.
+    expect(s.of('subscribe')[0]).toEqual({
+      type: 'subscribe',
+      space: 'rs_far',
+      since: 0,
+    });
   });
 });
 
@@ -2410,5 +2512,69 @@ describe('keys', () => {
     ).rejects.toThrow(/unreadable/);
     await again.forget();
     expect(await storage.get('theodore.fleet.device_key')).toBeNull();
+  });
+
+  it('never replaces the key when a read fails, and reads once more before making one', async () => {
+    const inner = memoryStorage();
+    let failing = false;
+    let empty = 0;
+    let made = 0;
+    const storage = {
+      ...inner,
+      get: async (k: string) => {
+        if (failing) throw new Error('keychain locked');
+        const v = await inner.get(k);
+        if (v === null) empty++;
+        return v;
+      },
+    };
+    const store = seedKeyStore(storage, (n) => {
+      made++;
+      return new Uint8Array(n).fill(made);
+    });
+    const first = await store.deviceKey();
+    expect(made).toBe(1);
+    // Nothing stored: read twice before a key is made.
+    expect(empty).toBe(2);
+
+    // The keychain can't be read (locked, a background launch): the dial
+    // fails, no key is made, and the stored one is still there after.
+    failing = true;
+    const fresh = seedKeyStore(storage, (n) => {
+      made++;
+      return new Uint8Array(n).fill(9);
+    });
+    await expect(fresh.deviceKey()).rejects.toThrow(/locked/);
+    expect(made).toBe(1);
+    failing = false;
+    expect((await fresh.deviceKey()).publicKey).toBe(first.publicKey);
+    expect(made).toBe(1);
+  });
+
+  it('two stores racing over one storage end up with the same key', async () => {
+    // A storage whose first reads come back empty for both, like two
+    // clients dialing at first launch.
+    const inner = memoryStorage();
+    let reads = 0;
+    const storage = {
+      ...inner,
+      get: async (k: string) => {
+        reads++;
+        // The first four reads (two per store) see nothing.
+        if (reads <= 4) return null;
+        return inner.get(k);
+      },
+    };
+    let n = 0;
+    const make = (bytes: number) => () => new Uint8Array(bytes).fill(++n);
+    const a = seedKeyStore(storage, make(32));
+    const b = seedKeyStore(storage, make(32));
+    const [ka, kb] = await Promise.all([a.deviceKey(), b.deviceKey()]);
+    expect(ka.publicKey).toBe(kb.publicKey);
+    const stored = await inner.get('theodore.fleet.device_key');
+    expect(stored).not.toBeNull();
+    expect((await seedKeyStore(inner, make(32)).deviceKey()).publicKey).toBe(
+      ka.publicKey,
+    );
   });
 });

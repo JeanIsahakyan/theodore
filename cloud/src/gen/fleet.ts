@@ -83,7 +83,14 @@ idle_ms: number } |
  */
 { type: "confirm"; envelope: SignedEnvelope } |
 /**  The confirm was answered (here or elsewhere) or ran out of time. */
-{ type: "confirm_resolved"; confirm_id: string };
+{ type: "confirm_resolved"; confirm_id: string } |
+/**
+ *  This device had these ids before (the cloud forgot it, or its key
+ *  changed): the spaces the same user started from them are its now
+ *  (protocol 11, docs/fleet.md "A device id changes"). Never another
+ *  user's; a live device's are left alone.
+ */
+{ type: "adopt"; previous: string[] };
 
 /**  What a request waiting for a person would do (`RemoteConfirm::action`). */
 export type ConfirmAction =
@@ -555,7 +562,14 @@ resume: { [key in string]: number } } |
  */
 { type: "confirm"; envelope: SignedEnvelope } |
 /**  The confirm is no longer waiting on its host. */
-{ type: "confirm_dismissed"; confirm_id: string };
+{ type: "confirm_dismissed"; confirm_id: string } |
+/**
+ *  One of the user's devices took over an earlier id of its own
+ *  (`adopt`): the spaces this device hosts for `previous` are
+ *  `device`'s now, and a pin or delegation of `previous` may follow it
+ *  when `device` lists the very same key (protocol 11).
+ */
+{ type: "device_adopted"; device: string; previous: string };
 
 /**
  *  A request body signed by its origin device. `body` is the JSON text of a
