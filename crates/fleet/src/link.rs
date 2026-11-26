@@ -519,6 +519,7 @@ fn kind(msg: &ClientMessage) -> &'static str {
         ClientMessage::Confirm { .. } => "confirm",
         ClientMessage::ConfirmResolved { .. } => "confirm_resolved",
         ClientMessage::Adopt { .. } => "adopt",
+        ClientMessage::ListMySpaces => "list_my_spaces",
     }
 }
 
@@ -540,5 +541,6 @@ fn server_kind(msg: &ServerMessage) -> &'static str {
         ServerMessage::Confirm { .. } => "confirm",
         ServerMessage::ConfirmDismissed { .. } => "confirm_dismissed",
         ServerMessage::DeviceAdopted { .. } => "device_adopted",
+        ServerMessage::MySpaces { .. } => "my_spaces",
     }
 }

@@ -90,7 +90,13 @@ idle_ms: number } |
  *  (protocol 11, docs/fleet.md "A device id changes"). Never another
  *  user's; a live device's are left alone.
  */
-{ type: "adopt"; previous: string[] };
+{ type: "adopt"; previous: string[] } |
+/**
+ *  Asks for `my_spaces` again (a phone's pull-to-refresh): the cloud
+ *  sends it after every welcome on its own (protocol 12, docs/fleet.md
+ *  "The list comes from the cloud").
+ */
+{ type: "list_my_spaces" };
 
 /**  What a request waiting for a person would do (`RemoteConfirm::action`). */
 export type ConfirmAction =
@@ -286,6 +292,37 @@ export type MirroredSubSpace = {
 	 *  agent that lists no models.
 	 */
 	model?: string | null,
+};
+
+/**
+ *  One space the cloud lists to a device in `my_spaces` (protocol 12,
+ *  docs/fleet.md "The list comes from the cloud"): a space of the same user
+ *  that the device started, or that an origin delegating to it started. It
+ *  is what the cloud holds, unsigned: enough to list the space and
+ *  subscribe to it; the host's signed rows (the `started` event, the
+ *  mirrored space row) replace every word of it once the subscription
+ *  replays them.
+ */
+export type MySpace = {
+	space: string,
+	host_device: string,
+	/**
+	 *  The device that started it: the listed device, or an origin that
+	 *  delegates to it (then the space is followed, not started here).
+	 */
+	origin_device: string,
+	/**
+	 *  Its name as the host's `started` event said it, when the cloud has
+	 *  that event; a placeholder until the signed rows arrive.
+	 */
+	name?: string | null,
+	mode?: FleetMode | null,
+	/**  The last status its host reported, when any. */
+	status?: RemoteSpaceStatus | null,
+	/**  The last seq the cloud has; `subscribe{since: 0}` replays the ring. */
+	last_seq: number,
+	/**  Unix ms of its last event in the cloud (its start, when none). */
+	last_ms: number,
 };
 
 export type ProjectRef = {
@@ -574,7 +611,16 @@ resume: { [key in string]: number } } |
  *  `device`'s now, and a pin or delegation of `previous` may follow it
  *  when `device` lists the very same key (protocol 11).
  */
-{ type: "device_adopted"; device: string; previous: string };
+{ type: "device_adopted"; device: string; previous: string } |
+/**
+ *  The spaces this device may follow, as the cloud holds them: every
+ *  space of the same user whose origin is this device or an origin
+ *  delegating to it, the most recently active first, at most
+ *  [`MAX_MY_SPACES`]. Sent after the welcome and on `list_my_spaces`
+ *  (protocol 12). Unsigned and informational: a device lists and
+ *  subscribes from it, and shows nothing of it as a host's word.
+ */
+{ type: "my_spaces"; list: MySpace[] };
 
 /**
  *  A request body signed by its origin device. `body` is the JSON text of a

@@ -97,6 +97,11 @@ export const CATALOG = {
     answers: 'How many spaces come back at start, how fast?',
     props: ['count', 'ms'],
   },
+  my_spaces_listed: {
+    answers:
+      'How many spaces does the cloud list after a welcome, and how many were missing here?',
+    props: ['count', 'added'],
+  },
   space_stopped: {
     answers: 'Do people stop spaces from the phone?',
     props: ['outcome', 'code'],

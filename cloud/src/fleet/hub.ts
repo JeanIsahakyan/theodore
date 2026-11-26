@@ -26,6 +26,8 @@
  *      target below 9 ─▶ refused{fleet.upgrade_required}
  *   ─▶ adopt{previous} (protocol 11) ─▶ the same user's spaces started from
  *      those earlier ids are the sender's ─▶ device_adopted to its hosts on 11
+ *   welcome on 12 ─▶ my_spaces{list}: the spaces it may follow (its own and
+ *      its delegators'), newest first, ≤ 200; list_my_spaces ─▶ the same again
  * POST /v1/fleet/request ─▶ routed like a socket request
  * ```
  *
@@ -49,6 +51,7 @@ import type {
   DeviceInfo,
   DeviceSummary,
   DismissReason,
+  MySpace,
   RemoteAsk,
   RemoteConfirm,
   ServerMessage,
@@ -76,6 +79,7 @@ import {
   MAX_DEPTH,
   MAX_DEVICES_PER_USER,
   MAX_FRAME_BYTES,
+  MAX_MY_SPACES,
   MAX_PENDING_PER_USER,
   MAX_SPACES_PER_USER,
   MAX_USER_EVENT_BYTES,
@@ -132,6 +136,7 @@ import {
   unb64,
   V6,
   V11,
+  V12,
   verifyEnvelope,
   verifyHello,
 } from './wire';
@@ -404,6 +409,8 @@ export class Hub {
           return this.confirmResolved(r, msg.confirm_id);
         case 'adopt':
           return this.adopt(r, msg.previous);
+        case 'list_my_spaces':
+          return this.sendMySpaces(r.conn, r.state);
       }
     });
   }
@@ -818,6 +825,9 @@ export class Hub {
         list: this.delegationsNaming(deviceId),
       });
     }
+    // The spaces it may follow, so a phone whose saved list is gone lists
+    // them again (the cloud's own MCP device reads the hub directly).
+    if (!s.internal) this.sendMySpaces(conn, s);
 
     // Unclaimed requests for it, under the new generation.
     this.store.run(
@@ -2071,6 +2081,85 @@ export class Hub {
     });
   }
 
+  /**
+   * `my_spaces{list}` (protocol 12, docs/fleet.md "The list comes from the
+   * cloud"): every space of the connection's own user whose origin is this
+   * device or an origin with a live delegation to it, the most recently
+   * active first, at most MAX_MY_SPACES. Sent after the welcome and on
+   * `list_my_spaces`; nothing to a connection below 12. The rows are the
+   * user's own by construction (`user_id` on the query), and a delegation
+   * counts only as the origin signed it (`delegations`, not revoked, not
+   * expired): the same rule `subscribe` applies, so everything listed may
+   * be subscribed to. What a row says of a space is unsigned and so a
+   * placeholder for the device; the host's signed events follow.
+   */
+  private sendMySpaces(conn: Conn, s: ConnState) {
+    if (protocolOf(s) < V12 || !s.device) return;
+    const me = s.device;
+    const origins = [
+      me,
+      ...this.store
+        .rows<{ origin_device: string }>(
+          `SELECT origin_device FROM delegations
+           WHERE delegate_device = ? AND user_id = ? AND revoked = 0
+             AND (expires_at_ms = 0 OR expires_at_ms > ?)`,
+          me,
+          s.user,
+          this.env.now(),
+        )
+        .map((d) => d.origin_device),
+    ];
+    const marks = origins.map(() => '?').join(', ');
+    const list: MySpace[] = this.store
+      .rows<SpaceRow>(
+        `SELECT * FROM spaces
+         WHERE user_id = ? AND origin_device IN (${marks})
+         ORDER BY last_ms DESC, space LIMIT ?`,
+        s.user,
+        ...origins,
+        MAX_MY_SPACES,
+      )
+      .map((sp) => {
+        const started = this.startedOf(sp);
+        return {
+          space: sp.space,
+          host_device: sp.host_device,
+          origin_device: sp.origin_device,
+          name: started?.name ?? null,
+          mode: started?.mode ?? null,
+          status: (sp.status as MySpace['status']) ?? null,
+          last_seq: sp.last_seq,
+          last_ms: sp.last_ms,
+        };
+      });
+    this.send(conn, { type: 'my_spaces', list });
+  }
+
+  /**
+   * What a space's host-signed `started` event said of it, as the cloud
+   * kept it (`spaces.started`): its name and mode; `null` without one, or
+   * with a malformed one.
+   */
+  private startedOf(
+    sp: SpaceRow,
+  ): { name: string; mode: MySpace['mode'] } | null {
+    try {
+      const body = JSON.parse(
+        (JSON.parse(sp.started ?? 'null') as SignedEnvelope | null)?.body ??
+          'null',
+      ) as SpaceEventBody | null;
+      if (body?.event.kind !== 'started') return null;
+      const { name, mode } = body.event;
+      if (typeof name !== 'string' || name === '') return null;
+      return {
+        name: clip(name, 200),
+        mode: typeof mode === 'string' ? mode : null,
+      };
+    } catch {
+      return null;
+    }
+  }
+
   // ── push and delegations ───────────────────────────────────────────────
 
   /** A phone's Expo token: stored, replaced, or ('' ) removed. */
@@ -2358,22 +2447,8 @@ export class Hub {
   private pushTitle(sp: SpaceRow): { title: string; space: string } {
     const host = this.store.device(sp.host_device);
     const hostName = host ? infoOf(host).name : 'Theodore';
-    let space = sp.space;
-    try {
-      const body = JSON.parse(
-        (JSON.parse(sp.started ?? 'null') as SignedEnvelope | null)?.body ??
-          'null',
-      ) as SpaceEventBody | null;
-      if (
-        body?.event.kind === 'started' &&
-        typeof body.event.name === 'string' &&
-        body.event.name !== ''
-      ) {
-        space = body.event.name;
-      }
-    } catch {
-      // a malformed started body: the id stands in
-    }
+    // A malformed started body: the id stands in.
+    const space = this.startedOf(sp)?.name ?? sp.space;
     return {
       title: clip(`${hostName} · ${space}`, 120),
       space: clip(space, 100),

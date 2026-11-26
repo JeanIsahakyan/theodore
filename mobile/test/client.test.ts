@@ -131,7 +131,7 @@ describe('connect', () => {
       device(ME, myKey, { kind: 'mobile' }),
     ]);
     const hello = sock.of('hello')[0]!;
-    expect(hello.protocol).toBe(11);
+    expect(hello.protocol).toBe(12);
     expect(hello.device_id).toBeNull();
     expect(hello.public_key).toBe(myKey.publicKey);
     expect(hello.spaces).toEqual([]);
@@ -371,7 +371,12 @@ describe('connect', () => {
     }
     // A send waits for the host's word when the account changes.
     const sending = client.send(space, 'hello');
-    await waitFor(() => sock.of('request').length === 2, 'send request');
+    // (Back in front, the computers were asked for their spaces too.)
+    await waitFor(
+      () =>
+        sock.of('request').some((r) => r.envelope.body.includes('"op":"send"')),
+      'send request',
+    );
     account.emit({ ...session('tok-b', 'org_test'), userId: 'user_2' });
     expect(sock.closed).not.toBeNull();
     await expect(sending).rejects.toThrow(/didn't answer in time/);

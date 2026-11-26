@@ -594,6 +594,8 @@ export function mockSnapshot(over: Partial<FleetSnapshot> = {}): FleetSnapshot {
     mirrors: { ...mockMirrors },
     questions: [{ ...mockQuestion, questions: [...mockQuestion.questions] }],
     confirms: [],
+    computerSpaces: [],
+    refreshing: false,
     ...over,
   };
 }
@@ -769,6 +771,9 @@ export function createMock(options: MockOptions = {}): Mock {
     },
     async forgetSaved(scopes) {
       await call('forgetSaved', scopes);
+    },
+    async refreshSpaces() {
+      await call('refreshSpaces');
     },
     async answerOverHttp(space, askId, answers, hostDevice) {
       await call('answerOverHttp', space, askId, answers, hostDevice);

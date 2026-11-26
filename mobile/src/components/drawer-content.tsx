@@ -10,6 +10,9 @@
  *   Fix the login redirect   ●      ● running (accent) / waiting (warning) / failed (red)
  *   3 sub-spaces, 1 running          its sub-spaces, when it has any
  * Yesterday · Previous 7 days · Older
+ * On your computers                 the trusted computers' other spaces
+ *   Port the parser  ●               ─▶ the sub-space screen (read_space)
+ *   mac-A · 2 sub-spaces              a computer offline: its last rows, dimmed
  * ──────────────────────────────
  * ▢ Devices
  * (JI) Jean · Acme         ⇅  ⚙     account row ─▶ the Accounts sheet (switch
@@ -25,6 +28,10 @@
  * (confirm, stop first if running, archive, toast with Undo). Rows of spaces
  * this phone can't archive have no menu.
  *
+ * Pull down to refresh: the cloud's list of this device's spaces again
+ * (`list_my_spaces`) and each trusted computer's own (`list_spaces`); the
+ * computers are asked again every minute while the list shows.
+ *
  * Before this run's first devices list (src/ui/load.ts) an empty list is
  * skeleton rows, not "Spaces you start or follow show here."; the server
  * unreachable ─▶ "Can't reach the server" and Retry under the list (saved
@@ -37,18 +44,28 @@ import { usePathname, type Href } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
 import {
   Pressable,
+  RefreshControl,
   SectionList,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from 'react-native';
-import type { SpaceView } from '../fleet/types';
+import type { ComputerSpaceView, SpaceView } from '../fleet/types';
 import { useServices } from '../services';
 import { useAuthState } from '../shell/AppProviders';
-import { spaceHref } from '../shell/navigate';
+import { spaceHref, subSpaceHref } from '../shell/navigate';
 import { useFleetState } from '../state/fleet';
-import { initials, spaceDot, spaceSections, type SpaceDot } from '../ui/drawer';
+import {
+  COMPUTERS_REFRESH_MS,
+  computerSections,
+  computerSpaceDot,
+  computerSubSummary,
+  initials,
+  spaceDot,
+  spaceSections,
+  type SpaceDot,
+} from '../ui/drawer';
 import { useAccounts } from './accounts/use-accounts';
 import { useSheet } from './pickers/sheet-host';
 import { UNREACHABLE_TITLE } from '../ui/load';
@@ -232,6 +249,60 @@ function SpaceItem({
   );
 }
 
+/** A space of a computer this device doesn't follow: opens like a sub-space. */
+function ComputerItem({
+  space,
+  active,
+  onPress,
+}: {
+  space: ComputerSpaceView;
+  active: boolean;
+  onPress: () => void;
+}) {
+  const p = usePalette();
+  const dot = computerSpaceDot(space);
+  const title = space.title || space.name || 'Untitled space';
+  const subs = computerSubSummary(space);
+  const where = space.online ? space.hostName : `${space.hostName}, offline`;
+  const label = [title, `on ${where}`, dot ? DOT_LABEL[dot] : null, subs]
+    .filter(Boolean)
+    .join(', ');
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      accessibilityState={{ selected: active }}
+      testID={`computer-space-${space.space}`}
+      android_ripple={{ color: p.border }}
+      className={
+        android
+          ? `mx-3 h-14 flex-row items-center gap-2 overflow-hidden rounded-full px-4 ${active ? 'bg-primary/15' : ''}`
+          : `mx-2 flex-row items-center gap-2 rounded-[10px] px-4 py-2.5 active:bg-accent ${active ? 'bg-muted' : ''}`
+      }
+      style={space.online ? undefined : { opacity: 0.5 }}
+    >
+      <View className="flex-1">
+        <Text
+          numberOfLines={1}
+          className={`text-[15px] ${active || android ? 'text-foreground' : 'text-muted-foreground'}`}
+        >
+          {title}
+        </Text>
+        <Text numberOfLines={1} className="text-xs text-muted-foreground">
+          {[where, subs].filter(Boolean).join(' · ')}
+        </Text>
+      </View>
+      {dot ? (
+        <View className={`h-2 w-2 rounded-full ${DOT_CLASS[dot]}`} />
+      ) : null}
+    </Pressable>
+  );
+}
+
+type DrawerItem = SpaceView | ComputerSpaceView;
+const followed = (x: DrawerItem): x is SpaceView => 'startedHere' in x;
+
 function SearchField({
   value,
   onChangeText,
@@ -322,13 +393,26 @@ export function DrawerContent({
   const { fleet } = useServices();
   const accountsSheet = useSheet('accounts');
   const spaces = useFleetState((s) => s.spaces);
+  const computerSpaces = useFleetState((s) => s.computerSpaces);
+  const refreshing = useFleetState((s) => s.refreshing);
   const archive = useArchive('row_menu');
+  // While the list shows: the computers' spaces stay current.
+  useEffect(() => {
+    const t = setInterval(
+      () => void fleet.refreshSpaces({ quiet: true }),
+      COMPUTERS_REFRESH_MS,
+    );
+    return () => clearInterval(t);
+  }, [fleet]);
   const load = useLoadState();
   const [query, setQuery] = useState('');
   const now = useMinute();
   const sections = useMemo(
-    () => spaceSections(spaces, now, query),
-    [spaces, now, query],
+    (): { title: string; data: DrawerItem[] }[] => [
+      ...spaceSections(spaces, now, query),
+      ...computerSections(computerSpaces, query),
+    ],
+    [spaces, computerSpaces, now, query],
   );
   const searching = query.trim() !== '';
 
@@ -352,7 +436,16 @@ export function DrawerContent({
       <SectionList
         className="flex-1"
         sections={sections}
-        keyExtractor={(s) => s.space}
+        keyExtractor={(s) =>
+          followed(s) ? s.space : `${s.hostDevice}/${s.space}`
+        }
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={() => void fleet.refreshSpaces()}
+            tintColor={p.muted}
+          />
+        }
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="on-drag"
         stickySectionHeadersEnabled={false}
@@ -370,6 +463,16 @@ export function DrawerContent({
           </Text>
         )}
         renderItem={({ item }) => {
+          if (!followed(item)) {
+            const to = subSpaceHref(item.hostDevice, item.space);
+            return (
+              <ComputerItem
+                space={item}
+                active={path === to}
+                onPress={() => onNavigate(to)}
+              />
+            );
+          }
           const href = spaceHref(item.space);
           return (
             <SpaceItem

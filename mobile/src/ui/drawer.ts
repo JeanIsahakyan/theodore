@@ -7,9 +7,11 @@
  * Yesterday        the local day before
  * Previous 7 days  the 7 days before that
  * Older            the rest, and spaces with no activity time
+ * On your computers  the trusted computers' other spaces (`list_spaces`),
+ *                    newest first; each opens like a sub-space
  * ```
  */
-import type { SpaceView } from '../fleet/types';
+import type { ComputerSpaceView, SpaceView } from '../fleet/types';
 import { isSheetPath, spaceIdFromPath } from '../shell/paths';
 import { spaceTitle } from './logic';
 
@@ -124,3 +126,53 @@ export function initials(name: string | null | undefined, email = ''): string {
   if (words.length === 1) return words[0].slice(0, 2).toUpperCase();
   return (email.trim()[0] ?? '?').toUpperCase();
 }
+
+export const COMPUTERS_SECTION = 'On your computers';
+
+export interface ComputerSection {
+  title: typeof COMPUTERS_SECTION;
+  data: ComputerSpaceView[];
+}
+
+/** A computer's own space matches on its title, name, project or computer. */
+export function matchesComputerQuery(
+  s: ComputerSpaceView,
+  query: string,
+): boolean {
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+  return [s.title, s.name, s.project, s.hostName].some((x) =>
+    x.toLowerCase().includes(q),
+  );
+}
+
+/** The computers' own spaces as one section after the days; none: empty. */
+export function computerSections(
+  list: readonly ComputerSpaceView[],
+  query = '',
+): ComputerSection[] {
+  const data = list.filter((s) => matchesComputerQuery(s, query));
+  return data.length ? [{ title: COMPUTERS_SECTION, data }] : [];
+}
+
+/** The dot of a computer's own space, from its listed status. */
+export function computerSpaceDot(s: ComputerSpaceView): SpaceDot | null {
+  if (s.status === 'question' || s.status === 'waiting') return 'waiting';
+  if (s.status === 'running' || s.status === 'setting_up') return 'running';
+  if (s.status === 'failed') return 'failed';
+  return null;
+}
+
+/** "2 sub-spaces, 1 running" under a computer's own space; `null`: none. */
+export function computerSubSummary(s: ComputerSpaceView): string | null {
+  const n = s.subSpaces.length;
+  if (!n) return null;
+  const running = s.subSpaces.filter(
+    (c) => c.status === 'running' || c.status === 'setting_up',
+  ).length;
+  const head = n === 1 ? '1 sub-space' : `${n} sub-spaces`;
+  return running ? `${head}, ${running} running` : head;
+}
+
+/** While the list shows, the computers are asked again this often. */
+export const COMPUTERS_REFRESH_MS = 60_000;

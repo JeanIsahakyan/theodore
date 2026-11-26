@@ -62,6 +62,11 @@ pub struct LocalSpaceItem {
     /// Shipped or merged.
     pub done: bool,
     pub updated_at: i64,
+    /// The fleet's `rs_` id when this computer hosts it for another device
+    /// (`list_spaces` only, docs/fleet.md "The list comes from the cloud"):
+    /// the phone that follows it under that id lists it once.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fleet_space: Option<String>,
 }
 
 /// `spaces_list`.
