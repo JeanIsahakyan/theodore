@@ -72,11 +72,14 @@ pub struct SpaceStartParams {
     /// At most this turn's mode. Default edit.
     #[serde(default)]
     pub mode: Option<FleetModeParam>,
-    /// claude, codex or gemini; default the user's chat agent.
+    /// claude, codex or gemini; default this space's agent.
     #[serde(default)]
     pub agent: Option<String>,
+    /// A model id the agent lists (or an alias such as `opus`); default
+    /// this space's model, or the agent's default when `agent` differs.
     #[serde(default)]
     pub model: Option<String>,
+    /// Default this space's effort when the model takes it.
     #[serde(default)]
     pub effort: Option<String>,
     /// A short name; default one made from the goal.
@@ -192,7 +195,7 @@ impl ReviewToolsServer {
     }
 
     #[tool(
-        description = "Start a sub-space on this computer: a new space with its own branch and worktree whose first message is `goal`; this space is its parent. Its mode is at most this turn's. Use it to split clearly independent work, then space_wait for it, space_read its result and integrate. Refused past the nesting depth or the number of live sub-spaces a space may have; the error says which."
+        description = "Start a sub-space on this computer: a new space with its own branch and worktree whose first message is `goal`; this space is its parent. Its mode is at most this turn's. Use it to split clearly independent work, then space_wait for it, space_read its result and integrate. It runs on your agent, model and effort unless you pass agent/model/effort; pick a cheaper model for search or mechanical work and a stronger one for hard work. Refused past the nesting depth or the number of live sub-spaces a space may have, or for a model the agent doesn't list (the error lists the valid ids)."
     )]
     async fn space_start(
         &self,

@@ -154,6 +154,15 @@ isn't listed (it can't be cut), a label is cut; then, while the info's JSON
 is over 8 KiB, the last model of the agent listing the most goes (earlier
 versions first), then the last agent.
 
+A start never runs on "the CLI's default": one naming no model runs on
+the host's default for the agent (`agents.<id>.model`, else its first
+current model), stored as that concrete id. `fleet_start_space` from a
+space's agent sends that space's own agent, model and effort, as far as
+the target lists them (all three, else agent and model, else the agent,
+else nothing); a hosted space's sub-spaces inherit as local ones do
+(docs/spaces.md "Sub-spaces"). `mirror{sub_space}` carries the child's
+`model` (`null` from an older host), shown in the phone's tree.
+
 What the host checks, before the claim:
 
 | Named | Must be |
@@ -300,7 +309,7 @@ hosted space (origin D) ─▶ spaces_list / space_read / space_ask ─▶ any s
 
 A child isn't a fleet space of its own: no `rs_` id, no journal. Its row is
 sent as a `sub_space` mirror of the hosted space at the top of its tree
-(`MirroredSubSpace{space, parent, title, status, mode, done}`, `parent` the
+(`MirroredSubSpace{space, parent, title, status, mode, done, model?}`, `parent` the
 hosted `rs_` id or another child's id), on every change, latest kept; the
 origin reaches it by its local id through the ops on any space below. An
 archived child leaves the tree: its row goes as a delete
@@ -1084,7 +1093,7 @@ result, `space_read`, `space_wait`) until its reply or the 5 min end; a
 `merge_child` too, and a `send_to` as "possibly waiting for approval"
 (the space's own mode decides). `space_read` of a space it started lists
 its `sub_spaces` (the `sub_space` mirrors: id, parent, title, status, mode,
-done), reached by their ids with the tools above.
+done, model), reached by their ids with the tools above.
 
 `spaces_list`, `space_read`, `space_wait`, `space_stop`, `ask_answer` and
 `plan_approve` name only spaces this MCP device started; the `computer_*`,

@@ -1021,6 +1021,19 @@ impl Core {
         };
         // Checked at the gate (`check_pick`): one this device lists.
         let agent = agent.as_deref().and_then(agent_of);
+        // A concrete model from the start, never "the default": what it
+        // names, else this device's default for the agent (docs/fleet.md
+        // "Agent, model and effort").
+        let pick = self
+            .space_pick(
+                &project_id,
+                None,
+                agent,
+                model.as_deref(),
+                effort.as_deref(),
+            )
+            .await
+            .map_err(|why| refuse(codes::AGENT_UNAVAILABLE, why))?;
         // Its files first, in memory: they go into the worktree once it
         // exists, before the goal's turn (`fleet_write_pending_context`).
         let files = self.fleet_fetch_attachments(&attachments).await?;
@@ -1040,10 +1053,10 @@ impl Core {
                     name: None,
                     branch: None,
                     base: None,
-                    agent,
-                    model,
+                    agent: Some(pick.agent),
+                    model: pick.model,
                     start_from: None,
-                    effort,
+                    effort: pick.effort,
                     mode: Some(space_mode(mode)),
                 },
                 Some(mark),

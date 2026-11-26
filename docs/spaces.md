@@ -1406,6 +1406,36 @@ child asks ─▶ question card for you, as any space ─┬─ you answer
                                                    └─ or space_answer (parent)
 ```
 
+A child runs on a concrete model from its first turn, never "the default"
+(`usecases/space_pick.rs`): the parent's, unless `space_start` names one.
+
+```
+agent   asked ──▶ else the parent's
+model   asked: one the agent lists (the model picker's list), an alias made
+          concrete (`opus` ─▶ `claude-opus-5-5`); unknown ─▶ sub_spaces.model,
+          naming the valid ids
+        else the parent's (same agent) ──▶ else agents.<id>.model
+          ──▶ else the agent's first current model
+effort  asked ──▶ else the parent's (same agent, the model takes it)
+          ──▶ else agents.<id>.effort (the model takes it) ──▶ the model's own
+```
+
+| Start | Child runs on |
+| --- | --- |
+| `{goal}` | the parent's agent, model and effort |
+| `{goal, model: "haiku"}` | the parent's agent, `claude-haiku-…`, the parent's effort if Haiku takes it |
+| `{goal, agent: "codex"}` | Codex, `agents.codex.model` else its first listed model, concrete |
+| `{goal, model: "gpt-9"}` | refused, `sub_spaces.model`: "claude has no model \"gpt-9\"; pick one of: …" |
+
+An agent that lists no models (Gemini) can't be checked or made concrete:
+its model is what was named or set, else the CLI's. The agent is told
+"a sub-space runs on your model and effort unless you pass
+agent/model/effort; pick a cheaper model for search or mechanical work and
+a stronger one for hard work" (the tool's description and the turn's
+prompt). `spaces_list` / `space_read` / `space_start` return each space's
+`model` and `effort`; the sub-space rows (desktop strip, the phone's tree)
+show the model.
+
 A child forks from the base, not from the parent, and its work stays on its
 own branch until the parent's agent merges it:
 
@@ -1430,10 +1460,10 @@ space_merge {child}   (own child · settled · same project · not shipped on it
 
 | Tool | Does | Who gets it |
 | --- | --- | --- |
-| `spaces_list {project?, include_done?}` | spaces here, not archived (and not shipped or merged unless `include_done`), newest first, ≤ 50: id, name, title, project, status, mode, agent, turns, parent, `self` / `child` / `parent`, a mirror flagged `remote` | every space turn (a space hosted here for another device too) |
+| `spaces_list {project?, include_done?}` | spaces here, not archived (and not shipped or merged unless `include_done`), newest first, ≤ 50: id, name, title, project, status, mode, agent, model, effort, turns, parent, `self` / `child` / `parent`, a mirror flagged `remote` | every space turn (a space hosted here for another device too) |
 | `space_read {space, messages?}` | any space here: goal, status, mode, progress steps, last messages (10, ≤ 50, each ≤ 4000 characters; `from` is `user`, the agent, or `space:<id>` for another space's message), the running turn's text so far, a waiting question (`ask` id), diff stat | same |
 | `space_ask {space, question}` | another space's answer, from its own agent's context (above): `answer`, `agent`, `model`, `how` (`fork` / `fresh`), `note`. ≤ 2 at once per asking space; gives up after `spaces.ask_timeout_secs` (default 180) | same, any mode, whatever `spaces.sub_spaces` says |
-| `space_start {goal, project?, mode?, agent?, model?, effort?, name?}` | a child: project default the caller's, mode default Edit | an Edit or Run turn, `spaces.sub_spaces` on |
+| `space_start {goal, project?, mode?, agent?, model?, effort?, name?}` | a child: project default the caller's, mode default Edit, agent / model / effort default the caller's (above) | an Edit or Run turn, `spaces.sub_spaces` on |
 | `space_send {space, message, mode?}` | a message to any other space here (a child or not), queued like yours while it runs, shown and told as from this space | same |
 | `space_wait {spaces, timeout_ms?}` | until one of the children settles, ≤ 10 min | every turn, `spaces.sub_spaces` on |
 | `space_stop {space}` | stop a child's turn | an Edit or Run turn, `spaces.sub_spaces` on |
@@ -2275,7 +2305,7 @@ space page     composer ◌ 2 agents running · 2 sub-spaces, 1 running, 1 of 2 
 (a parent)                This turn   ◌ Explore auth  Sonnet 5  running                32s          ─▶ its row
                                       ◌ Review tests  Opus 5.5  running in background  1m   [Stop]  ─▶ its row
                           Background  ⌘ pnpm dev                                       4m   [Stop]
-                          Sub-spaces  ◌ Fix the flaky test  claude · Edit · 3 turns  running        ─▶ opens
+                          Sub-spaces  ◌ Fix the flaky test  claude · Haiku 4.5 · Edit · 3 turns  running  ─▶ opens
                                       ✓ Update the docs     claude · Edit · 2 turns  merged  (muted, last)
 ```
 

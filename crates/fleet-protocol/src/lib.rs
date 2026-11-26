@@ -1121,6 +1121,10 @@ pub struct MirroredSubSpace {
     pub mode: FleetMode,
     /// Merged into its parent, or shipped.
     pub done: bool,
+    /// The model its turns run on; `None` from an older host, or an
+    /// agent that lists no models.
+    #[serde(default)]
+    pub model: Option<String>,
 }
 
 /// One event of a hosted space, as its host signs it ([`Domain::Event`]).

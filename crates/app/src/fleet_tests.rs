@@ -4494,3 +4494,57 @@ async fn an_adopted_device_id_takes_over_the_hosted_spaces_pin_and_delegation() 
     deliver(&f, env);
     assert_eq!(refusal(&f, &id).await, codes::UNTRUSTED_DEVICE);
 }
+
+#[tokio::test]
+async fn a_start_that_names_no_model_runs_on_a_concrete_one() {
+    let f = fixtures();
+    agents_listed(&f);
+    let (core, _recv, project, origin) = target(&f).await;
+    let ok = run(&f, &origin, start_op(&project.id, "rs_1")).await;
+    assert!(matches!(ok, ReplyOutcome::Ok { .. }), "{ok:?}");
+    let spaces = core.list_spaces(None).await.unwrap();
+    assert_eq!(spaces.len(), 1);
+    // No agents.claude.model: the first current model, never none.
+    assert_eq!(spaces[0].model.as_deref(), Some("opus"));
+}
+
+#[test]
+fn a_start_from_a_space_inherits_what_the_other_device_runs() {
+    use crate::usecases::fleet_agents::inherited_pick;
+    use theodore_domain::AgentId;
+    use theodore_fleet_protocol::{FleetAgentInfo, FleetModelInfo};
+    let listed = vec![FleetAgentInfo {
+        id: "claude".into(),
+        label: "Claude".into(),
+        default_model: Some("opus".into()),
+        default_effort: Some("high".into()),
+        models: vec![FleetModelInfo {
+            id: "opus".into(),
+            label: "Opus".into(),
+            efforts: vec!["low".into(), "high".into()],
+            default_effort: None,
+        }],
+    }];
+    let pick = |agent, model, effort| inherited_pick(&listed, agent, model, effort);
+    // All three, when that device takes them.
+    assert_eq!(
+        pick(AgentId::Claude, Some("opus"), Some("low")),
+        (
+            Some(AgentId::Claude),
+            Some("opus".into()),
+            Some("low".into())
+        )
+    );
+    // An effort it doesn't take: the agent and model.
+    assert_eq!(
+        pick(AgentId::Claude, Some("opus"), Some("max")),
+        (Some(AgentId::Claude), Some("opus".into()), None)
+    );
+    // A model it doesn't list: the agent only (its default, made concrete there).
+    assert_eq!(
+        pick(AgentId::Claude, Some("haiku"), Some("low")),
+        (Some(AgentId::Claude), None, None)
+    );
+    // An agent it doesn't run: its defaults.
+    assert_eq!(pick(AgentId::Codex, Some("gpt"), None), (None, None, None));
+}
