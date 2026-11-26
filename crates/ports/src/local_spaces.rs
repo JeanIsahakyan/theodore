@@ -46,6 +46,11 @@ pub struct LocalSpaceItem {
     /// `ask`, `plan`, `edit` or `run`.
     pub mode: String,
     pub agent: String,
+    /// The model its turns run on (`None`: an agent that lists none).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
     pub turns: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub parent: Option<LocalSpaceParent>,
@@ -57,6 +62,11 @@ pub struct LocalSpaceItem {
     /// Shipped or merged.
     pub done: bool,
     pub updated_at: i64,
+    /// The fleet's `rs_` id when this computer hosts it for another device
+    /// (`list_spaces` only, docs/fleet.md "The list comes from the cloud"):
+    /// the phone that follows it under that id lists it once.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fleet_space: Option<String>,
 }
 
 /// `spaces_list`.

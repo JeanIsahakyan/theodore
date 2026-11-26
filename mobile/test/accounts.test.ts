@@ -25,6 +25,13 @@ import { MultiAccountClient, type AccountKV } from '../src/auth/multi';
 import { serializeSession, type SessionStore } from '../src/auth/store';
 import type { Session } from '../src/auth/types';
 import type { AccountApi, Authenticated } from '../src/auth/workos';
+import {
+  ACCOUNT_DELETED_NOTICE,
+  clearAccountDeleted,
+  deleteAccountFlow,
+  useAccountDeleted,
+} from '../src/ui/deleteAccount';
+import type { ConfirmOptions } from '../src/ui/native/types';
 
 const T0 = 1_800_000_000_000;
 
@@ -163,6 +170,8 @@ function memoryKV(initial: Record<string, string> = {}) {
 function fakeApi() {
   const calls: { method: string; args: unknown[] }[] = [];
   const rejected = new Set<string>();
+  /** `deleteAccount` throws this (the cloud down), when set. */
+  const failing: { delete: Error | null } = { delete: null };
   let nextSignIn: Authenticated | null = null;
   const orgs: Record<string, { id: string; name: string }[]> = {};
   const parse = (rt: string) => {
@@ -206,12 +215,14 @@ function fakeApi() {
     },
     async deleteAccount(accessToken) {
       calls.push({ method: 'deleteAccount', args: [accessToken] });
+      if (failing.delete) throw failing.delete;
     },
   };
   return {
     api,
     calls,
     rejected,
+    failing,
     orgs,
     stage(r: Authenticated) {
       nextSignIn = r;
@@ -467,5 +478,85 @@ describe('MultiAccountClient', () => {
     expect(t.client.pushSweepDue('u_a', T0 + PUSH_SWEEP_EVERY_MS)).toBe(true);
     const stored = parseAccountIndex(t.kv.map.get(ACCOUNTS_KEY) ?? null);
     expect(stored?.accounts[0].pushSweptAt).toBe(T0);
+  });
+});
+
+describe('Settings → Delete account', () => {
+  const answer = (yes: boolean) => {
+    const asked: ConfirmOptions[] = [];
+    return {
+      asked,
+      confirm: async (o: ConfirmOptions) => {
+        asked.push(o);
+        return yes;
+      },
+    };
+  };
+
+  it('asks with the system destructive confirm: what goes, what stays', async () => {
+    const t = setup();
+    await signIn(t, 'u_a', 'org_1');
+    const c = answer(false);
+    expect(
+      await deleteAccountFlow({ confirm: c.confirm, auth: t.client }),
+    ).toBe('cancelled');
+    expect(c.asked).toHaveLength(1);
+    const o = c.asked[0]!;
+    expect(o.destructive).toBe(true);
+    expect(o.confirmLabel).toBe('Delete account');
+    expect(o.message).toContain('organizations only you are in');
+    expect(o.message).toContain('push tokens');
+    expect(o.message).toContain('your code and spaces on your computers');
+    expect(o.message).toContain('GitHub and agent accounts are untouched');
+    // Cancelled: nothing sent, still signed in.
+    expect(t.fake.calls.some((x) => x.method === 'deleteAccount')).toBe(false);
+    expect((await t.client.current())?.userId).toBe('u_a');
+  });
+
+  it('deletes with the active token, then signs out and says so', async () => {
+    clearAccountDeleted();
+    const t = setup();
+    await signIn(t, 'u_a', 'org_1');
+    const token = (await t.client.current())!.accessToken;
+    const c = answer(true);
+    expect(
+      await deleteAccountFlow({ confirm: c.confirm, auth: t.client }),
+    ).toBe('deleted');
+    expect(
+      t.fake.calls.find((x) => x.method === 'deleteAccount')?.args,
+    ).toEqual([token]);
+    // Signed out: the account's session gone from the store, no provider
+    // logout (the cloud ended its sessions).
+    expect(await t.client.current()).toBeNull();
+    expect(t.changes.at(-1)).toBeNull();
+    expect(t.client.accounts()).toEqual([]);
+    expect(t.kv.map.has(accountKey('u_a'))).toBe(false);
+    expect(t.fake.calls.some((x) => x.method === 'logout')).toBe(false);
+    expect(useAccountDeleted.getState().deleted).toBe(true);
+    expect(ACCOUNT_DELETED_NOTICE).toBe('Your account was deleted.');
+    clearAccountDeleted();
+  });
+
+  it('another account signed in takes over', async () => {
+    const t = setup();
+    await signIn(t, 'u_a', 'org_1');
+    await signIn(t, 'u_b', 'org_2');
+    await deleteAccountFlow({ confirm: answer(true).confirm, auth: t.client });
+    expect((await t.client.current())?.userId).toBe('u_a');
+    expect(t.kv.map.has(accountKey('u_b'))).toBe(false);
+    clearAccountDeleted();
+  });
+
+  it('a cloud failure throws and changes nothing', async () => {
+    clearAccountDeleted();
+    const t = setup();
+    await signIn(t, 'u_a', 'org_1');
+    t.fake.failing.delete = new AuthError('network', 'cloud down');
+    await expect(
+      deleteAccountFlow({ confirm: answer(true).confirm, auth: t.client }),
+    ).rejects.toThrow('cloud down');
+    expect((await t.client.current())?.userId).toBe('u_a');
+    expect(t.kv.map.has(accountKey('u_a'))).toBe(true);
+    expect(useAccountDeleted.getState().deleted).toBe(false);
   });
 });

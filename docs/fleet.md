@@ -154,6 +154,15 @@ isn't listed (it can't be cut), a label is cut; then, while the info's JSON
 is over 8 KiB, the last model of the agent listing the most goes (earlier
 versions first), then the last agent.
 
+A start never runs on "the CLI's default": one naming no model runs on
+the host's default for the agent (`agents.<id>.model`, else its first
+current model), stored as that concrete id. `fleet_start_space` from a
+space's agent sends that space's own agent, model and effort, as far as
+the target lists them (all three, else agent and model, else the agent,
+else nothing); a hosted space's sub-spaces inherit as local ones do
+(docs/spaces.md "Sub-spaces"). `mirror{sub_space}` carries the child's
+`model` (`null` from an older host), shown in the phone's tree.
+
 What the host checks, before the claim:
 
 | Named | Must be |
@@ -300,7 +309,7 @@ hosted space (origin D) ─▶ spaces_list / space_read / space_ask ─▶ any s
 
 A child isn't a fleet space of its own: no `rs_` id, no journal. Its row is
 sent as a `sub_space` mirror of the hosted space at the top of its tree
-(`MirroredSubSpace{space, parent, title, status, mode, done}`, `parent` the
+(`MirroredSubSpace{space, parent, title, status, mode, done, model?}`, `parent` the
 hosted `rs_` id or another child's id), on every change, latest kept; the
 origin reaches it by its local id through the ops on any space below. An
 archived child leaves the tree: its row goes as a delete
@@ -500,7 +509,7 @@ request ─▶ the gate above (pin, target_key, fresh, accept_remote, claim)
 
 | Op | Counts as | Does | Value |
 | --- | --- | --- | --- |
-| `list_spaces {project?}` | Ask | every space here not archived nor done, newest first, ≤ 50 | `spaces_list`'s: `{note, spaces, truncated}` |
+| `list_spaces {project?}` | Ask | every space here not archived nor done, newest first, ≤ 50 | `spaces_list`'s: `{note, spaces, truncated}`; a space hosted here for the fleet also carries its `fleet_space` (`rs_` id) |
 | `read_space {space, messages?}` | Ask | goal, status, last messages (10, ≤ 50), running text, question, progress, diff stat | `space_read`'s |
 | `ask_space {space, question}` | Ask | its agent answers from a read-only fork of its session (or a fresh read-only agent); the space is left as it was; ≤ 2 at once per asking device; `fleet.timeout` after `spaces.ask_timeout_secs` | `space_ask`'s: `{note, space, answer, agent, model, how}` |
 | `send_to {space, message}` | the space's own mode | its next turn, as from you; its mode never changes; queued while it runs ("Sends queue") | `{message}`, queued: `{message, queued: true, position}` |
@@ -804,12 +813,13 @@ pins down what this doc leaves open:
   first, then their mirrors, else `error{fleet.busy}` and the host keeps
   the event in its journal). Only ring loss is a `space_gap`; seq holes
   from compaction or relayed `turn_step`s are not.
-- Protocols 3 to 11 are accepted. A protocol-3 connection never sees
+- Protocols 3 to 12 are accepted. A protocol-3 connection never sees
   `mobile` / `web` devices in `devices` nor gets `delegations`, one below 5
   never sees the `mcp` device ("MCP over the cloud"); a request to a
   `mobile` / `web` / `mcp` device is `refused{fleet.invalid}`; an op on
   any space to a computer below 7 is `refused{fleet.upgrade_required}`; a
-  host below 11 never hears `device_adopted` ("A device id changes").
+  host below 11 never hears `device_adopted` ("A device id changes"); a
+  device below 12 never gets `my_spaces` ("The list comes from the cloud").
 - A space's followers are its origin and the origin's live delegates
   (`docs/mobile.md`): they may subscribe, and its questions reach them as
   they reach the origin (escalation too). A delegation is signed by the
@@ -869,6 +879,39 @@ it was; "Send my spaces' questions here" has to be turned on again (the
 removal revoked it). A phone that merely lost its id (the cloud forgot it,
 the Mac still pins the key) needs nothing: the pin and the delegation
 follow it.
+
+### The list comes from the cloud
+
+Protocol 12. A device's list of the spaces it started or follows was only
+its own: a phone whose saved set was lost (wiped on a refused refresh, a
+reinstall) came up empty although the cloud still had every space with
+that phone as the origin. Now the cloud says it after every welcome:
+
+```
+welcome (protocol ≥ 12, not the cloud's own MCP device)
+  ─▶ my_spaces{list}: spaces WHERE user_id = the connection's user
+       AND origin_device IN (this device, origins with a live delegation to it)
+     newest activity first, ≤ 200
+     each: space, host_device, origin_device, name and mode (from the kept
+     host-signed `started`, when the cloud has it), status, last_seq, last_ms
+list_my_spaces ─▶ the same, again (pull-to-refresh, right after an `adopt`)
+```
+
+| Guard | Holds |
+| --- | --- |
+| Only the connection's own user's rows (`user_id` in the query); a delegation counts only as its origin signed it, live (not revoked, not expired): what `subscribe` takes, so everything listed may be subscribed to | the cloud |
+| The list is unsigned: a device lists and subscribes from it; its name is a placeholder the host's signed `started` event and mirrored space row replace once the subscription replays them | device |
+| A space missing from the list is never dropped for that: the list is bounded, and a device may follow what it has | device |
+
+The phone also lists each trusted computer's other spaces: after its first
+`devices` of a link, and on pull-to-refresh, it signs `list_spaces` (Ask,
+"Any space on a computer") to every trusted computer online, and shows
+what they answer, without the spaces it already follows, under "On your
+computers" (docs/mobile.md "The list comes from the cloud"). A computer
+keeps its own list (its `fleet.follow:<rs_>` rows) and ignores `my_spaces`.
+In a `list_spaces` answer a space the computer hosts for the fleet carries
+its `rs_` id (`fleet_space`), so the device that follows it under that id
+lists it once.
 
 ## Files (blobs)
 
@@ -1084,7 +1127,7 @@ result, `space_read`, `space_wait`) until its reply or the 5 min end; a
 `merge_child` too, and a `send_to` as "possibly waiting for approval"
 (the space's own mode decides). `space_read` of a space it started lists
 its `sub_spaces` (the `sub_space` mirrors: id, parent, title, status, mode,
-done), reached by their ids with the tools above.
+done, model), reached by their ids with the tools above.
 
 `spaces_list`, `space_read`, `space_wait`, `space_stop`, `ask_answer` and
 `plan_approve` name only spaces this MCP device started; the `computer_*`,
@@ -1107,12 +1150,14 @@ events and replies a pinned computer signed, refusals as codes
   `read_file` op and the blob HTTP routes, "Files (blobs)"; 9 adds
   `archive_space` / `unarchive_space`, "Archive from another device"; 10
   adds `queued_message`, "Sends queue"; 11 adds `adopt` /
-  `device_adopted`, "A device id changes").
-  Hub: protocols 3 to 11; `mcp` hidden from connections below 5
+  `device_adopted`, "A device id changes"; 12 adds `my_spaces` /
+  `list_my_spaces`, "The list comes from the cloud").
+  Hub: protocols 3 to 12; `mcp` hidden from connections below 5
   (`devices`); the confirm frames never sent below 6; the confirm ops to a
   computer below 6, the ops on any space to one below 7, the archive
   ops to one below 9, and `queued_message` to one below 10, are
-  `refused{fleet.upgrade_required}`; `device_adopted` never sent below 11;
+  `refused{fleet.upgrade_required}`; `device_adopted` never sent below 11,
+  `my_spaces` never below 12 nor to the MCP device;
   never accepted as a socket's kind (hello, `announce`).
 - Its requests are ordinary `SignedEnvelope`s (`Domain::Request`, the
   Rust field order), checked against `src/gen/fleet-vectors.json`.

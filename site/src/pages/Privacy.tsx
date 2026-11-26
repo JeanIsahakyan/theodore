@@ -8,7 +8,7 @@
 import { Container, Prose } from '../components/ui';
 import { CONTACT_EMAIL, DOC } from '../content/links';
 
-export const PRIVACY_EFFECTIVE = 'November 21, 2026';
+export const PRIVACY_EFFECTIVE = 'November 25, 2026';
 
 export function Privacy() {
   return (
@@ -209,12 +209,17 @@ export function Privacy() {
 
           <h2>Deleting your account</h2>
           <p>
-            In Theodore Code, open Settings → <strong>Delete account</strong>.
-            This permanently deletes your account at WorkOS and everything the
-            Theodore cloud holds for you: devices, push tokens, spaces and their
-            content, your personal organization and connected MCP clients. Data
-            on your own computers is not touched. You can also email us to
-            delete your account.
+            Delete your account in the app: Settings → Account →{' '}
+            <strong>Delete account</strong> in Theodore on your computer, or
+            Settings → <strong>Delete account</strong> in Theodore Code on your
+            phone. This permanently deletes your account at WorkOS and
+            everything the Theodore cloud holds for you: devices, push tokens,
+            spaces and their content, files in transit, organizations only you
+            are in, connected MCP clients and your usage analytics.
+            Organizations other people are in stay; you leave them. Data on your
+            own computers (your code, projects and spaces) and your GitHub and
+            agent accounts are not touched. You can also email us to delete your
+            account.
           </p>
 
           <h2>Service providers</h2>

@@ -718,6 +718,10 @@ pub trait CoreApi: Send + Sync {
     async fn account_sign_out_of(&self, _user_id: String) -> Result<AccountStatus, CommandError> {
         Err(not_ready())
     }
+    /// Deletes the active account in the cloud, then signs it out here.
+    async fn account_delete(&self) -> Result<AccountStatus, CommandError> {
+        Err(not_ready())
+    }
     /// A `theodore://callback?…` sign-in redirect the OS opened the app
     /// with. Not a command: the shell's URL-scheme handler calls it. `true`
     /// when it belonged to the sign-in in progress (signed in or failed),

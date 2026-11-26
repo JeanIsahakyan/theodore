@@ -586,6 +586,9 @@ export const api = {
   /** Signs one account out; the next becomes active. */
   accountSignOutOf: (userId: string) =>
     call<AccountStatus>('account_sign_out_of', { userId }),
+  /** Deletes the active account in the cloud, then signs it out here;
+   *  the next account becomes active, none: the gate closes. */
+  accountDelete: () => call<AccountStatus>('account_delete'),
   /** Brings the window forward after the browser hands the sign-in back.
    *  Cosmetic: a failure is ignored, never toasted. */
   focusWindow: (): Promise<null> =>

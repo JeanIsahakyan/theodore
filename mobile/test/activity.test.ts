@@ -477,6 +477,15 @@ describe('the sub-space screen', () => {
         done: true,
       }),
     ).toBe('sub-space · on mac-A · Merged');
+    // A computer's own space (the list's "On your computers"): no parent.
+    expect(
+      subSpaceSubtitle({
+        parentTitle: null,
+        hostName: 'mac-A',
+        status: 'running',
+        done: false,
+      }),
+    ).toBe('on mac-A · Running');
   });
 
   it('draws yours and its parent agent’s as bubbles, the agent’s full width', () => {

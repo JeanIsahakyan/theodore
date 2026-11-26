@@ -187,7 +187,7 @@ Failures are logged with a stable dotted `error.code`, plus context: `agent` and
 | Store | `store.db`, `store.serde`, `store.migration` |
 | Outbox | `outbox.gave_up` |
 | Spaces | `space.command_failed`, `space.command_timed_out`, `space.turn_failed`, `space.worktree_moved_aside` (a space dir that wasn't its worktree, moved to `spaces/.moved-aside/`), `space.checkpoint_failed` and `space.auto_archive_failed` (recorded for the space's agent, docs/spaces.md "Theodore's errors reach the agent"; the ship, merge and attachment codes land there too) |
-| Account | `account.refresh_rejected`, `account.rejected`, `account.network`, `account.invalid_token`, `account.config`, `account.protocol`, `account.required` |
+| Account | `account.refresh_rejected`, `account.rejected`, `account.network`, `account.invalid_token`, `account.config`, `account.protocol`, `account.required`; the phone's `account.delete_failed` (Settings → Delete account) |
 | Chat | `chat.failed` (an AI panel question whose run failed) |
 | Other | `skill.failed`, `app.not_found`, `app.invalid`, `app.internal`, `app.start_failed`, `app.offline_not_cached`, `app.offline` (offline and the project was never cloned), `panic` |
 | UI | `ui.uncaught`, `ui.unhandled_rejection`, `ui.render_crash` |
@@ -299,6 +299,30 @@ and network errors, dropped on another 4xx or after 4 attempts.
 
 Either way, choose "Help improve Theodore" in onboarding or flip the switches in Settings —
 nothing is sent before that.
+
+### Account deletion: the PostHog person
+
+Deleting a Theodore account (docs/cloud.md "Account deletion") deletes its PostHog person and
+events too, from the cloud, since the apps hold only the public project key:
+
+```text
+DELETE /v1/account ─▶ … ─▶ POSTHOG_PERSONAL_API_KEY + POSTHOG_PROJECT_ID set? no ─▶ skipped
+  ─▶ GET  <POSTHOG_API_HOST>/api/projects/<project>/persons/?distinct_id=<user_…>
+  ─▶ each: DELETE …/persons/<uuid>/?delete_events=true        (5 s each; 404 = done)
+  ─▶ any failure ─▶ log `cloud.account_delete posthog <kind>`, the deletion goes on
+  ─▶ WorkOS user deleted, last
+```
+
+| Worker setting | Kind | Value |
+| --- | --- | --- |
+| `POSTHOG_PERSONAL_API_KEY` | secret | a personal API key with the `person:write` scope |
+| `POSTHOG_PROJECT_ID` | var | the project the apps send to |
+| `POSTHOG_API_HOST` | var, optional | default `https://us.posthog.com` (EU: `https://eu.posthog.com`) |
+
+Without them nothing reaches PostHog and the person stays until deleted by hand. Events sent
+anonymously, before a sign-in or without usage consent 2, were never linked to the user and
+aren't touched. New Relic has no per-person delete: its records carry `enduser.id` only with
+error-report consent 2 and age out with the account's retention.
 
 ## Cloud
 
@@ -629,7 +653,8 @@ no choice recorded ─▶ nothing sent, nothing queued; a switch off ─▶ its 
   the Home start flow (computer kind, mode, agent, model, effort, latency,
   refusal code), sends (queued or not, latency, retries, surface), answers, plan
   approvals, picks, sheets, the activity strip, sub-space opens and read
-  failures, saved-spaces restore (count, ms), trust changes, archive from the
+  failures, saved-spaces restore (count, ms), the cloud's list of this
+  device's spaces after a welcome (`my_spaces_listed`: count, added), trust changes, archive from the
   phone (`space_archived`: `action` archive / unarchive, `surface` `row_menu`:
   the drawer row's long-press menu, or `merged_chip`: the space screen's
   "Merged #n" chip, whether the space was stopped first,
@@ -661,7 +686,7 @@ no choice recorded ─▶ nothing sent, nothing queued; a switch off ─▶ its 
   changeable under Settings → Privacy, each switch independent; stored per
   install (`theodore.telemetry.choice`), kept across sign-out. Turning a switch
   on is consent 2; the app never had older words, so there is no "ask again"
-  prompt. The demo account is never linked.
+  prompt.
 - **Identity**: `theodore.telemetry.install_id` (never changes: the hashing key,
   `service.instance.id`), `theodore.telemetry.anon_id` (absent, so the install
   id, until linking starts or the first sign-out; sign-out makes a new one),

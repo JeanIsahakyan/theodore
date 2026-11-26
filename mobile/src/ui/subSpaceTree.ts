@@ -153,3 +153,22 @@ export function subSpaceSummary(
   if (c.waiting > 0) parts.push(`${c.waiting} waiting`);
   return parts.join(', ');
 }
+
+/**
+ * A model id as a row says it, short: `claude-opus-5-5` → `Opus 5.5`,
+ * `claude-haiku-4-5-20251001` → `Haiku 4.5`, `opus` → `Opus`; any other
+ * id (`gpt-5.5`) as it is. `null` without one (an older host).
+ */
+export function shortModel(id: string | null | undefined): string | null {
+  if (!id) return null;
+  const m =
+    /^claude-([a-z]+)((?:-\d+)*?)(?:-\d{8})?$/.exec(id) ??
+    /^()([a-z]+)$/.exec(id);
+  if (!m) return id;
+  const family = m[1] || m[2];
+  const version = m[1]
+    ? m[2].slice(1).split('-').filter(Boolean).join('.')
+    : '';
+  const name = family.charAt(0).toUpperCase() + family.slice(1);
+  return version ? `${name} ${version}` : name;
+}

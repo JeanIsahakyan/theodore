@@ -64,6 +64,14 @@ export class FakeWorkos implements Workos {
     );
   }
 
+  async organizationMembers(organizationId: string) {
+    this.calls.push(`listOrgMembers ${organizationId}`);
+    this.check();
+    return this.memberships_.filter(
+      (m) => m.organization_id === organizationId,
+    );
+  }
+
   async organization(id: string) {
     this.calls.push(`getOrgById ${id}`);
     this.check();

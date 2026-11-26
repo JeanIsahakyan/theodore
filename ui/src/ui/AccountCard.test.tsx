@@ -2,7 +2,7 @@
  *  Settings → Account's organization row and switcher. */
 import { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { click, mount, settle, type Mounted } from '../test/dom';
+import { click, mount, settle, typeInto, type Mounted } from '../test/dom';
 import { setTransport } from '../core/transport';
 import { initialFlow, type AccountFlow } from '../core/accountFlow';
 import type { AccountSignIn } from '../core/accountSignIn';
@@ -14,7 +14,12 @@ import type {
 import { RootStore } from '../stores/RootStore';
 import { RootStoreProvider } from '../stores/context';
 import { FakeTransport } from '../test/fakeTransport';
-import { AccountCard, SignInView, switchErrorText } from './AccountCard';
+import {
+  AccountCard,
+  deleteErrorText,
+  SignInView,
+  switchErrorText,
+} from './AccountCard';
 
 // jsdom has no `CSS.escape`; an open react-aria popover calls it.
 (globalThis as { CSS?: { escape?: (s: string) => string } }).CSS ??= {};
@@ -389,6 +394,150 @@ describe('Settings → Account, several accounts', () => {
     );
     expect(rowOf('user_01')?.textContent).toContain('Active');
   });
+});
+
+describe('Settings → Account → Delete account', () => {
+  const ada = {
+    id: 'user_01',
+    email: 'ada@example.com',
+    name: 'Ada Lovelace',
+    avatar_url: null,
+  };
+  const entry: AccountEntry = {
+    user: ada,
+    organization: { id: 'org_me', role: 'admin' },
+    organizations: [],
+    active: true,
+    sign_in_required: false,
+  };
+  const signedIn: AccountStatus = {
+    available: true,
+    required: true,
+    session_ended: false,
+    user: ada,
+    organization: entry.organization,
+    accounts: [entry],
+  };
+  const signedOut: AccountStatus = {
+    ...signedIn,
+    user: null,
+    organization: null,
+    accounts: [],
+  };
+
+  let transport: FakeTransport;
+  let store: RootStore;
+
+  beforeEach(async () => {
+    transport = new FakeTransport();
+    setTransport(transport);
+    store = new RootStore();
+    transport.onCall('account_organizations', () => []);
+    store.ephemeral.setAccount(signedIn);
+    transport.onCall('account_status', () => store.ephemeral.account);
+    m = await mount(
+      <RootStoreProvider store={store}>
+        <AccountCard />
+      </RootStoreProvider>,
+    );
+    await settle();
+  });
+
+  const called = (cmd: string) => transport.calls.filter((c) => c.cmd === cmd);
+  const dialog = () => document.querySelector<HTMLElement>('.delete-account');
+  const confirmField = () =>
+    document.querySelector<HTMLInputElement>('.account-delete-confirm');
+  const doDelete = () =>
+    document.querySelector<HTMLButtonElement>('.account-delete-do');
+
+  async function open() {
+    await click(m!.host.querySelector('.account-delete'));
+    await settle();
+  }
+
+  it('opens a sheet that says what goes and what stays', async () => {
+    expect(m!.host.querySelector('.account-delete')?.textContent).toContain(
+      'Delete account',
+    );
+    await open();
+    const text = dialog()?.textContent ?? '';
+    expect(text).toContain('Delete your Theodore account?');
+    expect(text).toContain('Organizations only you are in');
+    expect(text).toContain('Your devices, fleet history and push tokens');
+    expect(text).toContain('Your code, projects and spaces on your computers');
+    expect(text).toContain('Your GitHub and agent accounts, untouched');
+  });
+
+  it('deletes only once DELETE is typed', async () => {
+    await open();
+    expect(doDelete()?.disabled).toBe(true);
+    await typeInto(confirmField(), 'delete');
+    expect(doDelete()?.disabled).toBe(true);
+    await click(doDelete());
+    expect(called('account_delete')).toHaveLength(0);
+    await typeInto(confirmField(), 'DELETE');
+    expect(doDelete()?.disabled).toBe(false);
+  });
+
+  it('on success: signed out, and the sign-in says the account was deleted', async () => {
+    transport.onCall('account_delete', () => signedOut);
+    await open();
+    await typeInto(confirmField(), 'DELETE');
+    await click(doDelete());
+    await settle();
+    expect(called('account_delete')).toHaveLength(1);
+    expect(store.ephemeral.account?.user).toBeNull();
+    expect(store.ephemeral.accountGate).toBe('locked');
+    expect(store.ephemeral.accountDeleted).toBe(true);
+    expect(dialog()).toBeNull();
+    // Signing in again clears it.
+    store.ephemeral.setAccount(signedIn);
+    expect(store.ephemeral.accountDeleted).toBe(false);
+  });
+
+  it('on failure: says so, keeps the account, lets the user retry', async () => {
+    transport.onCall('account_delete', () => {
+      throw Object.assign(new Error('x'), {
+        code: 'account',
+        message: 'account: network: cloud v1/account failed (502)',
+      });
+    });
+    await open();
+    await typeInto(confirmField(), 'DELETE');
+    await click(doDelete());
+    await settle();
+    expect(dialog()?.textContent).toContain("Couldn't reach Theodore");
+    expect(store.ephemeral.account?.user?.id).toBe('user_01');
+    expect(store.ephemeral.accountDeleted).toBe(false);
+    expect(doDelete()?.disabled).toBe(false);
+  });
+
+  it('the sign-in screen says the account was deleted', async () => {
+    const signIn: AccountSignIn = {
+      flow: initialFlow,
+      start: vi.fn(),
+      cancel: vi.fn(),
+      chooseOrganization: vi.fn(),
+      reopen: vi.fn(),
+    };
+    m?.unmount();
+    m = await mount(<SignInView signIn={signIn} user={null} deleted />);
+    expect(m.host.textContent).toContain('Your account was deleted');
+    expect(m.host.textContent).toContain('still here');
+  });
+});
+
+describe('deleteErrorText', () => {
+  it.each([
+    [
+      'account: network: cloud v1/account failed (502)',
+      "Couldn't reach Theodore. Nothing was deleted yet — try again.",
+    ],
+    [
+      'account: protocol: cloud.internal: boom',
+      "Couldn't delete the account. Try again in a moment.",
+    ],
+  ])('%s', (raw, said) => expect(deleteErrorText(raw)).toBe(said));
 });
 
 describe('switchErrorText', () => {

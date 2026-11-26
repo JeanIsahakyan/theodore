@@ -4,7 +4,7 @@
  * carries types only); the rest are the cloud's own (docs/cloud.md "Fleet").
  */
 
-export const PROTOCOL_VERSION = 11;
+export const PROTOCOL_VERSION = 12;
 /**
  * The oldest protocol still accepted. Protocol-3 connections never see
  * `mobile` / `web` devices (their `DeviceKind` can't read them) nor
@@ -14,11 +14,15 @@ export const PROTOCOL_VERSION = 11;
  * (`list_spaces` … `merge_child`); below 9, no `archive_space` /
  * `unarchive_space` (8 added the blob transfer: attachments, `read_file`);
  * below 10, no `queued_message`; below 11, no `device_adopted` (a host
- * hears of a device taking over an earlier id of its own).
+ * hears of a device taking over an earlier id of its own); below 12, no
+ * `my_spaces` (the cloud lists a device the spaces it may follow) and no
+ * `list_my_spaces`.
  */
 export const MIN_PROTOCOL_VERSION = 3;
 /** Earlier device ids one `adopt` may name (`MAX_ADOPT_PREVIOUS`). */
 export const MAX_ADOPT_PREVIOUS = 10;
+/** Spaces one `my_spaces` lists, the most recently active first (`MAX_MY_SPACES`). */
+export const MAX_MY_SPACES = 200;
 /** A signed request or delegation older or newer than this is stale. */
 export const REQUEST_WINDOW_MS = 5 * 60_000;
 /** The challenge nonce; a hello signs exactly this many bytes. */

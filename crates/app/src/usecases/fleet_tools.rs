@@ -246,7 +246,7 @@ impl Core {
             )));
         }
         let s = self.fleet_settings().await;
-        let (device_id, project_id, children) = {
+        let (device_id, project_id, children, offered) = {
             let mem = self.fleet();
             let me = mem.device_id.clone();
             let candidates: Vec<(&DeviceSummary, &TrustedDevice)> = mem
@@ -298,7 +298,12 @@ impl Core {
                 .values()
                 .filter(|o| o.started_by.as_deref() == Some(caller))
                 .count();
-            (d.device_id.clone(), p.id.clone(), children)
+            (
+                d.device_id.clone(),
+                p.id.clone(),
+                children,
+                d.info.agents.clone(),
+            )
         };
         if children >= MAX_CHILDREN as usize {
             return Err(refused(format!(
@@ -308,13 +313,31 @@ impl Core {
         // A stable parent id, so the cloud counts this space's children
         // across restarts.
         let parent = self.fleet_parent_id(caller).await;
+        // On the caller's agent, model and effort as far as that device
+        // runs them; the rest is its default, made concrete there.
+        let pick = match self.space_row(caller).await {
+            Ok(me) => {
+                let (agent, model, effort) = crate::usecases::fleet_agents::inherited_pick(
+                    &offered,
+                    me.agent,
+                    me.model.as_deref(),
+                    me.effort.as_deref(),
+                );
+                RemotePick {
+                    agent,
+                    model,
+                    effort,
+                }
+            }
+            Err(_) => RemotePick::default(),
+        };
         let (view, rx) = self
             .fleet_start_remote(
                 &device_id,
                 &project_id,
                 goal,
                 mode,
-                RemotePick::default(),
+                pick,
                 Some(parent),
                 1,
                 Some(caller.to_string()),

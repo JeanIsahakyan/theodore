@@ -140,7 +140,7 @@ describe('consent gating', () => {
   it('each switch gates its own sink', async () => {
     const r = await rig();
     await r.t.setChoice({ usage: true, errors: false });
-    r.t.track('signed_in', { how: 'account' });
+    r.t.track('signed_in');
     r.t.log.warn('a warning');
     await r.flush();
     expect(r.posthogCalls().length).toBe(1);
@@ -244,7 +244,7 @@ describe('identity', () => {
     expect(batch[0]!.properties.build_env).toBe('staging');
 
     await r.t.setAccount(USER);
-    r.t.track('signed_in', { how: 'account' });
+    r.t.track('signed_in');
     await r.flush();
     batch = r.posthogCalls()[1]!.body.batch as typeof batch;
     const identify = batch.find((e) => e.event === '$identify')!;

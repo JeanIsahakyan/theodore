@@ -11,7 +11,6 @@
  * │                              │
  * │  [         Sign in        ]  │   native prominent button, full width,
  * │  You continue in a secure…   │   pinned to the bottom (safe area)
- * │        Try the demo          │   plain: sample data, no account
  * └──────────────────────────────┘
  * ```
  */
@@ -22,6 +21,11 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useServices } from '../../src/services';
 import { useAuthState } from '../../src/shell/AppProviders';
 import { log, track } from '../../src/telemetry/log';
+import {
+  ACCOUNT_DELETED_NOTICE,
+  clearAccountDeleted,
+  useAccountDeleted,
+} from '../../src/ui/deleteAccount';
 import { Notice } from '../../src/ui/kit';
 import { Button } from '../../src/ui/native';
 import { usePalette } from '../../src/ui/theme';
@@ -30,15 +34,17 @@ const android = process.env.EXPO_OS === 'android';
 
 export default function SignIn() {
   const { auth } = useServices();
-  const { setChoices, startDemo } = useAuthState();
+  const { setChoices } = useAuthState();
   const p = usePalette();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const deleted = useAccountDeleted((s) => s.deleted);
 
   // Not async before signIn(): on the web the popup must open in the
   // press's own task.
   const signIn = () => {
     setError(null);
+    clearAccountDeleted();
     setBusy(true);
     auth
       .signIn()
@@ -97,6 +103,9 @@ export default function SignIn() {
           </Text>
         </View>
         <View style={styles.actions}>
+          {deleted ? (
+            <Notice tone="neutral">{ACCOUNT_DELETED_NOTICE}</Notice>
+          ) : null}
           {error ? <Notice tone="danger">{error}</Notice> : null}
           <Button
             variant="primary"
@@ -109,14 +118,6 @@ export default function SignIn() {
           <Text style={[styles.hint, { color: p.muted }]}>
             You continue in a secure browser window and come back here.
           </Text>
-          <Button
-            variant="plain"
-            label="Try the demo"
-            accessibilityLabel="Try the demo with sample data, no account"
-            fullWidth
-            disabled={busy}
-            onPress={startDemo}
-          />
         </View>
       </View>
     </SafeAreaView>

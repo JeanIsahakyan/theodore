@@ -1,6 +1,8 @@
 /**
  * A sub-space of a followed space, read from its host by its local id
- * (docs/mobile.md "Sub-spaces"). It isn't followed here: nothing is
+ * (docs/mobile.md "Sub-spaces"). The same screen opens a computer's own
+ * space from the list's "On your computers" (`/sub-space/<dev_…>/<id>`:
+ * the computer instead of a parent space). It isn't followed here: nothing is
  * mirrored, so the screen polls `read_space` every 3 s while it is in
  * front, and keeps what it last loaded when the host can't be reached.
  *
@@ -46,6 +48,7 @@ import type {
   SubSpaceMessage,
   SubSpaceRead,
 } from '../../../../src/fleet/types';
+import { validDeviceId } from '../../../../src/fleet/rules';
 import { useServices } from '../../../../src/services';
 import { useGlassHeaderInset } from '../../../../src/shell/glassHeader';
 import { useFleetState } from '../../../../src/state/fleet';
@@ -145,6 +148,15 @@ export default function SubSpaceScreen() {
   const { fleet } = useServices();
   const p = usePalette();
   const host = useFleetState((s) => s.spaces.find((x) => x.space === parent));
+  // `/sub-space/<dev_…>/<id>`: a computer's own space, not a sub-space.
+  const computer = useFleetState((s) =>
+    validDeviceId(parent)
+      ? s.devices.find((d) => d.deviceId === parent && d.trusted)
+      : undefined,
+  );
+  const listed = useFleetState((s) =>
+    s.computerSpaces.find((c) => c.hostDevice === parent && c.space === child),
+  );
   const mirrored = useFleetState((s) => s.mirrors[parent]?.subSpaces[child]);
   const [read, setRead] = useState<SubSpaceRead | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -153,8 +165,8 @@ export default function SubSpaceScreen() {
   const list = useRef<ConversationHandle>(null);
   const input = useRef<TextInputInstance>(null);
   const top = useGlassHeaderInset();
-  const hostDevice = host?.hostDevice ?? null;
-  const hostName = host?.hostName ?? 'its computer';
+  const hostDevice = host?.hostDevice ?? computer?.deviceId ?? null;
+  const hostName = host?.hostName ?? computer?.name ?? 'its computer';
   // Files for its .context/, sealed for the host (docs/mobile.md "Files").
   const attach = useAttach(child, hostDevice);
   // Your messages the host hasn't shown yet, under the child's id
@@ -213,16 +225,24 @@ export default function SubSpaceScreen() {
   );
   const status = read?.status ?? mirrored?.status ?? 'unknown';
 
-  const title = read?.title || mirrored?.title || child;
+  const title = read?.title || mirrored?.title || listed?.title || child;
   const toEnd = useCallback(() => list.current?.scrollToEnd(), []);
 
-  if (!host) {
+  if (!host && !computer) {
     return (
       <View style={{ paddingTop: top }}>
         <Stack.Screen options={{ title: 'Sub-space' }} />
         <Empty
-          title="This sub-space's space isn't in your fleet any more"
-          hint="It was removed, or you no longer follow it."
+          title={
+            validDeviceId(parent)
+              ? "This space's computer isn't trusted here any more"
+              : "This sub-space's space isn't in your fleet any more"
+          }
+          hint={
+            validDeviceId(parent)
+              ? 'Trust it again in Devices.'
+              : 'It was removed, or you no longer follow it.'
+          }
         />
       </View>
     );
@@ -301,7 +321,7 @@ export default function SubSpaceScreen() {
         style={[styles.small, styles.center, { color: p.muted }]}
       >
         {subSpaceSubtitle({
-          parentTitle: spaceTitle(host),
+          parentTitle: host ? spaceTitle(host) : null,
           hostName,
           status,
           done: read?.done ?? mirrored?.done ?? false,

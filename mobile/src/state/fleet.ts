@@ -17,6 +17,8 @@ export const initialFleet: FleetSnapshot = {
   mirrors: {},
   questions: [],
   confirms: [],
+  computerSpaces: [],
+  refreshing: false,
 };
 
 export const useFleetState = create<FleetSnapshot>(() => initialFleet);

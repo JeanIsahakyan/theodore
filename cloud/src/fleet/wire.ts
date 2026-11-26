@@ -146,6 +146,9 @@ export const V10 = 10;
 /** Protocol 11: `adopt` (a device takes over an earlier id of its own) and
  *  the `device_adopted` frame hosts hear about it with. */
 export const V11 = 11;
+/** Protocol 12: `my_spaces` (the spaces a device may follow, after its
+ *  welcome) and `list_my_spaces` (the same on demand). */
+export const V12 = 12;
 
 /** A device id as the cloud issues them. */
 const DEVICE_ID = /^dev_[0-9a-f-]{36}$/;
@@ -498,6 +501,9 @@ export function parseClient(
       });
       return { type: 'adopt', previous };
     }
+    case 'list_my_spaces':
+      if (protocol < V12) break;
+      return { type: 'list_my_spaces' };
     default:
       break;
   }

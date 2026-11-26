@@ -7,11 +7,11 @@
 //! device ─▶ cloud   ClientMessage   hello, reauth, presence, announce, request,
 //!                                   claim, reply, space_event, ask, ask_resolved,
 //!                                   subscribe, unsubscribe, confirm,
-//!                                   confirm_resolved, adopt
+//!                                   confirm_resolved, adopt, list_my_spaces
 //! cloud  ─▶ device  ServerMessage   challenge, welcome, devices, request,
 //!                                   claim_result, reply, space_event, ask,
 //!                                   dismiss, error, confirm, confirm_dismissed,
-//!                                   device_adopted
+//!                                   device_adopted, my_spaces
 //! ```
 //!
 //! Requests are signed by the origin device ([`SignedEnvelope`]); the cloud
@@ -32,7 +32,7 @@ pub use keys::{DeviceKey, KeyError, fingerprint, verify};
 
 /// Protocol version sent in `hello`; the cloud refuses others with
 /// `fleet.version`.
-pub const PROTOCOL_VERSION: u32 = 11;
+pub const PROTOCOL_VERSION: u32 = 12;
 /// The oldest protocol the cloud still accepts (it hides `mobile` / `web`
 /// devices from protocol-3 connections and `mcp` ones from protocol < 5,
 /// whose `DeviceKind` can't read them; `confirm` / `confirm_dismissed` and
@@ -41,10 +41,14 @@ pub const PROTOCOL_VERSION: u32 = 11;
 /// attachments and `read_file` ([`BlobRef`]) need protocol 8; the
 /// `archive_space` / `unarchive_space` ops need protocol 9; the
 /// `queued_message` op needs protocol 10; `adopt` / `device_adopted`
-/// (a device taking over an earlier id of its own) need protocol 11).
+/// (a device taking over an earlier id of its own) need protocol 11;
+/// `my_spaces` / `list_my_spaces` (the cloud lists a device the spaces it
+/// may follow) need protocol 12).
 pub const MIN_PROTOCOL_VERSION: u32 = 3;
 /// Most earlier device ids one `adopt` may name.
 pub const MAX_ADOPT_PREVIOUS: usize = 10;
+/// Most spaces one `my_spaces` lists (the most recently active first).
+pub const MAX_MY_SPACES: usize = 200;
 /// A signed request older or newer than this is refused (`fleet.stale_request`).
 pub const REQUEST_WINDOW_MS: u64 = 5 * 60 * 1000;
 /// How long a target remembers `req_id`s to refuse replays.
@@ -332,6 +336,35 @@ pub struct DeviceSummary {
 pub struct SpaceCursor {
     pub space: RemoteSpaceId,
     pub seq: u64,
+}
+
+/// One space the cloud lists to a device in `my_spaces` (protocol 12,
+/// docs/fleet.md "The list comes from the cloud"): a space of the same user
+/// that the device started, or that an origin delegating to it started. It
+/// is what the cloud holds, unsigned: enough to list the space and
+/// subscribe to it; the host's signed rows (the `started` event, the
+/// mirrored space row) replace every word of it once the subscription
+/// replays them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct MySpace {
+    pub space: RemoteSpaceId,
+    pub host_device: DeviceId,
+    /// The device that started it: the listed device, or an origin that
+    /// delegates to it (then the space is followed, not started here).
+    pub origin_device: DeviceId,
+    /// Its name as the host's `started` event said it, when the cloud has
+    /// that event; a placeholder until the signed rows arrive.
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub mode: Option<FleetMode>,
+    /// The last status its host reported, when any.
+    #[serde(default)]
+    pub status: Option<RemoteSpaceStatus>,
+    /// The last seq the cloud has; `subscribe{since: 0}` replays the ring.
+    pub last_seq: u64,
+    /// Unix ms of its last event in the cloud (its start, when none).
+    pub last_ms: u64,
 }
 
 // ── signed requests ─────────────────────────────────────────────────────────
@@ -1121,6 +1154,10 @@ pub struct MirroredSubSpace {
     pub mode: FleetMode,
     /// Merged into its parent, or shipped.
     pub done: bool,
+    /// The model its turns run on; `None` from an older host, or an
+    /// agent that lists no models.
+    #[serde(default)]
+    pub model: Option<String>,
 }
 
 /// One event of a hosted space, as its host signs it ([`Domain::Event`]).
@@ -1301,6 +1338,10 @@ pub enum ClientMessage {
     Adopt {
         previous: Vec<DeviceId>,
     },
+    /// Asks for `my_spaces` again (a phone's pull-to-refresh): the cloud
+    /// sends it after every welcome on its own (protocol 12, docs/fleet.md
+    /// "The list comes from the cloud").
+    ListMySpaces,
 }
 
 /// Device ⇄ cloud, cloud side.
@@ -1394,6 +1435,15 @@ pub enum ServerMessage {
         device: DeviceId,
         previous: DeviceId,
     },
+    /// The spaces this device may follow, as the cloud holds them: every
+    /// space of the same user whose origin is this device or an origin
+    /// delegating to it, the most recently active first, at most
+    /// [`MAX_MY_SPACES`]. Sent after the welcome and on `list_my_spaces`
+    /// (protocol 12). Unsigned and informational: a device lists and
+    /// subscribes from it, and shows nothing of it as a host's word.
+    MySpaces {
+        list: Vec<MySpace>,
+    },
 }
 
 /// Every type the Worker needs, for the TS export.
@@ -1409,6 +1459,7 @@ pub fn types() -> specta::Types {
         .register::<RemoteConfirm>()
         .register::<StartedSpace>()
         .register::<MirroredSubSpace>()
+        .register::<MySpace>()
         .register::<BlobRef>()
         .register::<ReadFileResult>();
     // JS numbers: seqs, generations and unix-ms timestamps stay far below

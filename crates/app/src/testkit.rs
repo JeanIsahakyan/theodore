@@ -3165,6 +3165,8 @@ pub struct FakeAccount {
     /// `organizations_always`: what every `organizations` call gets once
     /// the queue is empty.
     org_list_standing: Mutex<Option<AccountResult<Vec<AccountOrganization>>>>,
+    /// `push_delete`: the cloud's answers to `delete_account` (default `Ok`).
+    deletes: Mutex<VecDeque<AccountResult<()>>>,
     callbacks: Mutex<Option<tokio::sync::mpsc::Sender<IncomingCallback>>>,
     calls: Mutex<Vec<String>>,
     /// `hold`: the next call starting with the prefix waits for a release.
@@ -3215,6 +3217,7 @@ impl FakeAccount {
             ensures: Mutex::new(VecDeque::new()),
             org_lists: Mutex::new(VecDeque::new()),
             org_list_standing: Mutex::new(None),
+            deletes: Mutex::new(VecDeque::new()),
             callbacks: Mutex::new(None),
             calls: Mutex::new(Vec::new()),
             holds: Mutex::new(Vec::new()),
@@ -3241,6 +3244,11 @@ impl FakeAccount {
     /// order, the app and the test ask.
     pub fn organizations_always(&self, r: AccountResult<Vec<AccountOrganization>>) {
         *self.org_list_standing.lock().unwrap() = Some(r);
+    }
+
+    /// The cloud's answer to the next `delete_account` (default: `Ok`).
+    pub fn push_delete(&self, r: AccountResult<()>) {
+        self.deletes.lock().unwrap().push_back(r);
     }
 
     /// The next call recorded as starting with `prefix` (e.g.
@@ -3473,6 +3481,14 @@ impl AccountPort for FakeAccount {
             session.session_id.as_deref().unwrap_or("")
         ));
         Ok(())
+    }
+
+    async fn delete_account(&self, cfg: &AccountConfig, access_token: &str) -> AccountResult<()> {
+        self.call(format!("delete_account:{access_token}"));
+        if cfg.cloud_url.is_none() {
+            return Err(AccountError::Config("no Theodore cloud configured".into()));
+        }
+        self.deletes.lock().unwrap().pop_front().unwrap_or(Ok(()))
     }
 }
 

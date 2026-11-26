@@ -19,7 +19,7 @@ export const CATALOG = {
     answers: 'Is the app used, on what version, cold or warm?',
     props: ['cold'],
   },
-  signed_in: { answers: 'Do people get past sign-in?', props: ['how'] },
+  signed_in: { answers: 'Do people get past sign-in?', props: [] },
   sign_in_failed: {
     answers: 'Why does sign-in fail?',
     props: ['reason'],
@@ -96,6 +96,11 @@ export const CATALOG = {
   saved_spaces_restored: {
     answers: 'How many spaces come back at start, how fast?',
     props: ['count', 'ms'],
+  },
+  my_spaces_listed: {
+    answers:
+      'How many spaces does the cloud list after a welcome, and how many were missing here?',
+    props: ['count', 'added'],
   },
   space_stopped: {
     answers: 'Do people stop spaces from the phone?',

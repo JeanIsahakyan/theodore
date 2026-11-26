@@ -84,7 +84,7 @@ fn listed<'a>(models: &'a [FleetModelInfo], id: &str) -> Option<&'a FleetModelIn
 }
 
 /// Whether `effort` is one `agent` takes with `efforts` (a model's levels).
-fn takes(agent: AgentId, efforts: &[String], effort: &str) -> bool {
+pub(crate) fn takes(agent: AgentId, efforts: &[String], effort: &str) -> bool {
     efforts.iter().any(|e| e == effort)
         || (agent == AgentId::Claude && effort == ULTRACODE && !efforts.is_empty())
 }
@@ -135,6 +135,29 @@ pub(crate) fn agent_info(
         default_effort,
         models: list,
     }
+}
+
+/// What a space here asks another device to start a space on, its own
+/// agent, model and effort, as far as `agents` (what that device lists)
+/// takes them: all three, else the agent and model, else the agent, else
+/// nothing (that device's defaults, made concrete there).
+pub(crate) fn inherited_pick(
+    agents: &[FleetAgentInfo],
+    agent: AgentId,
+    model: Option<&str>,
+    effort: Option<&str>,
+) -> (Option<AgentId>, Option<String>, Option<String>) {
+    let offer = Offer {
+        agents: agents.to_vec(),
+        signed_out: Vec::new(),
+    };
+    let id = Some(agent.as_str());
+    [(model, effort), (model, None), (None, None)]
+        .into_iter()
+        .find(|(m, e)| check_pick(&offer, id, *m, *e, None, None).is_ok())
+        .map_or((None, None, None), |(m, e)| {
+            (Some(agent), m.map(str::to_string), e.map(str::to_string))
+        })
 }
 
 /// What a request picked, checked against `agents` (what this device

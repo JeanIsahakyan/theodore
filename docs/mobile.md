@@ -87,7 +87,8 @@ requests still need the host's own trust in the phone's key.
 ## Kept across restarts
 
 iOS kills a backgrounded app at will; the Spaces list must not come back
-empty. Like the desktop's `fleet.follow:<rs_>` (docs/fleet.md "One space UI:
+empty. The saved set is a fast cache: the list itself comes from the cloud
+("The list comes from the cloud" below). Like the desktop's `fleet.follow:<rs_>` (docs/fleet.md "One space UI:
 mirrored rows"), the app keeps the spaces it started or follows, per account
 and organization (`src/fleet/saved.ts`): every account signed in here has
 its own sets, one per organization, and so do Home's last picks
@@ -126,6 +127,42 @@ an account leaves this device ─▶ its sets (every org) and picks are removed;
   again at every welcome that gives yet another id.
 - What is read back is shape-checked again (it is still another device's text).
 
+## The list comes from the cloud
+
+The cloud knows every space this phone started (and every space of a
+computer that delegates to it); the saved set only shows them faster.
+Protocol 12, docs/fleet.md "The list comes from the cloud":
+
+```
+launch ─▶ saved set listed at once (cache)
+welcome ─▶ my_spaces{list} (newest first, ≤ 200)
+   tracked here ─▶ kept as it is (a followed one read back is subscribed)
+   not tracked  ─▶ tracked: the cloud's name, mode and status as placeholders
+                   ("Untitled space" without a name), subscribe{since: 0}
+                   ─▶ the host's signed started event and mirrored row replace them
+   missing from the list ─▶ never dropped for that
+adopt sent ─▶ list_my_spaces (the welcome's list predates the move)
+first devices list of the link, back in the foreground, every minute while
+the list shows, pull-to-refresh
+   ─▶ list_spaces (Ask) to each trusted computer online
+   ─▶ "On your computers": every space on it, online computers first, then
+      newest; without archived / done ones and mirrors of spaces running
+      elsewhere; a sub-space counted under its top parent ("2 sub-spaces,
+      1 running"); a space tracked here left out: the computer names its
+      fleet id (`fleet_space`), an older one is matched by its name for it
+   ─▶ a row opens the sub-space screen (/sub-space/<computer id>/<local id>):
+      read_space every 3 s, send_to, answer_space
+pull-to-refresh ─▶ list_my_spaces + the computers again (`refreshSpaces`)
+```
+
+- A computer that refuses (`fleet.untrusted_device`: it doesn't trust this
+  phone yet) or doesn't answer keeps the rows it gave last; one no longer
+  trusted here loses them.
+- An offline computer keeps its last rows, dimmed ("mac-A, offline"). They
+  are saved per `<user>.<org>` (`theodore.fleet.computers.<user>.<org>`,
+  ≤ 50 per computer, shape-checked on load), listed at launch before the
+  socket, and removed with the account's other sets.
+
 ## Protocol additions (crates/fleet-protocol, v4)
 
 | Addition | Shape |
@@ -136,7 +173,7 @@ an account leaves this device ─▶ its sets (every org) and picks are removed;
 | `ServerMessage::Delegations{list}` | the delegations naming this device (as origin or delegate) |
 | `POST /v1/fleet/request` | Bearer JWT + `{device_id, envelope}`: a one-shot signed request (a notification action, no socket). Answers `{accepted}` or `refused{code}`; the reply comes later as push or over the socket |
 
-The app speaks protocol 11. Since v4 it also reads (and sends):
+The app speaks protocol 12. Since v4 it also reads (and sends):
 
 | Addition | What the app does |
 | --- | --- |
@@ -145,6 +182,7 @@ The app speaks protocol 11. Since v4 it also reads (and sends):
 | `ServerMessage::Confirm{envelope}` (v6) | `RemoteConfirm`, `Domain::Confirm`, opened with the host's pin, signer = `host_device`; kept until `confirm_dismissed`, its expiry, an answer, or the next welcome (the cloud sends the waiting ones again) |
 | `RemoteOp::Confirm{confirm_id, allow}` (v6) | the card's or the push's Allow / Deny, to the host; a late one (`fleet.invalid`) just drops the card |
 | `RemoteOp::ArchiveSpace{space}` / `UnarchiveSpace{space}` (v9) | Archive from a drawer row's long-press menu ("Archive" below), routed like a stop; a host below 9 ─▶ `fleet.upgrade_required` from the cloud |
+| `ServerMessage::MySpaces{list}`, `ClientMessage::ListMySpaces` (v12) | after every welcome, and on pull-to-refresh or after an adopt: the spaces the cloud says this device may follow, merged into the list ("The list comes from the cloud" above) |
 | `ClientMessage::Adopt{previous}` (v11) | sent right after a welcome that gives this device another id than it had (or than its saved set names): the cloud moves the same user's spaces to the new id ("Kept across restarts" above, docs/fleet.md "A device id changes") |
 
 ## Cloud (cloud/)
@@ -1247,20 +1285,6 @@ production  ─▶ eas submit --platform ios     ─▶ App Store Connect ─▶
   must say how to sign in (a test WorkOS account) and that the app needs a
   computer running Theodore to do anything.
 
-### Demo
-
-"Try the demo" on the sign-in screen swaps both clients for the mock
-services (`src/dev/demo.ts` over `src/dev/mock.ts`) under a neutral account:
-every screen works on sample data, nothing talks to a server, no push.
-Signing out (or "Delete account") leaves it and empties the store. It is
-what App Review uses (the app shows nothing without a computer running
-Theodore) and what the store screenshots are taken from.
-
-```
-sign-in ─▶ Try the demo ─▶ AppProviders: services = createDemo() ─▶ signed in (demo)
-settings ─▶ Sign out ─▶ mock auth: null ─▶ services = real, fleet store reset
-```
-
 ### Store listing
 
 - App Store Connect: "Theodore Code", Developer Tools, free, all territories,
@@ -1273,8 +1297,21 @@ settings ─▶ Sign out ─▶ mock auth: null ─▶ services = real, fleet st
   builds (`https://app.theodore.cloud/privacy`, and the old
   `theodore-web.prd-instance.workers.dev`). Keep both true when data handling changes (cloud, push payloads,
   telemetry).
-- Account deletion (App Store 5.1.1(v)): Settings → Delete account ─▶
-  `DELETE /v1/account` (docs/cloud.md "Account deletion") ─▶ signed out.
+- Account deletion (App Store 5.1.1(v)), `src/ui/deleteAccount.ts`:
+
+  ```
+  Settings → Delete account (red)
+    ─▶ system destructive confirm: what goes (account, organizations only
+       you are in, devices, fleet history, push tokens), what stays (code and
+       spaces on your computers, shared organizations, GitHub/agent accounts)
+    ─▶ DELETE /v1/account (docs/cloud.md "Account deletion")
+       ok   ─▶ that account's session and stores gone here; the next account
+               takes over, or sign-in shows "Your account was deleted."
+       fail ─▶ the reason under the row, nothing changed; tap again to retry
+  ```
+
+  Failure log: `account deletion failed`, `error.code`
+  `account.delete_failed`, no message.
 - App Privacy answers (App Store Connect, by hand; the API has none): Contact
   Info (name, email), User Content (other), Identifiers (user id, device id),
   all for App Functionality, linked to the user, no tracking.

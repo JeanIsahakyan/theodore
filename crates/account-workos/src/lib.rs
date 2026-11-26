@@ -738,6 +738,19 @@ impl AccountPort for WorkosAccount {
             .collect())
     }
 
+    async fn delete_account(&self, cfg: &AccountConfig, access_token: &str) -> AccountResult<()> {
+        // 204, no body; a retry after success is a 204 too.
+        self.cloud(
+            cfg,
+            reqwest::Method::DELETE,
+            "v1/account",
+            Some(access_token),
+            None,
+        )
+        .await
+        .map(|_| ())
+    }
+
     async fn sign_out(&self, _cfg: &AccountConfig, session: &AccountSession) -> AccountResult<()> {
         let Some(sid) = &session.session_id else {
             return Ok(());

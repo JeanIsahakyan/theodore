@@ -14,8 +14,6 @@
  *                        sets and picks removed; the next account's session takes over,
  *                        or the sign-in screen when none is left
  * account / org       ─▶ Home's last picks read back (src/state/compose.ts)
- * "Try the demo"      ─▶ the demo services (src/dev/demo.ts) stand in for
- *                        all clients until sign-out; no push, no server
  * telemetry           ─▶ startTelemetry(auth) first; the account id follows
  *                        the session (src/telemetry/log.ts setAccount);
  *                        app_started, signed_in / out, org_switched; the
@@ -25,7 +23,6 @@
  */
 import {
   createContext,
-  useCallback,
   useContext,
   useEffect,
   useMemo,
@@ -47,8 +44,6 @@ import { resetPending } from '../state/pending';
 import { resetAttachments } from '../state/attachments';
 import { clearFileCache } from '../fleet/file-cache';
 import { forgetHostsWithoutFiles } from '../ui/stepImages';
-import { createDemo } from '../dev/demo';
-import { resetFleetState } from '../dev/mock';
 import type { FleetClient } from '../fleet/types';
 import { log, telemetry, track } from '../telemetry/log';
 import { startTelemetry } from '../telemetry/setup';
@@ -67,10 +62,6 @@ export interface AuthState {
   /** Organizations offered by a sign-in waiting for a pick. */
   choices: OrganizationChoice[] | null;
   setChoices(choices: OrganizationChoice[] | null): void;
-  /** Signed in to the demo, not a real account. */
-  demo: boolean;
-  /** Enters the demo; signing out leaves it. */
-  startDemo(): void;
 }
 
 const AuthStateContext = createContext<AuthState | null>(null);
@@ -135,9 +126,7 @@ export function setActiveSpace(id: string | null): void {
 
 export function AppProviders({ children }: { children: ReactNode }) {
   const clients = useMemo(() => getClients(), []);
-  const real = clients.services;
-  const [demo, setDemo] = useState<Services | null>(null);
-  const services = demo ?? real;
+  const services = clients.services;
   const { auth, fleet } = services;
   const [status, setStatus] = useState<AuthStatus>('loading');
   const [session, setSession] = useState<Session | null>(null);
@@ -148,7 +137,7 @@ export function AppProviders({ children }: { children: ReactNode }) {
     // start of this JS runtime (a warm start reuses the clients).
     const cold = !runtime.__theodoreStarted;
     runtime.__theodoreStarted = true;
-    void startTelemetry(real.auth).then(() => {
+    void startTelemetry(auth).then(() => {
       track('app_started', { cold });
       log.info('app started', { cold, uptime_ms: telemetry.uptime() });
     });
@@ -156,7 +145,7 @@ export function AppProviders({ children }: { children: ReactNode }) {
       if (s !== 'active') void telemetry.flush();
     });
     return () => sub.remove();
-  }, [real]);
+  }, [auth]);
 
   useEffect(() => {
     void setupNotifications({ activeSpaceId: () => activeSpace }).catch(
@@ -175,14 +164,10 @@ export function AppProviders({ children }: { children: ReactNode }) {
     let last: Session | null | undefined;
     const apply = (s: Session | null) => {
       if (!live) return;
-      // The account id (never the email) follows the session; the demo's
-      // neutral account isn't a real one and stays anonymous.
-      void telemetry.setAccount(
-        auth === real.auth ? (s?.userId ?? null) : null,
-      );
+      // The account id (never the email) follows the session.
+      void telemetry.setAccount(s?.userId ?? null);
       if (last !== undefined) {
-        if (s && !last)
-          track('signed_in', { how: auth === real.auth ? 'account' : 'demo' });
+        if (s && !last) track('signed_in');
         else if (!s && last) track('signed_out');
         else if (s && last && s.organizationId !== last.organizationId)
           track('org_switched', { ok: true });
@@ -193,12 +178,6 @@ export function AppProviders({ children }: { children: ReactNode }) {
       setStatus(s ? 'signed_in' : 'signed_out');
       if (s) setChoices(null);
       else setSwitching(null);
-      // Signing out of the demo leaves it: back to the real clients and
-      // an empty store.
-      if (!s && auth !== real.auth) {
-        setDemo(null);
-        resetFleetState();
-      }
     };
     const off = auth.onChange(apply);
     auth.current().then(apply, (e: unknown) => {
@@ -212,13 +191,11 @@ export function AppProviders({ children }: { children: ReactNode }) {
       live = false;
       off();
     };
-  }, [auth, real]);
+  }, [auth]);
 
   // The fleet runs while signed in to an organization. An org or account
   // switch is the fleet client's own business (it watches the session);
-  // here only on ─▶ off and off ─▶ on, and which client: the one that
-  // started is the one stopped, so leaving the demo never stops (and
-  // flushes the demo store through) the real client.
+  // here only on ─▶ off and off ─▶ on.
   const fleetOn = session?.organizationId != null;
   const running = useRef<FleetClient | null>(null);
   const swept = useRef(false);
@@ -238,7 +215,6 @@ export function AppProviders({ children }: { children: ReactNode }) {
         });
       })
       .then(async () => {
-        if (want !== real.fleet) return;
         await registerForPush(want);
         // Once per app run: the other accounts' orgs get the token too.
         if (swept.current) return;
@@ -247,7 +223,7 @@ export function AppProviders({ children }: { children: ReactNode }) {
           .sweepInactive(clients.accounts)
           .catch((e: unknown) => console.warn('[shell] push sweep failed', e));
       });
-  }, [clients, fleet, fleetOn, real]);
+  }, [clients, fleet, fleetOn]);
 
   // "Switching to <target>…" ends with the new link's first devices list,
   // or its failure.
@@ -292,17 +268,9 @@ export function AppProviders({ children }: { children: ReactNode }) {
     });
   }, [scope, status]);
 
-  const startDemo = useCallback(() => setDemo(createDemo()), []);
   const state = useMemo<AuthState>(
-    () => ({
-      status,
-      session,
-      choices,
-      setChoices,
-      demo: demo !== null,
-      startDemo,
-    }),
-    [status, session, choices, demo, startDemo],
+    () => ({ status, session, choices, setChoices }),
+    [status, session, choices],
   );
 
   return (

@@ -55,6 +55,7 @@ pub(crate) mod space_live_diff;
 pub(crate) mod space_mentions;
 pub(crate) mod space_naming;
 pub(crate) mod space_notes;
+pub(crate) mod space_pick;
 pub mod space_plan;
 pub mod space_pr;
 pub mod space_questions;

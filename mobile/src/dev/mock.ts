@@ -518,7 +518,7 @@ export const mockSubSpaceReads: Record<string, SubSpaceRead> = {
   },
 };
 
-/** Files `readFile` answers with, by path (the demo's file viewer). */
+/** Files `readFile` answers with, by path (the mock's file viewer). */
 export const mockFiles: Record<string, { mime: string; bytes: Uint8Array }> = {
   'ui/AccountCard.tsx': {
     mime: 'text/typescript',
@@ -594,6 +594,8 @@ export function mockSnapshot(over: Partial<FleetSnapshot> = {}): FleetSnapshot {
     mirrors: { ...mockMirrors },
     questions: [{ ...mockQuestion, questions: [...mockQuestion.questions] }],
     confirms: [],
+    computerSpaces: [],
+    refreshing: false,
     ...over,
   };
 }
@@ -769,6 +771,9 @@ export function createMock(options: MockOptions = {}): Mock {
     },
     async forgetSaved(scopes) {
       await call('forgetSaved', scopes);
+    },
+    async refreshSpaces() {
+      await call('refreshSpaces');
     },
     async answerOverHttp(space, askId, answers, hostDevice) {
       await call('answerOverHttp', space, askId, answers, hostDevice);

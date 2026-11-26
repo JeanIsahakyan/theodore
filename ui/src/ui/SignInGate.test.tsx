@@ -142,6 +142,14 @@ describe('App behind the account gate', () => {
     expect(host.textContent).toContain('Your session ended — sign in again');
   });
 
+  it('says so when the account was deleted', async () => {
+    store.ui.finishOnboarding();
+    await setAccount(signedOut);
+    store.ephemeral.accountWasDeleted(signedOut);
+    await render();
+    expect(host.textContent).toContain('Your account was deleted');
+  });
+
   it('keeps shortcuts and the palette inert', async () => {
     store.ui.finishOnboarding();
     await setAccount(signedOut);

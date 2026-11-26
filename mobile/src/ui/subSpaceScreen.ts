@@ -17,17 +17,24 @@ import { SUB_STATE_LABEL, subSpaceState } from './subSpaceTree';
 
 /** "sub-space of <parent> · on <host> · <state>". */
 export function subSpaceSubtitle(input: {
-  parentTitle: string;
+  /** `null`: a computer's own space, no parent (the list's "On your computers"). */
+  parentTitle: string | null;
   hostName: string;
   status: string;
   done: boolean;
 }): string {
   const state = SUB_STATE_LABEL[subSpaceState(input)];
   return [
-    input.parentTitle ? `sub-space of ${input.parentTitle}` : 'sub-space',
+    input.parentTitle === null
+      ? null
+      : input.parentTitle
+        ? `sub-space of ${input.parentTitle}`
+        : 'sub-space',
     `on ${input.hostName}`,
     state,
-  ].join(' · ');
+  ]
+    .filter((x): x is string => x !== null)
+    .join(' · ');
 }
 
 /** Whose message: yours (or its parent agent's) as a bubble, the agent's

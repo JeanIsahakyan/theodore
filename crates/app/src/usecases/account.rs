@@ -1784,6 +1784,41 @@ impl Core {
         Ok(status)
     }
 
+    /// Deletes the active account (docs/cloud.md "Account deletion"): the
+    /// cloud deletes it and what it keeps of it, then it's forgotten here
+    /// as a sign-out forgets it (keychain entry, refresher, telemetry
+    /// identity). Projects, spaces, drafts and worktrees stay. The next
+    /// account with a session takes over; none: the gate closes. A cloud
+    /// failure changes nothing here and is returned, so a retry can finish
+    /// it (the cloud's side is idempotent).
+    pub async fn account_delete(&self) -> AppResult<AccountStatus> {
+        let cfg = self.account_config().await.ok_or_else(not_configured)?;
+        self.account_load().await;
+        let user_id = self
+            .account_active_user_id()
+            .ok_or(AppError::AccountRequired)?;
+        let token = self
+            .account_access_token_for(&user_id)
+            .await?
+            .ok_or(AppError::AccountRequired)?;
+        if let Err(e) = self.0.deps.account.delete_account(&cfg, &token).await {
+            let e = AppError::from(e);
+            // The code only: the message may carry the cloud's words.
+            tracing::warn!(error.code = e.code(), "the account deletion failed");
+            return Err(e);
+        }
+        tracing::info!("deleted a Theodore account");
+        self.account_sign_in_cancel();
+        self.0.account.session_ended.store(false, Ordering::SeqCst);
+        // No provider sign-out: the sessions went with the account.
+        self.account_forget(&user_id).await?;
+        let status = self.account_status_now();
+        self.emit(Ephemeral::AccountStatus {
+            status: status.clone(),
+        });
+        Ok(status)
+    }
+
     /// Removes `user_id`'s slot, in memory and in the keychain; returns its
     /// session (if it still had one). An unknown user: nothing to do.
     async fn account_forget(&self, user_id: &str) -> AppResult<Option<AccountSession>> {
