@@ -10,6 +10,7 @@ import {
   Person,
   Persons,
   Plus,
+  TrashBin,
 } from '@gravity-ui/icons';
 import {
   Button,
@@ -131,6 +132,7 @@ export function SignInView({
   user,
   logo = true,
   ended = false,
+  deleted = false,
   initialEmail = '',
 }: {
   signIn: AccountSignIn;
@@ -140,6 +142,8 @@ export function SignInView({
   logo?: boolean;
   /** The provider ended the last session: say so on the first stage. */
   ended?: boolean;
+  /** The last account was deleted here: say so on the first stage. */
+  deleted?: boolean;
   /** Pre-filled email: "Sign in again" on an account whose session ended. */
   initialEmail?: string;
 }) {
@@ -344,16 +348,20 @@ export function SignInView({
     <Stage
       mark={logo ? <Logo size={44} /> : null}
       title={
-        ended
-          ? 'Your session ended — sign in again'
-          : logo
-            ? 'Sign in to Theodore'
-            : 'Sign in'
+        deleted
+          ? 'Your account was deleted'
+          : ended
+            ? 'Your session ended — sign in again'
+            : logo
+              ? 'Sign in to Theodore'
+              : 'Sign in'
       }
       text={
-        ended
-          ? 'Your projects, reviews and drafts are all still here.'
-          : 'Your code hosts stay connected.'
+        deleted
+          ? 'Your projects and spaces on this computer are still here. Sign in with another account, or create a new one, to keep using Theodore.'
+          : ended
+            ? 'Your projects, reviews and drafts are all still here.'
+            : 'Your code hosts stay connected.'
       }
     >
       <form
@@ -692,6 +700,7 @@ export const AccountCard = observer(function AccountCard() {
   const ui = useUi();
   const status = useAccountStatus();
   const [error, setError] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   if (!status?.available) return null;
   const user = status.user;
@@ -760,9 +769,143 @@ export const AccountCard = observer(function AccountCard() {
           <Plus className="size-4" /> Add another account
         </Button>
       )}
+      {user && (
+        <Button
+          size="sm"
+          variant="ghost"
+          className="account-delete self-start text-danger"
+          onPress={() => setDeleting(true)}
+        >
+          <TrashBin className="size-4" /> Delete account…
+        </Button>
+      )}
+      {user && deleting && (
+        <DeleteAccountDialog user={user} onClose={() => setDeleting(false)} />
+      )}
     </section>
   );
 });
+
+/** What typing this confirms a deletion. */
+export const DELETE_WORD = 'DELETE';
+
+/** Settings → Account → Delete account: what goes, what stays, then type
+ *  DELETE. The cloud deletes the active account (docs/cloud.md "Account
+ *  deletion"); it's then signed out here, local projects and spaces kept.
+ *  A failure is said here and nothing changes: Delete again retries. */
+const DeleteAccountDialog = observer(function DeleteAccountDialog({
+  user,
+  onClose,
+}: {
+  user: AccountUser;
+  onClose: () => void;
+}) {
+  const store = useRootStore();
+  const [typed, setTyped] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const ready = typed.trim() === DELETE_WORD && !busy;
+
+  const remove = () => {
+    if (!ready) return;
+    setBusy(true);
+    setError(null);
+    void api
+      .accountDelete()
+      .then((s) => {
+        store.ephemeral.accountWasDeleted(s);
+        onClose();
+      })
+      .catch((e) => {
+        setError(deleteErrorText(String(e?.message ?? e)));
+        setBusy(false);
+      });
+  };
+
+  return (
+    <Modal.Backdrop isOpen onOpenChange={(open) => !open && !busy && onClose()}>
+      <Modal.Container placement="center">
+        <Modal.Dialog
+          aria-label="Delete your Theodore account"
+          className="modal delete-account w-[460px] max-w-[92vw]"
+        >
+          <Modal.CloseTrigger aria-label="Close" />
+          <Modal.Header>
+            <Modal.Heading className="pe-8">
+              Delete your Theodore account?
+            </Modal.Heading>
+          </Modal.Header>
+          <Modal.Body className="flex flex-col gap-3 text-sm">
+            <span className="text-muted">
+              {accountLabel(user)} · {user.email}
+            </span>
+            <div className="flex flex-col gap-1">
+              <span className="font-medium">Deleted for good</span>
+              <ul className="list-disc ps-5 text-muted">
+                <li>Your Theodore account and its sign-in</li>
+                <li>Organizations only you are in</li>
+                <li>Your devices, fleet history and push tokens</li>
+              </ul>
+            </div>
+            <div className="flex flex-col gap-1">
+              <span className="font-medium">Kept</span>
+              <ul className="list-disc ps-5 text-muted">
+                <li>Your code, projects and spaces on your computers</li>
+                <li>Organizations others are in (you leave them)</li>
+                <li>Your GitHub and agent accounts, untouched</li>
+              </ul>
+            </div>
+            <TextField
+              value={typed}
+              onChange={setTyped}
+              aria-label={`Type ${DELETE_WORD} to confirm`}
+              isDisabled={busy}
+            >
+              <Label>
+                Type <b>{DELETE_WORD}</b> to confirm
+              </Label>
+              <Input
+                className="account-delete-confirm"
+                autoComplete="off"
+                autoFocus
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') remove();
+                }}
+              />
+            </TextField>
+            {error && (
+              <span className="account-delete-error text-xs text-danger">
+                {error}
+              </span>
+            )}
+          </Modal.Body>
+          <Modal.Footer>
+            <Button variant="ghost" isDisabled={busy} onPress={onClose}>
+              Cancel
+            </Button>
+            <Button
+              variant="danger"
+              className="account-delete-do"
+              isDisabled={!ready}
+              isPending={busy}
+              onPress={remove}
+            >
+              Delete account
+            </Button>
+          </Modal.Footer>
+        </Modal.Dialog>
+      </Modal.Container>
+    </Modal.Backdrop>
+  );
+});
+
+/** A failed deletion, said plainly; nothing was changed here. */
+export function deleteErrorText(raw: string): string {
+  if (/^account: network\b/.test(raw.trim())) {
+    return "Couldn't reach Theodore. Nothing was deleted yet — try again.";
+  }
+  return "Couldn't delete the account. Try again in a moment.";
+}
 
 /** The whole window while signed out where signing in is required (plan
  *  §6.12): the logo and the sign-in stages, centred — no sidebar, no tabs,
@@ -780,6 +923,7 @@ export const SignInGate = observer(function SignInGate() {
           signIn={signIn}
           user={status?.user ?? null}
           ended={status?.session_ended ?? false}
+          deleted={store.ephemeral.accountDeleted}
         />
       </div>
     </div>

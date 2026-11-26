@@ -295,6 +295,12 @@ pub trait AccountPort: Send + Sync {
     /// Ends the session at the provider. Best effort: the local sign-out
     /// happens whatever this returns.
     async fn sign_out(&self, cfg: &AccountConfig, session: &AccountSession) -> AccountResult<()>;
+
+    /// Deletes the caller's account and what the cloud keeps of it
+    /// (`DELETE /v1/account`, docs/cloud.md "Account deletion"): its
+    /// sessions, organizations nobody else is in, fleet rows. Idempotent:
+    /// an account already deleted answers `Ok`. No cloud: `Config`.
+    async fn delete_account(&self, cfg: &AccountConfig, access_token: &str) -> AccountResult<()>;
 }
 
 /// No provider: always signed out, the UI hides the account card. Used by
@@ -363,6 +369,9 @@ impl AccountPort for LocalAccount {
         Err(AccountError::Unavailable)
     }
     async fn sign_out(&self, _cfg: &AccountConfig, _session: &AccountSession) -> AccountResult<()> {
+        Err(AccountError::Unavailable)
+    }
+    async fn delete_account(&self, _cfg: &AccountConfig, _access_token: &str) -> AccountResult<()> {
         Err(AccountError::Unavailable)
     }
 }

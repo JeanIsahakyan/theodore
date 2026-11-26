@@ -124,24 +124,39 @@ with one org and one membership. A deactivated membership is not undone
 
 ## Account deletion
 
-`DELETE /v1/account` (App Store guideline 5.1.1(v): the phone app, and the
-web app, offer it). Code: `src/account.ts`; the hub side is
-`Hub.purgeUser` / `purgeAll` and `McpFleet.forget`.
+`DELETE /v1/account` (App Store guideline 5.1.1(v)): the phone and web app
+(Settings → Delete account, `docs/mobile.md`) and the desktop app (Settings
+→ Account → Delete account, `account_delete`, "App side" below) offer it.
+Code: `src/account.ts`; the hub side is `Hub.purgeUser` / `purgeAll` and
+`McpFleet.forget`; the blobs `purgeBlobs` (`src/fleet/blobs.ts`); PostHog
+`src/posthog.ts`.
 
 ```
 DELETE /v1/account + Bearer <access JWT> ─▶ verify (401) ─▶ RL_USER
-  ─▶ WorkOS GET user ── 404 ─▶ 204          (already deleted: a retry after step 4)
+  ─▶ WorkOS GET user ── 404 ─▶ 204          (already deleted: a retry after step 5)
   1 ─▶ OAUTH_KV: every MCP grant of the user revoked, its access and refresh tokens with it
   2 ─▶ WorkOS: memberships (any status) + the org with external_id personal:<user>
-       ─▶ each other org's OrgHub ─ purge {scope: user} ─▶ the user's rows only
-  3 ─▶ personal org's OrgHub ─ purge {scope: org} ─▶ every row
-       ─▶ WorkOS DELETE /organizations/<personal>          (404 = done)
-  4 ─▶ WorkOS DELETE /user_management/users/<user>          (404 = done)
+       ─▶ each other org: GET its memberships ─▶ anyone else (any status)?
+            yes, shared ─▶ OrgHub purge {scope: user} ─▶ the user's rows only
+                           R2 blobs/<org>/… the user uploaded (+ their owner marks)
+            no,  sole   ─▶ goes as the personal org does (3)
+  3 ─▶ personal and sole orgs: OrgHub purge {scope: org} ─▶ every row
+       ─▶ R2 every blob under blobs/<org>/ (+ owner marks)
+       ─▶ WorkOS DELETE /organizations/<org>                  (404 = done)
+  4 ─▶ PostHog: the person (distinct_id = user id) and its events, if the
+       Worker has a key (docs/telemetry.md "Account deletion"); a failure is
+       logged and skipped, never blocks
+  5 ─▶ WorkOS DELETE /user_management/users/<user>          (404 = done)
        (memberships and sessions go with the user)
   ─▶ 204
 any step fails ─▶ the usual error (500 cloud.internal, 502 cloud.workos, …);
   every step is idempotent and the user goes last, so a retry finishes it
 ```
+
+Logs: a failed step is one `cloud.account_delete <step> <error kind>` line
+(`user`, `mcp_grants`, `orgs`, `org_members`, `hubs`, `org_hubs`, `blobs`,
+`delete_org`, `posthog`, `workos_user`), never an id, an email or a token;
+the route's own request line carries `error.code`.
 
 Purge in a hub, for the user:
 
@@ -162,16 +177,17 @@ questions, confirms and delegations never cross users (a request to
 another user's device is `fleet.not_yours`), so the user's spaces are the
 ones with its `user_id`: hosted on and started from its own devices.
 Another member's rows are never touched. `scope: org` (the personal org,
-gone from WorkOS next) empties every table, and closes every connection.
+or one only the user was in, gone from WorkOS next) empties every table,
+and closes every connection.
 
 What isn't deleted here:
 
 | What | Where it stays |
 | --- | --- |
-| Team orgs the user was in | kept for the other members (only the user's rows and membership go) |
+| Team orgs the user was in with anyone else (a pending invite counts) | kept for the other members (only the user's rows, blobs and membership go) |
 | Data on the user's own computers and phones (journals, spaces, keys, the session) | there; the app signs out after the `204` |
 | WorkOS audit logs and events | WorkOS, per its retention |
-| Expo push receipts, Cloudflare request logs, New Relic / PostHog diagnostics | those services, per their retention; the cloud's own logs carry ids, kinds and codes only, never a token or an email, and user and org ids reach New Relic hashed (`docs/telemetry.md` "Cloud") |
+| Expo push receipts, Cloudflare request logs, New Relic diagnostics; PostHog when the Worker has no key (or the call failed) | those services, per their retention; the cloud's own logs carry ids, kinds and codes only, never a token or an email, and user and org ids reach New Relic hashed (`docs/telemetry.md` "Cloud") |
 | The user id in `gone_users` | 24 h, then dropped |
 | OAuth clients Claude registered (DCR) | `OAUTH_KV`: a client record names no user; its grants for this user are gone |
 
@@ -179,9 +195,15 @@ Gaps: memberships are read as one page (100, as `GET /v1/orgs`); an org
 past that keeps the user's rows until its hub prunes them (spaces after 30
 days offline; devices aren't pruned).
 
-Tests (`test/account.test.ts`): the route against a fake WorkOS and
-in-memory KV, hubs as `Hub` over node:sqlite behind the same purge
-handler, and the `OrgHub` shell's refusal after a purge.
+Gaps, too: an org's memberships are read as one page (100): past that it
+counts as shared, so it stays.
+
+Tests (`test/account.test.ts`): the route against a fake WorkOS,
+in-memory KV and R2, hubs as `Hub` over node:sqlite behind the same purge
+handler (the personal org and a sole one emptied and deleted, the shared
+one keeping the other member's rows and blobs, idempotent, PostHog called
+before the user and never blocking), and the `OrgHub` shell's refusal
+after a purge. `test/posthog.test.ts`: the PostHog calls.
 
 ## App side
 
@@ -199,6 +221,7 @@ has none). No URL: sign-in works as before, no organizations.
 | sign-in (code, device), refresh, switch org (`refresh` + `organization_id`) | WorkOS directly |
 | ensure the personal org (after sign-in, at start, while the session has no org) | cloud `POST /v1/orgs/personal` |
 | list orgs (`account_organizations`, `account_accounts` for every account) | cloud `GET /v1/orgs` |
+| delete the account (`account_delete`, Settings → Account → Delete account) | cloud `DELETE /v1/account` with the active account's token; ok ─▶ that account forgotten here as a sign-out forgets it (keychain entry, refresher, telemetry identity), no provider sign-out (its sessions are gone); the next account takes over, or the sign-in says "Your account was deleted". A failure changes nothing here. Projects, spaces and worktrees stay |
 | finish a sign-in that needs an org picked | cloud `POST /v1/auth/select-organization`, then the app validates the session itself: signature always checked (JWKS unreachable ─▶ `account.network`, never skipped), and the session's `organization_id` and the token's `org_id` must both be the org picked (else `account.invalid_token`, nothing stored) |
 
 | Cloud answer | App error |
@@ -314,6 +337,7 @@ Stable `area.kind` codes, same form as the app's `error.code`
 | WorkOS API key | Worker secret `WORKOS_API_KEY` | Worker secret `WORKOS_API_KEY` |
 | Web app origins (`WEB_ORIGINS` var) | `https://app-staging.theodore.cloud,https://theodore-web-staging.prd-instance.workers.dev` | `https://app.theodore.cloud,https://theodore-web.prd-instance.workers.dev` |
 | Expo access token (optional) | Worker secret `EXPO_ACCESS_TOKEN` | Worker secret `EXPO_ACCESS_TOKEN` |
+| PostHog person deletion (optional, `docs/telemetry.md` "Account deletion") | Worker secret `POSTHOG_PERSONAL_API_KEY`, vars `POSTHOG_PROJECT_ID`, `POSTHOG_API_HOST` | same |
 | Environment name (`THEODORE_ENV` var; `deployment.environment.name`) | `staging` | `production` |
 | New Relic OTLP endpoint (`THEODORE_OTLP_ENDPOINT` var) | `https://otlp.nr-data.net` in `wrangler.toml` | same |
 | New Relic license key (`THEODORE_OTLP_HEADERS`, `api-key=<key>`) | Worker secret ("Pending" below) | same |

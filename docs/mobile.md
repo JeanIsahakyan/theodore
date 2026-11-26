@@ -1259,8 +1259,21 @@ production  ─▶ eas submit --platform ios     ─▶ App Store Connect ─▶
   builds (`https://app.theodore.cloud/privacy`, and the old
   `theodore-web.prd-instance.workers.dev`). Keep both true when data handling changes (cloud, push payloads,
   telemetry).
-- Account deletion (App Store 5.1.1(v)): Settings → Delete account ─▶
-  `DELETE /v1/account` (docs/cloud.md "Account deletion") ─▶ signed out.
+- Account deletion (App Store 5.1.1(v)), `src/ui/deleteAccount.ts`:
+
+  ```
+  Settings → Delete account (red)
+    ─▶ system destructive confirm: what goes (account, organizations only
+       you are in, devices, fleet history, push tokens), what stays (code and
+       spaces on your computers, shared organizations, GitHub/agent accounts)
+    ─▶ DELETE /v1/account (docs/cloud.md "Account deletion")
+       ok   ─▶ that account's session and stores gone here; the next account
+               takes over, or sign-in shows "Your account was deleted."
+       fail ─▶ the reason under the row, nothing changed; tap again to retry
+  ```
+
+  Failure log: `account deletion failed`, `error.code`
+  `account.delete_failed`, no message.
 - App Privacy answers (App Store Connect, by hand; the API has none): Contact
   Info (name, email), User Content (other), Identifiers (user id, device id),
   all for App Functionality, linked to the user, no tracking.

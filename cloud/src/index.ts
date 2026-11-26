@@ -59,6 +59,11 @@ import {
 import { isMcpPath, mcpFetch, type McpBindings } from './mcp/oauth';
 import { ensurePersonalOrganization, listOrganizations } from './orgs';
 import {
+  posthogForgetter,
+  type ForgetPerson,
+  type PosthogEnv,
+} from './posthog';
+import {
   telemetryFor,
   type RelayBatch,
   type TelemetryEnv,
@@ -68,7 +73,7 @@ import { noopLogger, type Logger } from './telemetry/log';
 import { parseRelay } from './telemetry/relay';
 import { upstream, WorkosClient, WorkosError, type Workos } from './workos';
 
-export interface Env extends McpBindings, TelemetryEnv {
+export interface Env extends McpBindings, TelemetryEnv, PosthogEnv {
   WORKOS_API_KEY: string;
   WORKOS_CLIENT_ID: string;
   WORKOS_API_BASE?: string;
@@ -114,6 +119,8 @@ export interface Deps {
   defer?: (work: Promise<unknown>) => void;
   /** Forwards a relay batch to New Relic; absent: the relay accepts and drops. */
   relay?: (batch: RelayBatch) => Promise<void>;
+  /** Deletes a PostHog person on account deletion; absent: no key configured. */
+  forgetPerson?: ForgetPerson;
 }
 
 /** `WEB_ORIGINS` as a list: trimmed, empty entries and trailing `/` gone. */
@@ -207,6 +214,7 @@ export function depsFor(
     log: telemetry.log,
     defer: ctx ? (work) => ctx.waitUntil(work) : undefined,
     relay: telemetry.remote ? (batch) => telemetry.relay(batch) : undefined,
+    forgetPerson: posthogForgetter(env) ?? undefined,
   };
 }
 

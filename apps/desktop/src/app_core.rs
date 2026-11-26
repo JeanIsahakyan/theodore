@@ -1356,6 +1356,9 @@ impl CoreApi for AppCore {
     async fn account_sign_out_of(&self, user_id: String) -> Result<AccountStatus, CommandError> {
         self.core.account_sign_out_of(&user_id).await.map_err(err)
     }
+    async fn account_delete(&self) -> Result<AccountStatus, CommandError> {
+        self.core.account_delete().await.map_err(err)
+    }
     async fn account_sign_in_callback(&self, url: String) -> bool {
         !matches!(
             self.core.account_sign_in_callback(&url).await,

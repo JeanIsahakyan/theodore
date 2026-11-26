@@ -830,6 +830,39 @@ async fn ensure_personal_organization_sends_the_bearer_and_returns_the_id() {
 }
 
 #[tokio::test]
+async fn delete_account_sends_the_bearer_and_takes_a_204() {
+    let server = MockServer::start().await;
+    Mock::given(method("DELETE"))
+        .and(path("/cloud/v1/account"))
+        .and(header("authorization", "Bearer at_del"))
+        .respond_with(ResponseTemplate::new(204))
+        .expect(1)
+        .mount(&server)
+        .await;
+    account(&server)
+        .delete_account(&cloud_cfg(&server), "at_del")
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn a_failed_delete_account_is_an_error() {
+    let server = MockServer::start().await;
+    Mock::given(method("DELETE"))
+        .and(path("/cloud/v1/account"))
+        .respond_with(ResponseTemplate::new(502).set_body_json(json!({
+            "error": {"code": "cloud.workos", "message": "WorkOS failed"},
+        })))
+        .mount(&server)
+        .await;
+    let err = account(&server)
+        .delete_account(&cloud_cfg(&server), "at_del")
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AccountError::Network(_)), "{err:?}");
+}
+
+#[tokio::test]
 async fn organizations_are_listed_with_role_and_personal() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))

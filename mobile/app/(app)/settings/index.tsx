@@ -21,7 +21,9 @@
  * About          1.0.0       › ─▶ settings/about (version, server)
  * ──────────
  * ⇥ Sign out (red)  ─▶ system confirm ─▶ signed out
- * ✕ Delete account (red) ─▶ system confirm ─▶ cloud deletes ─▶ signed out
+ * ✕ Delete account (red) ─▶ system confirm (what goes, what stays)
+ *     ─▶ cloud deletes ─▶ signed out ─▶ sign-in: "Your account was deleted."
+ *     (src/ui/deleteAccount.ts)
  * ```
  */
 import Constants from 'expo-constants';
@@ -45,6 +47,8 @@ import { useServices } from '../../../src/services';
 import { useAuthState } from '../../../src/shell/AppProviders';
 import { useFleetState } from '../../../src/state/fleet';
 import { THEME_CHOICES } from '../../../src/ui/appearance';
+import { log } from '../../../src/telemetry/log';
+import { deleteAccountFlow } from '../../../src/ui/deleteAccount';
 import { errorText } from '../../../src/ui/logic';
 import { confirm } from '../../../src/ui/native';
 import {
@@ -94,20 +98,24 @@ export default function SettingsScreen() {
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const deleteAccount = async () => {
-    const ok = await confirm({
-      title: 'Delete your Theodore account?',
-      message:
-        'Your account, devices, spaces and organizations you own are deleted from the Theodore cloud for good. Code and spaces on your computers stay there.',
-      confirmLabel: 'Delete account',
-      destructive: true,
-    });
-    if (!ok) return;
-    setDeleting(true);
     setDeleteError(null);
-    auth
-      .deleteAccount()
-      .catch((e: unknown) => setDeleteError(errorText(e)))
-      .finally(() => setDeleting(false));
+    try {
+      await deleteAccountFlow({
+        confirm: async (o) => {
+          const ok = await confirm(o);
+          if (ok) setDeleting(true);
+          return ok;
+        },
+        auth,
+      });
+    } catch (e: unknown) {
+      log.warn('account deletion failed', {
+        'error.code': 'account.delete_failed',
+      });
+      setDeleteError(errorText(e));
+    } finally {
+      setDeleting(false);
+    }
   };
 
   const signOut = async () => {

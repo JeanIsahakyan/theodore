@@ -256,6 +256,9 @@ export class EphemeralStore {
   /** The Theodore account, from `account_status` and its `account_status`
    *  event; `null` until first fetched. */
   account: AccountStatus | null = null;
+  /** The last account was deleted here (Settings → Account): the sign-in
+   *  screen says so until someone signs in. */
+  accountDeleted = false;
   /** Optimistic overlay on `Comment.reactions`, `"<comment>:<emoji>"` ->
    *  the viewer-reacted state we just set. Wins over the server's
    *  `viewer_reacted`/`count` until the next sync brings a `Comment` whose
@@ -333,6 +336,7 @@ export class EphemeralStore {
       appInfo: observableRef,
       forcedSyncUntil: observable,
       account: observableRef,
+      accountDeleted: observable,
       accountGate: computed,
       sandbox: computed,
       reactionOverrides: observableShallow,
@@ -603,6 +607,16 @@ export class EphemeralStore {
   setAccount(s: AccountStatus): void {
     runInAction(() => {
       this.account = s;
+      if (s.user) this.accountDeleted = false;
+    });
+  }
+
+  /** `account_delete` answered: the status after it, and — nobody left
+   *  signed in — "Your account was deleted" on the sign-in screen. */
+  accountWasDeleted(s: AccountStatus): void {
+    runInAction(() => {
+      this.account = s;
+      this.accountDeleted = !s.user;
     });
   }
 

@@ -267,6 +267,11 @@ export const commands = {
 	accountAccounts: () => typedError<AccountStatus, CommandError>(__TAURI_INVOKE("account_accounts")),
 	accountSwitch: (req: AccountSwitchRequest) => typedError<AccountStatus, CommandError>(__TAURI_INVOKE("account_switch", { req })),
 	accountSignOutOf: (userId: string) => typedError<AccountStatus, CommandError>(__TAURI_INVOKE("account_sign_out_of", { userId })),
+	/**
+	 *  Deletes the active Theodore account in the cloud, then signs it out here
+	 *  (docs/cloud.md "Account deletion"); local projects and spaces stay.
+	 */
+	accountDelete: () => typedError<AccountStatus, CommandError>(__TAURI_INVOKE("account_delete")),
 	fleetStatus: () => typedError<FleetStatus, CommandError>(__TAURI_INVOKE("fleet_status")),
 	fleetSetSettings: (req: FleetSettingsRequest) => typedError<FleetStatus, CommandError>(__TAURI_INVOKE("fleet_set_settings", { req })),
 	fleetTrustDevice: (req: FleetTrustRequest) => typedError<FleetStatus, CommandError>(__TAURI_INVOKE("fleet_trust_device", { req })),
