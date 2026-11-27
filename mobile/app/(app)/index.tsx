@@ -88,7 +88,7 @@ import {
 } from '../../src/ui/load';
 import { RUN_WARNING, errorText, refusalCode } from '../../src/ui/logic';
 import { Button, Glass } from '../../src/ui/native';
-import { QuestionsBanner } from '../../src/ui/QuestionsBanner';
+import { ConfirmsBanner } from '../../src/ui/ConfirmsBanner';
 import { SkeletonChip } from '../../src/ui/Skeleton';
 import { Spinner } from '../../src/ui/Spinner';
 import { usePalette } from '../../src/ui/theme';
@@ -238,7 +238,7 @@ export default function NewSpaceScreen() {
     <View className="flex-1 bg-background" style={{ paddingTop: top }}>
       <MainHeader title={TITLE} onNewSpace={requestNewSpace} />
       <SharingCard />
-      <QuestionsBanner glass />
+      <ConfirmsBanner glass />
       {/* Before the first list, Home itself says what the link does. */}
       {settled ? (
         <ConnectionBanner style={{ alignSelf: 'center', marginTop: 8 }} />
