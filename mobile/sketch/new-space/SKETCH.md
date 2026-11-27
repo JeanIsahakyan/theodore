@@ -14,7 +14,7 @@ experience (glass, motion, haptics) is judged on a device.
 ## Home
 
 ```
-[☰]        New space          [🔔][✎]
+[☰]        New space             [✎]
 
                   ⌘
               New space
@@ -122,11 +122,15 @@ A tap applies it and goes back to the main step.
 
 ```
 before   Home ──Start──▶ push /space/id   [‹]
-after    Home ──Start──▶ /space/id, no slide   [☰] … [🔔][✎]
-         drawer ───────▶ /space/id             [☰] … [🔔][✎]
+after    Home ──Start──▶ /space/id, no slide   [☰] … [✎]
+         drawer ───────▶ /space/id             [☰] … [✎]
+         drawer "Waiting for you · N" ─▶ Home (its question cards)
 ```
 
-- The space header is the main header's: menu, questions, new space.
+- The space header is the main header's: menu, new space. No bell: a
+  waiting question shows on its space row (● waiting), in the drawer's
+  "Waiting for you · N" row (only while N > 0, top of the list), on Home's
+  banner and in the space itself; its push opens the space.
 - No iOS edge swipe back from a space; Android Back goes to Home.
 - Devices and Settings stay pushed with Back.
 
@@ -197,7 +201,7 @@ computers; the sheet stays open.
 ### Space: the mode in the model sheet
 
 ```
-[☰]   fix the login bug…          [🔔][✎]
+[☰]   fix the login bug…             [✎]
       on mac-A · Running · Edit                  the header shows the mode
 
 ╭──────────────────────────────────────────────╮
@@ -288,7 +292,7 @@ refused / 15 s silence    ─▶ Not sent · why   ╭ and fix the tests ╮
                                                     (Retry) (Edit)
 
 Start from Home
-Home ──Start──▶ /space/pending_<n>, no slide      [☰]  Fix the login redirect  [🔔][✎]
+Home ──Start──▶ /space/pending_<n>, no slide      [☰]  Fix the login redirect  [✎]
                                                        on mac-A · Starting · Edit
                                                               ╭ Fix the login redirect ╮
                                                        ◌ Starting on mac-A…
