@@ -124,13 +124,12 @@ A tap applies it and goes back to the main step.
 before   Home ──Start──▶ push /space/id   [‹]
 after    Home ──Start──▶ /space/id, no slide   [☰] … [✎]
          drawer ───────▶ /space/id             [☰] … [✎]
-         drawer "Waiting for you · N" ─▶ Home (its question cards)
 ```
 
-- The space header is the main header's: menu, new space. No bell: a
-  waiting question shows on its space row (● waiting), in the drawer's
-  "Waiting for you · N" row (only while N > 0, top of the list), on Home's
-  banner and in the space itself; its push opens the space.
+- The space header is the main header's: menu, new space. A question
+  lives in its chat: its space row says ● waiting, its push opens the
+  space; no bell, no list of questions. Only Claude via cloud's Allow /
+  Deny requests (no chat) show on Home, as compact cards.
 - No iOS edge swipe back from a space; Android Back goes to Home.
 - Devices and Settings stay pushed with Back.
 
