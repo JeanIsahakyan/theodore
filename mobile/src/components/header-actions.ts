@@ -8,8 +8,7 @@
  *
  * No screen-specific buttons: a space's Archive is in the drawer row's
  * long-press menu (docs/mobile.md "Archive"), so the title keeps its room.
- * Questions waiting for you are in the drawer ("Waiting for you · N", its
- * space rows' dots) and on Home, not here.
+ * A space's question is in its chat (its drawer row says "waiting").
  */
 import { usePathname } from 'expo-router';
 import { useCallback } from 'react';

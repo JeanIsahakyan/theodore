@@ -39,14 +39,14 @@ sends its spaces' questions here) shows on Home as a card and arrives as a
 push with Deny / Allow buttons (docs/fleet.md "Requests from Claude via the
 cloud").
 
-Where a waiting question is reachable (the header has no bell):
+A question lives in its chat; nothing lists questions across spaces (no
+bell, no "waiting" list on Home or in the drawer):
 
 ```text
 push notification ─────────────▶ its space (answer there, or on the push)
 drawer space row ● waiting ────▶ its space (the question card)
-drawer "Waiting for you · N" ──▶ Home's banner: every question routed here,
-                                 any computer's or sub-space's, and the
-                                 Allow / Deny requests; only while N > 0
+Claude via cloud Allow / Deny ─▶ Home's ConfirmsBanner (no chat to hold it);
+                                 its push opens Home
 ```
 
 ## Trust, the same model
@@ -441,7 +441,7 @@ Android: isDynamicColorAvailable (Android 12+)
 | Scroll to the newest message | glass circle | blur circle | raised `card` circle, ripple |
 | Plan's Approve / Revise, Send answer | capsule `.borderedProminent` / `.bordered` (kit `Button` `pill`) | same | `Button` / `FilledTonalButton` |
 | Option chips | `.glassProminent` / `.glass` capsules | `.borderedProminent` / `.bordered` | `FilterChip` |
-| Questions banner (on Home) | `Glass` cards tinted with the warning color | cards | cards in Material You surface |
+| Allow / Deny banner (on Home, Claude via cloud only) | `Glass` cards tinted with the warning color | cards | cards in Material You surface |
 | Connection banner | `Glass` capsule | muted pill | muted pill |
 
 Rules:
@@ -528,8 +528,6 @@ web            sidebar beside the stack (md+), over it with a scrim (narrow)
 
 drawer pick on Home ─▶ push [Home, pick]     elsewhere ─▶ replace [Home, pick]
 new space (✎, the header) ─▶ dismissTo Home
-"Waiting for you · N" (drawer, top, only while N > 0) ─▶ dismissTo Home,
-   whose banner answers each question and Allow / Deny request
 route change ─▶ to a page: the drawer closes   to or from a sheet route: it stays
    (drawerClosesOn, src/ui/drawer.ts; useDrawerFollowsRoute in the shell)
 ```
