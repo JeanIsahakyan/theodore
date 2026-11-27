@@ -5,6 +5,7 @@
  * ```text
  * drawer pick on Home        ─▶ push      [Home, pick]
  * drawer pick anywhere else  ─▶ replace   [Home, pick]   (back: Home)
+ * drawer "Waiting for you"   ─▶ dismissTo [Home]         (its questions)
  * new space                  ─▶ dismissTo [Home], its goal cleared and focused
  * notification / deep link   ─▶ push      [Home, space]  (Home is the anchor)
  * ```
@@ -27,6 +28,7 @@ export function openSubSpace(space: string, child: string): void {
 
 export function openFromDrawer(href: Href, path: string): void {
   if (path === href) return;
+  if (href === '/') return backHome();
   if (path === '/') router.push(href);
   else router.replace(href, { withAnchor: true });
 }

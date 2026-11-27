@@ -2,19 +2,16 @@
 /**
  * Android: a Material 3 small top app bar (Compose `TopAppBar`) as the
  * stack's header: the menu as its navigation icon, the title in
- * `titleLarge`, actions as icon buttons (the questions bell with a badge
- * while one waits). Edge to edge: React Native pads it under the status
+ * `titleLarge`, "new space" as its action icon button. Edge to edge: React Native pads it under the status
  * bar, Compose adds no insets of its own.
  *
  * ```text
- * [☰]  New space                     [🔔³][✎]
- * [☰]  fix the login bug…            [🔔³][✎]   a space: two lines
+ * [☰]  New space                         [✎]
+ * [☰]  fix the login bug…                [✎]   a space: two lines
  *      on mac-A · Running
  * ```
  */
 import {
-  Badge,
-  BadgedBox,
   Column,
   Host,
   Icon,
@@ -35,16 +32,12 @@ const NO_INSETS = {};
 function AppBar({
   title,
   subtitle,
-  waiting,
   onMenu,
-  onQuestions,
   onNewSpace,
 }: {
   title: string;
   subtitle?: string;
-  waiting: number;
   onMenu: () => void;
-  onQuestions: () => void;
   onNewSpace: () => void;
 }) {
   const p = usePalette();
@@ -105,29 +98,6 @@ function AppBar({
             </Column>
           </TopAppBar.Title>
           <TopAppBar.Actions>
-            {waiting > 0 ? (
-              <IconButton
-                // Remounted as it shows (Compose keeps its first handler).
-                key={`questions-${waiting}`}
-                onClick={onQuestions}
-                modifiers={[
-                  semantics({
-                    contentDescription: `${waiting} question${waiting === 1 ? '' : 's'} waiting`,
-                  }),
-                ]}
-              >
-                <BadgedBox>
-                  <BadgedBox.Badge>
-                    <Badge>
-                      <Text>{String(waiting)}</Text>
-                    </Badge>
-                  </BadgedBox.Badge>
-                  <Icon
-                    source={require('../../assets/icons/notifications.xml')}
-                  />
-                </BadgedBox>
-              </IconButton>
-            ) : null}
             <IconButton
               onClick={onNewSpace}
               modifiers={[semantics({ contentDescription: 'New space' })]}
@@ -142,8 +112,7 @@ function AppBar({
 }
 
 export function MainHeader({ title, subtitle, onNewSpace }: MainHeaderProps) {
-  const { openDrawer, newSpace, waiting, openQuestions } =
-    useHeaderActions(onNewSpace);
+  const { openDrawer, newSpace } = useHeaderActions(onNewSpace);
   return (
     <Stack.Screen
       options={{
@@ -152,9 +121,7 @@ export function MainHeader({ title, subtitle, onNewSpace }: MainHeaderProps) {
           <AppBar
             title={title}
             subtitle={subtitle}
-            waiting={waiting}
             onMenu={openDrawer}
-            onQuestions={openQuestions}
             onNewSpace={newSpace}
           />
         ),

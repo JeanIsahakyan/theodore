@@ -1,5 +1,5 @@
 /**
- * A space's header: the main header (☰, questions, new space), the
+ * A space's header: the main header (☰, new space), the
  * space's name and "on <host> · <status>" under it. A space is a
  * top-level screen like Home: no Back, the drawer is how you leave it.
  * Archive is in the drawer row's long-press menu, not here: the title

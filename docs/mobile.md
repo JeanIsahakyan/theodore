@@ -39,6 +39,16 @@ sends its spaces' questions here) shows on Home as a card and arrives as a
 push with Deny / Allow buttons (docs/fleet.md "Requests from Claude via the
 cloud").
 
+Where a waiting question is reachable (the header has no bell):
+
+```text
+push notification ─────────────▶ its space (answer there, or on the push)
+drawer space row ● waiting ────▶ its space (the question card)
+drawer "Waiting for you · N" ──▶ Home's banner: every question routed here,
+                                 any computer's or sub-space's, and the
+                                 Allow / Deny requests; only while N > 0
+```
+
 ## Trust, the same model
 
 The phone is one more device with its own key; nothing about the fleet's
@@ -420,9 +430,9 @@ Android: isDynamicColorAvailable (Android 12+)
 
 | Where | iOS 26+ | iOS < 26 | Android |
 | --- | --- | --- | --- |
-| Home's header | native glass bar, ☰ / 🔔 / ✎ bar items | opaque native header, same items | Material 3 top app bar (menu, badged bell, edit) |
+| Home's header | native glass bar, ☰ / ✎ bar items | opaque native header, same items | Material 3 top app bar (menu, edit) |
 | Pushed screens' header | native glass bar, "‹" back (minimal) | `TopBar` ("‹ Back") | `TopBar`: Material 3 top app bar |
-| Space's header (name, "on host · status · mode") | Home's header (☰ / 🔔 / ✎), two-line title view | same, opaque native header | Home's top app bar, title + subtitle |
+| Space's header (name, "on host · status · mode") | Home's header (☰ / ✎), two-line title view | same, opaque native header | Home's top app bar, title + subtitle |
 | Drawer | behind the content, which slides off it (rounded corners) | same | Material 3 modal navigation drawer over a scrim, pill items |
 | Composer | Liquid Glass, interactive | system chrome blur | `surfaceContainerHigh`, 28 dp corners, filled send |
 | Composer: model (a space: its Mode step too) | small bordered capsule (effort secondary) ─▶ formSheet route, glass sheet, grabber | same, no glass | assist chip (`labelMedium`) ─▶ Compose `ModalBottomSheet` |
@@ -517,7 +527,9 @@ iOS / Android  DrawerLayout (src/components/drawer-layout.tsx) ── Stack
 web            sidebar beside the stack (md+), over it with a scrim (narrow)
 
 drawer pick on Home ─▶ push [Home, pick]     elsewhere ─▶ replace [Home, pick]
-new space (✎, the header) ─▶ dismissTo Home  bell ─▶ the first waiting space
+new space (✎, the header) ─▶ dismissTo Home
+"Waiting for you · N" (drawer, top, only while N > 0) ─▶ dismissTo Home,
+   whose banner answers each question and Allow / Deny request
 route change ─▶ to a page: the drawer closes   to or from a sheet route: it stays
    (drawerClosesOn, src/ui/drawer.ts; useDrawerFollowsRoute in the shell)
 ```
@@ -879,7 +891,7 @@ sent:  only what was picked (startPicks / sendPicks), the host's defaults otherw
   ("Edit ⌄"), so its Mode step stays reachable.
 - Start ─▶ the space opens with a fade, not a slide, at once under a
   pending id ("Optimistic sends" above): it is a top-level screen like
-  Home, its header the main one (☰ / 🔔 / ✎, no Back, no iOS edge swipe
+  Home, its header the main one (☰ / ✎, no Back, no iOS edge swipe
   back); Android Back goes to Home. Devices and Settings stay pushed with
   Back.
 - Design record: `mobile/sketch/new-space/SKETCH.md`.
@@ -1002,7 +1014,7 @@ breath, still under Reduce Motion), never the empty states
 ```text
 before the first welcome of this app run, with nothing saved
 
-[☰]        New space          [🔔][✎]
+[☰]        New space             [✎]
                   ⌘
               New space
         ( ▒▒▒▒▒▒▒▒ ⌄ )  on  ( ▒▒▒▒▒▒ ⌄ )      skeleton chips (the project / computer chips' size)

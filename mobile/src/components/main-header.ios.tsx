@@ -5,14 +5,13 @@
  * screens: Home and a space (no Back: the drawer is how you leave it).
  *
  * ```text
- * [☰]          New space          [🔔][✎]
- * [☰]      fix the login bug…     [🔔][✎]   a space: two lines
+ * [☰]          New space             [✎]
+ * [☰]      fix the login bug…        [✎]   a space: two lines
  *          on mac-A · Running
  * ```
  */
 import { Stack } from 'expo-router';
 import { useWindowDimensions } from 'react-native';
-import { liquidGlass } from '../ui/native';
 import { usePalette } from '../ui/theme';
 import { useHeaderActions, type MainHeaderProps } from './header-actions';
 import { TitleStack } from './space-title';
@@ -23,8 +22,7 @@ const SIDES = 150;
 export function MainHeader({ title, subtitle, onNewSpace }: MainHeaderProps) {
   const p = usePalette();
   const { width } = useWindowDimensions();
-  const { openDrawer, newSpace, waiting, openQuestions } =
-    useHeaderActions(onNewSpace);
+  const { openDrawer, newSpace } = useHeaderActions(onNewSpace);
   return (
     <>
       <Stack.Screen
@@ -53,15 +51,6 @@ export function MainHeader({ title, subtitle, onNewSpace }: MainHeaderProps) {
         />
       </Stack.Toolbar>
       <Stack.Toolbar placement="right">
-        {waiting > 0 ? (
-          <Stack.Toolbar.Button
-            icon="bell.badge"
-            accessibilityLabel={`${waiting} question${waiting === 1 ? '' : 's'} waiting`}
-            tintColor={p.warning}
-            {...(liquidGlass ? { badge: { value: waiting } } : null)}
-            onPress={openQuestions}
-          />
-        ) : null}
         <Stack.Toolbar.Button
           icon="square.and.pencil"
           accessibilityLabel="New space"

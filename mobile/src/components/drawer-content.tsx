@@ -6,6 +6,8 @@
  * ```text
  * Theodore
  * [⌕ Search spaces            ]
+ * ⚠ Waiting for you · 2             only while N > 0 ─▶ Home, where each question
+ *                                   (and Allow / Deny request) is answered
  * Today
  *   Fix the login redirect   ●      ● running (accent) / waiting (warning) / failed (red)
  *   3 sub-spaces, 1 running          its sub-spaces, when it has any
@@ -249,6 +251,38 @@ function SpaceItem({
   );
 }
 
+/**
+ * "Waiting for you · N": questions routed here and requests waiting for
+ * Allow / Deny, some for spaces the list doesn't show (another computer's,
+ * a sub-space's). Opens Home, whose banner answers them (`QuestionsBanner`).
+ */
+function WaitingItem({ onPress }: { onPress: () => void }) {
+  const p = usePalette();
+  const count = useFleetState((s) => s.questions.length + s.confirms.length);
+  if (count === 0) return null;
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={`Waiting for you: ${count}`}
+      testID="drawer-waiting"
+      android_ripple={{ color: p.border }}
+      className={
+        android
+          ? 'mx-3 mb-1 h-14 flex-row items-center gap-3 overflow-hidden rounded-full px-4'
+          : 'mx-2 mb-1 flex-row items-center gap-3 rounded-[10px] px-4 py-3 active:bg-accent'
+      }
+    >
+      <SymbolImage name="bell" size={android ? 24 : 20} color={p.warning} />
+      <Text className="flex-1 text-base text-foreground">
+        Waiting for you
+        <Text className="text-base text-muted-foreground">{` · ${count}`}</Text>
+      </Text>
+      <View className="h-2 w-2 rounded-full bg-warning" />
+    </Pressable>
+  );
+}
+
 /** A space of a computer this device doesn't follow: opens like a sub-space. */
 function ComputerItem({
   space,
@@ -450,6 +484,9 @@ export function DrawerContent({
         keyboardDismissMode="on-drag"
         stickySectionHeadersEnabled={false}
         contentContainerStyle={{ paddingBottom: 8 }}
+        ListHeaderComponent={
+          <WaitingItem onPress={() => onNavigate('/' as Href)} />
+        }
         renderSectionHeader={({ section }) => (
           <Text
             accessibilityRole="header"
